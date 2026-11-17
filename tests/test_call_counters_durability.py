@@ -3841,6 +3841,34 @@ class TestRetainNotRollback:
         call_counters.publish_test_window("a.py::t1", window)
         assert call_counters.persistence_pending() is False
 
+    def test_publish_clears_marker_despite_failing_boundary_flush(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The journal leg covers retained evidence: the append clears the
+        # marker even though this publish's own sidecar flush then fails
+        # (fail-visible, no new marker); a later healthy publish converges.
+        call_counters.record_call("C_Login", module="m")
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Login", 0, module="m")
+        assert call_counters.persistence_pending() is True
+        before = call_counters.take_snapshot()
+        window = call_counters.diff_snapshots(before, call_counters.take_snapshot())
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.publish_test_window("a.py::t1", window)
+        assert call_counters.persistence_pending() is False
+        info = call_counters.registration_info()
+        assert info is not None
+        assert len(Path(info["journal_path"]).read_text(encoding="utf-8").splitlines()) == 1
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+        before = call_counters.take_snapshot()
+        _record_calls(1)
+        window = call_counters.diff_snapshots(before, call_counters.take_snapshot())
+        call_counters.publish_test_window("a.py::t2", window)
+        assert _read_sidecar()["journal_seq"] == 2
+        assert call_counters.persistence_pending() is False
+
     def test_repaired_evidence_recovers_exactly(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4050,6 +4078,32 @@ class TestMarkRule:
         records = _collect_dead(engaged, tmp_path)
         assert [rec["$report_type"] for rec in records] == ["CallCountersLost"]
         assert records[0]["end_state"] == "conflict"
+
+    def test_newer_mark_with_scalar_emits_loss_partial_plus_conflict(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # The newer-mark arm drops counts, but the sidecar scalar (no window-
+        # overlap ambiguity: it never lived in any journal window) still
+        # flows as a zero-call loss partial beside the conflict.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(3), "receipts": []}],
+            journal_seq=5,
+            probes_lost=3,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 0
+        assert records[0]["probes_lost"] == 3
+        assert records[1]["end_state"] == "conflict"
 
     def test_self_heal_failed_append_recovers_all_plus_conflict(
         self, engaged: Path, tmp_path: Path
@@ -4263,25 +4317,25 @@ class TestTransientWriteRetry:
             durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
         assert calls == 3, "transient errors retry boundedly, then raise"
 
-    def test_journal_transient_failure_absorbed(
+    def test_journal_transient_open_failure_absorbed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import builtins
-
-        real_open = open
+        # A transient open failure (the win32-AV shape) retries the whole
+        # open: nothing landed, so nothing can duplicate.
+        real_open = os.open
         calls = 0
 
-        def _flaky_open(path: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        def _flaky_open(path: Any, flags: int, mode: int = 0o666) -> int:
             nonlocal calls
-            if "a" in mode and str(path).endswith(".windows.jsonl"):
-                calls += 1
-                if calls == 1:
-                    raise OSError(errno.EAGAIN, "try again")
-            return real_open(path, mode, *args, **kwargs)
+            calls += 1
+            if calls == 1:
+                raise OSError(errno.EAGAIN, "try again")
+            return real_open(path, flags, mode)
 
-        monkeypatch.setattr(builtins, "open", _flaky_open)
+        monkeypatch.setattr(os, "open", _flaky_open)
         journal = tmp_path / "w.windows.jsonl"
         durability.append_journal(journal, {"nodeid": "a.py::t1", "block": _counts_block(2)})
+        assert calls == 2
         assert journal.read_text(encoding="utf-8").count("a.py::t1") == 1
 
     def test_record_absorbs_transient_os_replace_failure(
@@ -4312,6 +4366,71 @@ class TestTransientWriteRetry:
         assert is_transient(OSError(errno.EACCES, "denied")) is True
         assert is_transient(OSError(errno.EPERM, "denied")) is True
         assert is_transient(OSError(errno.ENOSPC, "no space")) is False
+
+    def test_journal_partial_write_completes_exactly_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Faithful POSIX fakes: short writes return counts (no error); a
+        # raising write accepts zero bytes. A failed attempt retries only
+        # the unwritten remainder, never the whole line, so no duplicate
+        # window can land (close cannot complete an unbuffered write).
+        real_write = os.write
+        calls = 0
+
+        def _flaky_write(fd: int, data: bytes) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_write(fd, data[:10])
+            if calls == 2:
+                raise OSError(errno.EAGAIN, "try again")
+            return real_write(fd, data)
+
+        monkeypatch.setattr(os, "write", _flaky_write)
+        journal = tmp_path / "w.windows.jsonl"
+        durability.append_journal(journal, {"nodeid": "a.py::t1", "block": _counts_block(2)})
+        lines = journal.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        assert json.loads(lines[0])["nodeid"] == "a.py::t1"
+
+    def test_journal_close_error_after_landing_does_not_duplicate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Bytes that left the process are page-cache durable (this module's
+        # whole scope), so a close error after a complete write is success:
+        # retrying would duplicate the window, and raising would make the
+        # next publish double-count via its superset window.
+        real_close = os.close
+        calls = 0
+
+        def _flaky_close(fd: int) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError(errno.EIO, "close commit failed")
+            real_close(fd)
+
+        monkeypatch.setattr(os, "close", _flaky_close)
+        journal = tmp_path / "w.windows.jsonl"
+        durability.append_journal(journal, {"nodeid": "a.py::t1", "block": _counts_block(2)})
+        assert calls == 1, "no retry on close errors"
+        lines = journal.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        assert json.loads(lines[0])["nodeid"] == "a.py::t1"
+
+    def test_journal_permanent_write_failure_raises_without_landing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pin-as-is guard: a permanent write failure raises at once (no
+        # retry, nothing landed) so the publish-level superset self-heals.
+        def _denied(fd: int, data: bytes) -> int:
+            raise OSError(errno.ENOSPC, "no space left")
+
+        monkeypatch.setattr(os, "write", _denied)
+        journal = tmp_path / "w.windows.jsonl"
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.append_journal(journal, {"nodeid": "a.py::t1", "block": _counts_block(2)})
+        assert journal.read_text(encoding="utf-8") == ""
 
 
 # --------------------------------------------------------------------------
