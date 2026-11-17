@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -1712,6 +1713,41 @@ def test_f13_isolation_child_env_inherits_pin_drops_coverage_sentinel(
     env = subprocess_safety_probe._isolation_child_env()
     assert env["_P11CHECK_PIN"] == "s3cret-pin"
     assert "_P11CHECK_SUBPROCESS_COVERAGE" not in env
+
+
+def test_cx1_isolation_child_env_scrubs_sidecar_slot_but_keeps_seq(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Codex CX1: the grandchild runs probe_main, so an inherited sidecar
+    # slot would let it overwrite the outer probe's sidecar (an orphaned
+    # late write would then false-heal the outer loss). The seq stays:
+    # the grandchild receipt chains upward through coverage by design.
+    from pkcs11_check.testcases._probes._emit import flush_probe_sidecar
+
+    monkeypatch.setenv("_P11CHECK_PROBE_SIDECAR", str(tmp_path / "outer.json"))
+    monkeypatch.setenv("_P11CHECK_PROBE_SEQ", "7")
+    monkeypatch.setenv("_P11CHECK_PROBE_PARENT", "p" * 32)
+    monkeypatch.setenv("_P11CHECK_PROBE_RUN", "R1")
+    monkeypatch.setenv("_P11CHECK_PROBE_UNIT", "a.py")
+    monkeypatch.setenv("_P11CHECK_PROBE_ATTEMPT", "0")
+    monkeypatch.setenv("_P11CHECK_PROBE_ROLE", "unit")
+    monkeypatch.setenv("_P11CHECK_PROBE_ISOLATION", "file")
+    env = subprocess_safety_probe._isolation_child_env()
+    assert "_P11CHECK_PROBE_SIDECAR" not in env
+    for key in (
+        "_P11CHECK_PROBE_PARENT",
+        "_P11CHECK_PROBE_RUN",
+        "_P11CHECK_PROBE_UNIT",
+        "_P11CHECK_PROBE_ATTEMPT",
+        "_P11CHECK_PROBE_ROLE",
+        "_P11CHECK_PROBE_ISOLATION",
+    ):
+        assert key not in env
+    assert env["_P11CHECK_PROBE_SEQ"] == "7"
+    # And the real sidecar writer stays silent under the scrubbed env.
+    monkeypatch.setattr(os, "environ", dict(env))
+    flush_probe_sidecar([["m", "C_Login", 0, 1]])
+    assert list(tmp_path.glob("*.json")) == []
 
 
 def test_f13_isolation_child_probe_registered() -> None:

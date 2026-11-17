@@ -815,9 +815,11 @@ def note_lost_probe(*, parent_uuid: Any = None, probe_seq: Any = None) -> None:
 
     With a well-formed ``(parent_uuid, probe_seq)`` identity the loss is
     keyed (duplicates collapse to one); otherwise it lands unkeyed (never
-    heals, never breaks the caller). Flushes immediately when registered;
-    a failed flush retains the loss, marks it pending, and raises (never
-    silently dropped).
+    heals, never breaks the caller). Self-registers first like the
+    record_* paths (a loss note is a zero-call mutation, so an engaged
+    but fresh process must still persist it); sealed raises before
+    anything is admitted. A failed flush retains the loss, marks it
+    pending, and raises (never silently dropped).
     """
     global _unkeyed_lost
     key: tuple[str, int] | None = None
@@ -830,6 +832,7 @@ def note_lost_probe(*, parent_uuid: Any = None, probe_seq: Any = None) -> None:
         assert isinstance(parent_uuid, str) and isinstance(probe_seq, int)
         key = (parent_uuid, probe_seq)
     with _lock:
+        _ensure_registered_locked()
         if key is not None:
             _lost_keys.add(key)
         else:
@@ -846,15 +849,17 @@ def add_lost_probes(n: Any) -> None:
 
     Garbage-tolerant like :func:`ingest_child_counts`: anything that is not a
     positive ``int`` (bools included) is ignored without raising, so a hostile
-    payload value can never break the ingest path. Pure loss accounting:
-    never registers (never blocks on the admission barrier), one lock
-    acquisition. Flushes immediately when registered; a failed flush retains
-    the losses, marks them pending, and raises.
+    payload value can never break the ingest path (garbage parses out before
+    registration, so it stays silent even when sealed). Real losses
+    self-register first like the record_* paths; sealed raises before
+    anything is admitted. A failed flush retains the losses, marks them
+    pending, and raises.
     """
     global _unkeyed_lost
     with _lock:
         lost_count = _parse_lost_count(n)
         if lost_count:
+            _ensure_registered_locked()
             _unkeyed_lost += lost_count
             try:
                 _mark_dirty_locked(calls=1)

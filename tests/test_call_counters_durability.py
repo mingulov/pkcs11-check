@@ -5736,3 +5736,112 @@ class TestTornSidecarRoleRecovery:
         assert len(lost) == 1
         assert lost[0]["role"] == "preflight"
         assert lost[0]["isolation"] == "file"
+
+
+class TestLossNoteSelfRegistration:
+    def test_note_lost_probe_registers_first(self, engaged: Path) -> None:
+        # Codex CX5: a loss note is a zero-call mutation, so it
+        # self-registers like record_* -- otherwise an engaged but
+        # fresh process would lose the evidence on death.
+        call_counters.note_lost_probe()
+        assert list((engaged / "registrations").glob("*.json")) != []
+        assert _read_sidecar()["probes_lost"] == 1
+
+    def test_add_lost_probes_registers_first(self, engaged: Path) -> None:
+        call_counters.add_lost_probes(2)
+        assert list((engaged / "registrations").glob("*.json")) != []
+        assert _read_sidecar()["probes_lost"] == 2
+
+    def test_note_lost_probe_sealed_raises_before_admitting(self, engaged: Path) -> None:
+        durability.seal(engaged, reason="test")
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.note_lost_probe()
+        assert call_counters.probes_lost() == 0
+
+    def test_add_lost_probes_garbage_stays_silent_when_sealed(self, engaged: Path) -> None:
+        # Garbage parses out before registration: a hostile payload
+        # value can never break ingest, even when sealed.
+        durability.seal(engaged, reason="test")
+        call_counters.add_lost_probes("garbage")
+        assert list((engaged / "registrations").glob("*.json")) == []
+
+
+class TestCommittedRecoveryOnlyClaim:
+    def _committed_session(self, pid: int) -> dict[str, Any]:
+        return _session_record(
+            pid,
+            _counts_block(5),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 1,
+                "lost_keys": [{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            },
+        )
+
+    def test_marker_recovery_emits_zero_claim_and_heals(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex CX2: a consumed marker carries recovery identity but no
+        # counts; the committed path must still emit its zero-call claim
+        # partial, so the session's loss claim heals at extraction
+        # instead of being deleted with the marker.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5))
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        durability.mark_probe_consumed(orphan)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                self._committed_session(pid),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 0
+        assert partials[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}]
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["complete"] is True
+        assert payload["probes_lost"] == 0
+        assert payload.get("probes_detail", []) == []
+
+    def test_torn_committed_recovery_emits_zero_claim_and_heals(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Same CX2 rule through the registryless committed path.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
+        )
+        Path(planted["registry"]).unlink()
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        durability.mark_probe_consumed(orphan)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                self._committed_session(pid),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 0
+        assert partials[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}]
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["complete"] is True
+        assert payload["probes_lost"] == 0

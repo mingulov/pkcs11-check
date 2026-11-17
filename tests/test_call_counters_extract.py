@@ -975,6 +975,42 @@ def test_extract_unmarked_segment_yields_null_unit_attempt(tmp_path: Path) -> No
     assert payload["unattributed_segments"] == [{"scope_index": 1, "unit": None, "attempt": None}]
 
 
+def test_extract_overlapping_keyed_loss_counts_once(tmp_path: Path) -> None:
+    # Codex CX3 (narrowed): the same keyed identity under two ledger
+    # sources (here a uuid-less session plus an orphan-keys union)
+    # counts once -- the total matches the unioned detail rows. Round
+    # and global levels keep the documented summing operator.
+    session = _session_record(100, 10, probes_lost=1)
+    session.update(
+        {
+            "run_id": _R1,
+            "lost_keys": [{"parent_uuid": "a" * 32, "probe_seq": 0}],
+        }
+    )
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            session,
+            {
+                "$report_type": "CallCountersPartial",
+                "worker_uuid": "b" * 32,
+                "truncated": True,
+                "total_calls": 0,
+                "by_module": {},
+                "run_id": _R1,
+                "orphan_keys": [{"parent_uuid": "a" * 32, "probe_seq": 0}],
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["probes_lost"] == 1
+    assert payload["probes_detail"] == [{"worker_uuid": "a" * 32, "probe_seq": 0, "status": "lost"}]
+
+
 def test_extract_forged_recovery_never_heals_another_producer(tmp_path: Path) -> None:
     # Robustness M2: a partial's recovered_keys heal only its own
     # producer's claims -- a forged key naming another producer is
