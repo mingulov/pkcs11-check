@@ -92,6 +92,13 @@ _entry_counts: Counter[tuple[str, str, str]] = Counter()
 _exit_counts: Counter[tuple[str, str, str, int]] = Counter()
 _phase_name: str = DEFAULT_BUCKET
 _probes_lost = 0
+#: Admitted-but-undurable evidence after a failed return/mutation checkpoint
+#: (``{"checkpoint": kind, "unit": str, "attempt": int}``), else None. Entries
+#: never set it (they roll back instead); it clears only when a sidecar flush
+#: or journal append durably covers the retained evidence. A marker surviving
+#: to session emission forces counter-specific incomplete. Fork children
+#: inherit it like ``_dirty`` (their first covering flush clears it).
+_persistence_pending: dict[str, Any] | None = None
 _worker_uuid: str | None = None
 _worker_uuid_pid: int | None = None
 _registration: Registration | None = None
@@ -219,9 +226,10 @@ def _flush_locked() -> None:
 
     No-op unless registered in this pid. Raises ``CounterPersistenceError``
     on I/O failure (the old sidecar stays intact; dirty stays set so the
-    evidence is retried by the next flush).
+    evidence is retried by the next flush). A successful write covers every
+    retained kind, so it also clears the pending-persistence marker.
     """
-    global _dirty, _pending_calls
+    global _dirty, _pending_calls, _persistence_pending
     if _registration is None or _registration_pid != os.getpid():
         return
     if durability_dir() is None:
@@ -235,10 +243,13 @@ def _flush_locked() -> None:
         "journal_seq": _journal_len,
         "in_progress": _serialize(Counter(_inprog_entry), Counter(_inprog_exit)),
         "receipts": [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)],
+        "probes_lost": _probes_lost,
     }
     write_sidecar_atomic(_registration.sidecar_path, payload)
     _dirty = False
     _pending_calls = 0
+    # This flush covered every retained kind (counts, receipts, loss scalar).
+    _persistence_pending = None
 
 
 def flush_counters() -> bool:
@@ -298,7 +309,10 @@ def _rollback_admission(
 ) -> Iterator[None]:
     """Roll back just-admitted counts if the dirty-mark flush fails (holds ``_lock``).
 
-    The caller admits the counts first, then marks dirty inside this guard: a
+    Entries only: the provider never ran, so unadmitting is honest. Returns,
+    direct calls, and ingests must NOT use this guard (their traffic already
+    happened); they retain and mark pending instead. The caller admits the
+    counts first, then marks dirty inside this guard: a
     ``CounterPersistenceError`` from the K-boundary flush decrements exactly
     the just-admitted counts (global and in-progress alike) and restores the
     pending window, while ``_dirty`` stays set so the earlier evidence is
@@ -324,6 +338,51 @@ def _rollback_admission(
             if admitted_inprog:
                 _unadmit(_inprog_exit, exit_key)
         raise
+
+
+def _set_pending_locked(checkpoint: str) -> None:
+    """Mark admitted evidence undurable after a failed checkpoint. Holds ``_lock``.
+
+    ``checkpoint`` is the failed kind (``"return"``, ``"direct"``,
+    ``"ingest"``, ``"note"``). Entries never call this (they roll back, so
+    nothing is retained); every other record path calls it when its flush
+    fails, keeping the real traffic admitted. No-op when unregistered (an
+    unregistered mark never attempts a flush, so nothing failed).
+    """
+    global _persistence_pending
+    if _registration is None:
+        return
+    _persistence_pending = {
+        "checkpoint": checkpoint,
+        "unit": _registration.unit,
+        "attempt": _registration.attempt,
+    }
+
+
+def _recover_pending_locked() -> None:
+    """Retry persistence for marked evidence; block while undurable. Holds ``_lock``.
+
+    Entry-only pre-check (call after ``_ensure_registered_locked``): a
+    surviving marker retries the covering flush first, and while the writer
+    is still broken the entry raises WITHOUT admitting, so the provider
+    never runs on unrecordable evidence. A covering flush clears the marker
+    (see :func:`_flush_locked`) and the entry proceeds. When the retry
+    covers nothing (a flush that cannot write in this process), the entry
+    stays blocked: fail closed, never silently unmarked.
+    """
+    if _persistence_pending is None:
+        return
+    try:
+        _flush_locked()
+    except CounterPersistenceError as exc:
+        raise CounterPersistenceError(
+            "counter persistence still failing; retained evidence undurable, "
+            f"provider entry blocked: {exc}"
+        ) from exc
+    if _persistence_pending is not None:
+        raise CounterPersistenceError(
+            "counter persistence pending and unrecoverable in this process; provider entry blocked"
+        )
 
 
 @contextmanager
@@ -389,7 +448,9 @@ def record_call(fn: str, *, bucket: str | None = None, module: str = UNKNOWN_MOD
     the handle the call passed through; the default ``""`` marks calls with
     no handle (never inferred to a real module). When durability is engaged
     the call self-registers first (raising ``CounterPersistenceError`` when
-    sealed or on I/O failure, blocking provider entry) and K-flushes under
+    sealed or on I/O failure, blocking provider entry), recovers any
+    pending-persistence marker (retrying the covering flush; while the writer
+    is still broken the entry raises without admitting), and K-flushes under
     the same lock acquisition. A failed K flush rolls back the just-admitted
     entry (strong exception guarantee): the provider never ran, so the
     session must not show the call either.
@@ -400,6 +461,7 @@ def record_call(fn: str, *, bucket: str | None = None, module: str = UNKNOWN_MOD
     with _lock:
         target = _resolve_bucket_locked(bucket)
         _ensure_registered_locked()
+        _recover_pending_locked()
         key = (module_id, target, fn)
         _entry_counts[key] += 1
         if _registration is not None:
@@ -417,9 +479,10 @@ def record_return(
     once at entry and pass it to both halves, so a mid-call bucket switch
     cannot land the entry and the RV in different buckets. The module halves
     must likewise match: entry and exit of one call always share a handle.
-    Durability registration/flush behaves like :func:`record_call` (a
-    return marks dirty but never fills the K window: only new calls do).
-    A failed retry flush rolls back the just-admitted exit the same way.
+    The return fills the K window like an entry (with K=1 every return
+    persists immediately). A failed flush RETAINS the just-admitted exit —
+    the provider already returned, so rolling back would hide real traffic —
+    marks the undurable evidence pending, and raises.
     """
     module_id = _resolve_module(module)
     if bucket is not None and bucket not in BUCKETS:
@@ -431,8 +494,11 @@ def record_return(
         _exit_counts[key] += 1
         if _registration is not None:
             _inprog_exit[key] += 1
-        with _rollback_admission(entry_key=None, exit_key=key):
-            _mark_dirty_locked()
+        try:
+            _mark_dirty_locked(calls=1)
+        except CounterPersistenceError:
+            _set_pending_locked("return")
+            raise
 
 
 def record_direct_call(
@@ -440,8 +506,9 @@ def record_direct_call(
 ) -> None:
     """Count a call made outside the ``_call`` choke point (entry + exit together).
 
-    Same K-flush rollback as :func:`record_call`: a failed flush unadmits
-    both halves, so a call the provider never ran leaves no trace.
+    Post-hoc counting: the provider already ran, so unlike :func:`record_call`
+    a failed flush RETAINS both halves (rolling back would hide real traffic),
+    marks the undurable evidence pending, and raises.
     """
     module_id = _resolve_module(module)
     if bucket is not None and bucket not in BUCKETS:
@@ -456,8 +523,11 @@ def record_direct_call(
         if _registration is not None:
             _inprog_entry[entry_key] += 1
             _inprog_exit[exit_key] += 1
-        with _rollback_admission(entry_key=entry_key, exit_key=exit_key):
+        try:
             _mark_dirty_locked(calls=1)
+        except CounterPersistenceError:
+            _set_pending_locked("direct")
+            raise
 
 
 def _serialize(
@@ -631,7 +701,9 @@ def ingest_child_evidence(
     acquisition. Unlike the ``record_*`` entry points, a failed K flush here
     does NOT roll back: child evidence is post-hoc real provider data, so it
     stays admitted (dirty, retried by the next flush) rather than
-    undercounting calls that provably ran.
+    undercounting calls that provably ran; the undurable evidence is marked
+    pending instead. Loss-only and receipt-only ingests flush immediately
+    (they count one window unit despite carrying zero calls).
     """
     global _probes_lost, _receipts
     if bucket is not None and bucket not in BUCKETS:
@@ -653,7 +725,12 @@ def ingest_child_evidence(
         _probes_lost += lost_count
         _receipts |= receipt_keys
         if parsed or lost_count or receipt_keys:
-            _mark_dirty_locked(calls=sum(count for _, _, _, count in parsed))
+            try:
+                units = sum(count for _, _, _, count in parsed) if parsed else 1
+                _mark_dirty_locked(calls=units)
+            except CounterPersistenceError:
+                _set_pending_locked("ingest")
+                raise
 
 
 def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
@@ -673,11 +750,19 @@ def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
 
 
 def note_lost_probe() -> None:
-    """Record one probe child whose counters could not be recovered."""
+    """Record one probe child whose counters could not be recovered.
+
+    Flushes immediately when registered; a failed flush retains the loss,
+    marks it pending, and raises (never silently dropped).
+    """
     global _probes_lost
     with _lock:
         _probes_lost += 1
-        _mark_dirty_locked()
+        try:
+            _mark_dirty_locked(calls=1)
+        except CounterPersistenceError:
+            _set_pending_locked("note")
+            raise
 
 
 def add_lost_probes(n: Any) -> None:
@@ -687,20 +772,46 @@ def add_lost_probes(n: Any) -> None:
     positive ``int`` (bools included) is ignored without raising, so a hostile
     payload value can never break the ingest path. Pure loss accounting:
     never registers (never blocks on the admission barrier), one lock
-    acquisition.
+    acquisition. Flushes immediately when registered; a failed flush retains
+    the losses, marks them pending, and raises.
     """
     global _probes_lost
     with _lock:
         lost_count = _parse_lost_count(n)
         if lost_count:
             _probes_lost += lost_count
-            _mark_dirty_locked()
+            try:
+                _mark_dirty_locked(calls=1)
+            except CounterPersistenceError:
+                _set_pending_locked("note")
+                raise
 
 
 def probes_lost() -> int:
     """Return the number of probe children with unrecoverable counters."""
     with _lock:
         return _probes_lost
+
+
+def persistence_pending() -> bool:
+    """Whether admitted counter evidence is still undurable.
+
+    True after a failed return/mutation checkpoint until a sidecar flush or
+    journal append durably covers the retained evidence. Session emission
+    reads this: a surviving marker forces counter-specific incomplete.
+    """
+    with _lock:
+        return _persistence_pending is not None
+
+
+def pending_marker() -> dict[str, Any] | None:
+    """Return the pending-persistence marker for session emission, else None.
+
+    The marker carries the failed checkpoint kind plus unit/attempt
+    identity (a copy; mutating it affects nothing).
+    """
+    with _lock:
+        return dict(_persistence_pending) if _persistence_pending is not None else None
 
 
 def assign_probe_seq() -> int:
@@ -729,13 +840,19 @@ def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> 
     No-op when disengaged. Otherwise appends ``(nodeid, block, receipts)``
     to the journal FIRST, then resets the in-progress accumulator and
     boundary-flushes (carrying the new journal length), so any crash
-    interleaving stays sound: journaled-but-unflushed windows are excluded
-    from the collected gap because their calls are still in the flushed
-    snapshot. A failed append leaves the baseline unadvanced (nothing is
-    eagerly cleared). Raises ``CounterPersistenceError`` when sealed or on
-    I/O failure, ValueError on a caller-bug block/nodeid.
+    interleaving stays sound: journaled-but-unflushed windows subsume the
+    stale snapshot (the collector's older-mark arm folds the journal and
+    excludes it). A failed append leaves the baseline unadvanced (nothing is
+    eagerly cleared) and any pending marker set. A successful append covers
+    all retained evidence, so it clears a pre-existing marker even when the
+    boundary sidecar flush then fails (that failure still raises,
+    fail-visible, but sets no marker: the journal leg already covers the
+    evidence). Callers passing an explicit block promise it covers the
+    accumulator, as snapshot-derived windows do. Raises
+    ``CounterPersistenceError`` when sealed or on I/O failure, ValueError on
+    a caller-bug block/nodeid.
     """
-    global _journal_len, _dirty
+    global _journal_len, _dirty, _persistence_pending
     if durability_dir() is None:
         return
     if not isinstance(nodeid, str) or not nodeid:
@@ -763,6 +880,9 @@ def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> 
         except OSError as exc:
             raise CounterPersistenceError(f"cannot publish test window {nodeid}: {exc}") from exc
         _journal_len += 1
+        # The append covered every retained kind: clear any marker even
+        # though the boundary flush below may still fail (journal leg).
+        _persistence_pending = None
         _inprog_entry.clear()
         _inprog_exit.clear()
         _dirty = True
@@ -773,11 +893,13 @@ def reset_for_tests() -> None:
     """Clear counters, phase, regions, losses, identity, receipts, and durability."""
     global _probes_lost, _phase_name, _worker_uuid, _worker_uuid_pid
     global _registration, _registration_pid, _dirty, _pending_calls, _probe_seq, _journal_len
+    global _persistence_pending
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
         _phase_name = DEFAULT_BUCKET
         _probes_lost = 0
+        _persistence_pending = None
         _worker_uuid = None
         _worker_uuid_pid = None
         _registration = None
@@ -814,6 +936,8 @@ __all__ = [
     "ingest_child_counts",
     "ingest_child_evidence",
     "note_lost_probe",
+    "pending_marker",
+    "persistence_pending",
     "probes_lost",
     "publish_test_window",
     "record_call",

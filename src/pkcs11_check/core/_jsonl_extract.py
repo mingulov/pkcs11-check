@@ -428,7 +428,16 @@ def _parse_session_counters(
     record: dict[str, Any],
 ) -> (
     tuple[
-        int, int, dict[str, Any], int, str, str, str | None, frozenset[tuple[str, int]], str | None
+        int,
+        int,
+        dict[str, Any],
+        int,
+        str,
+        str,
+        str | None,
+        frozenset[tuple[str, int]],
+        str | None,
+        bool,
     ]
     | None
 ):
@@ -442,7 +451,10 @@ def _parse_session_counters(
     malformed ``worker_uuid`` or ``role`` fails the whole record closed (a
     forged attribution tag must not fold). ``run`` is the round key from
     :func:`_parse_round` (implicit ``""`` when the key is absent). Receipts
-    fold item-tolerantly (see :func:`_parse_receipts_list`).
+    fold item-tolerantly (see :func:`_parse_receipts_list`). A present
+    non-None ``persistence_pending`` marker (any shape: its contents are
+    forensic, not validity-gating) reads as pending — fail closed, since an
+    unreadable marker cannot prove clean persistence; absent/None reads clean.
     """
     pid = _as_nonneg_int(record.get("pid"))
     total = _as_nonneg_int(record.get("total_calls"))
@@ -463,14 +475,17 @@ def _parse_session_counters(
     if not isinstance(isolation, str):
         isolation = "unknown"
     receipts = _parse_receipts_list(record.get("receipts"))
+    pending = record.get("persistence_pending") is not None
     assert role is None or isinstance(role, str)
-    return (pid, total, block, probes_lost, isolation, run, uuid, receipts, role)
+    return (pid, total, block, probes_lost, isolation, run, uuid, receipts, role, pending)
 
 
 def _parse_partial_counters(
     record: dict[str, Any],
 ) -> (
-    tuple[int | None, int, dict[str, Any], str, str, frozenset[tuple[str, int]], str | None, str]
+    tuple[
+        int | None, int, dict[str, Any], str, str, frozenset[tuple[str, int]], str | None, str, int
+    ]
     | None
 ):
     """Validate a CallCountersPartial into its staged tuple (now with role + isolation).
@@ -481,7 +496,9 @@ def _parse_partial_counters(
     and the counters shape follows the same fail-closed contract as
     sessions; anything malformed skips the whole record. A present role
     fails closed like sessions (a forged tag must not fold); isolation is
-    informational like sessions (``"unknown"`` when absent or mistyped).
+    informational like sessions (``"unknown"`` when absent or mistyped). A
+    present ``probes_lost`` must be a usable non-negative int (absent reads
+    0); anything else skips the whole record.
     """
     if record.get("truncated") is not True:
         return None
@@ -508,6 +525,9 @@ def _parse_partial_counters(
     isolation = record.get("isolation")
     if not isinstance(isolation, str):
         isolation = "unknown"
+    part_lost = _as_nonneg_int(record.get("probes_lost", 0))
+    if part_lost is None:
+        return None
     assert isinstance(uuid, str)
     assert role is None or isinstance(role, str)
     return (
@@ -519,6 +539,7 @@ def _parse_partial_counters(
         _parse_receipts_list(record.get("receipts")),
         role,
         isolation,
+        part_lost,
     )
 
 
@@ -690,6 +711,8 @@ class _CountersGroup:
 
     session_pids: set[int] = field(default_factory=set)
     session_probes_lost: int = 0
+    session_persistence_pending: bool = False
+    partial_probes_lost: int = 0
     has_session: bool = False
     fallback_used: bool = False
     has_partial: bool = False
@@ -705,6 +728,7 @@ class _CountersPid:
 
     sessions_total: int = 0
     sessions_probes_lost: int = 0
+    sessions_persistence_pending: bool = False
     has_session: bool = False
     fallback_total: int = 0
     fallback_used: bool = False
@@ -725,6 +749,7 @@ def _counters_group_complete(group: _CountersGroup) -> bool:
         and not group.has_partial
         and not group.has_lost
         and group.session_probes_lost == 0
+        and not group.session_persistence_pending
     )
 
 
@@ -739,9 +764,11 @@ def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]
 
     A row is complete iff its module reconciles clean for this pid (session
     evidence, no fallback or partial evidence, no lost probes, no loss
-    disposition); lost probes and loss dispositions are process-level, so
-    they flip every row of the pid. Partial modules render ``truncated``
-    rows; a reconciled loss disposition renders ``end_state``; a non-unit
+    disposition, no surviving persistence marker); lost probes, loss
+    dispositions, and the marker are process-level, so they flip every row
+    of the pid. Partial modules render ``truncated`` rows; a surviving
+    marker renders ``persistence_pending``; a reconciled loss disposition
+    renders ``end_state``; a non-unit
     role (session or partial evidence; retry, confirmation, preflight)
     renders ``role``. No round/shard keys; the caller tags those, and
     strips ``module`` when the block holds a single distinct module
@@ -764,6 +791,7 @@ def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]
                 and module not in state.partial_modules
                 and state.sessions_probes_lost == 0
                 and not state.end_states
+                and not state.sessions_persistence_pending
             ),
         }
         if state.worker_uuid is not None:
@@ -772,6 +800,8 @@ def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]
             row["role"] = state.role
         if module in state.partial_modules:
             row["truncated"] = True
+        if state.sessions_persistence_pending:
+            row["persistence_pending"] = True
         if state.end_states:
             row["end_state"] = (
                 next(iter(state.end_states)) if len(state.end_states) == 1 else "conflict"
@@ -928,7 +958,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     receipts_by_round: dict[str, set[tuple[str, int]]] = {}
     staged_lost: list[tuple[str, int, str | None, int | None, int, dict[str, Any]]] = []
     staged_partials: list[
-        tuple[str, int, str | None, int | None, str, int | None, dict[str, Any], str | None, str]
+        tuple[
+            str, int, str | None, int | None, str, int | None, dict[str, Any], str | None, str, int
+        ]
     ] = []
     scope = 0
     current: tuple[int, str | None, int | None] = (0, None, None)
@@ -1017,7 +1049,18 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             parsed = _parse_session_counters(rec)
             if parsed is None:
                 continue
-            pid, total, block, probes_lost, isolation, run, uuid, receipts, role = parsed
+            (
+                pid,
+                total,
+                block,
+                probes_lost,
+                isolation,
+                run,
+                uuid,
+                receipts,
+                role,
+                marker_pending,
+            ) = parsed
             if uuid is not None and (run, uuid) in authoritative:
                 # Torn-append retry: one producer emits one session per
                 # run, so a repeat is the same scope appended twice and
@@ -1032,6 +1075,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             group.has_session = True
             group.session_pids.add(pid)
             group.session_probes_lost += probes_lost
+            if marker_pending:
+                group.session_persistence_pending = True
             pid_state = _pid_state((run, pid))
             if not pid_state.has_session:
                 pid_state.isolation = isolation
@@ -1042,6 +1087,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             pid_state.has_session = True
             pid_state.sessions_total += total
             pid_state.sessions_probes_lost += probes_lost
+            if marker_pending:
+                pid_state.sessions_persistence_pending = True
             _fold_module_calls(pid_state.session_modules, block)
             continue
         if report_type == PARTIAL_REPORT_TYPE:
@@ -1057,10 +1104,20 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 part_receipts,
                 part_role,
                 part_isolation,
+                part_lost,
             ) = parsed_partial
             _union_receipts(part_run, part_receipts)
             staged_partials.append(
-                (part_run, *current, part_uuid, part_pid, part_block, part_role, part_isolation)
+                (
+                    part_run,
+                    *current,
+                    part_uuid,
+                    part_pid,
+                    part_block,
+                    part_role,
+                    part_isolation,
+                    part_lost,
+                )
             )
             continue
         if report_type == LOST_REPORT_TYPE:
@@ -1136,6 +1193,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             block,
             part_role,
             part_isolation,
+            part_lost,
         ) = staged
         if (part_run, uuid) in authoritative:
             continue
@@ -1143,7 +1201,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             continue
         folded_partials.add((part_run, uuid))
         _fold(part_run, block)
-        _group((part_run, part_scope, part_target, part_attempt)).has_partial = True
+        fold_group = _group((part_run, part_scope, part_target, part_attempt))
+        fold_group.has_partial = True
+        fold_group.partial_probes_lost += part_lost
         if part_pid is None:
             continue
         pid_state = _pid_state((part_run, part_pid))
@@ -1315,7 +1375,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "complete": round_complete,
             "total_calls": round_merged["total_calls"],
             "by_module": canonicalize_module_first(round_merged),
-            "probes_lost": sum(group.session_probes_lost for group in round_groups),
+            "probes_lost": sum(
+                group.session_probes_lost + group.partial_probes_lost for group in round_groups
+            ),
             "by_process": _strip_single_module_tag([dict(row) for row in round_rows[run]]),
         }
         if lost_by_round.get(run):
@@ -1338,7 +1400,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         "complete": complete,
         "total_calls": merged["total_calls"],
         "by_module": merged,
-        "probes_lost": sum(group.session_probes_lost for group in groups.values()),
+        "probes_lost": sum(
+            group.session_probes_lost + group.partial_probes_lost for group in groups.values()
+        ),
         "by_process": by_process,
         "by_round": by_round,
     }

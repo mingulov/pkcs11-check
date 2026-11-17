@@ -40,6 +40,7 @@ from pkcs11_check.core.call_counters import (
     diff_snapshots,
     flush_counters,
     get_worker_uuid,
+    pending_marker,
     probes_lost,
     publish_test_window,
     serialize_current,
@@ -181,7 +182,9 @@ def build_session_record() -> dict[str, Any]:
 
     Carries ``probes_lost`` only (there is no ``probes_completed`` field)
     plus the process ``worker_uuid`` and the folded-probe ``receipts``
-    (omitted when empty); counters serialize module-first.
+    (omitted when empty); counters serialize module-first. A surviving
+    pending-persistence marker rides as ``persistence_pending`` (omitted
+    when clear); the extractor reads it as counter-specific incomplete.
     """
     record: dict[str, Any] = {
         "$report_type": CALL_COUNTERS_REPORT_TYPE,
@@ -190,6 +193,9 @@ def build_session_record() -> dict[str, Any]:
         "isolation": os.environ.get(ISOLATION_ENV, "unknown"),
         "probes_lost": probes_lost(),
     }
+    marker = pending_marker()
+    if marker is not None:
+        record["persistence_pending"] = marker
     # Per-round attribution: the CLI seeds one run_id per invocation; direct
     # pytest runs have no seed, so the key is omitted (never null) and the
     # extractor folds such records into the implicit "" round.

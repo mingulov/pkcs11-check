@@ -568,17 +568,20 @@ recording call, blocking provider entry rather than undercounting.
 Evidence persists as two files per producer (identity + nonce names, one
 writer each, no locks): `<uuid>-<nonce>.partial.json` holds the
 in-progress snapshot (tmp + replace), and `<uuid>-<nonce>.windows.jsonl`
-appends one record per published test window. Flushes happen every ten
-calls (K bound, per producer), at test-window boundaries, and at exit,
-under the counters lock with a dirty flag covering every evidence
-mutation; a pid guard keeps a forked child from touching its parent's
-files (it re-registers with a fresh identity). The journal appends first,
-the in-progress accumulator resets second, and the sidecar (carrying
-`journal_seq`, the journal length reflected in the reset) flushes third,
-so every crash interleaving is sound: journaled-but-unflushed windows are
-excluded from the collected gap because their calls are still in the
-flushed snapshot. No fsync is used: scope is process death (page cache
-survives it); machine crash can lose the unflushed tail.
+appends one record per published test window. Flushes happen on every
+record (K=1 bound, per producer: every entry, every return, every
+zero-call mutation), at test-window boundaries, and at exit, under the
+counters lock with a dirty flag covering every evidence mutation; a pid
+guard keeps a forked child from touching its parent's files (it
+re-registers with a fresh identity). The journal appends first, the
+in-progress accumulator resets second, and the sidecar (carrying
+`journal_seq`, the journal length reflected in the reset) flushes third.
+The collector compares the mark against the count of content-valid
+journal windows: equal folds the windows plus the tail, an older mark
+folds every valid window and excludes the subsumed stale snapshot, a
+newer mark is a corruption conflict, and a missing mark folds the
+snapshot only and conflicts. No fsync is used: scope is process death
+(page cache survives it); machine crash can lose the unflushed tail.
 
 Per-test entries carry the window's folded-probe receipts (since the
 setup mark) and the session record carries all of them; the teardown
@@ -988,7 +991,7 @@ Receipts: bounded to un-retired probes on session records and per-test
 entries; superseding records union superseded receipts, recursively to
 grandchildren. Handoff: no eager clear -- an in-progress window is
 overwritten only by the next window's first snapshot -- with at most
-K=10 unflushed windows per producer.
+K=1 unflushed windows per producer.
 
 ### Receipts, registry files, birth tokens, scope index
 

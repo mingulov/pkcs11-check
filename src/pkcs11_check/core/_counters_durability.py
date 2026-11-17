@@ -16,12 +16,18 @@ at most one writer ever touches one file, so no locks are needed)::
 
 Crash-consistency rule: the journal appends first, the in-progress
 accumulator resets second, and the sidecar (carrying ``journal_seq``, the
-journal length reflected in the reset) flushes third. Any interleaving is
-sound: journaled-but-unflushed windows are excluded from the gap because
-their calls are still in the flushed in-progress snapshot, and a torn tail
-is the crash-mid-append shape (dropped, benign). A torn middle line or a
-journal shorter than ``journal_seq`` is corruption: the collector folds the
-valid pieces and reports ``conflict``.
+journal length reflected in the reset) flushes third. The collector compares
+the mark against n, the number of content-valid journal windows anywhere in
+the file (a torn middle line flags ``conflict`` but valid lines still fold:
+single-writer append order keeps every valid line a real window). Three
+arms: mark == n folds the valid windows plus the in-progress tail; mark < n
+(crash between journal append and sidecar replace, possibly repeatedly)
+folds every valid window and EXCLUDES the stale snapshot, which the first
+valid window beyond the mark subsumes (failed appends never reset, so that
+window is a superset of the last-flushed accumulator); mark > n is a
+vanished append (corruption: conflict, lost record only). A missing mark
+with a non-empty journal folds the snapshot only and conflicts (overlap
+unknowable). A torn tail is the crash-mid-append shape (dropped, benign).
 
 Scope is process death (SIGKILL, ``os._exit``, C-level termination): page
 cache survives those, so no fsync is used anywhere here. Machine crash can
@@ -34,6 +40,7 @@ This module imports only stdlib plus ``counters_schema`` and
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -74,8 +81,13 @@ COUNTERS_ROLE_ENV = "PKCS11_CHECK_COUNTERS_ROLE"
 PROBE_SEQ_ENV = "_P11CHECK_PROBE_SEQ"
 PROBE_SIDECAR_ENV = "_P11CHECK_PROBE_SIDECAR"
 
-#: Provider calls between automatic sidecar flushes (K bound, per producer).
-FLUSH_WINDOW_K = 10
+#: Evidence units between automatic sidecar flushes (K bound, per producer).
+#: K=1 (rc3 Area A): every entry, every return, and every zero-call
+#: mutation (loss notes, receipt/loss-only ingests) persists immediately,
+#: so a crash loses at most the in-flight checkpoint itself. ``_pending_calls``
+#: still counts toward the window (entries, returns, and mutations each add
+#: one unit); with K=1 it returns to zero after every mark.
+FLUSH_WINDOW_K = 1
 SEAL_FILENAME = "SEALED"
 SIDECAR_SUFFIX = ".partial.json"
 JOURNAL_SUFFIX = ".windows.jsonl"
@@ -515,8 +527,30 @@ def read_json_file(path: Path | str) -> Any | None:
         return None
 
 
+#: OSError errnos worth a bounded retry inside a persistence write.
+_TRANSIENT_WRITE_ERRNOS = frozenset({errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR})
+#: Extra transient errnos on Windows (AV scanners/indexers briefly hold files).
+_WIN32_TRANSIENT_WRITE_ERRNOS = frozenset({errno.EACCES, errno.EPERM})
+#: Total write attempts per persistence call (initial + retries); the 1ms
+#: backoff costs nothing on the healthy path (no failure, no sleep) and at
+#: most ~2ms on a failing one.
+_WRITE_RETRY_ATTEMPTS = 3
+_WRITE_RETRY_BACKOFF_S = 0.001
+
+
+def _is_transient_write_error(exc: OSError) -> bool:
+    """Whether a failed persistence write is worth retrying (bounded, rare)."""
+    if exc.errno in _TRANSIENT_WRITE_ERRNOS:
+        return True
+    return sys.platform == "win32" and exc.errno in _WIN32_TRANSIENT_WRITE_ERRNOS
+
+
 def append_journal(path: Path | str, record: dict[str, Any]) -> None:
     """Append one window record to a journal (flush; no fsync by design).
+
+    Transient write errors retry boundedly (a retried partial line lands as
+    a torn fragment the collector flags; the valid line still folds), then
+    raise.
 
     Raises:
         CounterPersistenceError: When the record cannot be appended.
@@ -525,19 +559,24 @@ def append_journal(path: Path | str, record: dict[str, Any]) -> None:
         line = json.dumps(record) + "\n"
     except (TypeError, ValueError) as exc:
         raise CounterPersistenceError(f"cannot encode journal record: {exc}") from exc
-    try:
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line)
-            fh.flush()
-    except OSError as exc:
-        raise CounterPersistenceError(f"cannot append journal {path}: {exc}") from exc
+    for attempt in range(_WRITE_RETRY_ATTEMPTS):
+        try:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+                fh.flush()
+            return
+        except OSError as exc:
+            if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
+                raise CounterPersistenceError(f"cannot append journal {path}: {exc}") from exc
+            time.sleep(_WRITE_RETRY_BACKOFF_S)
 
 
 def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
     """Write one sidecar atomically (tmp + replace; tmp cleaned on failure).
 
     A crash lands the old or the new content, never a mix; readers treat a
-    torn file as absent.
+    torn file as absent. Transient write errors retry boundedly (each attempt
+    cleans its tmp first), then raise.
 
     Raises:
         CounterPersistenceError: When the payload cannot be encoded or written.
@@ -548,17 +587,21 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
     except (TypeError, ValueError) as exc:
         raise CounterPersistenceError(f"cannot encode sidecar {resolved}: {exc}") from exc
     tmp = resolved.with_name(f"{resolved.name}.tmp-{os.getpid()}-{mint_filename_nonce()}")
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-        os.replace(tmp, resolved)
-    except OSError as exc:
+    for attempt in range(_WRITE_RETRY_ATTEMPTS):
         try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+            os.replace(tmp, resolved)
+            return
+        except OSError as exc:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
+                raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
+            time.sleep(_WRITE_RETRY_BACKOFF_S)
 
 
 def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> FenceOutcome:
@@ -1139,9 +1182,17 @@ def _gap_for_producer(
 
     ``block`` is None when nothing recoverable remains (no partial is
     emitted, only the lost record); ``conflict`` marks evidence that
-    cannot be reconciled (missing disambiguator, truncated journal, torn
-    middle lines, invalid pieces) and must surface as a ``conflict``
-    end state rather than invented or doubled counts.
+    cannot be reconciled and must surface as a ``conflict`` end state
+    rather than invented or doubled counts. n counts content-valid journal
+    windows anywhere in the file; tears only flag (an unparseable tail is
+    the benign crash-mid-append shape; anything else unparseable, or a
+    parseable line with invalid window content, flags conflict while valid
+    lines still fold). Three arms on the sidecar mark: equal folds the
+    valid windows plus the in-progress tail; older folds every valid window
+    and excludes the subsumed stale snapshot; newer is a vanished append
+    (corruption: conflict, lost record only — deliberately conservative on
+    untrustworthy evidence). A missing mark with a non-empty journal folds
+    the snapshot only and conflicts (overlap unknowable).
     """
     receipts: list[dict[str, Any]] = []
     if sidecar is None:
@@ -1154,46 +1205,50 @@ def _gap_for_producer(
     if not is_module_first_block(in_progress):
         return None, [], True
     receipts.extend(_valid_receipts(sidecar.get("receipts")))
-    complete: list[dict[str, Any]] = []
-    torn_middle = False
+    windows: list[dict[str, Any]] = []
+    conflict = False
     for index, line in enumerate(journal_lines):
         try:
             parsed = json.loads(line)
         except ValueError:
             parsed = None
-        if isinstance(parsed, dict):
-            complete.append(parsed)
-        elif index != len(journal_lines) - 1:
-            # A torn TAIL is the crash-mid-append shape (benign: the
-            # unpublished window's calls are still in in_progress); a torn
-            # MIDDLE line cannot come from append-only writes (corruption).
-            torn_middle = True
-    conflict = torn_middle
+        if not isinstance(parsed, dict):
+            if index != len(journal_lines) - 1:
+                conflict = True
+            continue
+        if not isinstance(parsed.get("nodeid"), str) or not parsed.get("nodeid"):
+            conflict = True
+            continue
+        if not is_module_first_block(parsed.get("block")):
+            conflict = True
+            continue
+        windows.append(parsed)
+    n = len(windows)
     seq = sidecar.get("journal_seq")
-    if journal_lines or complete:
-        if not _is_nonneg_int(seq):
-            return None, [], True
-        assert isinstance(seq, int)
-        if len(complete) < seq:
-            return None, [], True
-    else:
-        seq = 0
-    assert isinstance(seq, int)
     gap = {"total_calls": 0, "by_module": {}}
-    merge_module_first(gap, in_progress)
-    for window in complete[:seq]:
-        nodeid = window.get("nodeid")
-        block = window.get("block")
-        if not isinstance(nodeid, str) or not nodeid:
-            conflict = True
-            continue
-        if not is_module_first_block(block):
-            conflict = True
-            continue
-        if (worker_uuid, nodeid) in committed_entries:
-            continue
-        receipts.extend(_valid_receipts(window.get("receipts")))
-        merge_module_first(gap, block)
+    if not journal_lines:
+        if _is_nonneg_int(seq) and seq != 0:
+            # A mark with no journal means every append vanished.
+            return None, receipts, True
+        merge_module_first(gap, in_progress)
+    elif not _is_nonneg_int(seq):
+        merge_module_first(gap, in_progress)
+        conflict = True
+    else:
+        assert isinstance(seq, int)
+        if seq > n:
+            return None, receipts, True
+        if seq == n:
+            merge_module_first(gap, in_progress)
+        # Else (seq < n): the stale snapshot is subsumed by the first valid
+        # window beyond the mark — fold every valid window, exclude it.
+        for window in windows:
+            nodeid = window["nodeid"]
+            assert isinstance(nodeid, str)
+            if (worker_uuid, nodeid) in committed_entries:
+                continue
+            receipts.extend(_valid_receipts(window.get("receipts")))
+            merge_module_first(gap, window["block"])
     if gap["total_calls"] == 0:
         return None, receipts, conflict
     if not is_module_first_block(gap):
@@ -1243,6 +1298,7 @@ def _partial_record(
     pid: int | None,
     block: dict[str, Any],
     receipts: list[dict[str, Any]],
+    probes_lost: int = 0,
 ) -> dict[str, Any]:
     """Build a gap-only ``CallCountersPartial`` record (schema-valid)."""
     record: dict[str, Any] = {
@@ -1263,6 +1319,8 @@ def _partial_record(
         record["receipts"] = sorted(
             receipts, key=lambda item: (item["worker_uuid"], item["probe_seq"])
         )
+    if probes_lost:
+        record["probes_lost"] = probes_lost
     return record
 
 
@@ -1513,6 +1571,17 @@ def _collect_dead_producer(
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
     block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+    scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
+    if scalar is None:
+        scalar_count = 0
+    elif _is_nonneg_int(scalar):
+        assert isinstance(scalar, int)
+        scalar_count = scalar
+    else:
+        # Fail closed: an unreadable loss scalar conflicts loudly instead of
+        # inventing (or silently dropping) a loss count.
+        scalar_count = 0
+        conflict = True
     orphan_block, orphan_receipts, consumed = _adopt_probe_orphans(
         root,
         worker_uuid=uuid,
@@ -1525,6 +1594,10 @@ def _collect_dead_producer(
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
         receipts = [*receipts, *orphan_receipts]
     records: list[dict[str, Any]] = []
+    if block is None and scalar_count:
+        # No counts but real losses: still emit the scalar (a zero-call
+        # partial), so the loss total never silently drops.
+        block = {"total_calls": 0, "by_module": {}}
     if block is not None:
         records.append(
             _partial_record(
@@ -1535,6 +1608,7 @@ def _collect_dead_producer(
                 pid=content["pid"],
                 block=block,
                 receipts=receipts,
+                probes_lost=scalar_count,
             )
         )
     lost = _lost_record(
