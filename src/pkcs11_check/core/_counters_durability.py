@@ -143,6 +143,7 @@ class Registration:
     unit: str
     attempt: int
     role: str
+    isolation: str
     registry_path: Path
     sidecar_path: Path
     journal_path: Path
@@ -398,6 +399,7 @@ def register_worker(
     unit: str,
     attempt: int,
     role: str,
+    isolation: str,
     worker_uuid: str,
     pid: int,
 ) -> Registration:
@@ -423,6 +425,8 @@ def register_worker(
         raise CounterPersistenceError(f"invalid attempt: {attempt!r}")
     if not is_role(role):
         raise CounterPersistenceError(f"invalid role: {role!r}")
+    if not isinstance(isolation, str) or not isolation:
+        raise CounterPersistenceError(f"invalid isolation: {isolation!r}")
     if not is_worker_uuid(worker_uuid):
         raise CounterPersistenceError(f"invalid worker_uuid: {worker_uuid!r}")
     if not _is_nonneg_int(pid):
@@ -443,6 +447,7 @@ def register_worker(
         "attempt": attempt,
         "pid": pid,
         "role": role,
+        "isolation": isolation,
         "timestamp": time.time(),
         "sidecar": str(resolved / f"{worker_uuid}-{mint_filename_nonce()}{SIDECAR_SUFFIX}"),
         "birth_token": birth if birth is not None else 0,
@@ -489,6 +494,7 @@ def register_worker(
         unit=unit,
         attempt=attempt,
         role=role,
+        isolation=isolation,
         registry_path=registry_path,
         sidecar_path=sidecar_path,
         journal_path=journal_path,
@@ -1299,6 +1305,8 @@ def _partial_record(
     block: dict[str, Any],
     receipts: list[dict[str, Any]],
     probes_lost: int = 0,
+    role: str = "unit",
+    isolation: str = "unknown",
 ) -> dict[str, Any]:
     """Build a gap-only ``CallCountersPartial`` record (schema-valid)."""
     record: dict[str, Any] = {
@@ -1321,6 +1329,10 @@ def _partial_record(
         )
     if probes_lost:
         record["probes_lost"] = probes_lost
+    if role != "unit":
+        record["role"] = role
+    if isolation != "unknown":
+        record["isolation"] = isolation
     return record
 
 
@@ -1332,6 +1344,8 @@ def _lost_record(
     run_id: str,
     unit: str,
     attempt: int | None,
+    role: str = "unit",
+    isolation: str = "unknown",
 ) -> dict[str, Any] | None:
     """Build an identity-bearing ``CallCountersLost`` record, else None.
 
@@ -1356,6 +1370,10 @@ def _lost_record(
         record["unit"] = unit
     if attempt is not None:
         record["attempt"] = attempt
+    if role != "unit":
+        record["role"] = role
+    if isolation != "unknown":
+        record["isolation"] = isolation
     return record
 
 
@@ -1609,6 +1627,8 @@ def _collect_dead_producer(
                 block=block,
                 receipts=receipts,
                 probes_lost=scalar_count,
+                role=content["role"],
+                isolation=content.get("isolation", "unknown"),
             )
         )
     lost = _lost_record(
@@ -1618,6 +1638,8 @@ def _collect_dead_producer(
         run_id=content["run_id"],
         unit=content["unit"],
         attempt=content["attempt"],
+        role=content["role"],
+        isolation=content.get("isolation", "unknown"),
     )
     if lost is not None:
         records.append(lost)
@@ -1664,6 +1686,8 @@ def _collect_committed_producer(
                 pid=content["pid"],
                 block=orphan_block,
                 receipts=orphan_receipts,
+                role=content["role"],
+                isolation=content.get("isolation", "unknown"),
             )
         ],
         consumed,

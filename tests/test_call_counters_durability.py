@@ -850,6 +850,7 @@ def _plant_producer(
     journal_seq: int | None = -1,
     receipts: list[dict[str, Any]] | None = None,
     probes_lost: Any = None,
+    isolation: str | None = "file",
 ) -> dict[str, Path]:
     """Plant registry + sidecar + journal files for a (possibly dead) producer.
 
@@ -859,7 +860,8 @@ def _plant_producer(
     only). ``receipts`` seeds the sidecar's folded-probe receipt list (a
     parent that flushed after ingesting probes). ``probes_lost`` seeds the
     sidecar's loss scalar (omitted when None; pass garbage to plant a
-    mistyped scalar).
+    mistyped scalar). ``isolation`` seeds the registry isolation stamp
+    (pass None to plant a legacy isolation-less registry).
     """
     reg_dir = root / "registrations"
     reg_dir.mkdir(parents=True, exist_ok=True)
@@ -878,6 +880,8 @@ def _plant_producer(
         # (birth_token_for_pid() is None there): the registry stays valid.
         "birth_token": birth if birth is not None else 0,
     }
+    if isolation is not None:
+        content["isolation"] = isolation
     (reg_dir / f"{uuid}.json").write_text(json.dumps(content), encoding="utf-8")
     if in_progress is not None:
         sidecar_content: dict[str, Any] = {
@@ -2498,6 +2502,7 @@ def _register_self(root: Path) -> durability.Registration:
         unit="a.py",
         attempt=0,
         role="unit",
+        isolation="file",
         worker_uuid=_UUID_A,
         pid=os.getpid(),
     )
@@ -4307,3 +4312,234 @@ class TestTransientWriteRetry:
         assert is_transient(OSError(errno.EACCES, "denied")) is True
         assert is_transient(OSError(errno.EPERM, "denied")) is True
         assert is_transient(OSError(errno.ENOSPC, "no space")) is False
+
+
+# --------------------------------------------------------------------------
+# Area D (rc3): isolation/role on worker partials + lost
+# --------------------------------------------------------------------------
+
+
+class TestRegistryIsolationStamp:
+    def test_registration_records_isolation_env(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(call_counters.ISOLATION_ENV, "file")
+        call_counters.record_call("C_Login")
+        registries = sorted((engaged / "registrations").glob("*.json"))
+        assert len(registries) == 1
+        content = json.loads(registries[0].read_text(encoding="utf-8"))
+        assert content.get("isolation") == "file"
+        assert schema.is_registry_content(content) is True
+
+    def test_registration_defaults_isolation_unknown(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(call_counters.ISOLATION_ENV, raising=False)
+        call_counters.record_call("C_Login")
+        registries = sorted((engaged / "registrations").glob("*.json"))
+        assert len(registries) == 1
+        content = json.loads(registries[0].read_text(encoding="utf-8"))
+        assert content.get("isolation") == "unknown"
+        assert schema.is_registry_content(content) is True
+
+
+class TestPartialLostAttribution:
+    def test_dead_producer_records_carry_role_and_isolation(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            role="retry",
+            isolation="file",
+            in_progress=_counts_block(5),
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["role"] == "retry"
+        assert records[0]["isolation"] == "file"
+        assert records[1]["role"] == "retry"
+        assert records[1]["isolation"] == "file"
+        assert schema.is_sidecar_partial(records[0]) is True
+        assert schema.is_lost_record(records[1]) is True
+
+    def test_default_attribution_stays_omitted(self, engaged: Path, tmp_path: Path) -> None:
+        # Pin-as-is guard: default attribution stays omitted (absent reads
+        # as the default), so default-shaped records are byte-stable.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            isolation="unknown",
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert "role" not in records[0]
+        assert "isolation" not in records[0]
+        assert "role" not in records[1]
+        assert "isolation" not in records[1]
+
+    def test_isolation_less_registry_adopts_orphan_without_attribution(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # A registry without the required stamp reads as absent, but the
+        # evidence is not lost: the sidecar adopts through the orphan path
+        # (attribution honestly unknown).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            isolation=None,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 5
+        assert "role" not in records[0]
+        assert "isolation" not in records[0]
+        assert "role" not in records[1]
+        assert "isolation" not in records[1]
+
+    def test_partial_role_and_isolation_reach_rows(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            role="retry",
+            isolation="file",
+            in_progress=_counts_block(5),
+        )
+        collected = _collect_dead(engaged, tmp_path, name="child.jsonl")
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                *collected,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["complete"] is False
+        rows = payload["by_process"]
+        assert len(rows) == 1
+        assert rows[0]["isolation"] == "file"
+        assert rows[0]["role"] == "retry"
+        assert rows[0]["truncated"] is True
+
+    def test_committed_partial_carries_role_and_isolation(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            role="retry",
+            isolation="file",
+            in_progress=_counts_block(9),
+        )
+        _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        session = _session_record(
+            pid, _counts_block(13), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert [rec["$report_type"] for rec in records] == ["CallCountersPartial"]
+        assert records[0]["role"] == "retry"
+        assert records[0]["isolation"] == "file"
+
+
+class TestLostAttributionOutput:
+    def test_lost_processes_entries_carry_role_and_isolation(self, tmp_path: Path) -> None:
+        lost = _lost_record(role="retry", isolation="file")
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                lost,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        assert payload["complete"] is False
+        entries = payload["lost_processes"]
+        assert len(entries) == 1
+        assert entries[0]["role"] == "retry"
+        assert entries[0]["isolation"] == "file"
+
+    def test_malformed_lost_role_skips_record(self, tmp_path: Path) -> None:
+        # A distinct uuid proves the skip is the malformation (not healing:
+        # a well-formed claim here would anchor an entry).
+        session = _session_record(
+            100, _counts_block(10), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+        )
+        lost = _lost_record(worker_uuid=_UUID_B, pid=200, role="janitor", isolation="file")
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                lost,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        assert payload["total_calls"] == 10
+        # Fail closed like sessions: a forged attribution tag must not fold.
+        assert "lost_processes" not in payload
+
+    def test_malformed_lost_isolation_tolerated(self, tmp_path: Path) -> None:
+        # Pin-as-is guard: isolation is informational everywhere, so a
+        # mistyped value drops the key, never the record.
+        lost = _lost_record(role="retry", isolation=123)
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                lost,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        entries = payload["lost_processes"]
+        assert len(entries) == 1
+        assert entries[0]["role"] == "retry"
+        assert "isolation" not in entries[0]

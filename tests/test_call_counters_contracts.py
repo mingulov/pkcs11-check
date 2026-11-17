@@ -445,6 +445,7 @@ class TestShapePredicates:
             "timestamp": 1799999999.5,
             "sidecar": "counters/a1b2c3d4.json",
             "birth_token": 123456,
+            "isolation": "file",
         }
         content.update(overrides)
         return content
@@ -461,6 +462,7 @@ class TestShapePredicates:
             "timestamp",
             "sidecar",
             "birth_token",
+            "isolation",
         ):
             missing = self._registry()
             del missing[key]
@@ -471,6 +473,8 @@ class TestShapePredicates:
         assert schema.is_registry_content(self._registry(timestamp=False)) is False
         assert schema.is_registry_content(self._registry(sidecar="")) is False
         assert schema.is_registry_content(self._registry(unit="")) is False
+        assert schema.is_registry_content(self._registry(isolation="")) is False
+        assert schema.is_registry_content(self._registry(isolation=None)) is False
         assert schema.is_registry_content(self._registry(extra_key=1)) is False
 
     def test_process_row_accepts_legacy_and_full(self) -> None:

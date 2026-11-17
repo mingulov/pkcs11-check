@@ -100,6 +100,7 @@ def _plant_producer(
         "timestamp": 0.0,
         "sidecar": str(sidecar),
         "birth_token": 0,
+        "isolation": "none",
     }
     assert schema.is_registry_content(content)
     (reg_dir / f"{uuid}.json").write_text(json.dumps(content), encoding="utf-8")

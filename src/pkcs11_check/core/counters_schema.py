@@ -85,7 +85,9 @@ PARTIAL_OPTIONAL_KEYS = frozenset(
 )
 PARTIAL_ALLOWED_KEYS = PARTIAL_REQUIRED_KEYS | PARTIAL_OPTIONAL_KEYS
 LOST_REQUIRED_KEYS = frozenset({"$report_type", "end_state", "scope_index"})
-LOST_OPTIONAL_KEYS = frozenset({"worker_uuid", "pid", "run_id", "unit", "attempt", "origin_shard"})
+LOST_OPTIONAL_KEYS = frozenset(
+    {"worker_uuid", "pid", "run_id", "unit", "attempt", "origin_shard", "role", "isolation"}
+)
 LOST_ALLOWED_KEYS = LOST_REQUIRED_KEYS | LOST_OPTIONAL_KEYS
 LOST_FORBIDDEN_KEYS = frozenset(
     {"total_calls", "buckets", "by_module", "probes_lost", "truncated", "receipts"}
@@ -101,6 +103,7 @@ REGISTRY_REQUIRED_KEYS = frozenset(
         "timestamp",
         "sidecar",
         "birth_token",
+        "isolation",
     }
 )
 REGISTRY_ALLOWED_KEYS = frozenset(REGISTRY_REQUIRED_KEYS)
@@ -533,6 +536,8 @@ def is_registry_content(value: object) -> TypeGuard[dict[str, Any]]:
         and isinstance(value["sidecar"], str)
         and bool(value["sidecar"])
         and is_birth_token(value["birth_token"])
+        and isinstance(value["isolation"], str)
+        and bool(value["isolation"])
     )
 
 
