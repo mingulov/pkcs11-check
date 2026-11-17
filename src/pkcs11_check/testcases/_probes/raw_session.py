@@ -52,6 +52,7 @@ from pkcs11_check.core.call_counters import (
     current_bucket,
     current_receipts,
     flatten_current,
+    lost_probe_keys,
     probes_lost,
     record_call,
     record_return,
@@ -150,7 +151,8 @@ def _write_raw_coverage() -> None:
     counters flush to the probe sidecar for the parent's torn-coverage fallback.
     """
     flattened = flatten_current()
-    flush_probe_sidecar(flattened)
+    keys = lost_probe_keys()
+    flush_probe_sidecar(flattened, lost_keys=keys or None)
     write_coverage(
         {},
         {},
@@ -158,6 +160,7 @@ def _write_raw_coverage() -> None:
         probes_lost=probes_lost(),
         receipt=probe_coverage_receipt(),
         receipts=current_receipts() or None,
+        lost_keys=keys or None,
     )
 
 

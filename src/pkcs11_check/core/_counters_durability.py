@@ -60,6 +60,7 @@ from pkcs11_check.core.counters_schema import (
     UNKNOWN_MODULE,
     ensure_five_buckets,
     is_birth_token,
+    is_lost_key,
     is_module_first_block,
     is_receipt,
     is_registry_content,
@@ -977,8 +978,8 @@ def _receipt_keys(value: Any) -> set[tuple[str, int]]:
     return {(entry["worker_uuid"], entry["probe_seq"]) for entry in _valid_receipts(value)}
 
 
-def _parse_probe_filename(name: str) -> str | None:
-    """Return the parent uuid prefix bound by a probe sidecar filename, else None."""
+def _parse_probe_filename(name: str) -> tuple[str, int] | None:
+    """Return ``(parent prefix, seq)`` bound by a probe sidecar filename, else None."""
     if not name.startswith(PROBE_FILE_PREFIX) or not name.endswith(PROBE_FILE_SUFFIX):
         return None
     stem = name[len(PROBE_FILE_PREFIX) : -len(PROBE_FILE_SUFFIX)]
@@ -990,11 +991,11 @@ def _parse_probe_filename(name: str) -> str | None:
         return None
     if not nonce or not seq.isascii() or not seq.isdigit():
         return None
-    return parent8
+    return (parent8, int(seq))
 
 
-def _parse_consumed_probe_filename(name: str) -> str | None:
-    """Return the parent uuid prefix bound by a consumed-marker name, else None."""
+def _parse_consumed_probe_filename(name: str) -> tuple[str, int] | None:
+    """Return ``(parent prefix, seq)`` bound by a consumed-marker name, else None."""
     if not name.startswith(PROBE_CONSUMED_PREFIX) or not name.endswith(PROBE_FILE_SUFFIX):
         return None
     stem = name[len(PROBE_CONSUMED_PREFIX) : -len(PROBE_FILE_SUFFIX)]
@@ -1006,7 +1007,7 @@ def _parse_consumed_probe_filename(name: str) -> str | None:
         return None
     if not nonce or not seq.isascii() or not seq.isdigit():
         return None
-    return parent8
+    return (parent8, int(seq))
 
 
 def mark_probe_consumed(sidecar: Path | str) -> Path:
@@ -1033,8 +1034,10 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
     return marked
 
 
-def _read_probe_orphan(path: Path) -> tuple[str, int, list[Any]] | None:
-    """Return ``(child_uuid, seq, counters)`` from a probe sidecar, else None."""
+def _read_probe_orphan(
+    path: Path,
+) -> tuple[str, int, list[Any], frozenset[tuple[str, int]]] | None:
+    """Return ``(child_uuid, seq, counters, lost_keys)`` from a probe sidecar, else None."""
     data = read_json_file(path)
     if not isinstance(data, dict):
         return None
@@ -1048,7 +1051,13 @@ def _read_probe_orphan(path: Path) -> tuple[str, int, list[Any]] | None:
     if not isinstance(counters, (list, tuple)):
         return None
     assert isinstance(uuid, str) and isinstance(seq, int)
-    return (uuid, seq, list(counters))
+    raw_keys = data.get("lost_keys", ())
+    keys: set[tuple[str, int]] = set()
+    if isinstance(raw_keys, (list, tuple)):
+        for entry in raw_keys:
+            if is_lost_key(entry):
+                keys.add((entry["parent_uuid"], entry["probe_seq"]))
+    return (uuid, seq, list(counters), frozenset(keys))
 
 
 def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
@@ -1142,22 +1151,34 @@ def _adopt_probe_orphans(
     journal_lines: list[str],
     claims: dict[str, set[tuple[str, int]]],
     known_uuids: set[str],
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[Path]]:
-    """Fold one producer's retained probe sidecars: ``(block, receipts, consumed)``.
+) -> tuple[
+    dict[str, Any] | None,
+    list[dict[str, Any]],
+    list[Path],
+    list[tuple[str, int]],
+    set[tuple[str, int]],
+]:
+    """Fold one producer's retained probe sidecars.
 
+    Returns ``(block, receipts, consumed, recovered, orphan_keys)``.
     Orphans covered by the producer's durable receipts (sidecar + all
     journal windows + JSONL session/entry claims) suppress silently: their
     evidence is already durable. Uncovered orphans fold into one
     module-first block keyed by the PARENT uuid (never the child's: a
     child-keyed partial would fold beside the parent's gap and
     double-count) and their receipts are claimed, so the extractor reports
-    them folded without inflating ``probes_lost``. Consumed files go only
-    after the caller durably records the fold (append-then-delete, like
-    parent files). Retained, never destroyed: ambiguous prefixes (more
-    than one known producer shares the 8-char hint), parentless orphans,
-    and dict-shaped but schema-invalid files (mirroring invalid sidecars).
-    Torn (unparseable or non-dict) files are provably unrecoverable debris
-    and consume with the fold.
+    them folded without inflating ``probes_lost``. Adopted orphans also
+    yield ``recovered`` ``(parent, seq)`` identities (exact healing of the
+    parent's live-claimed keys) and union their own nested ``orphan_keys``
+    (fresh grandchild-scope info no session could hold). Recovery fires
+    only when the filename and content seq agree; a mismatch still folds
+    counts best-effort but heals nothing (fail closed toward incomplete).
+    Consumed files go only after the caller durably records the fold
+    (append-then-delete, like parent files). Retained, never destroyed:
+    ambiguous prefixes (more than one known producer shares the 8-char
+    hint), parentless orphans, and dict-shaped but schema-invalid files
+    (mirroring invalid sidecars). Torn (unparseable or non-dict) files are
+    provably unrecoverable debris and consume with the fold.
 
     Residual: a probe ingested via the live sidecar-fallback path (whose
     receipt is suppressed by design), followed by a failed parent flush
@@ -1166,24 +1187,33 @@ def _adopt_probe_orphans(
     """
     prefix = worker_uuid[:8]
     if sum(1 for uuid in known_uuids if uuid.startswith(prefix)) != 1:
-        return None, [], []
+        return None, [], [], [], set()
     coverage = _durable_receipts(sidecar, journal_lines) | claims.get(worker_uuid, set())
     merged: dict[str, Any] = {"total_calls": 0, "by_module": {}}
     claimed: list[dict[str, Any]] = []
     consumed: list[Path] = []
+    recovered: list[tuple[str, int]] = []
+    orphan_keys: set[tuple[str, int]] = set()
     # Pass 1 (order-free): consumed markers suppress before any orphan
     # folds. A marker's counts already sit in the parent checkpoint, so
     # its identity joins coverage and the marker itself consumes. Torn
-    # markers are debris: unparseable content folds nothing.
+    # markers are debris: unparseable content folds nothing. Valid markers
+    # still heal (their evidence is checkpoint-durable) and union their
+    # nested keys.
     for path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
-        if _parse_consumed_probe_filename(path.name) != prefix:
+        parsed_name = _parse_consumed_probe_filename(path.name)
+        if parsed_name is None or parsed_name[0] != prefix:
             continue
         orphan = _read_probe_orphan(path)
         if orphan is not None:
             coverage.add((orphan[0], orphan[1]))
+            orphan_keys |= orphan[3]
+            if orphan[1] == parsed_name[1]:
+                recovered.append((worker_uuid, orphan[1]))
         consumed.append(path)
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
-        if _parse_probe_filename(path.name) != prefix:
+        parsed_name = _parse_probe_filename(path.name)
+        if parsed_name is None or parsed_name[0] != prefix:
             continue
         orphan = _read_probe_orphan(path)
         if orphan is None:
@@ -1191,7 +1221,7 @@ def _adopt_probe_orphans(
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
-        child_uuid, seq, counters = orphan
+        child_uuid, seq, counters, keys = orphan
         if (child_uuid, seq) in coverage:
             consumed.append(path)
             continue
@@ -1199,11 +1229,29 @@ def _adopt_probe_orphans(
         if block is not None:
             merge_module_first(merged, block)
             claimed.append({"worker_uuid": child_uuid, "probe_seq": seq})
+            orphan_keys |= keys
+            if seq == parsed_name[1]:
+                recovered.append((worker_uuid, seq))
         consumed.append(path)
     if merged["total_calls"] == 0:
-        return None, [], consumed
+        return None, [], consumed, sorted(set(recovered)), orphan_keys
     claimed.sort(key=lambda item: (item["worker_uuid"], item["probe_seq"]))
-    return merged, claimed, consumed
+    return merged, claimed, consumed, sorted(set(recovered)), orphan_keys
+
+
+def _sidecar_loss_keys(sidecar: Any | None) -> set[tuple[str, int]]:
+    """Return the sidecar's keyed-loss set (tolerantly parsed, never raises)."""
+    if not isinstance(sidecar, dict):
+        return set()
+    raw = sidecar.get("lost_keys", ())
+    if not isinstance(raw, (list, tuple)):
+        return set()
+    return {(entry["parent_uuid"], entry["probe_seq"]) for entry in raw if is_lost_key(entry)}
+
+
+def _keys_to_wire(keys: set[tuple[str, int]] | frozenset[tuple[str, int]]) -> list[dict[str, Any]]:
+    """Render a key set as sorted wire dicts (deterministic order)."""
+    return [{"parent_uuid": parent, "probe_seq": seq} for parent, seq in sorted(keys)]
 
 
 def _gap_for_producer(
@@ -1335,6 +1383,9 @@ def _partial_record(
     probes_lost: int = 0,
     role: str = "unit",
     isolation: str = "unknown",
+    lost_keys: list[dict[str, Any]] | None = None,
+    orphan_keys: list[dict[str, Any]] | None = None,
+    recovered_keys: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a gap-only ``CallCountersPartial`` record (schema-valid)."""
     record: dict[str, Any] = {
@@ -1361,6 +1412,12 @@ def _partial_record(
         record["role"] = role
     if isolation != "unknown":
         record["isolation"] = isolation
+    if lost_keys:
+        record["lost_keys"] = lost_keys
+    if orphan_keys:
+        record["orphan_keys"] = orphan_keys
+    if recovered_keys:
+        record["recovered_keys"] = recovered_keys
     return record
 
 
@@ -1495,7 +1552,7 @@ def collect_unit(
             continue
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
-        orphan_block, orphan_receipts, consumed = _adopt_probe_orphans(
+        orphan_block, orphan_receipts, consumed, recovered, orphan_keys = _adopt_probe_orphans(
             root,
             worker_uuid=uuid,
             sidecar=sidecar,
@@ -1517,6 +1574,8 @@ def collect_unit(
                         pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
                         block=orphan_block,
                         receipts=orphan_receipts,
+                        orphan_keys=_keys_to_wire(orphan_keys),
+                        recovered_keys=_keys_to_wire(set(recovered)),
                     )
                 )
             if _append_collected(child_path, records):
@@ -1525,10 +1584,22 @@ def collect_unit(
                 _consume_producer_files(consumed)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+        scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
+        if scalar is None:
+            scalar_count = 0
+        elif _is_nonneg_int(scalar):
+            assert isinstance(scalar, int)
+            scalar_count = scalar
+        else:
+            scalar_count = 0
+            conflict = True
+        gap_keys = _sidecar_loss_keys(sidecar)
         if orphan_block is not None:
             block = orphan_block if block is None else merge_module_first(block, orphan_block)
             receipts = [*receipts, *orphan_receipts]
         records = []
+        if block is None and (scalar_count or gap_keys or orphan_keys):
+            block = {"total_calls": 0, "by_module": {}}
         if block is not None:
             records.append(
                 _partial_record(
@@ -1541,6 +1612,10 @@ def collect_unit(
                     pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
                     block=block,
                     receipts=receipts,
+                    probes_lost=scalar_count,
+                    lost_keys=_keys_to_wire(gap_keys),
+                    orphan_keys=_keys_to_wire(orphan_keys),
+                    recovered_keys=_keys_to_wire(set(recovered)),
                 )
             )
         lost = _lost_record(
@@ -1628,7 +1703,8 @@ def _collect_dead_producer(
         # inventing (or silently dropping) a loss count.
         scalar_count = 0
         conflict = True
-    orphan_block, orphan_receipts, consumed = _adopt_probe_orphans(
+    gap_keys = _sidecar_loss_keys(sidecar)
+    orphan_block, orphan_receipts, consumed, recovered, orphan_keys = _adopt_probe_orphans(
         root,
         worker_uuid=uuid,
         sidecar=sidecar,
@@ -1640,9 +1716,11 @@ def _collect_dead_producer(
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
         receipts = [*receipts, *orphan_receipts]
     records: list[dict[str, Any]] = []
-    if block is None and scalar_count:
-        # No counts but real losses: still emit the scalar (a zero-call
-        # partial), so the loss total never silently drops.
+    if block is None and (scalar_count or gap_keys or orphan_keys):
+        # No counts but real losses: still emit them (a zero-call partial),
+        # so validated loss evidence never silently drops. Recovered-only
+        # (nothing claimed anywhere) emits nothing: the lost record below
+        # already names the death.
         block = {"total_calls": 0, "by_module": {}}
     if block is not None:
         records.append(
@@ -1657,6 +1735,9 @@ def _collect_dead_producer(
                 probes_lost=scalar_count,
                 role=content["role"],
                 isolation=content.get("isolation", "unknown"),
+                lost_keys=_keys_to_wire(gap_keys),
+                orphan_keys=_keys_to_wire(orphan_keys),
+                recovered_keys=_keys_to_wire(set(recovered)),
             )
         )
     lost = _lost_record(
@@ -1694,7 +1775,7 @@ def _collect_committed_producer(
     sidecar_path = Path(sidecar_raw)
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
-    orphan_block, orphan_receipts, consumed = _adopt_probe_orphans(
+    orphan_block, orphan_receipts, consumed, recovered, orphan_keys = _adopt_probe_orphans(
         root,
         worker_uuid=uuid,
         sidecar=sidecar,
@@ -1704,6 +1785,8 @@ def _collect_committed_producer(
     )
     if orphan_block is None:
         return [], consumed
+    # Claim-only: orphan evidence rides orphan_keys (union-always); no gap
+    # set (the live session is authoritative for this producer's own keys).
     return (
         [
             _partial_record(
@@ -1716,6 +1799,8 @@ def _collect_committed_producer(
                 receipts=orphan_receipts,
                 role=content["role"],
                 isolation=content.get("isolation", "unknown"),
+                orphan_keys=_keys_to_wire(orphan_keys),
+                recovered_keys=_keys_to_wire(set(recovered)),
             )
         ],
         consumed,
@@ -2064,7 +2149,9 @@ def prepare_resume(
         seen_runs.add(str(sidecar.get("run_id", "")))
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
-        orphan_block, orphan_receipts, consumed = _adopt_probe_orphans(
+        # Resume track (postponed past 0.3.0): recovered/orphan-keys are
+        # unpacked but deliberately not wired yet; behavior preserved exactly.
+        orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys = _adopt_probe_orphans(
             root,
             worker_uuid=uuid,
             sidecar=sidecar,

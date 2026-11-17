@@ -1532,3 +1532,64 @@ def test_ingest_drops_negative_rv_rows_but_keeps_channel(ingest: _IngestFn, tmp_
     sign = _unknown_buckets(snap)["test"]["by_fn"]["C_Sign"]
     assert sign["calls"] == 3
     assert sign["by_rv"]["0"]["count"] == 3
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): coverage wire carries keyed losses
+# --------------------------------------------------------------------------
+
+_CHILD_UUID = "c" * 32
+
+
+def test_write_coverage_embeds_lost_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    keys = [{"parent_uuid": _CHILD_UUID, "probe_seq": 0}]
+    _emit.write_coverage(
+        {"C_Login": 1}, {}, call_counters=[["C_Login", 0, 1]], probes_lost=1, lost_keys=keys
+    )
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["lost_keys"] == keys
+    assert data["probes_lost"] == 1
+
+
+def test_write_coverage_omits_empty_lost_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pin-as-is guard: keyless payloads stay byte-stable (legacy readers).
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    _emit.write_coverage({"C_Login": 1}, {}, call_counters=[["C_Login", 0, 1]], probes_lost=0)
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert "lost_keys" not in data
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_forwards_nested_lost_keys(ingest: _IngestFn, tmp_path: Path) -> None:
+    payload = _child_payload()
+    payload["probes_lost"] = 3
+    payload["lost_keys"] = [
+        {"parent_uuid": _CHILD_UUID, "probe_seq": 0},
+        {"parent_uuid": _CHILD_UUID, "probe_seq": 1},
+    ]
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is True
+    assert sorted(
+        (key["parent_uuid"], key["probe_seq"]) for key in call_counters.lost_probe_keys()
+    ) == [(_CHILD_UUID, 0), (_CHILD_UUID, 1)]
+    # Scalar-anchored: 3 total − 2 keyed = 1 unkeyed.
+    assert call_counters.probes_lost() == 3
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_drops_keys_when_counters_unusable(ingest: _IngestFn, tmp_path: Path) -> None:
+    # Mirrors the scalar rule: an unusable channel drops inner claims
+    # (keys and scalar alike); the launcher owns one loss instead.
+    payload = _child_payload()
+    payload["call_counters"] = "garbage"
+    payload["probes_lost"] = 3
+    payload["lost_keys"] = [{"parent_uuid": _CHILD_UUID, "probe_seq": 0}]
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is False
+    assert call_counters.lost_probe_keys() == []
+    assert call_counters.probes_lost() == 0

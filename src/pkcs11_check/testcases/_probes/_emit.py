@@ -9,6 +9,7 @@ Coverage shape (I6):
      "call_log_ok": dict[str, int], "mechanism_rv_counts": dict[str, dict[str, int]],
      "call_counters": list[[module, fn, rv_or_None, count]],  # fw#73; only when provided
      "probes_lost": int,  # fw#73; child-side losses, always present
+     "lost_keys": list[{"parent_uuid": str, "probe_seq": int}],  # rc3-F; only when non-empty
      "receipt": {"worker_uuid": str, "probe_seq": int},  # rc2; only when assigned
      "receipts": list[{"worker_uuid": str, "probe_seq": int}]}  # rc2; only when non-empty
 
@@ -19,6 +20,9 @@ child's own lost-probe count (losses below it); readers use ``.get`` with a
 zero default so payloads written before the key existed still read as zero.
 ``receipt`` echoes the parent-assigned probe seqno (the parent accepts it only
 on an exact match); ``receipts`` propagates grandchild receipts upward.
+``lost_keys`` carries the child's keyed-loss set (unkeyed remainder is the
+scalar minus its length); readers union it item-tolerantly, so payloads
+written before the key existed still read as fully unkeyed.
 
 RV-trace shape (I7):
     "P11_RV_TRACE_JSON:" + json.dumps(list[dict])
@@ -244,6 +248,7 @@ def write_coverage(
     probes_lost: int = 0,
     receipt: dict[str, Any] | None = None,
     receipts: list[dict[str, Any]] | None = None,
+    lost_keys: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write function/mechanism counts and their successful/return-value subsets (I6).
 
@@ -257,7 +262,10 @@ def write_coverage(
     parent (which accumulates them only when the counters channel is usable).
     ``receipt``/``receipts`` carry the echoed seqno receipt and propagated
     grandchild receipts (omitted when None/empty, so legacy payloads are
-    byte-identical). No-op when the environment variable is absent.
+    byte-identical). ``lost_keys`` carries the child's keyed-loss set
+    (omitted when None/empty, same legacy rule); the parent unions it and
+    treats the scalar minus its length as unkeyed.
+    No-op when the environment variable is absent.
     """
     path = _coverage_path()
     if not path:
@@ -276,6 +284,8 @@ def write_coverage(
             payload["receipt"] = receipt
         if receipts:
             payload["receipts"] = receipts
+        if lost_keys:
+            payload["lost_keys"] = lost_keys
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     except (OSError, TypeError, ValueError):
@@ -301,13 +311,19 @@ def probe_coverage_receipt() -> dict[str, Any] | None:
     return {"worker_uuid": get_worker_uuid(), "probe_seq": seq}
 
 
-def flush_probe_sidecar(counters: list[list[str | int | None]] | None) -> None:
+def flush_probe_sidecar(
+    counters: list[list[str | int | None]] | None,
+    *,
+    lost_keys: list[dict[str, Any]] | None = None,
+) -> None:
     """Write this probe child's counters sidecar for the parent's fallback.
 
     The parent deletes the sidecar after a coverage commit
     (flush-then-delete) and folds it as partial evidence (receipt
-    suppressed) when the coverage file is torn. No-op when the parent did
-    not assign a sidecar path. Never raises.
+    suppressed) when the coverage file is torn. ``lost_keys`` carries the
+    child's keyed-loss set (omitted when None/empty, so legacy sidecars
+    are byte-identical). No-op when the parent did not assign a sidecar
+    path. Never raises.
     """
     from pkcs11_check.core._counters_durability import PROBE_SIDECAR_ENV
 
@@ -318,11 +334,13 @@ def flush_probe_sidecar(counters: list[list[str | int | None]] | None) -> None:
     if receipt is None:
         return
     try:
-        payload = {
+        payload: dict[str, Any] = {
             "worker_uuid": receipt["worker_uuid"],
             "probe_seq": receipt["probe_seq"],
             "counters": counters,
         }
+        if lost_keys:
+            payload["lost_keys"] = lost_keys
         tmp = f"{path}.tmp-{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)

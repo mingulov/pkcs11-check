@@ -653,7 +653,7 @@ def _merge_call_counter_blocks(
     complete = True
     collected: list[tuple[str, str, dict[str, Any]]] = []
     collected_lost: list[tuple[str, dict[str, Any]]] = []
-    detail_keys: set[tuple[str, int]] = set()
+    detail_keys: set[tuple[str, int, str]] = set()
     by_round: dict[str, dict[str, Any]] = {}
     seen: dict[str, dict[str, Any]] = {}
     for index, (_, block) in enumerate(blocks):
@@ -694,6 +694,9 @@ def _merge_call_counter_blocks(
             continue
         seen[shard_label] = block
         merge_module_first(by_module, block["by_module"])
+        # Shard producers are disjoint, so derived shard totals sum exactly
+        # (the per-producer ledger operator's disjoint case); identical
+        # same-label snapshots fuse above instead of doubling.
         probes_lost += int(block["probes_lost"])
         if not block["complete"]:
             complete = False
@@ -702,8 +705,12 @@ def _merge_call_counter_blocks(
         for detail in block.get("probes_detail", []):
             uuid = detail.get("worker_uuid")
             seq = detail.get("probe_seq")
-            if isinstance(uuid, str) and isinstance(seq, int):
-                detail_keys.add((uuid, seq))
+            status = detail.get("status")
+            if isinstance(uuid, str) and isinstance(seq, int) and isinstance(status, str):
+                # Triples, not pairs: the same probe folded in one shard
+                # and lost-claimed in another stays visible as both rows
+                # (merge unions; it never fuses across statuses).
+                detail_keys.add((uuid, seq, status))
         for run in shard_round_keys:
             # Namespaced keys embed the shard label, so a repeat would need
             # the same label twice -- decided at the same-label gate above
@@ -750,8 +757,8 @@ def _merge_call_counter_blocks(
         merged_block["lost_processes"] = lost_processes
     if detail_keys:
         merged_block["probes_detail"] = [
-            {"worker_uuid": uuid, "probe_seq": seq, "status": "folded"}
-            for uuid, seq in sorted(detail_keys)
+            {"worker_uuid": uuid, "probe_seq": seq, "status": status}
+            for uuid, seq, status in sorted(detail_keys)
         ]
     return merged_block
 

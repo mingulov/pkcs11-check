@@ -65,8 +65,11 @@ from pkcs11_check.core._counters_durability import (
 from pkcs11_check.core.counters_schema import (
     UNKNOWN_MODULE,
     ensure_five_buckets,
+    is_lost_key,
     is_module_first_block,
+    is_probe_seq,
     is_receipt,
+    is_worker_uuid,
     mint_worker_uuid,
 )
 
@@ -91,7 +94,16 @@ _state = _ThreadState()
 _entry_counts: Counter[tuple[str, str, str]] = Counter()
 _exit_counts: Counter[tuple[str, str, str, int]] = Counter()
 _phase_name: str = DEFAULT_BUCKET
-_probes_lost = 0
+#: Keyed losses ``(accounting_parent_uuid, probe_seq)``: probes noted lost
+#: with identity. Recovery removes the key; ``probes_lost()`` derives the
+#: total as keyed + unkeyed so the two can never drift apart.
+_lost_keys: set[tuple[str, int]] = set()
+#: Unkeyed losses: notes without identity plus legacy scalar remainders.
+#: Never heals (nothing to cancel against); sources dedupe at ingest.
+_unkeyed_lost = 0
+#: Ingested child-payload sources ``(parent_uuid, probe_seq)``: a repeat
+#: ingest adds nothing (idempotent).
+_ingested_sources: set[tuple[str, int]] = set()
 #: Admitted-but-undurable evidence after a failed return/mutation checkpoint
 #: (``{"checkpoint": kind, "unit": str, "attempt": int}``), else None. Entries
 #: never set it (they roll back instead); it clears only when a sidecar flush
@@ -244,7 +256,10 @@ def _flush_locked() -> None:
         "journal_seq": _journal_len,
         "in_progress": _serialize(Counter(_inprog_entry), Counter(_inprog_exit)),
         "receipts": [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)],
-        "probes_lost": _probes_lost,
+        "probes_lost": len(_lost_keys) + _unkeyed_lost,
+        "lost_keys": [
+            {"parent_uuid": parent, "probe_seq": seq} for parent, seq in sorted(_lost_keys)
+        ],
     }
     write_sidecar_atomic(_registration.sidecar_path, payload)
     _dirty = False
@@ -683,38 +698,73 @@ def _parse_receipts(value: Any) -> set[tuple[str, int]]:
     return keys
 
 
+def _parse_lost_keys(value: Any) -> set[tuple[str, int]]:
+    """Return the well-formed lost keys from a payload value (never raises)."""
+    if not isinstance(value, (list, tuple)):
+        return set()
+    keys: set[tuple[str, int]] = set()
+    for entry in value:
+        if is_lost_key(entry):
+            keys.add((entry["parent_uuid"], entry["probe_seq"]))
+    return keys
+
+
+def _parse_ingest_source(value: Any) -> tuple[str, int] | None:
+    """Return a well-formed ingest source ``(parent_uuid, probe_seq)``, else None."""
+    if not isinstance(value, tuple) or len(value) != 2:
+        return None
+    parent, seq = value
+    if not is_worker_uuid(parent) or not is_probe_seq(seq):
+        return None
+    assert isinstance(parent, str) and isinstance(seq, int)
+    return (parent, seq)
+
+
 def ingest_child_evidence(
     flat: Any,
     lost: Any = 0,
     receipts: Any = (),
     *,
     bucket: str | None = None,
+    lost_keys: Any = (),
+    source: Any = None,
 ) -> None:
     """Merge one child's evidence atomically: counts + losses + receipts.
 
     ONE atomic transaction under the counters lock (validate counts,
-    propagated losses, and receipt inserts, apply, mark dirty): checkpoints
-    and flushes observe all-or-none. Garbage-tolerant per item (a hostile
-    row, loss value, or receipt never breaks the ingest); an explicitly
-    unknown ``bucket`` raises ValueError like ``counted_bucket``. When
-    durability is engaged the ingest self-registers first (raising
-    ``CounterPersistenceError`` when sealed) and K-flushes under the same
-    acquisition. Unlike the ``record_*`` entry points, a failed K flush here
-    does NOT roll back: child evidence is post-hoc real provider data, so it
-    stays admitted (dirty, retried by the next flush) rather than
-    undercounting calls that provably ran; the undurable evidence is marked
-    pending instead. Loss-only and receipt-only ingests flush immediately
-    (they count one window unit despite carrying zero calls).
+    propagated losses, keys, and receipt inserts, apply, mark dirty):
+    checkpoints and flushes observe all-or-none. Garbage-tolerant per item
+    (a hostile row, loss value, key, or receipt never breaks the ingest);
+    an explicitly unknown ``bucket`` raises ValueError like
+    ``counted_bucket``. Keyed losses union (idempotent); the scalar covers
+    the child's whole loss total, so the unkeyed remainder is
+    ``max(0, scalar - len(keys))`` (identities win over an inconsistent
+    scalar, fail closed toward incomplete). A well-formed ``source``
+    ``(parent_uuid, probe_seq)`` makes repeat ingests of one payload a
+    no-op (same source implies same payload); sourceless payloads always
+    apply (no fresh-run vector re-ingests them). When durability is engaged
+    the ingest self-registers first (raising ``CounterPersistenceError``
+    when sealed) and K-flushes under the same acquisition. Unlike the
+    ``record_*`` entry points, a failed K flush here does NOT roll back:
+    child evidence is post-hoc real provider data, so it stays admitted
+    (dirty, retried by the next flush) rather than undercounting calls that
+    provably ran; the undurable evidence is marked pending instead.
+    Loss-only and receipt-only ingests flush immediately (they count one
+    window unit despite carrying zero calls).
     """
-    global _probes_lost, _receipts
+    global _unkeyed_lost, _receipts, _lost_keys
     if bucket is not None and bucket not in BUCKETS:
         raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     parsed = _parse_flat_rows(flat)
     lost_count = _parse_lost_count(lost)
     receipt_keys = _parse_receipts(receipts)
+    key_set = _parse_lost_keys(lost_keys)
+    src = _parse_ingest_source(source)
     with _lock:
         target = _resolve_bucket_locked(bucket)
         _ensure_registered_locked()
+        if src is not None and src in _ingested_sources:
+            return
         for module, fn, rv, count in parsed:
             _entry_counts[(module, target, fn)] += count
             if _registration is not None:
@@ -723,9 +773,12 @@ def ingest_child_evidence(
                 _exit_counts[(module, target, fn, rv)] += count
                 if _registration is not None:
                     _inprog_exit[(module, target, fn, rv)] += count
-        _probes_lost += lost_count
+        _lost_keys |= key_set
+        _unkeyed_lost += max(0, lost_count - len(key_set))
         _receipts |= receipt_keys
-        if parsed or lost_count or receipt_keys:
+        if src is not None:
+            _ingested_sources.add(src)
+        if parsed or lost_count or receipt_keys or key_set:
             try:
                 units = sum(count for _, _, _, count in parsed) if parsed else 1
                 _mark_dirty_locked(calls=units)
@@ -750,15 +803,30 @@ def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
     ingest_child_evidence(flat, 0, (), bucket=bucket)
 
 
-def note_lost_probe() -> None:
+def note_lost_probe(*, parent_uuid: Any = None, probe_seq: Any = None) -> None:
     """Record one probe child whose counters could not be recovered.
 
-    Flushes immediately when registered; a failed flush retains the loss,
-    marks it pending, and raises (never silently dropped).
+    With a well-formed ``(parent_uuid, probe_seq)`` identity the loss is
+    keyed (duplicates collapse to one); otherwise it lands unkeyed (never
+    heals, never breaks the caller). Flushes immediately when registered;
+    a failed flush retains the loss, marks it pending, and raises (never
+    silently dropped).
     """
-    global _probes_lost
+    global _unkeyed_lost
+    key: tuple[str, int] | None = None
+    if (
+        parent_uuid is not None
+        and probe_seq is not None
+        and is_worker_uuid(parent_uuid)
+        and is_probe_seq(probe_seq)
+    ):
+        assert isinstance(parent_uuid, str) and isinstance(probe_seq, int)
+        key = (parent_uuid, probe_seq)
     with _lock:
-        _probes_lost += 1
+        if key is not None:
+            _lost_keys.add(key)
+        else:
+            _unkeyed_lost += 1
         try:
             _mark_dirty_locked(calls=1)
         except CounterPersistenceError:
@@ -776,11 +844,11 @@ def add_lost_probes(n: Any) -> None:
     acquisition. Flushes immediately when registered; a failed flush retains
     the losses, marks them pending, and raises.
     """
-    global _probes_lost
+    global _unkeyed_lost
     with _lock:
         lost_count = _parse_lost_count(n)
         if lost_count:
-            _probes_lost += lost_count
+            _unkeyed_lost += lost_count
             try:
                 _mark_dirty_locked(calls=1)
             except CounterPersistenceError:
@@ -789,9 +857,18 @@ def add_lost_probes(n: Any) -> None:
 
 
 def probes_lost() -> int:
-    """Return the number of probe children with unrecoverable counters."""
+    """Return the number of probe children with unrecoverable counters.
+
+    Derived as keyed + unkeyed so the two can never drift apart.
+    """
     with _lock:
-        return _probes_lost
+        return len(_lost_keys) + _unkeyed_lost
+
+
+def lost_probe_keys() -> list[dict[str, Any]]:
+    """Return the live keyed-loss set as sorted ``{parent_uuid, probe_seq}`` dicts."""
+    with _lock:
+        return [{"parent_uuid": parent, "probe_seq": seq} for parent, seq in sorted(_lost_keys)]
 
 
 def persistence_pending() -> bool:
@@ -892,14 +969,16 @@ def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> 
 
 def reset_for_tests() -> None:
     """Clear counters, phase, regions, losses, identity, receipts, and durability."""
-    global _probes_lost, _phase_name, _worker_uuid, _worker_uuid_pid
+    global _unkeyed_lost, _phase_name, _worker_uuid, _worker_uuid_pid
     global _registration, _registration_pid, _dirty, _pending_calls, _probe_seq, _journal_len
     global _persistence_pending
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
         _phase_name = DEFAULT_BUCKET
-        _probes_lost = 0
+        _lost_keys.clear()
+        _unkeyed_lost = 0
+        _ingested_sources.clear()
         _persistence_pending = None
         _worker_uuid = None
         _worker_uuid_pid = None
@@ -936,6 +1015,7 @@ __all__ = [
     "get_worker_uuid",
     "ingest_child_counts",
     "ingest_child_evidence",
+    "lost_probe_keys",
     "note_lost_probe",
     "pending_marker",
     "persistence_pending",

@@ -851,6 +851,7 @@ def _plant_producer(
     receipts: list[dict[str, Any]] | None = None,
     probes_lost: Any = None,
     isolation: str | None = "file",
+    lost_keys: list[dict[str, Any]] | None = None,
 ) -> dict[str, Path]:
     """Plant registry + sidecar + journal files for a (possibly dead) producer.
 
@@ -861,7 +862,8 @@ def _plant_producer(
     parent that flushed after ingesting probes). ``probes_lost`` seeds the
     sidecar's loss scalar (omitted when None; pass garbage to plant a
     mistyped scalar). ``isolation`` seeds the registry isolation stamp
-    (pass None to plant a legacy isolation-less registry).
+    (pass None to plant a legacy isolation-less registry). ``lost_keys``
+    seeds the sidecar's keyed-loss set (omitted when None).
     """
     reg_dir = root / "registrations"
     reg_dir.mkdir(parents=True, exist_ok=True)
@@ -898,6 +900,8 @@ def _plant_producer(
             sidecar_content["journal_seq"] = seq
         if probes_lost is not None:
             sidecar_content["probes_lost"] = probes_lost
+        if lost_keys is not None:
+            sidecar_content["lost_keys"] = lost_keys
         sidecar.write_text(json.dumps(sidecar_content), encoding="utf-8")
     if journal:
         journal_path.write_text(
@@ -914,19 +918,23 @@ def _plant_probe_orphan(
     child_uuid: str = _UUID_B,
     counters: list[list[Any]] | None = None,
     nonce: str = "feedface",
+    lost_keys: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Plant a retained probe sidecar ``probe-<parent8>-<seq>-<nonce>.json``.
 
     Mirrors the runner's filename (parent uuid prefix, assigned seqno) and
-    the child's payload (child uuid, echoed seqno, flat counter rows).
+    the child's payload (child uuid, echoed seqno, flat counter rows, and
+    the child's own keyed-loss set when given).
     """
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"probe-{parent_uuid[:8]}-{seq}-{nonce}.json"
-    payload = {
+    payload: dict[str, Any] = {
         "worker_uuid": child_uuid,
         "probe_seq": seq,
         "counters": counters if counters is not None else [["m", "C_Login", 0, 4]],
     }
+    if lost_keys is not None:
+        payload["lost_keys"] = lost_keys
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -2086,7 +2094,7 @@ class TestProbeConsumedMarker:
         assert info is not None
         parent_sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
         assert parent_sidecar["in_progress"]["total_calls"] == 5, "1 parent + 4 probe"
-        merged, claimed, consumed = durability._adopt_probe_orphans(
+        merged, claimed, consumed, recovered, orphan_keys = durability._adopt_probe_orphans(
             engaged,
             worker_uuid=parent_uuid,
             sidecar=parent_sidecar,
@@ -2097,6 +2105,8 @@ class TestProbeConsumedMarker:
         assert merged is None, "parent checkpoint already holds the probe counts"
         assert claimed == []
         assert markers[0] in consumed
+        assert recovered == [(parent_uuid, seq)], "marker evidence heals the live claim"
+        assert orphan_keys == set()
 
     def test_failed_rename_is_loud(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2127,7 +2137,7 @@ class TestProbeConsumedMarker:
         engaged.mkdir(parents=True, exist_ok=True)
         marker = engaged / f"probe-consumed-{_UUID_A[:8]}-3-feedface.json"
         marker.write_text("{torn", encoding="utf-8")
-        merged, claimed, consumed = durability._adopt_probe_orphans(
+        merged, claimed, consumed, recovered, orphan_keys = durability._adopt_probe_orphans(
             engaged,
             worker_uuid=_UUID_A,
             sidecar=None,
@@ -2138,6 +2148,8 @@ class TestProbeConsumedMarker:
         assert merged is None
         assert claimed == []
         assert marker in consumed
+        assert recovered == []
+        assert orphan_keys == set()
 
     def test_missing_sidecar_counts_as_deleted(self, engaged: Path, tmp_path: Path) -> None:
         from pkcs11_check.testcases._probes.runner import ingest_probe_payload
@@ -4662,3 +4674,694 @@ class TestLostAttributionOutput:
         assert len(entries) == 1
         assert entries[0]["role"] == "retry"
         assert "isolation" not in entries[0]
+
+
+def _lost_key(parent: str, seq: int) -> dict[str, Any]:
+    return {"parent_uuid": parent, "probe_seq": seq}
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): live loss ledger (keyed + unkeyed, derived total)
+# --------------------------------------------------------------------------
+
+
+class TestLiveLossLedger:
+    def test_note_with_identity_is_keyed(self, engaged: Path) -> None:
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=3)
+        assert call_counters.lost_probe_keys() == [_lost_key(_UUID_A, 3)]
+        assert call_counters.probes_lost() == 1
+
+    def test_note_without_identity_is_unkeyed(self, engaged: Path) -> None:
+        call_counters.note_lost_probe()
+        assert call_counters.lost_probe_keys() == []
+        assert call_counters.probes_lost() == 1
+
+    def test_note_mixed_identity_falls_back_to_unkeyed(self, engaged: Path) -> None:
+        call_counters.note_lost_probe(parent_uuid=_UUID_A)
+        call_counters.note_lost_probe(probe_seq=3)
+        call_counters.note_lost_probe(parent_uuid="bogus", probe_seq=1)
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=-1)
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=True)
+        assert call_counters.lost_probe_keys() == []
+        assert call_counters.probes_lost() == 5
+
+    def test_duplicate_key_counts_once(self, engaged: Path) -> None:
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=3)
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=3)
+        assert call_counters.lost_probe_keys() == [_lost_key(_UUID_A, 3)]
+        assert call_counters.probes_lost() == 1
+
+    def test_probes_lost_derived_total(self, engaged: Path) -> None:
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=1)
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=2)
+        call_counters.note_lost_probe()
+        call_counters.add_lost_probes(2)
+        assert len(call_counters.lost_probe_keys()) == 2
+        assert call_counters.probes_lost() == 5
+
+    def test_reset_clears_ledger(self, engaged: Path) -> None:
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=1)
+        call_counters.note_lost_probe()
+        call_counters.reset_for_tests()
+        assert call_counters.lost_probe_keys() == []
+        assert call_counters.probes_lost() == 0
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): ingest ledger (union + source-scoped idempotency)
+# --------------------------------------------------------------------------
+
+
+class TestIngestLedger:
+    def test_ingest_unions_keys_and_remainder(self, engaged: Path) -> None:
+        call_counters.ingest_child_evidence(
+            [["m", "C_Login", 0, 6]],
+            5,
+            [],
+            lost_keys=[_lost_key(_UUID_A, 1), _lost_key(_UUID_A, 2)],
+            source=(_UUID_B, 0),
+        )
+        assert sorted(
+            (key["parent_uuid"], key["probe_seq"]) for key in call_counters.lost_probe_keys()
+        ) == [(_UUID_A, 1), (_UUID_A, 2)]
+        # Scalar-anchored: 5 total − 2 keyed = 3 unkeyed.
+        assert call_counters.probes_lost() == 5
+        assert call_counters.serialize_current()["total_calls"] == 6
+
+    def test_ingest_duplicate_source_adds_nothing(self, engaged: Path) -> None:
+        kwargs: dict[str, Any] = {
+            "lost_keys": [_lost_key(_UUID_A, 1)],
+            "source": (_UUID_B, 0),
+        }
+        call_counters.ingest_child_evidence([["m", "C_Login", 0, 6]], 3, [], **kwargs)
+        call_counters.ingest_child_evidence([["m", "C_Login", 0, 6]], 3, [], **kwargs)
+        assert call_counters.serialize_current()["total_calls"] == 6
+        assert call_counters.probes_lost() == 3
+        assert len(call_counters.lost_probe_keys()) == 1
+
+    def test_ingest_legacy_scalar_is_unkeyed(self, engaged: Path) -> None:
+        call_counters.ingest_child_evidence([["m", "C_Login", 0, 6]], 4, [])
+        assert call_counters.lost_probe_keys() == []
+        assert call_counters.probes_lost() == 4
+
+    def test_ingest_clamps_keys_over_scalar(self, engaged: Path) -> None:
+        # Inconsistent child: identities win (fail closed toward
+        # incomplete), the scalar never pulls the total below them.
+        call_counters.ingest_child_evidence(
+            [],
+            1,
+            [],
+            lost_keys=[_lost_key(_UUID_A, 1), _lost_key(_UUID_A, 2), _lost_key(_UUID_A, 3)],
+            source=(_UUID_B, 0),
+        )
+        assert len(call_counters.lost_probe_keys()) == 3
+        assert call_counters.probes_lost() == 3
+
+    def test_ingest_skips_malformed_keys_itemwise(self, engaged: Path) -> None:
+        call_counters.ingest_child_evidence(
+            [],
+            5,
+            [],
+            lost_keys=[
+                _lost_key(_UUID_A, 1),
+                {"parent_uuid": "bogus", "probe_seq": 2},
+                {"parent_uuid": _UUID_A},
+                "garbage",
+                _lost_key(_UUID_A, 3),
+            ],
+            source=(_UUID_B, 0),
+        )
+        assert len(call_counters.lost_probe_keys()) == 2
+        # Scalar-anchored total conserved: 5 − 2 keyed = 3 unkeyed.
+        assert call_counters.probes_lost() == 5
+
+    def test_ingest_unknown_source_never_skips(self, engaged: Path) -> None:
+        # Documents the residual: sourceless payloads cannot dedupe, so
+        # repeats accumulate (no fresh-run vector re-ingests them).
+        call_counters.ingest_child_evidence([["m", "C_Login", 0, 6]], 3, [])
+        call_counters.ingest_child_evidence([["m", "C_Login", 0, 6]], 3, [])
+        assert call_counters.serialize_current()["total_calls"] == 12
+        assert call_counters.probes_lost() == 6
+
+    def test_ingest_invalid_source_treated_as_unknown(self, engaged: Path) -> None:
+        call_counters.ingest_child_evidence([["m", "C_Login", 0, 6]], 3, [], source=("bogus", 0))
+        assert call_counters.serialize_current()["total_calls"] == 6
+        assert call_counters.probes_lost() == 3
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): loss emission (sidecar + session carry keys)
+# --------------------------------------------------------------------------
+
+
+class TestLossEmission:
+    def test_sidecar_carries_keys(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=1)
+        call_counters.note_lost_probe()
+        on_disk = _read_sidecar()
+        assert on_disk["lost_keys"] == [_lost_key(_UUID_A, 1)]
+        assert on_disk["probes_lost"] == 2
+
+    def test_session_emission_carries_keys(self, engaged: Path) -> None:
+        from pkcs11_check._plugin_counters import build_session_record
+
+        call_counters.record_call("C_Login", module="m")
+        call_counters.note_lost_probe(parent_uuid=_UUID_A, probe_seq=1)
+        call_counters.note_lost_probe()
+        session = build_session_record()
+        assert session["lost_keys"] == [_lost_key(_UUID_A, 1)]
+        assert session["probes_lost"] == 2
+        assert schema.is_session_record(session) is True
+
+    def test_empty_keys_omitted_on_wire(self, engaged: Path) -> None:
+        # Pin-as-is guard: keyless sessions stay byte-stable.
+        from pkcs11_check._plugin_counters import build_session_record
+
+        call_counters.record_call("C_Login", module="m")
+        session = build_session_record()
+        assert "lost_keys" not in session
+        assert session["probes_lost"] == 0
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): extractor ledger (supersede, union, clamp, legacy)
+# --------------------------------------------------------------------------
+
+
+def _extract_report(records: list[dict[str, Any]], tmp_path: Path) -> dict[str, Any] | None:
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            *records,
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    return extract_call_counters_from_jsonl(jsonl)
+
+
+class TestExtractorLedger:
+    def test_session_keys_derive_total(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 5,
+                "lost_keys": [_lost_key(_UUID_A, 1), _lost_key(_UUID_A, 2)],
+            },
+        )
+        assert schema.is_session_record(session) is True
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["total_calls"] == 10
+        assert payload["probes_lost"] == 5
+        assert payload["complete"] is False
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_A, "probe_seq": 1, "status": "lost"},
+            {"worker_uuid": _UUID_A, "probe_seq": 2, "status": "lost"},
+        ]
+
+    def test_session_supersedes_partial_keys_both_orders(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 1,
+                "lost_keys": [_lost_key(_UUID_A, 9)],
+            },
+        )
+        partial = _partial_record(
+            worker_uuid=_UUID_A,
+            run_id=_RUN,
+            attempt=0,
+            probes_lost=5,
+            lost_keys=[_lost_key(_UUID_A, 1), _lost_key(_UUID_A, 2)],
+        )
+        partial.update(_counts_block(4))
+        for records in ([session, partial], [partial, session]):
+            payload = _extract_report(records, tmp_path)
+            assert payload is not None
+            assert payload["total_calls"] == 10, "session counts win"
+            assert payload["probes_lost"] == 1, "session keys win"
+            assert payload["complete"] is False
+            assert payload["probes_detail"] == [
+                {"worker_uuid": _UUID_A, "probe_seq": 9, "status": "lost"}
+            ], "superseded partial keys never surface"
+
+    def test_mixed_keyed_unkeyed(self, tmp_path: Path) -> None:
+        keyed = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 5,
+                "lost_keys": [_lost_key(_UUID_A, 1), _lost_key(_UUID_A, 2)],
+            },
+        )
+        unkeyed = _session_record(200, _counts_block(7), extra={"run_id": _RUN, "probes_lost": 4})
+        payload = _extract_report([keyed, unkeyed], tmp_path)
+        assert payload is not None
+        assert payload["total_calls"] == 17
+        assert payload["probes_lost"] == 9
+        assert payload["complete"] is False
+        # Only keyed losses get detail rows; unkeyed fold into the total.
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_A, "probe_seq": 1, "status": "lost"},
+            {"worker_uuid": _UUID_A, "probe_seq": 2, "status": "lost"},
+        ]
+
+    def test_legacy_scalar_never_heals(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100, _counts_block(10), extra={"worker_uuid": _UUID_A, "run_id": _RUN, "probes_lost": 5}
+        )
+        recovered = _partial_record(
+            worker_uuid=_UUID_A,
+            run_id=_RUN,
+            attempt=0,
+            recovered_keys=[_lost_key(_UUID_A, 1)],
+        )
+        recovered.update(_counts_block(0))
+        payload = _extract_report([session, recovered], tmp_path)
+        assert payload is not None
+        # Scalar-only losses have no identity to cancel: the total stands.
+        # Pin-as-is shape (identical pre/post): guards recovery against
+        # ever touching unkeyed totals.
+        assert payload["probes_lost"] == 5
+        assert payload["complete"] is False
+        assert "probes_detail" not in payload
+
+    def test_clamp_keys_over_scalar(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 1,
+                "lost_keys": [_lost_key(_UUID_A, 1), _lost_key(_UUID_A, 2)],
+            },
+        )
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        # Inconsistent producer: identities win (fail closed toward
+        # incomplete), the scalar never pulls below them.
+        assert payload["probes_lost"] == 2
+        assert payload["complete"] is False
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_A, "probe_seq": 1, "status": "lost"},
+            {"worker_uuid": _UUID_A, "probe_seq": 2, "status": "lost"},
+        ]
+
+    def test_uuidless_duplicate_replaces(self, tmp_path: Path) -> None:
+        session = _session_record(100, _counts_block(10), extra={"run_id": _RUN, "probes_lost": 5})
+        payload = _extract_report([session, dict(session)], tmp_path)
+        assert payload is not None
+        # Same scope twice is a torn-append retry: losses counted once.
+        # (Counts still sum for uuid-less repeats: pre-existing behavior,
+        # out of the loss-ledger scope.)
+        assert payload["total_calls"] == 20
+        assert payload["probes_lost"] == 5
+
+    def test_uuidless_distinct_scopes_sum(self, tmp_path: Path) -> None:
+        first = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(100, _counts_block(10), extra={"run_id": _RUN, "probes_lost": 5}),
+                {"$report_type": "SessionStart"},
+                _marker("b.py", 0),
+                _session_record(100, _counts_block(7), extra={"run_id": _RUN, "probes_lost": 4}),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(first)
+        assert payload is not None
+        assert payload["total_calls"] == 17
+        assert payload["probes_lost"] == 9
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): orphan recovery (recovered_keys subtract exactly once)
+# --------------------------------------------------------------------------
+
+
+class TestOrphanRecovery:
+    def test_gap_keys_net_against_adopted_orphan(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(
+            engaged,
+            uuid=parent,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            probes_lost=1,
+            lost_keys=[_lost_key(parent, 0)],
+        )
+        _plant_probe_orphan(engaged, parent_uuid=parent, seq=0)
+        collected = _collect_dead(engaged, tmp_path, name="child.jsonl")
+        partials = [rec for rec in collected if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        # The gap carries both the live-claimed key and the orphan recovery.
+        assert partials[0]["lost_keys"] == [_lost_key(parent, 0)]
+        assert partials[0]["recovered_keys"] == [_lost_key(parent, 0)]
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                *collected,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        # Net zero losses — but the producer is dead, so truncated shape
+        # keeps the run honestly incomplete.
+        assert payload["probes_lost"] == 0
+        assert payload["complete"] is False
+
+    def test_session_plus_orphan_heals_fully(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(engaged, uuid=parent, pid=pid, birth=birth, in_progress=_counts_block(9))
+        _plant_probe_orphan(engaged, parent_uuid=parent, seq=0)
+        session = _session_record(
+            pid,
+            _counts_block(13),
+            extra={
+                "worker_uuid": parent,
+                "run_id": _RUN,
+                "probes_lost": 1,
+                "lost_keys": [_lost_key(parent, 0)],
+            },
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert [rec["$report_type"] for rec in records] == ["CallCountersPartial"]
+        assert records[0]["recovered_keys"] == [_lost_key(parent, 0)]
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                *records,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["total_calls"] == 13
+        assert payload["probes_lost"] == 0
+        assert payload["complete"] is True
+
+    def test_seq_mismatch_suppresses_recovery(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(
+            engaged,
+            uuid=parent,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            probes_lost=1,
+            lost_keys=[_lost_key(parent, 0)],
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=parent, seq=0)
+        content = json.loads(orphan.read_text(encoding="utf-8"))
+        content["probe_seq"] = 7
+        orphan.write_text(json.dumps(content), encoding="utf-8")
+        collected = _collect_dead(engaged, tmp_path, name="child.jsonl")
+        partials = [rec for rec in collected if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        # Counts still fold best-effort, but a filename/content mismatch
+        # must not cancel a loss claim (fail closed toward incomplete).
+        assert "recovered_keys" not in partials[0]
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                *collected,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_marker_orphan_emits_recovery(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(
+            engaged,
+            uuid=parent,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            probes_lost=1,
+            lost_keys=[_lost_key(parent, 0)],
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=parent, seq=0)
+        marker = orphan.with_name(orphan.name.replace("probe-", "probe-consumed-", 1))
+        orphan.rename(marker)
+        collected = _collect_dead(engaged, tmp_path, name="child.jsonl")
+        partials = [rec for rec in collected if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["recovered_keys"] == [_lost_key(parent, 0)]
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                *collected,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["probes_lost"] == 0
+        assert payload["complete"] is False
+
+    def test_adopted_orphan_keys_union_into_gap(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(engaged, uuid=parent, pid=pid, birth=birth, in_progress=_counts_block(5))
+        _plant_probe_orphan(engaged, parent_uuid=parent, seq=0, lost_keys=[_lost_key(_UUID_B, 4)])
+        collected = _collect_dead(engaged, tmp_path, name="child.jsonl")
+        partials = [rec for rec in collected if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        # The orphan's own keyed losses ride the gap partial separately from
+        # the gap set (union-always: fresh info no session could hold).
+        assert partials[0]["orphan_keys"] == [_lost_key(_UUID_B, 4)]
+        assert "lost_keys" not in partials[0]
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                *collected,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_committed_orphan_keys_union_despite_supersede(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(engaged, uuid=parent, pid=pid, birth=birth, in_progress=_counts_block(9))
+        _plant_probe_orphan(engaged, parent_uuid=parent, seq=0, lost_keys=[_lost_key(_UUID_B, 4)])
+        session = _session_record(
+            pid, _counts_block(13), extra={"worker_uuid": parent, "run_id": _RUN}
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert [rec["$report_type"] for rec in records] == ["CallCountersPartial"]
+        # Claim-only: orphan evidence rides orphan_keys; no gap set (the
+        # session is authoritative for this producer's own keys).
+        assert "lost_keys" not in records[0]
+        assert records[0]["orphan_keys"] == [_lost_key(_UUID_B, 4)]
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                *records,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["total_calls"] == 13, "session counts win"
+        assert payload["probes_lost"] == 1, "orphan keys union despite supersede"
+        assert payload["complete"] is False
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): probes_detail with lost rows (legacy prefix-stable)
+# --------------------------------------------------------------------------
+
+
+class TestProbesDetailLost:
+    def test_lost_rows_follow_folded(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 1,
+                "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+                "lost_keys": [_lost_key(_UUID_A, 1)],
+            },
+        )
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"},
+            {"worker_uuid": _UUID_A, "probe_seq": 1, "status": "lost"},
+        ]
+
+    def test_folded_only_shape_unchanged(self, tmp_path: Path) -> None:
+        # Pin-as-is guard: receipts without losses render exactly as before.
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+            },
+        )
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"}
+        ]
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): zero rows for evidenced-but-moduleless pids
+# --------------------------------------------------------------------------
+
+
+class TestZeroRows:
+    def test_end_states_only_pid_gets_module_less_row(self, tmp_path: Path) -> None:
+        lost = _lost_record(worker_uuid=_UUID_B, pid=200, role="retry", isolation="file")
+        payload = _extract_report([lost], tmp_path)
+        assert payload is not None
+        assert payload["complete"] is False
+        assert payload["by_process"] == [
+            {
+                "pid": 200,
+                "isolation": "file",
+                "total_calls": 0,
+                "complete": False,
+                "worker_uuid": _UUID_B,
+                "role": "retry",
+                "end_state": "crashed",
+            }
+        ]
+
+    def test_clean_zero_session_stays_silent(self, tmp_path: Path) -> None:
+        # Flood guard: a zero-call session with nothing outstanding earns
+        # no row (nothing to say); only incomplete-visible evidence does.
+        session = _session_record(
+            100, _counts_block(0), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+        )
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["total_calls"] == 0
+        assert payload["complete"] is True
+        assert payload["by_process"] == []
+
+    def test_zero_call_session_with_loss_gets_row(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(0),
+            extra={"worker_uuid": _UUID_A, "run_id": _RUN, "probes_lost": 3},
+        )
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["complete"] is False
+        assert payload["by_process"] == [
+            {
+                "pid": 100,
+                "isolation": "file",
+                "total_calls": 0,
+                "complete": False,
+                "worker_uuid": _UUID_A,
+            }
+        ]
+
+    def test_strip_tolerates_mixed_rows(self) -> None:
+        from pkcs11_check.core._jsonl_extract import _strip_single_module_tag
+
+        single = [
+            {"pid": 100, "module": "m", "total_calls": 5},
+            {"pid": 200, "total_calls": 0},
+        ]
+        assert _strip_single_module_tag(single) == [
+            {"pid": 100, "total_calls": 5},
+            {"pid": 200, "total_calls": 0},
+        ]
+        multi = [
+            {"pid": 100, "module": "m1", "total_calls": 5},
+            {"pid": 200, "total_calls": 0},
+            {"pid": 300, "module": "m2", "total_calls": 7},
+        ]
+        assert _strip_single_module_tag(multi) == multi
+
+
+# --------------------------------------------------------------------------
+# Area F (rc3): conflict-adjacent partial folding (pinned as-is)
+# --------------------------------------------------------------------------
+
+
+class TestConflictExtractAsIs:
+    def test_conflict_pair_folds_loud(self, tmp_path: Path) -> None:
+        partial = _partial_record(worker_uuid=_UUID_A, run_id=_RUN, attempt=0)
+        partial.update(_counts_block(5))
+        lost = _lost_record(end_state="conflict")
+        payload = _extract_report([partial, lost], tmp_path)
+        assert payload is not None
+        # Approximate counts fold; the conflict marker keeps them loud.
+        assert payload["total_calls"] == 5
+        assert payload["complete"] is False
+        assert payload["lost_processes"][0]["end_state"] == "conflict"

@@ -239,12 +239,17 @@ def ingest_probe_payload(
     """
     sidecar = str(sidecar_path) if sidecar_path is not None else None
     data = _read_probe_json(str(cov_path))
+    source = (get_worker_uuid(), seq)
     if data is not None:
         counters = data.get("call_counters")
         receipt = data.get("receipt")
         if isinstance(counters, (list, tuple)) and receipt is None:
             ingest_child_evidence(
-                list(counters), data.get("probes_lost", 0), data.get("receipts", ())
+                list(counters),
+                data.get("probes_lost", 0),
+                data.get("receipts", ()),
+                lost_keys=data.get("lost_keys", ()),
+                source=source,
             )
             _commit_probe_sidecar(sidecar)
             return "folded"
@@ -255,7 +260,13 @@ def ingest_probe_payload(
                     list(data["receipts"]) if isinstance(data.get("receipts"), list) else []
                 )
                 propagated.append({"worker_uuid": validated[0], "probe_seq": validated[1]})
-                ingest_child_evidence(list(counters), data.get("probes_lost", 0), propagated)
+                ingest_child_evidence(
+                    list(counters),
+                    data.get("probes_lost", 0),
+                    propagated,
+                    lost_keys=data.get("lost_keys", ()),
+                    source=source,
+                )
                 _commit_probe_sidecar(sidecar)
                 return "folded"
     fallback = _read_probe_json(sidecar)
@@ -268,7 +279,13 @@ def ingest_probe_payload(
         if validate_probe_receipt(fallback_receipt, seq) is not None and isinstance(
             fallback_counters, (list, tuple)
         ):
-            ingest_child_evidence(list(fallback_counters))
+            ingest_child_evidence(
+                list(fallback_counters),
+                0,
+                (),
+                lost_keys=fallback.get("lost_keys", ()),
+                source=source,
+            )
             _commit_probe_sidecar(sidecar)
             return "partial"
     _delete_probe_sidecar(sidecar)
@@ -410,9 +427,11 @@ def run_probe(
         if counters_status != "folded":
             # The child's C_* traffic never fully arrived (crash, corrupt
             # file, unattributable receipt, or sidecar-only partial
-            # evidence): account it as lost (fw#73). This is the only
-            # lost-probe accounting site; ingests never account loss.
-            note_lost_probe()
+            # evidence): account it as lost (fw#73), keyed by this parent's
+            # identity plus the assigned probe seqno so a late arrival can
+            # heal exactly this claim. This is the only lost-probe
+            # accounting site; ingests never account loss.
+            note_lost_probe(parent_uuid=get_worker_uuid(), probe_seq=probe_seq)
 
         # I7 AFTER ingest + loss accounting: the rv-trace is an optional
         # diagnostic parse, so it must never run before (or block) counter
