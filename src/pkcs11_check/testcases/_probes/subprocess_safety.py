@@ -277,9 +277,37 @@ def _isolation_child_env() -> dict[str, str]:
     the abrupt-exit detector. The caller hands the grandchild a private path under
     ``GRANDCHILD_COVERAGE_ENV`` and ingests it afterwards, so its C_* traffic still
     folds into this probe child's globals (fw#73).
+
+    The probe sidecar slot and the F2 parent-identity block strip for the
+    same reason: the grandchild runs ``probe_main``, so an inherited slot
+    would let it overwrite the outer probe's sidecar -- and an orphaned
+    late write would then heal the outer probe's loss claim with
+    grandchild-only evidence (codex CX1). ``PROBE_SEQ_ENV`` stays: the
+    grandchild's receipt chains upward through the coverage channel by
+    design (the unit parent propagates grandchild receipts).
     """
+    from pkcs11_check.core._counters_durability import (
+        PROBE_ATTEMPT_ENV,
+        PROBE_ISOLATION_ENV,
+        PROBE_PARENT_ENV,
+        PROBE_ROLE_ENV,
+        PROBE_RUN_ENV,
+        PROBE_SIDECAR_ENV,
+        PROBE_UNIT_ENV,
+    )
+
     env = dict(os.environ)
     env.pop("_P11CHECK_SUBPROCESS_COVERAGE", None)
+    for key in (
+        PROBE_SIDECAR_ENV,
+        PROBE_PARENT_ENV,
+        PROBE_RUN_ENV,
+        PROBE_UNIT_ENV,
+        PROBE_ATTEMPT_ENV,
+        PROBE_ROLE_ENV,
+        PROBE_ISOLATION_ENV,
+    ):
+        env.pop(key, None)
     return env
 
 

@@ -789,8 +789,21 @@ class _LossLedger:
             entry.keyed.discard(key)
 
     def total(self) -> int:
-        """Derived loss total: keyed identities plus unkeyed counts."""
-        return sum(len(entry.keyed) + entry.unkeyed for entry in self.entries.values())
+        """Derived loss total: distinct keyed identities plus unkeyed counts.
+
+        Keyed sets union across sources, so a crafted overlap (the same
+        identity under two sources) counts once, matching net_keys();
+        unkeyed remainders sum (each source's remainder is its own).
+        Legit inputs hold each identity under exactly one entry, so the
+        union changes nothing for them (codex CX3, narrowed: round and
+        global levels keep the documented summing operator).
+        """
+        keyed: set[tuple[str, int]] = set()
+        unkeyed = 0
+        for entry in self.entries.values():
+            keyed |= entry.keyed
+            unkeyed += entry.unkeyed
+        return len(keyed) + unkeyed
 
     def net_keys(self) -> set[tuple[str, int]]:
         """Union of surviving keyed identities (for lost detail rows)."""

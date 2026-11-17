@@ -1714,7 +1714,15 @@ def collect_unit(
         )
         if uuid in sessions:
             records = []
-            if orphan_block is not None:
+            # Recovery-only evidence still emits its zero-call claim
+            # partial (same CX2 rule as the registry-committed path):
+            # the session supersedes the zero counts while the
+            # recovered_keys harvest pierces supersede to heal it.
+            claim_block = (
+                orphan_block if orphan_block is not None else {"total_calls": 0, "by_module": {}}
+            )
+            if orphan_block is not None or recovered or orphan_keys:
+                torn_stamp_role, torn_stamp_isolation = _sidecar_stamp(sidecar)
                 records.append(
                     _partial_record(
                         worker_uuid=uuid,
@@ -1724,8 +1732,10 @@ def collect_unit(
                         if _is_nonneg_int(sidecar.get("attempt"))
                         else 0,
                         pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-                        block=orphan_block,
+                        block=claim_block,
                         receipts=orphan_receipts,
+                        role=torn_stamp_role,
+                        isolation=torn_stamp_isolation,
                         orphan_keys=_keys_to_wire(orphan_keys),
                         recovered_keys=_keys_to_wire(set(recovered)),
                     )
@@ -1958,10 +1968,16 @@ def _collect_committed_producer(
         producer_run=content["run_id"],
         producer_unit=content["unit"],
     )
-    if orphan_block is None:
+    if orphan_block is None and not recovered and not orphan_keys:
         return [], consumed
     # Claim-only: orphan evidence rides orphan_keys (union-always); no gap
     # set (the live session is authoritative for this producer's own keys).
+    # Recovery-only evidence (a consumed marker's healed identity, or an
+    # empty orphan's) still emits a zero-call partial: dropping it would
+    # delete the heal the session's loss claim waits for (codex CX2). The
+    # session supersedes the zero counts at extraction; the recovered_keys
+    # harvest pierces supersede by design.
+    block = orphan_block if orphan_block is not None else {"total_calls": 0, "by_module": {}}
     return (
         [
             _partial_record(
@@ -1970,7 +1986,7 @@ def _collect_committed_producer(
                 unit=content["unit"],
                 attempt=content["attempt"],
                 pid=content["pid"],
-                block=orphan_block,
+                block=block,
                 receipts=orphan_receipts,
                 role=content["role"],
                 isolation=content.get("isolation", "unknown"),

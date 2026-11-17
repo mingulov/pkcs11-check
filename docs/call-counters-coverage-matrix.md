@@ -145,3 +145,10 @@ Conventions: `extract` = `tests/test_call_counters_extract.py`,
 - Overhead follows K: `TestK1Cadence::test_flush_window_is_one` locks
   the cadence; wall-clock overhead is measured ad-hoc per release with
   a stop-and-adjudicate rule (rc3 Area A note).
+- Known residual (pre-existing, legacy-only): a legacy (pre-0.3.0,
+  identity-less) orphan under an 8-char prefix collision retains
+  loudly while its producer's anchors consume, so a staggered later
+  collect could attribute it to the surviving collider. 0.3.0 never
+  writes legacy orphans (the sidecar slot implies the F2 block, written
+  atomically), so fresh dirs cannot hit this; fixing the legacy corner
+  (anchor deferral or orphan quarantine) is follow-up material.

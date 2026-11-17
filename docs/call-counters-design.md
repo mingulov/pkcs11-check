@@ -846,6 +846,23 @@ losses, and zero conflicts; rounds AND their groups and the global
 flag ANDs the rounds AND the absence of unattributed segments (see
 the completeness formula under Normative contracts).
 
+## rc3 wire-shape deltas (outside the frozen rc2 contract below)
+
+- `probes_detail[]` rows carry `status: folded` (a folded probe's
+  child identity) or `status: lost` (the accounting parent of a
+  surviving keyed loss); folded rows render first, then net lost rows.
+- Session and partial records may carry `lost_keys` /
+  `orphan_keys` / `recovered_keys` (keyed-loss identity lists) and
+  sessions a `persistence_pending` marker (counter-specific
+  incomplete); partials may be zero-call claim-only carriers for
+  recovery evidence.
+- Results blocks may carry `unattributed_segments`
+  (`{scope_index, unit, attempt}`); no degenerate `""` round renders.
+- Producer sidecars carry the `role` / `isolation` attribution stamp;
+  probe sidecars carry the F2 parent-identity block.
+- `by_process` zero-call rows render for pids with ledger losses or
+  end states (loss-attributed); clean-zero sessions stay silent.
+
 ## Normative contracts (rc2) - frozen by Task 1
 
 This section is the frozen contract for the rc2 counter-gap work (plan v8,
