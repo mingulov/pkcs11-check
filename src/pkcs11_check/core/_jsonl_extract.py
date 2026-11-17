@@ -912,8 +912,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     both input orders); a partial without a pid folds its counts globally
     but names no by_process row. A group is complete iff a session record
     exists, no fallback or partial was used, no loss disposition names it,
-    and session ``probes_lost`` is 0; the run is complete iff every group
-    is. Folded-probe receipts union across sessions, entries, and partials
+    session ``probes_lost`` is 0, and no surviving persistence marker names
+    it; the run is complete iff every group is. Folded-probe receipts union
+    across sessions, entries, and partials
     (superseded sources still contribute their receipts) into
     ``probes_detail``; lost records reconcile globally by producer identity
     (repeats dedup, conflicting end states surface ``conflict``) into

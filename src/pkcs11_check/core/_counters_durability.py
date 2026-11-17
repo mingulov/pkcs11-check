@@ -552,29 +552,57 @@ def _is_transient_write_error(exc: OSError) -> bool:
 
 
 def append_journal(path: Path | str, record: dict[str, Any]) -> None:
-    """Append one window record to a journal (flush; no fsync by design).
+    """Append one window record to a journal (no fsync by design).
 
-    Transient write errors retry boundedly (a retried partial line lands as
-    a torn fragment the collector flags; the valid line still folds), then
-    raise.
+    Unbuffered ``os.open`` (``O_APPEND``) plus an ``os.write`` loop that
+    completes short writes, so every byte lands at most once: a failed
+    attempt retries only the unwritten remainder, never the whole line
+    (a buffered retry could double-append when ``close`` completes a
+    failed ``flush`` behind it). Transient open/write errors retry
+    boundedly; anything else raises, leaving at most a torn partial prefix
+    (benign: unparseable, and the next publish's superset window recovers
+    it, flagged as a torn middle). Errors from ``os.close`` after a
+    complete write are swallowed, not retried: the bytes already left the
+    process (page-cache durable, which is this module's whole scope), so
+    retrying would duplicate the window, while raising would make the next
+    publish double-count via its superset window.
 
     Raises:
         CounterPersistenceError: When the record cannot be appended.
     """
     try:
-        line = json.dumps(record) + "\n"
+        line = (json.dumps(record) + "\n").encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise CounterPersistenceError(f"cannot encode journal record: {exc}") from exc
+    remaining = line
     for attempt in range(_WRITE_RETRY_ATTEMPTS):
         try:
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write(line)
-                fh.flush()
-            return
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
         except OSError as exc:
             if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
                 raise CounterPersistenceError(f"cannot append journal {path}: {exc}") from exc
             time.sleep(_WRITE_RETRY_BACKOFF_S)
+            continue
+        try:
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError(errno.EAGAIN, "short write")
+                remaining = remaining[written:]
+        except OSError as exc:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
+                raise CounterPersistenceError(f"cannot append journal {path}: {exc}") from exc
+            time.sleep(_WRITE_RETRY_BACKOFF_S)
+            continue
+        try:
+            os.close(fd)
+        except OSError:
+            pass  # bytes already left the process; close cannot un-land them
+        return
 
 
 def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
