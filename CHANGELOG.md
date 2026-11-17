@@ -10,10 +10,9 @@ validated by a full provider round (see Known limitations).
 
 ### Added
 
-- **Exact call counts for every provider call: totals by function and
-  return code, split by module, always on and matching external
-  observers -- including crashed runs and startup checks, with gaps
-  named instead of silent.**
+- **Always-on provider call counters by function, return code and
+  module, including startup checks and recoverable crash evidence;
+  unrecoverable gaps surface through incomplete results or warnings.**
 - **New conformance areas: allowed-mechanism policy effects,
   malformed object-template detection, key-staging and refused-unwrap
   ownership, Diffie-Hellman peer-key coverage, Security Officer
@@ -48,7 +47,7 @@ validated by a full provider round (see Known limitations).
   report.**
 - **Windows counter collection fixed: no more startup crashes, and
   process-lifecycle handling made portable.**
-- **Refreshed third-party test vectors to their latest releases.**
+- **Refreshed pinned third-party test-vector snapshots to their latest upstream revisions.**
 
 ### Known limitations
 
@@ -62,8 +61,10 @@ validated by a full provider round (see Known limitations).
   keeps its pre-existing rule pending a full round.
 - Resumed runs have known counter-evidence gaps (an unresolved loss
   can go unnamed; a failed startup check on resume can overwrite the
-  prior report); fixes are sequenced as the immediate follow-up.
-  Fresh runs are exact.
+  prior report); fixes are tracked as follow-up work. Fresh runs avoid
+  these resume-specific defects; fully recovered executions reconcile
+  exactly, while rare persistence failures remain documented in the
+  counter design.
 
 ## [0.2.3] - 2026-10-05
 

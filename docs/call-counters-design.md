@@ -546,9 +546,11 @@ identified as having unrecoverable counter evidence. That is the contract
 for fully recovered executions; the known persistence residuals are a
 warn-only preflight evidence failure under I/O pathology (no loss record,
 loud warning), a possibly-undercounted `probes_lost` scalar when a
-producer dies before emitting its session record (totals and completeness
-unaffected), and the documented triple-fault probe shape (fail-visible via
-its lost record). The machinery lives in
+producer dies before emitting its session record (gap recovery still
+folds the counts and the lost record still forces `complete: false`;
+only this diagnostic scalar can read low), and the documented
+triple-fault probe shape (fail-visible via its lost record). The
+machinery lives in
 `core/_counters_durability.py` (files, collection, sweep, fence) with the
 recording half in `core/call_counters.py` (registration, flushing,
 publishing, atomic ingest) and assembly in `core/_jsonl_extract.py`
@@ -925,7 +927,9 @@ legacy blocks stay byte-identical.
 | Merge | `(shard, run_id, worker_uuid)` | `merge_key` |
 
 The named helpers are schema and contract-test reference constructors
-for these shapes; production builds the equivalent tuples inline.
+for these shapes; production keys the same fields inline where it keys
+them (receipts, supersede, scope) and keys merges by resolved shard
+label instead.
 
 ### Enums
 
