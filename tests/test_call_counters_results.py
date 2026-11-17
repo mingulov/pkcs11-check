@@ -326,6 +326,76 @@ def test_merge_shard_dirs_concatenates_segments_with_shard_tags(tmp_path: Path) 
     assert flipped["call_counters"]["unattributed_segments"] == block["unattributed_segments"]
 
 
+def test_merge_keeps_folded_and_lost_statuses_distinct(tmp_path: Path) -> None:
+    from pkcs11_check.core.merge import _merge_call_counter_blocks
+
+    # H gap pin: detail keys are triples (uuid, seq, status), not pairs --
+    # the same probe folded in one shard and lost-claimed in another stays
+    # visible as BOTH rows (merge unions; it never fuses across statuses).
+    left = _counters_block(5)
+    left["by_round"] = {
+        _MR1: {
+            "complete": True,
+            "total_calls": 5,
+            "by_module": left["by_module"],
+            "probes_lost": 0,
+            "by_process": left["by_process"],
+        }
+    }
+    left["probes_detail"] = [{"worker_uuid": "c" * 32, "probe_seq": 0, "status": "folded"}]
+    right = _counters_block(5)
+    right["by_process"][0]["pid"] = 200
+    right["by_round"] = {
+        _MR2: {
+            "complete": True,
+            "total_calls": 5,
+            "by_module": right["by_module"],
+            "probes_lost": 1,
+            "by_process": right["by_process"],
+        }
+    }
+    right["probes_detail"] = [{"worker_uuid": "c" * 32, "probe_seq": 0, "status": "lost"}]
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    shard_a.mkdir()
+    shard_b.mkdir()
+    merged = _merge_call_counter_blocks([(shard_a, left), (shard_b, right)])
+    assert merged is not None
+    assert merged["probes_detail"] == [
+        {"worker_uuid": "c" * 32, "probe_seq": 0, "status": "folded"},
+        {"worker_uuid": "c" * 32, "probe_seq": 0, "status": "lost"},
+    ]
+
+
+def test_merge_skips_malformed_segment_entries(tmp_path: Path) -> None:
+    from pkcs11_check.core.merge import _merge_call_counter_blocks
+
+    # H gap pin: non-dict segment entries are malformed input and skip;
+    # the merge never crashes on them (the extractor never emits them).
+    block = _counters_block(5)
+    block["by_round"] = {
+        _MR1: {
+            "complete": True,
+            "total_calls": 5,
+            "by_module": block["by_module"],
+            "probes_lost": 0,
+            "by_process": block["by_process"],
+        }
+    }
+    block["unattributed_segments"] = [
+        {"scope_index": 1, "unit": "a.py", "attempt": 0},
+        42,
+        "junk",
+        None,
+        ["scope_index"],
+    ]
+    shard = tmp_path / "shardA"
+    shard.mkdir()
+    merged = _merge_call_counter_blocks([(shard, block)])
+    assert merged is not None
+    assert merged["unattributed_segments"] == [{"scope_index": 1, "unit": "a.py", "attempt": 0}]
+
+
 def test_merge_single_shard_segments_carry_no_shard_tag(tmp_path: Path) -> None:
     s0 = tmp_path / "shard0"
     _write_shard(
