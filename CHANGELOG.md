@@ -27,10 +27,13 @@ validated by a full provider round (see Known limitations).
   literal census.**
 - **Post-quantum crypto: prehashed-parameter supply and conditional
   wrong-length verification.**
-- **Crash-exact call counters: every provider call is recorded before
-  it runs, so kills and crashes reconcile to exact numbers or stay
-  visibly incomplete; executed-but-counterless work lists as
-  unattributed segments instead of an empty round.**
+- **Crash-exact call counters: at the default cadence every provider
+  call is recorded before it runs, so kills and crashes reconcile to
+  exact numbers or stay visibly incomplete; executed-but-counterless
+  work lists as unattributed segments instead of an empty round.
+  Speed-sensitive runs may batch snapshots with
+  `PKCS11_CHECK_COUNTERS_FLUSH_K=N` (a crash can then lose up to the
+  last N-1 unflushed units, always flagged incomplete).**
 - **Key-staging and session-open traffic attributes to its own
   provisioning bucket; merged reports carry unattributed segments
   with shard tags.**

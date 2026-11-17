@@ -584,7 +584,23 @@ record (K=1 bound, per producer: every entry, every return, every
 zero-call mutation), at test-window boundaries, and at exit, under the
 counters lock with a dirty flag covering every evidence mutation; a pid
 guard keeps a forked child from touching its parent's files (it
-re-registers with a fresh identity). The journal appends first, the
+re-registers with a fresh identity).
+
+Speed-sensitive runs may raise the sidecar cadence with
+`PKCS11_CHECK_COUNTERS_FLUSH_K=N` (persist every N evidence units
+instead of every unit; unset or garbage, with a loud one-per-process
+warning, means 1). K counts evidence units -- entries, returns, and
+zero-call mutations each add one; ingests add their row counts -- not
+completed calls: a crash can lose up to the last K-1 unflushed units
+of sidecar tail (counts and key detail alike), always flagged
+incomplete by the producer's death. Boundary, exit, probe
+flush-before-delete, and persistence-recovery flushes stay
+unconditional at any K, and the journal still bounds recovery at test
+windows. The cadence is read once per process (children inherit via
+env). Reports need no K annotation: `complete` implies exact at any
+cadence, since only a death can lose tail and death always forces
+incomplete -- K changes performance characteristics, never how a
+report is read. The journal appends first, the
 in-progress accumulator resets second, and the sidecar (carrying
 `journal_seq`, the journal length reflected in the reset) flushes third.
 The collector compares the mark against the count of content-valid
