@@ -27,6 +27,16 @@ validated by a full provider round (see Known limitations).
   literal census.**
 - **Post-quantum crypto: prehashed-parameter supply and conditional
   wrong-length verification.**
+- **Crash-exact call counters: every provider call is recorded before
+  it runs, so kills and crashes reconcile to exact numbers or stay
+  visibly incomplete; executed-but-counterless work lists as
+  unattributed segments instead of an empty round.**
+- **Key-staging and session-open traffic attributes to its own
+  provisioning bucket; merged reports carry unattributed segments
+  with shard tags.**
+- **Report compatibility: 0.3.0 adds the `unattributed_segments` list
+  and the provisioning bucket split; readers that ignore unknown keys
+  keep working, and the empty round block no longer renders.**
 
 ### Fixed
 
@@ -49,6 +59,9 @@ validated by a full provider round (see Known limitations).
 - **Windows counter collection fixed: no more startup crashes, and
   process-lifecycle handling made portable.**
 - **Refreshed pinned third-party test-vector snapshots to their latest upstream revisions.**
+- **Crashed probe sidecars reunite with their parent by full identity
+  instead of a filename hint; stale evidence from other runs or units
+  stays visible instead of misfolding.**
 
 ### Known limitations
 
@@ -66,6 +79,11 @@ validated by a full provider round (see Known limitations).
   these resume-specific defects; fully recovered executions reconcile
   exactly, while rare persistence failures remain documented in the
   counter design.
+- Startup-check counter evidence can fail warn-only under disk I/O
+  pathology (loud warning, no loss record).
+- Crash-exactness needs the CLI runner (or an exported counters
+  directory): bare-pytest runs count in memory only, so a crash can
+  lose unflushed calls, and their rows read isolation unknown.
 
 ## [0.2.3] - 2026-10-05
 
