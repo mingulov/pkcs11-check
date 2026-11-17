@@ -31,8 +31,14 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_ROLE_ENV,
     COUNTERS_UNIT_ENV,
     JOURNAL_SUFFIX,
+    PROBE_ATTEMPT_ENV,
+    PROBE_ISOLATION_ENV,
+    PROBE_PARENT_ENV,
+    PROBE_ROLE_ENV,
+    PROBE_RUN_ENV,
     PROBE_SEQ_ENV,
     PROBE_SIDECAR_ENV,
+    PROBE_UNIT_ENV,
     SIDECAR_SUFFIX,
     end_state_for_attempt,
     read_json_file,
@@ -85,6 +91,12 @@ _SCRUBBED_CHILD_ENV_KEYS = frozenset(
         PREFLIGHT_EVIDENCE_ENV,
         PROBE_SEQ_ENV,
         PROBE_SIDECAR_ENV,
+        PROBE_PARENT_ENV,
+        PROBE_RUN_ENV,
+        PROBE_UNIT_ENV,
+        PROBE_ATTEMPT_ENV,
+        PROBE_ROLE_ENV,
+        PROBE_ISOLATION_ENV,
     }
 )
 

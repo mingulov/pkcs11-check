@@ -35,14 +35,23 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_DIR_ENV,
     COUNTERS_ROLE_ENV,
     COUNTERS_UNIT_ENV,
+    PROBE_ATTEMPT_ENV,
+    PROBE_ISOLATION_ENV,
+    PROBE_PARENT_ENV,
+    PROBE_ROLE_ENV,
+    PROBE_RUN_ENV,
     PROBE_SEQ_ENV,
     PROBE_SIDECAR_ENV,
+    PROBE_UNIT_ENV,
     durability_dir,
     mark_probe_consumed,
     validate_probe_receipt,
 )
 from pkcs11_check.core.call_counters import (
+    ISOLATION_ENV,
+    RUN_ID_ENV,
     assign_probe_seq,
+    ensure_registered,
     flush_counters,
     get_worker_uuid,
     ingest_child_evidence,
@@ -352,11 +361,19 @@ def run_probe(
     # never the registry: strip the counters identity so a grandchild can
     # neither register under its parent's (unit, attempt) nor flush into
     # the parent's evidence files (that would double-count on collection).
+    # The F2 parent-context keys strip here too, so ambient values from an
+    # enclosing probe never leak into this child's self-describing block.
     for counters_key in (
         COUNTERS_DIR_ENV,
         COUNTERS_UNIT_ENV,
         COUNTERS_ATTEMPT_ENV,
         COUNTERS_ROLE_ENV,
+        PROBE_PARENT_ENV,
+        PROBE_RUN_ENV,
+        PROBE_UNIT_ENV,
+        PROBE_ATTEMPT_ENV,
+        PROBE_ROLE_ENV,
+        PROBE_ISOLATION_ENV,
     ):
         env.pop(counters_key, None)
     probe_seq = assign_probe_seq()
@@ -364,11 +381,24 @@ def run_probe(
     probe_sidecar: str | None = None
     counters_root = durability_dir()
     if counters_root is not None:
+        # Eager registration (rc3 Area B): the parent's registry entry is
+        # published before the child can die, so a dead parent still leaves
+        # attributable evidence for the reunion pass. Sealed raises before
+        # the spawn (fail fast, no phantom traffic).
+        ensure_registered()
         probe_sidecar = str(
             counters_root
             / f"probe-{get_worker_uuid()[:8]}-{probe_seq}-{mint_filename_nonce()}.json"
         )
         env[PROBE_SIDECAR_ENV] = probe_sidecar
+        # F2: the child embeds these into its sidecar, making the orphan
+        # self-describing even when the parent's registry is gone.
+        env[PROBE_PARENT_ENV] = get_worker_uuid()
+        env[PROBE_RUN_ENV] = os.environ.get(RUN_ID_ENV, "")
+        env[PROBE_UNIT_ENV] = os.environ.get(COUNTERS_UNIT_ENV, "")
+        env[PROBE_ATTEMPT_ENV] = os.environ.get(COUNTERS_ATTEMPT_ENV, "0")
+        env[PROBE_ROLE_ENV] = os.environ.get(COUNTERS_ROLE_ENV, "")
+        env[PROBE_ISOLATION_ENV] = os.environ.get(ISOLATION_ENV, "")
     else:
         env.pop(PROBE_SIDECAR_ENV, None)
 

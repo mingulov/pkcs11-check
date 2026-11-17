@@ -919,12 +919,15 @@ def _plant_probe_orphan(
     counters: list[list[Any]] | None = None,
     nonce: str = "feedface",
     lost_keys: list[dict[str, Any]] | None = None,
+    identity: dict[str, Any] | None = None,
 ) -> Path:
     """Plant a retained probe sidecar ``probe-<parent8>-<seq>-<nonce>.json``.
 
     Mirrors the runner's filename (parent uuid prefix, assigned seqno) and
     the child's payload (child uuid, echoed seqno, flat counter rows, and
-    the child's own keyed-loss set when given).
+    the child's own keyed-loss set when given). ``identity`` seeds the F2
+    self-describing block (parent_uuid/run_id/unit/attempt/role/isolation);
+    omitted entirely for legacy shape (filename carries the only identity).
     """
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"probe-{parent_uuid[:8]}-{seq}-{nonce}.json"
@@ -935,8 +938,24 @@ def _plant_probe_orphan(
     }
     if lost_keys is not None:
         payload["lost_keys"] = lost_keys
+    if identity is not None:
+        payload.update(identity)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def _f2_identity(
+    parent: str, run_id: str = _RUN, unit: str = "a.py", attempt: int = 0
+) -> dict[str, Any]:
+    """Full F2 self-describing block for a planted orphan."""
+    return {
+        "parent_uuid": parent,
+        "run_id": run_id,
+        "unit": unit,
+        "attempt": attempt,
+        "role": "unit",
+        "isolation": "file",
+    }
 
 
 def _dead_pid_with_birth() -> tuple[int, int | None]:
@@ -5365,3 +5384,258 @@ class TestConflictExtractAsIs:
         assert payload["total_calls"] == 5
         assert payload["complete"] is False
         assert payload["lost_processes"][0]["end_state"] == "conflict"
+
+
+# --------------------------------------------------------------------------
+# Area B (rc3): eager registration at probe-sidecar assignment
+# --------------------------------------------------------------------------
+
+
+class TestEagerProbeRegistration:
+    def test_run_probe_registers_before_spawn(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        def _boom(*args: Any, **kwargs: Any) -> Any:
+            raise OSError("no spawn")
+
+        monkeypatch.setattr(subprocess, "run", _boom)
+        with pytest.raises(OSError, match="no spawn"):
+            run_probe("_echo", {"module_path": "/x.so"})
+        # The parent registered before the (failed) spawn: a child that
+        # dies instantly still leaves attributable evidence.
+        assert list((engaged / "registrations").glob("*.json")) != []
+
+    def test_run_probe_sealed_fails_before_spawn(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        durability.seal(engaged, reason="test")
+        calls: list[Any] = []
+
+        def _spy(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _spy)
+        with pytest.raises(durability.CounterPersistenceError):
+            run_probe("_echo", {"module_path": "/x.so"})
+        assert calls == [], "sealed probes never spawn (fail fast, no phantom traffic)"
+
+    def test_run_probe_exports_parent_context(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        monkeypatch.setenv(call_counters.ISOLATION_ENV, "file")
+        seen: dict[str, str] = {}
+
+        def _capture(*args: Any, **kwargs: Any) -> Any:
+            seen.update(kwargs.get("env", {}))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        result = run_probe("_echo", {"module_path": "/x.so"})
+        assert result.returncode == 0
+        parent = call_counters.get_worker_uuid()
+        assert seen[durability.PROBE_PARENT_ENV] == parent
+        assert seen[durability.PROBE_RUN_ENV] == _RUN
+        assert seen[durability.PROBE_UNIT_ENV] == "a.py"
+        assert seen[durability.PROBE_ATTEMPT_ENV] == "0"
+        assert seen[durability.PROBE_ROLE_ENV] == "unit"
+        assert seen[durability.PROBE_ISOLATION_ENV] == "file"
+
+
+# --------------------------------------------------------------------------
+# Area B (rc3): content-exact orphan reunion (F3)
+# --------------------------------------------------------------------------
+
+
+class TestContentExactReunion:
+    def test_ambiguity_healed_by_content_match(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        first = "a" * 31 + "0"
+        second = "a" * 31 + "1"
+        _plant_producer(engaged, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(5))
+        _plant_producer(engaged, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7))
+        orphan = _plant_probe_orphan(
+            engaged, parent_uuid=first, seq=0, identity=_f2_identity(first)
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        by_producer = {rec["worker_uuid"]: rec for rec in records if "total_calls" in rec}
+        assert by_producer[first]["total_calls"] == 9, "orphan reunited by full identity"
+        assert by_producer[second]["total_calls"] == 7, "sibling untouched"
+        assert not orphan.exists(), "adopted orphan consumes"
+
+    def test_legacy_ambiguous_retained_and_warned(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        first = "a" * 31 + "0"
+        second = "a" * 31 + "1"
+        _plant_producer(engaged, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(5))
+        _plant_producer(engaged, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7))
+        orphan = _plant_probe_orphan(engaged, parent_uuid=first, seq=0)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        with pytest.warns(UserWarning, match="ambiguous"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+            )
+        assert sorted(rec["total_calls"] for rec in records if "total_calls" in rec) == [5, 7]
+        assert orphan.exists(), "unattributable legacy orphan stays for a later pass"
+
+    def test_cross_run_orphan_skipped(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5))
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            identity=_f2_identity(_UUID_A, run_id="R-prior"),
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        with pytest.warns(UserWarning, match="cross-run"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+            )
+        assert [rec["total_calls"] for rec in records if "total_calls" in rec] == [5]
+        assert orphan.exists(), "stale-run evidence stays for the barrier, never misfolds"
+
+    def test_mid_pass_orphan_excluded_from_this_pass(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pin-as-is guard: adoption snapshots the directory (glob list), so
+        # a sidecar landing mid-pass waits for the next pass (TOCTOU-safe).
+        pid, birth = _dead_pid_with_birth()
+        parent = call_counters.get_worker_uuid()
+        _plant_producer(engaged, uuid=parent, pid=pid, birth=birth, in_progress=_counts_block(5))
+        _plant_probe_orphan(engaged, parent_uuid=parent, seq=0)
+        real_read = durability._read_probe_orphan
+        planted: list[bool] = []
+
+        def _planting_read(path: Path) -> Any:
+            if not planted:
+                planted.append(True)
+                _plant_probe_orphan(engaged, parent_uuid=parent, seq=1)
+            return real_read(path)
+
+        monkeypatch.setattr(durability, "_read_probe_orphan", _planting_read)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        assert planted == [True]
+        assert [rec["total_calls"] for rec in records if "total_calls" in rec] == [9]
+        leftovers = sorted(p.name for p in engaged.glob("probe-*.json") if "consumed" not in p.name)
+        assert len(leftovers) == 1 and "-1-" in leftovers[0]
+
+
+class TestStaleProducerSidecarFilter:
+    def test_cross_run_sidecar_skipped_and_warned(self, engaged: Path, tmp_path: Path) -> None:
+        # Torn registry (deleted) + valid sidecar from a prior run: the
+        # sidecar must not fold into this run (the barrier owns prior runs).
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="R-prior",
+            in_progress=_counts_block(5),
+        )
+        Path(planted["registry"]).unlink()
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        with pytest.warns(UserWarning, match="cross-run"):
+            records = durability.collect_unit(
+                engaged,
+                unit="a.py",
+                child_jsonl=child,
+                status="crashed",
+                returncode=-9,
+                current_run=_RUN,
+            )
+        assert [rec for rec in records if "total_calls" in rec] == []
+        assert Path(planted["sidecar"]).exists(), "stale evidence retained, never misfolded"
+
+    def test_cross_unit_sidecar_skipped_and_warned(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            unit="b.py",
+            in_progress=_counts_block(5),
+        )
+        Path(planted["registry"]).unlink()
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        with pytest.warns(UserWarning, match="cross-unit"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+            )
+        assert [rec for rec in records if "total_calls" in rec] == []
+        assert Path(planted["sidecar"]).exists()
+
+
+class TestBarrierAdoptionE2E:
+    def test_barrier_adopts_orphan_with_prior_claims(self, tmp_path: Path) -> None:
+        # Pin-as-is guard: resume barrier adoption (present claims that do
+        # not cover the orphan must not block it).
+        root = tmp_path / "counters"
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(root, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5))
+        orphan = _plant_probe_orphan(
+            root,
+            parent_uuid=_UUID_A,
+            seq=0,
+            identity=_f2_identity(_UUID_A),
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    999,
+                    _counts_block(3),
+                    extra={
+                        "worker_uuid": _UUID_B,
+                        "run_id": "R-prior",
+                        "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 9}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        plan = durability.prepare_resume(root, prior_merged_jsonl=prior)
+        assert plan["barrier_ok"] is True
+        staged = plan["cache_records"]["a.py"]
+        partials = [rec for rec in staged if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9, "gap plus adopted orphan"
+        assert not orphan.exists()
