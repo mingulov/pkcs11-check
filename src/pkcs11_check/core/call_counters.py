@@ -471,8 +471,9 @@ def _serialize(
     every module block present carries all five bucket keys (zero buckets
     explicit as ``{"calls": 0, "by_fn": {}}``) while functions/RVs stay
     sparse. An exit without an entry (a lone return) still opens its
-    module map entry with zero calls, so the block validates and the
-    global ``total == sum(modules)`` invariant holds. Empty counters emit
+    module map entry with zero calls, but the result fails validation;
+    production return sites are always paired, so no valid run can
+    produce one. Empty counters emit
     no module blocks at all (``{"total_calls": 0, "by_module": {}}``).
     """
     from pkcs11_check.raw.rv import ckr_name

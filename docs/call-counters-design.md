@@ -2,8 +2,11 @@
 
 Shipped feature reference. The call counters count every `C_*` call made
 through the loaded module - by function name and `CK_RV`, attributed to one of
-four scope buckets and to the module id bound to the handle the call passed
-through - so that run totals match an external observer's counts.
+five scope buckets and to the module id bound to the handle the call passed
+through - so that run totals match an external observer's counts for fully
+recovered executions. Anything less is fail-visible: named losses and
+`complete: false`, or a loud warning for preflight persistence failures
+(see Durability).
 Per-test window entries ride `report.jsonl`'s `user_properties` and one session
 record per process rides the same stream, each carrying the process
 `worker_uuid`; the extractor folds both into a `call_counters` block in
@@ -36,8 +39,9 @@ provenance per shard).
 ## Goals
 
 1. Record complete per-run counters: every `C_*` call through the module, by
-   function and `CK_RV`, in four scope buckets and split by module id, so
-   run totals match an external observer's counts.
+   function and `CK_RV`, in five scope buckets and split by module id, so
+   run totals match an external observer's counts for fully recovered
+   executions (anything less is fail-visible per Durability).
 2. Always on. No CLI option, no env switch, no per-run configuration.
 3. Attribute calls to their phase: per-test window entries plus one session
    record per process in `report.jsonl`, merged into `results.json` on the
@@ -538,7 +542,13 @@ durability entry point is inert and counter behavior is unchanged.
 ## Durability (rc2 Task 3)
 
 Every in-scope call is counted exactly once, or its process is explicitly
-identified as having unrecoverable counter evidence. The machinery lives in
+identified as having unrecoverable counter evidence. That is the contract
+for fully recovered executions; the known persistence residuals are a
+warn-only preflight evidence failure under I/O pathology (no loss record,
+loud warning), a possibly-undercounted `probes_lost` scalar when a
+producer dies before emitting its session record (totals and completeness
+unaffected), and the documented triple-fault probe shape (fail-visible via
+its lost record). The machinery lives in
 `core/_counters_durability.py` (files, collection, sweep, fence) with the
 recording half in `core/call_counters.py` (registration, flushing,
 publishing, atomic ingest) and assembly in `core/_jsonl_extract.py`
@@ -777,11 +787,12 @@ duplicated input -- yield identical bytes.
 
 ### Reading the block
 
-`probes_lost` is the authoritative count of probe children with
-unrecoverable counters; `probes_detail` sits next to it with one
-`{worker_uuid, probe_seq, status}` row per folded receipt, uncapped
-and absent when empty. Any surviving named loss keeps its group, its
-round, and the run incomplete.
+`probes_lost` counts probe children with unrecoverable counters,
+authoritative for retained session records and a lower bound when a
+producer dies before emitting its session record; `probes_detail` sits
+next to it with one `{worker_uuid, probe_seq, status}` row per folded
+receipt, uncapped and absent when empty. Any surviving named loss keeps
+its group, its round, and the run incomplete.
 
 Coverage and counters are different instruments: function and
 mechanism coverage record admission (which functions and mechanisms
@@ -894,10 +905,12 @@ unresolved end and is absent on clean rows. PIDs are metadata only;
 `worker_uuid` is the identity.
 
 `lost_processes[]` (full lost identities) and `probes_detail[]`
-(`{worker_uuid, probe_seq, status}` with `status` in
-`{folded, lost}`) sit next to the authoritative `probes_lost` int at the
-top level and in every per-round block. Both lists are uncapped and
-absent when empty, so legacy blocks stay byte-identical.
+(`{worker_uuid, probe_seq, status: folded}`; no other status is emitted)
+sit next to the `probes_lost` int at the top level and in every
+per-round block. `probes_lost` is authoritative for retained session
+records and a lower bound when a producer dies before emitting its
+session record. Both lists are uncapped and absent when empty, so
+legacy blocks stay byte-identical.
 
 ### Identity keys
 
@@ -911,14 +924,16 @@ absent when empty, so legacy blocks stay byte-identical.
 | Scope | `(scope, target, attempt)` | `scope_key` |
 | Merge | `(shard, run_id, worker_uuid)` | `merge_key` |
 
+The named helpers are schema and contract-test reference constructors
+for these shapes; production builds the equivalent tuples inline.
+
 ### Enums
 
 - `end_state`: `crashed`, `timeout`, `killed`, `unknown`, `unresolved`,
   `conflict`.
 - `role`: `unit` (default, omitted on rows), `retry`, `confirmation`,
   `preflight`.
-- Probe `status`: `folded` (counts included), `lost` (counted in
-  `probes_lost`).
+- Probe `status`: `folded` (counts included). Only `folded` is emitted.
 - Contribution kind: `authoritative`, `partial`, `absent`.
 
 ### Completeness formula
@@ -935,9 +950,10 @@ effective group in it is complete; global `complete` ANDs the rounds.
 ### Merge rules
 
 Merge extracts each shard JSONL in fresh state, sums totals, buckets,
-and losses, dedups contributions by full merge identity (identical
-`(shard, run_id, worker_uuid, module)` fuses, so passing one shard dir
-twice still fuses; distinct shards never fuse even on uuid collision),
+and losses, fusing identical blocks under one resolved shard label (so
+passing one shard dir twice still fuses), refusing the same label with
+any difference, and always summing distinct labels even on uuid
+collision,
 ANDs `complete`, namespaces `by_round` under `"<label>/<run id>"`, tags
 rows conditionally, and emits byte-canonical output (key-sorted modules,
 buckets, functions, and RVs, so plain `json.dumps` is order-independent).
