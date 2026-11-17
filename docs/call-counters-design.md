@@ -118,16 +118,25 @@ merge orders yield the identical leaf including the name.
   record exists AND no fallback per-test deltas were folded in AND no
   partial was folded in AND no loss dispositions it AND session
   `probes_lost` is zero. A round is complete iff every effective group
-  in it is complete; the global flag ANDs the rounds (see the
-  completeness formula under Normative contracts).
+  in it is complete; the global flag ANDs the rounds AND the absence of
+  unattributed segments (see the completeness formula under Normative
+  contracts).
 - A segment with test reports but zero counters data in an opened,
-  unfinished session scope (typically a first-test crash) emits an EMPTY
-  group, which flips the run to `complete: false` instead of vanishing. A
-  crash during FIRST fixture setup leaves no reports at all, so a segment
-  with only a plain marker (no `reason`/`skipped` static-skip provenance)
-  and zero reports/counters in an opened, unfinished scope emits the same
-  EMPTY group. A finished scope with zero counters predates the feature
-  and contributes nothing, as does a static-skip marker with zero reports.
+  unfinished session scope (typically a first-test crash) emits an
+  unattributed segment, which flips the GLOBAL run to `complete: false`
+  instead of vanishing. A crash during FIRST fixture setup leaves no
+  reports at all, so a segment with only a plain marker (no
+  `reason`/`skipped` static-skip provenance) and zero reports/counters in
+  an opened, unfinished scope emits the same segment. A finished scope
+  with zero counters predates the feature and contributes nothing, as
+  does a static-skip marker with zero reports.
+- `unattributed_segments` lists `{scope_index, unit, attempt}` (unit and
+  attempt null when the segment was never marked) for executed-but-
+  counterless segments, canonically sorted. These name no round, so no
+  round block renders for them -- not even `""` -- and per-round
+  `complete` flags never see them; only the global flag does. Merged
+  output concatenates shard segments with `shard` tags (scopes are
+  shard-local), tagged iff more than one shard merges.
 - `by_process` carries one row per (round, pid, module) that contributed a
   session record, fallback deltas, or partial counts; `isolation` is the
   stamped `PKCS11_CHECK_ISOLATION` value (session stamp wins, else the
@@ -205,11 +214,13 @@ round attribution the merged totals could not be split back per invocation.
   pid reused across invocations never fuses and a same-pid entry from
   another round is never superseded.
 - Implicit round: records without `run_id` (pre-round artifacts,
-  direct-pytest runs) fold into the `""` round, which also owns C2 empty
-  groups (a counterless report names no round, so `""` doubles as "round
-  unknown"). Old artifacts therefore yield exactly one `""` round with
-  byte-compatible totals. A record whose `run_id` is present but not a
-  non-empty string is malformed and skipped whole (fail-closed, like I2).
+  direct-pytest runs) fold into the `""` round, which renders only when
+  it holds data. Executed-but-counterless segments (C2/C2b) name no round
+  and surface as `unattributed_segments` instead -- no degenerate `""`
+  block renders for them. Old artifacts with counters data therefore
+  yield exactly one `""` round with byte-compatible totals. A record
+  whose `run_id` is present but not a non-empty string is malformed and
+  skipped whole (fail-closed, like I2).
 - Merge namespacing: `by_round` maps merge under `"<label>/<run id>"`
   flat keys, so identical run ids on two shards (a CI-matrix same-second
   same-pid collision) never fuse. The label is the shard dir basename, or
@@ -832,8 +843,8 @@ Completeness in one line: reconciled effective contributions plus
 unresolved losses -- a group is complete iff an authoritative
 contribution reconciles clean with zero lost probes, zero effective
 losses, and zero conflicts; rounds AND their groups and the global
-flag ANDs the rounds (see the completeness formula under Normative
-contracts).
+flag ANDs the rounds AND the absence of unattributed segments (see
+the completeness formula under Normative contracts).
 
 ## Normative contracts (rc2) - frozen by Task 1
 
