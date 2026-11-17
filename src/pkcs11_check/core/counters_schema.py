@@ -60,6 +60,7 @@ SESSION_OPTIONAL_KEYS = frozenset(
         "role",
         "receipts",
         "persistence_pending",
+        "lost_keys",
     }
 )
 SESSION_ALLOWED_KEYS = SESSION_REQUIRED_KEYS | SESSION_OPTIONAL_KEYS
@@ -81,6 +82,9 @@ PARTIAL_OPTIONAL_KEYS = frozenset(
         "role",
         "isolation",
         "probes_lost",
+        "lost_keys",
+        "recovered_keys",
+        "orphan_keys",
     }
 )
 PARTIAL_ALLOWED_KEYS = PARTIAL_REQUIRED_KEYS | PARTIAL_OPTIONAL_KEYS
@@ -123,6 +127,7 @@ ROW_OPTIONAL_KEYS = frozenset(
 ROW_ALLOWED_KEYS = ROW_REQUIRED_KEYS | ROW_OPTIONAL_KEYS
 RECEIPT_KEYS = frozenset({"worker_uuid", "probe_seq"})
 PROBE_DETAIL_KEYS = frozenset({"worker_uuid", "probe_seq", "status"})
+LOST_KEY_KEYS = frozenset({"parent_uuid", "probe_seq"})
 
 _SECRET_EXACT_KEYS = frozenset(
     {
@@ -344,6 +349,20 @@ def is_receipt(value: object) -> TypeGuard[dict[str, Any]]:
     if set(value) != RECEIPT_KEYS:
         return False
     return is_worker_uuid(value["worker_uuid"]) and is_probe_seq(value["probe_seq"])
+
+
+def is_lost_key(value: object) -> TypeGuard[dict[str, Any]]:
+    """Whether ``value`` is a lost-probe key ``{parent_uuid, probe_seq}``.
+
+    The parent is the probe launcher (accounting owner); the seq is the
+    parent-assigned probe number. Same seq vocabulary as receipts, but the
+    uuid names the observation's parent, never the child.
+    """
+    if not isinstance(value, dict):
+        return False
+    if set(value) != LOST_KEY_KEYS:
+        return False
+    return is_worker_uuid(value["parent_uuid"]) and is_probe_seq(value["probe_seq"])
 
 
 def is_probe_detail(value: object) -> TypeGuard[dict[str, Any]]:
@@ -1017,6 +1036,7 @@ __all__ = [
     "ENTRY_REQUIRED_KEYS",
     "LOST_ALLOWED_KEYS",
     "LOST_FORBIDDEN_KEYS",
+    "LOST_KEY_KEYS",
     "LOST_OPTIONAL_KEYS",
     "LOST_REPORT_TYPE",
     "LOST_REQUIRED_KEYS",
@@ -1054,6 +1074,7 @@ __all__ = [
     "is_bucket_name",
     "is_end_state",
     "is_legacy_buckets_block",
+    "is_lost_key",
     "is_lost_record",
     "is_module_first_block",
     "is_preflight_synth_record",

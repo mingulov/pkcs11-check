@@ -22,7 +22,7 @@ import os
 from collections import Counter, defaultdict
 from typing import Any
 
-from pkcs11_check.core.call_counters import add_lost_probes, ingest_child_counts
+from pkcs11_check.core.call_counters import ingest_child_evidence
 from pkcs11_check.testcases._subprocess_coverage import (
     normalize_mechanism_counts,
     normalize_mechanism_rv_counts,
@@ -118,9 +118,15 @@ def ingest_subprocess_coverage(path: str, *, ingest_counters: bool = True) -> bo
         # Unusable channel: the launcher owns this child as one loss, so the
         # payload's inner loss claims (if any) are dropped, never accumulated.
         return False
-    ingest_child_counts(list(counters))
-    # .get default: payloads written before the wire extension carry no key.
-    add_lost_probes(data.get("probes_lost", 0))
+    # .get defaults: payloads written before the wire extensions carry no keys.
+    # One atomic ingest (counts + scalar + keys with the scalar-anchored
+    # remainder rule); the child is sourceless, so repeats always apply.
+    ingest_child_evidence(
+        list(counters),
+        data.get("probes_lost", 0),
+        (),
+        lost_keys=data.get("lost_keys", ()),
+    )
     return True
 
 

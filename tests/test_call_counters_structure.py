@@ -650,3 +650,139 @@ class TestMergeIdentityDedup:
             ("shardB", 10),
         ]
         assert sorted(merged_ab["by_round"]) == [f"shardA/{_R1}", f"shardB/{_R1}"]
+
+
+def _lost_key(parent: str, seq: int) -> dict[str, Any]:
+    return {"parent_uuid": parent, "probe_seq": seq}
+
+
+class TestMergeLossLedger:
+    def test_merge_never_fuses_across_statuses(self, tmp_path: Path) -> None:
+        # Same probe folded in one shard and lost-claimed in another:
+        # contradictory dispositions stay visible, never fused.
+        first = tmp_path / "shardA"
+        _write_shard(
+            first,
+            "a.py",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    100,
+                    total=10,
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _R1,
+                        "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        second = tmp_path / "shardB"
+        _write_shard(
+            second,
+            "b.py",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("b.py", 0),
+                _session_record(
+                    200,
+                    total=7,
+                    extra={
+                        "worker_uuid": _UUID_B,
+                        "run_id": _R1,
+                        "probes_lost": 1,
+                        "lost_keys": [_lost_key(_UUID_B, 0)],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        merged = merge_shard_dirs([first, second], tmp_path / "merged")["call_counters"]
+        assert merged["total_calls"] == 17
+        assert merged["probes_lost"] == 1
+        assert merged["probes_detail"] == [
+            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"},
+            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "lost"},
+        ]
+
+    def test_merge_sums_disjoint_derived_totals(self, tmp_path: Path) -> None:
+        first = tmp_path / "shardA"
+        _write_shard(
+            first,
+            "a.py",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    100,
+                    total=10,
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _R1,
+                        "probes_lost": 2,
+                        "lost_keys": [_lost_key(_UUID_A, 1)],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        second = tmp_path / "shardB"
+        _write_shard(
+            second,
+            "b.py",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("b.py", 0),
+                _session_record(
+                    200,
+                    total=7,
+                    extra={
+                        "worker_uuid": _UUID_C,
+                        "run_id": _R1,
+                        "probes_lost": 3,
+                        "lost_keys": [_lost_key(_UUID_C, 4), _lost_key(_UUID_C, 5)],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        merged = merge_shard_dirs([first, second], tmp_path / "merged")["call_counters"]
+        assert merged["total_calls"] == 17
+        assert merged["probes_lost"] == 5
+        assert merged["probes_detail"] == [
+            {"worker_uuid": _UUID_A, "probe_seq": 1, "status": "lost"},
+            {"worker_uuid": _UUID_C, "probe_seq": 4, "status": "lost"},
+            {"worker_uuid": _UUID_C, "probe_seq": 5, "status": "lost"},
+        ]
+
+    def test_merge_zero_rows_flow_without_module_stamp(self, tmp_path: Path) -> None:
+        first = tmp_path / "shardA"
+        _write_shard(
+            first,
+            "a.py",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(100, total=10, extra={"worker_uuid": _UUID_A, "run_id": _R1}),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        second = tmp_path / "shardB"
+        _write_shard(
+            second,
+            "b.py",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("b.py", 0),
+                _lost_record(worker_uuid=_UUID_B, pid=200, unit="b.py"),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        merged = merge_shard_dirs([first, second], tmp_path / "merged")["call_counters"]
+        zero_rows = [row for row in merged["by_process"] if row["pid"] == 200]
+        assert len(zero_rows) == 1
+        assert "module" not in zero_rows[0]
+        assert zero_rows[0]["shard"] == "shardB"
+        assert zero_rows[0]["complete"] is False

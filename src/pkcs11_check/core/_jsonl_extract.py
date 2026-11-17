@@ -167,6 +167,7 @@ from pkcs11_check.core.counters_schema import (
     canonicalize_module_first,
     is_end_state,
     is_legacy_buckets_block,
+    is_lost_key,
     is_module_first_block,
     is_receipt,
     is_role,
@@ -424,6 +425,21 @@ def _parse_receipts_list(value: Any) -> frozenset[tuple[str, int]]:
     )
 
 
+def _parse_lost_keys_list(value: Any) -> frozenset[tuple[str, int]]:
+    """Return the well-formed lost keys from a record's key list.
+
+    Item-tolerant like receipts: malformed pairs are skipped, so one
+    hostile pair never discards the record. The scalar anchors the total
+    (unkeyed = scalar − keyed length), so skipping a pair conserves the
+    total instead of dropping it.
+    """
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(
+        (entry["parent_uuid"], entry["probe_seq"]) for entry in value if is_lost_key(entry)
+    )
+
+
 def _parse_session_counters(
     record: dict[str, Any],
 ) -> (
@@ -438,6 +454,7 @@ def _parse_session_counters(
         frozenset[tuple[str, int]],
         str | None,
         bool,
+        frozenset[tuple[str, int]],
     ]
     | None
 ):
@@ -455,6 +472,9 @@ def _parse_session_counters(
     non-None ``persistence_pending`` marker (any shape: its contents are
     forensic, not validity-gating) reads as pending — fail closed, since an
     unreadable marker cannot prove clean persistence; absent/None reads clean.
+    Keyed losses parse item-tolerantly; the scalar minus their length is the
+    unkeyed remainder (clamped at zero: identities win over an inconsistent
+    scalar, fail closed toward incomplete).
     """
     pid = _as_nonneg_int(record.get("pid"))
     total = _as_nonneg_int(record.get("total_calls"))
@@ -476,15 +496,27 @@ def _parse_session_counters(
         isolation = "unknown"
     receipts = _parse_receipts_list(record.get("receipts"))
     pending = record.get("persistence_pending") is not None
+    keys = _parse_lost_keys_list(record.get("lost_keys"))
     assert role is None or isinstance(role, str)
-    return (pid, total, block, probes_lost, isolation, run, uuid, receipts, role, pending)
+    return (pid, total, block, probes_lost, isolation, run, uuid, receipts, role, pending, keys)
 
 
 def _parse_partial_counters(
     record: dict[str, Any],
 ) -> (
     tuple[
-        int | None, int, dict[str, Any], str, str, frozenset[tuple[str, int]], str | None, str, int
+        int | None,
+        int,
+        dict[str, Any],
+        str,
+        str,
+        frozenset[tuple[str, int]],
+        str | None,
+        str,
+        int,
+        frozenset[tuple[str, int]],
+        frozenset[tuple[str, int]],
+        frozenset[tuple[str, int]],
     ]
     | None
 ):
@@ -498,7 +530,9 @@ def _parse_partial_counters(
     fails closed like sessions (a forged tag must not fold); isolation is
     informational like sessions (``"unknown"`` when absent or mistyped). A
     present ``probes_lost`` must be a usable non-negative int (absent reads
-    0); anything else skips the whole record.
+    0); anything else skips the whole record. Key lists
+    (``lost_keys``/``orphan_keys``/``recovered_keys``) parse item-tolerantly
+    like receipts.
     """
     if record.get("truncated") is not True:
         return None
@@ -540,6 +574,9 @@ def _parse_partial_counters(
         role,
         isolation,
         part_lost,
+        _parse_lost_keys_list(record.get("lost_keys")),
+        _parse_lost_keys_list(record.get("orphan_keys")),
+        _parse_lost_keys_list(record.get("recovered_keys")),
     )
 
 
@@ -711,6 +748,72 @@ def _parse_test_counters(
 
 
 @dataclass
+class _LossEntry:
+    """One loss source's books: keyed identities plus an unkeyed remainder."""
+
+    keyed: set[tuple[str, int]] = field(default_factory=set)
+    unkeyed: int = 0
+
+
+@dataclass
+class _LossLedger:
+    """Per-scope loss books: keyed sets plus unkeyed counts (R3-1 operator).
+
+    Entries are keyed by source: ``("uuid", run, uuid)`` for attributed
+    producers, ``("record", run, pid, scope, target, attempt)`` for uuid-less
+    records (the canonical fallback: same scope twice is a torn-append
+    retry, distinct scopes are distinct producers). Newer cumulative state
+    for one source REPLACES its entry; independent orphan keys UNION;
+    exact recovery discards one keyed identity. The derived total (keyed
+    plus unkeyed) can never go negative and never double-counts.
+    """
+
+    entries: dict[tuple[Any, ...], _LossEntry] = field(default_factory=dict)
+
+    def replace(
+        self, source: tuple[Any, ...], keys: frozenset[tuple[str, int]], unkeyed: int
+    ) -> None:
+        """Replace one source's cumulative entry (newer state supersedes)."""
+        self.entries[source] = _LossEntry(set(keys), unkeyed)
+
+    def union_orphans(self, run: str, keys: frozenset[tuple[str, int]]) -> None:
+        """Union adopted-orphan keys (fresh info no session could hold)."""
+        for parent, seq in keys:
+            self.entries.setdefault(("uuid", run, parent), _LossEntry()).keyed.add((parent, seq))
+
+    def discard(self, key: tuple[str, int]) -> None:
+        """Discard one recovered keyed identity everywhere (idempotent)."""
+        for entry in self.entries.values():
+            entry.keyed.discard(key)
+
+    def total(self) -> int:
+        """Derived loss total: keyed identities plus unkeyed counts."""
+        return sum(len(entry.keyed) + entry.unkeyed for entry in self.entries.values())
+
+    def net_keys(self) -> set[tuple[str, int]]:
+        """Union of surviving keyed identities (for lost detail rows)."""
+        result: set[tuple[str, int]] = set()
+        for entry in self.entries.values():
+            result |= entry.keyed
+        return result
+
+
+def _loss_source(
+    run: str, uuid: str | None, pid: int, coords: tuple[int, str | None, int | None]
+) -> tuple[Any, ...]:
+    """Return the canonical loss-ledger source for one record.
+
+    Attributed producers key by identity; uuid-less records fall back to
+    ``("record", run, pid, scope, target, attempt)`` so the same scope
+    twice (a torn-append retry) replaces while distinct scopes add.
+    """
+    if uuid is not None:
+        return ("uuid", run, uuid)
+    scope, target, attempt = coords
+    return ("record", run, pid, scope, target, attempt)
+
+
+@dataclass
 class _CountersGroup:
     """One (target, attempt) group's reconciliation state (built, then reconciled).
 
@@ -722,9 +825,8 @@ class _CountersGroup:
     """
 
     session_pids: set[int] = field(default_factory=set)
-    session_probes_lost: int = 0
+    loss: _LossLedger = field(default_factory=_LossLedger)
     session_persistence_pending: bool = False
-    partial_probes_lost: int = 0
     has_session: bool = False
     fallback_used: bool = False
     has_partial: bool = False
@@ -739,7 +841,7 @@ class _CountersPid:
     """One pid's folded contribution across all groups (split per module at render)."""
 
     sessions_total: int = 0
-    sessions_probes_lost: int = 0
+    loss: _LossLedger = field(default_factory=_LossLedger)
     sessions_persistence_pending: bool = False
     has_session: bool = False
     fallback_total: int = 0
@@ -754,13 +856,13 @@ class _CountersPid:
 
 
 def _counters_group_complete(group: _CountersGroup) -> bool:
-    """Whether a group reconciles clean: session, no fallback/partial/loss, no lost probes."""
+    """Whether a group reconciles clean: session, no fallback/partial/loss, empty ledger."""
     return (
         group.has_session
         and not group.fallback_used
         and not group.has_partial
         and not group.has_lost
-        and group.session_probes_lost == 0
+        and group.loss.total() == 0
         and not group.session_persistence_pending
     )
 
@@ -771,20 +873,41 @@ def _fold_module_calls(state: dict[str, int], block: dict[str, Any]) -> None:
         state[module] = state.get(module, 0) + module_block["calls"]
 
 
+def _decorate_process_row(row: dict[str, Any], state: _CountersPid, *, module: str | None) -> None:
+    """Attach attribution keys to one by_process row (in place)."""
+    if state.worker_uuid is not None:
+        row["worker_uuid"] = state.worker_uuid
+    if state.role is not None and state.role != "unit":
+        row["role"] = state.role
+    if module is not None and module in state.partial_modules:
+        row["truncated"] = True
+    if state.sessions_persistence_pending:
+        row["persistence_pending"] = True
+    if state.end_states:
+        row["end_state"] = (
+            next(iter(state.end_states)) if len(state.end_states) == 1 else "conflict"
+        )
+    if module is not None:
+        row["module"] = module
+
+
 def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]]:
     """Render one by_process row per (pid, module), each carrying its ``module`` key.
 
     A row is complete iff its module reconciles clean for this pid (session
-    evidence, no fallback or partial evidence, no lost probes, no loss
-    disposition, no surviving persistence marker); lost probes, loss
+    evidence, no fallback or partial evidence, an empty loss ledger, no loss
+    disposition, no surviving persistence marker); ledger losses, loss
     dispositions, and the marker are process-level, so they flip every row
     of the pid. Partial modules render ``truncated`` rows; a surviving
     marker renders ``persistence_pending``; a reconciled loss disposition
     renders ``end_state``; a non-unit
     role (session or partial evidence; retry, confirmation, preflight)
-    renders ``role``. No round/shard keys; the caller tags those, and
-    strips ``module`` when the block holds a single distinct module
-    (see :func:`_strip_single_module_tag`).
+    renders ``role``. A pid with incomplete-visible evidence but no modules
+    (fallback evidence, a loss disposition, outstanding ledger losses, or a
+    degraded marker) renders one module-less row so the evidence is never
+    invisible; a clean zero-call session stays silent. No round/shard keys;
+    the caller tags those, and strips ``module`` when the block holds a
+    single distinct module (see :func:`_strip_single_module_tag`).
     """
     rows: list[dict[str, Any]] = []
     modules = sorted(
@@ -801,24 +924,26 @@ def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]
                 module in state.session_modules
                 and module not in state.fallback_modules
                 and module not in state.partial_modules
-                and state.sessions_probes_lost == 0
+                and state.loss.total() == 0
                 and not state.end_states
                 and not state.sessions_persistence_pending
             ),
         }
-        if state.worker_uuid is not None:
-            row["worker_uuid"] = state.worker_uuid
-        if state.role is not None and state.role != "unit":
-            row["role"] = state.role
-        if module in state.partial_modules:
-            row["truncated"] = True
-        if state.sessions_persistence_pending:
-            row["persistence_pending"] = True
-        if state.end_states:
-            row["end_state"] = (
-                next(iter(state.end_states)) if len(state.end_states) == 1 else "conflict"
-            )
-        row["module"] = module
+        _decorate_process_row(row, state, module=module)
+        rows.append(row)
+    if not modules and (
+        state.fallback_used
+        or state.end_states
+        or state.loss.total() > 0
+        or state.sessions_persistence_pending
+    ):
+        row = {
+            "pid": pid,
+            "isolation": state.isolation,
+            "total_calls": 0,
+            "complete": False,
+        }
+        _decorate_process_row(row, state, module=None)
         rows.append(row)
     return rows
 
@@ -828,12 +953,13 @@ def _strip_single_module_tag(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 
     The same conditional rule as ``round``/``shard``: single-module output
     reads exactly like rc1 on every row key. Imported by ``core.merge`` for
-    the same decision over the merged row set.
+    the same decision over the merged row set. Module-less rows (zero-call
+    evidence) pass through untouched and never vote: only present tags count.
     """
-    if len({row["module"] for row in rows}) > 1:
+    if len({row["module"] for row in rows if "module" in row}) > 1:
         return rows
     for row in rows:
-        del row["module"]
+        row.pop("module", None)
     return rows
 
 
@@ -969,10 +1095,22 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     authoritative: set[tuple[str, str]] = set()
     receipts_all: set[tuple[str, int]] = set()
     receipts_by_round: dict[str, set[tuple[str, int]]] = {}
+    recovered_by_run: dict[str, set[tuple[str, int]]] = {}
     staged_lost: list[tuple[str, int, str | None, int | None, int, dict[str, Any]]] = []
     staged_partials: list[
         tuple[
-            str, int, str | None, int | None, str, int | None, dict[str, Any], str | None, str, int
+            str,
+            int,
+            str | None,
+            int | None,
+            str,
+            int | None,
+            dict[str, Any],
+            str | None,
+            str,
+            int,
+            frozenset[tuple[str, int]],
+            frozenset[tuple[str, int]],
         ]
     ] = []
     scope = 0
@@ -1073,6 +1211,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 receipts,
                 role,
                 marker_pending,
+                keys,
             ) = parsed
             if uuid is not None and (run, uuid) in authoritative:
                 # Torn-append retry: one producer emits one session per
@@ -1087,7 +1226,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             group = _group((run, *current))
             group.has_session = True
             group.session_pids.add(pid)
-            group.session_probes_lost += probes_lost
+            source = _loss_source(run, uuid, pid, current)
+            group.loss.replace(source, keys, max(0, probes_lost - len(keys)))
             if marker_pending:
                 group.session_persistence_pending = True
             pid_state = _pid_state((run, pid))
@@ -1099,7 +1239,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 pid_state.role = role
             pid_state.has_session = True
             pid_state.sessions_total += total
-            pid_state.sessions_probes_lost += probes_lost
+            pid_state.loss.replace(source, keys, max(0, probes_lost - len(keys)))
             if marker_pending:
                 pid_state.sessions_persistence_pending = True
             _fold_module_calls(pid_state.session_modules, block)
@@ -1118,8 +1258,15 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 part_role,
                 part_isolation,
                 part_lost,
+                part_keys,
+                part_orphan_keys,
+                part_recovered,
             ) = parsed_partial
             _union_receipts(part_run, part_receipts)
+            # Recoveries harvest at stage time (like receipts): exact healing
+            # must pierce session-supersede, which would otherwise skip this
+            # partial's whole contribution at fold time.
+            recovered_by_run.setdefault(part_run, set()).update(part_recovered)
             staged_partials.append(
                 (
                     part_run,
@@ -1130,6 +1277,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                     part_role,
                     part_isolation,
                     part_lost,
+                    part_keys,
+                    part_orphan_keys,
                 )
             )
             continue
@@ -1193,7 +1342,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     # same-producer partials (both input orders); repeats of one partial
     # fold first-wins (re-collection after a crash between append and
     # consume still counts exactly once). Groups are created only for
-    # folded partials, so a superseded partial leaves no vacuous group.
+    # folded partials, so a superseded partial leaves no vacuous group —
+    # except when it carries adopted-orphan keys (fresh info no session
+    # could hold), which union regardless of supersede.
     folded_partials: set[tuple[str, str]] = set()
     for staged in staged_partials:
         (
@@ -1207,7 +1358,15 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             part_role,
             part_isolation,
             part_lost,
+            part_keys,
+            part_orphan_keys,
         ) = staged
+        if part_orphan_keys:
+            _group((part_run, part_scope, part_target, part_attempt)).loss.union_orphans(
+                part_run, part_orphan_keys
+            )
+            if part_pid is not None:
+                _pid_state((part_run, part_pid)).loss.union_orphans(part_run, part_orphan_keys)
         if (part_run, uuid) in authoritative:
             continue
         if (part_run, uuid) in folded_partials:
@@ -1216,10 +1375,15 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         _fold(part_run, block)
         fold_group = _group((part_run, part_scope, part_target, part_attempt))
         fold_group.has_partial = True
-        fold_group.partial_probes_lost += part_lost
+        fold_group.loss.replace(
+            ("uuid", part_run, uuid), part_keys, max(0, part_lost - len(part_keys))
+        )
         if part_pid is None:
             continue
         pid_state = _pid_state((part_run, part_pid))
+        pid_state.loss.replace(
+            ("uuid", part_run, uuid), part_keys, max(0, part_lost - len(part_keys))
+        )
         if pid_state.worker_uuid is None:
             pid_state.worker_uuid = uuid
         # Deliberate asymmetry (rc3-D residual): session values win over
@@ -1336,6 +1500,19 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         if entry.get("pid") is not None:
             pid_state = _pid_state((run, entry["pid"]))
             pid_state.end_states.add(entry["end_state"])
+            if (
+                not pid_state.has_session
+                and not pid_state.fallback_used
+                and not pid_state.partial_modules
+            ):
+                # Otherwise-evidenceless pid: attribute the zero row from
+                # the loss record (real evidence always wins elsewhere).
+                if pid_state.worker_uuid is None and entry.get("worker_uuid") is not None:
+                    pid_state.worker_uuid = entry["worker_uuid"]
+                if pid_state.role is None and entry.get("role") is not None:
+                    pid_state.role = entry["role"]
+                if pid_state.isolation == "unknown" and entry.get("isolation") is not None:
+                    pid_state.isolation = entry["isolation"]
         if entry.get("worker_uuid") is not None:
             for (state_run, _state_pid), pid_state in pids.items():
                 if state_run == run and pid_state.worker_uuid == entry["worker_uuid"]:
@@ -1363,6 +1540,20 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         if key[0] in opened and key[0] not in finished:
             groups[("", *key)] = _CountersGroup()
 
+    # Exact recovery: adopted-orphan identities harvested at stage time
+    # discard their live-claimed keys everywhere in their run (idempotent;
+    # unclaimed keys are no-ops). Applied once all folds are final so the
+    # result is independent of record order.
+    for run, recovered in recovered_by_run.items():
+        for group_key, group in groups.items():
+            if group_key[0] == run:
+                for healed in recovered:
+                    group.loss.discard(healed)
+        for (pid_run, _), state in pids.items():
+            if pid_run == run:
+                for healed in recovered:
+                    state.loss.discard(healed)
+
     if not groups and not lost_processes:
         return None
     # A surviving lost record is a terminal disposition: any named loss
@@ -1379,7 +1570,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     )
     round_rows: dict[str, list[dict[str, Any]]] = {run: [] for run in rounds}
     for (run, pid), state in sorted(pids.items()):
-        if state.has_session or state.fallback_used or state.partial_modules:
+        if state.has_session or state.fallback_used or state.partial_modules or state.end_states:
             round_rows[run].extend(_counters_process_rows(pid, state))
     show_round = len({run for run, rows in round_rows.items() if rows}) > 1
     by_process: list[dict[str, Any]] = []
@@ -1396,19 +1587,27 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "complete": round_complete,
             "total_calls": round_merged["total_calls"],
             "by_module": canonicalize_module_first(round_merged),
-            "probes_lost": sum(
-                group.session_probes_lost + group.partial_probes_lost for group in round_groups
-            ),
+            "probes_lost": sum(group.loss.total() for group in round_groups),
             "by_process": _strip_single_module_tag([dict(row) for row in round_rows[run]]),
         }
         if lost_by_round.get(run):
             round_block["lost_processes"] = lost_by_round[run]
         round_receipts = sorted(receipts_by_round.get(run, set()))
-        if round_receipts:
+        round_lost: set[tuple[str, int]] = set()
+        for group in round_groups:
+            round_lost |= group.loss.net_keys()
+        round_lost_rows = [
+            {"worker_uuid": parent, "probe_seq": seq, "status": "lost"}
+            for parent, seq in sorted(round_lost)
+        ]
+        if round_receipts or round_lost_rows:
+            # Folded rows first (legacy prefix-stable), then net lost rows.
+            # A lost row's worker_uuid names the accounting parent (status
+            # qualifies the identity); a folded row's names the child.
             round_block["probes_detail"] = [
                 {"worker_uuid": uuid, "probe_seq": seq, "status": "folded"}
                 for uuid, seq in round_receipts
-            ]
+            ] + round_lost_rows
         by_round[run] = round_block
         for row in round_rows[run]:
             tagged = dict(row)
@@ -1421,20 +1620,25 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         "complete": complete,
         "total_calls": merged["total_calls"],
         "by_module": merged,
-        "probes_lost": sum(
-            group.session_probes_lost + group.partial_probes_lost for group in groups.values()
-        ),
+        "probes_lost": sum(group.loss.total() for group in groups.values()),
         "by_process": by_process,
         "by_round": by_round,
     }
     if lost_processes:
         payload["lost_processes"] = lost_processes
     ordered_receipts = sorted(receipts_all)
-    if ordered_receipts:
+    net_lost: set[tuple[str, int]] = set()
+    for group in groups.values():
+        net_lost |= group.loss.net_keys()
+    lost_rows = [
+        {"worker_uuid": parent, "probe_seq": seq, "status": "lost"}
+        for parent, seq in sorted(net_lost)
+    ]
+    if ordered_receipts or lost_rows:
         payload["probes_detail"] = [
             {"worker_uuid": uuid, "probe_seq": seq, "status": "folded"}
             for uuid, seq in ordered_receipts
-        ]
+        ] + lost_rows
     return payload
 
 

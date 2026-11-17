@@ -36,7 +36,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pkcs11_check.core.call_counters import current_receipts, flatten_current, probes_lost
+from pkcs11_check.core.call_counters import (
+    current_receipts,
+    flatten_current,
+    lost_probe_keys,
+    probes_lost,
+)
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
@@ -120,7 +125,8 @@ def _write_coverage(raw: RawPKCS11 | _LegacyCoverageSnapshot) -> None:
     the probe sidecar for the parent's torn-coverage fallback.
     """
     flattened = flatten_current()
-    flush_probe_sidecar(flattened)
+    keys = lost_probe_keys()
+    flush_probe_sidecar(flattened, lost_keys=keys or None)
     write_coverage(
         raw.call_log,
         {str(k): v for k, v in raw.mechanism_counts.items()},
@@ -133,6 +139,7 @@ def _write_coverage(raw: RawPKCS11 | _LegacyCoverageSnapshot) -> None:
         probes_lost=probes_lost(),
         receipt=probe_coverage_receipt(),
         receipts=current_receipts() or None,
+        lost_keys=keys or None,
     )
 
 
