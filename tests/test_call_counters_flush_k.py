@@ -15,8 +15,6 @@ unconditional at any K.
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -114,13 +112,12 @@ def test_no_snapshot_before_k_dies_loud(
     for _ in range(5):
         call_counters.record_call("C_Login", module="m")
     assert _sidecar_or_none() is None
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "pass"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    dead_pid = proc.pid
-    proc.wait(timeout=30)
+    # An impossible pid is verifiably dead on every platform. A real
+    # spawn-and-reap pid registered post-mortem (birth 0) is
+    # reuse-blind: if Windows recycles it to an unopenable process
+    # before collection, the verdict degrades to unknown and the
+    # producer skips silently (smoke-windows flake).
+    dead_pid = 2**31 - 1
     worker = "d" * 32
     durability.register_worker(
         engaged,
