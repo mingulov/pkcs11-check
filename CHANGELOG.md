@@ -1,15 +1,19 @@
 # Changelog
 
-## [0.3.0] - 2026-11-06
+## [0.3.0] - 2026-11-17
 
 Coverage and verdict-accuracy release: six new conformance areas,
-provider-compatibility probes, 64-bit Windows platform guards, and a
-round-gating evidence toolkit; oracle precedence, refusal handling,
-and ownership proofs corrected. Not yet validated by a full provider
-round (see Known limitations).
+provider-compatibility probes, exact always-on call counters, 64-bit
+Windows platform guards, and a round-gating evidence toolkit; oracle
+precedence, refusal handling, and ownership proofs corrected. Not yet
+validated by a full provider round (see Known limitations).
 
 ### Added
 
+- **Exact call counts for every provider call: totals by function and
+  return code, split by module, always on and matching external
+  observers -- including crashed runs and startup checks, with gaps
+  named instead of silent.**
 - **New conformance areas: allowed-mechanism policy effects,
   malformed object-template detection, key-staging and refused-unwrap
   ownership, Diffie-Hellman peer-key coverage, Security Officer
@@ -40,6 +44,11 @@ round (see Known limitations).
   verdict; undefined setup return codes fail as metadata.**
 - **New and corrected verdicts for copy behavior, signatures, key
   derivation, key sensitivity, sessions, and object search.**
+- **In-process runs produce their JSON results instead of an empty
+  report.**
+- **Windows counter collection fixed: no more startup crashes, and
+  process-lifecycle handling made portable.**
+- **Refreshed third-party test vectors to their latest releases.**
 
 ### Known limitations
 
@@ -51,6 +60,10 @@ round (see Known limitations).
 - Key-derivation exactness and attribute-table readings await
   maintainer spec confirmation; complementary key-pair matching
   keeps its pre-existing rule pending a full round.
+- Resumed runs have known counter-evidence gaps (an unresolved loss
+  can go unnamed; a failed startup check on resume can overwrite the
+  prior report); fixes are sequenced as the immediate follow-up.
+  Fresh runs are exact.
 
 ## [0.2.3] - 2026-10-05
 
