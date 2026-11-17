@@ -3,8 +3,9 @@
 ## [0.3.0] - 2026-11-17
 
 Coverage and verdict-accuracy release: six new conformance areas,
-provider-compatibility probes, exact always-on call counters, 64-bit
-Windows platform guards, and a round-gating evidence toolkit; oracle
+provider-compatibility probes, always-on provider call counters,
+64-bit Windows platform guards, and a round-gating evidence toolkit;
+oracle
 precedence, refusal handling, and ownership proofs corrected. Not yet
 validated by a full provider round (see Known limitations).
 
