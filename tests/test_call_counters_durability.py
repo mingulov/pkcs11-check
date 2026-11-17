@@ -4420,6 +4420,9 @@ class TestTransientWriteRetry:
 
     def test_transient_predicate(self, monkeypatch: pytest.MonkeyPatch) -> None:
         is_transient = durability._is_transient_write_error
+        # Both halves force the platform: on real Windows sys.platform is
+        # already "win32", which would flip the POSIX EACCES assert below.
+        monkeypatch.setattr(sys, "platform", "linux")
         assert is_transient(OSError(errno.EAGAIN, "try again")) is True
         assert is_transient(OSError(errno.EWOULDBLOCK, "would block")) is True
         assert is_transient(OSError(errno.ENOSPC, "no space")) is False
