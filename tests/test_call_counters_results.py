@@ -1386,7 +1386,7 @@ def test_merge_heterogeneous_counters_is_byte_identical(tmp_path: Path) -> None:
     # Byte-identity (codex R2): shards contributing DISTINCT buckets,
     # functions, and RVs merge to byte-identical output in both orders
     # (plain json.dumps, no sort_keys) -- homogeneous shapes cannot expose
-    # first-insertion-order leaks through merge_serialized.
+    # first-insertion-order leaks through module-first merging.
     shard_a = tmp_path / "shardA"
     shard_b = tmp_path / "shardB"
     _round_shard(

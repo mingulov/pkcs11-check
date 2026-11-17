@@ -397,7 +397,7 @@ def test_extract_malformed_buckets_skipped_without_raise(tmp_path: Path) -> None
                 "isolation": "file",
                 "probes_lost": 0,
                 "total_calls": 10,
-                # by_rv leaf missing "count": merge_serialized would KeyError.
+                # by_rv leaf missing "count": the extractor rejects it (fail-closed).
                 "buckets": {
                     "test": {
                         "calls": 10,
