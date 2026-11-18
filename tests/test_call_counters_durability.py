@@ -3368,6 +3368,47 @@ class TestProbeOrphanAdoption:
         assert first["in_progress"]["total_calls"] == 4
         assert first["consumed_probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 0}]
 
+    def test_run_probe_notes_loss_when_commit_fails(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        # Codex 6.2 F1: a commit failure must not skip the keyed loss
+        # note the success path records -- note, then re-raise, so the
+        # killed probe's unflushed tail can never read complete.
+        seen_seq: list[int] = []
+
+        def _killed(*args: Any, **kwargs: Any) -> Any:
+            env = kwargs["env"]
+            Path(env["_P11CHECK_SUBPROCESS_COVERAGE"]).write_bytes(b"{torn")
+            seq = int(env[durability.PROBE_SEQ_ENV])
+            seen_seq.append(seq)
+            Path(env[durability.PROBE_SIDECAR_ENV]).write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": _UUID_B,
+                        "probe_seq": seq,
+                        "counters": [["m", "C_Login", 0, 4]],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return SimpleNamespace(returncode=-9, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _killed)
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            run_probe("_echo", {"module_path": "/x.so"})
+        assert seen_seq != []
+        parent = call_counters.get_worker_uuid()
+        assert call_counters.probes_lost() == 1
+        assert call_counters.lost_probe_keys() == [
+            {"parent_uuid": parent, "probe_seq": seen_seq[0]}
+        ]
+        assert call_counters.serialize_current()["total_calls"] == 4
+
     def test_empty_fallback_still_persists_consumed_identity(
         self, engaged: Path, tmp_path: Path
     ) -> None:
