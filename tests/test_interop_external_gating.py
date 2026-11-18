@@ -62,16 +62,31 @@ def test_run_spawns_with_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_list_modules_skipped_without_opt_in(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from pkcs11_check.testcases.test_interop_openssl import _have_p11kit
-
-    if not _have_p11kit():
-        pytest.skip("p11-kit not installed")
     monkeypatch.delenv(OPT_IN_ENV, raising=False)
-    # Trap the launch in the child: with no PATH entry for p11-kit, a
-    # regressed gate errors instead of enumerating host modules.
-    monkeypatch.setenv("PATH", str(tmp_path))
+    # Hermetic child: stub tool presence and trap the spawn inside the
+    # inner pytest, so the test needs no host packages and cannot
+    # launch anything on any platform if the gate regresses.
+    pytester.makepyfile(
+        stub_interop_env="""
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _stub_external_tools(monkeypatch):
+    import subprocess
+
+    from pkcs11_check.testcases import test_interop_openssl as mod
+
+    monkeypatch.setattr(mod, "_have_p11kit", lambda: True)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("spawn attempted without opt-in")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+"""
+    )
     import pkcs11_check
 
     assert pkcs11_check.__file__ is not None
@@ -82,7 +97,15 @@ def test_list_modules_skipped_without_opt_in(
     # Plugin disabled: the stock plugin skips every testcase item without
     # --p11-module, which would mask the gate's own skip.
     result = pytester.runpytest_subprocess(
-        node, "-v", "-ra", "-p", "no:cacheprovider", "-p", "no:pkcs11-check"
+        node,
+        "-v",
+        "-ra",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:pkcs11-check",
+        "-p",
+        "stub_interop_env",
     )
     result.assert_outcomes(skipped=1)
     result.stdout.fnmatch_lines(["*external-tool interop*"])
