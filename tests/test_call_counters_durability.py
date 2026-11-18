@@ -5934,6 +5934,107 @@ class TestZeroRows:
             }
         ]
 
+    def test_module_less_fallback_used_forces_incomplete(self, tmp_path: Path) -> None:
+        # B3: the module-less complete formula's fallback_used arm --
+        # a ran-zero pid with a session in one scope and fallback
+        # evidence in another reads incomplete, never complete.
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    100, _counts_block(0), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+                ),
+                {"$report_type": "SessionStart"},
+                _marker("b.py", 0),
+                _test_report(
+                    "b.py::t1",
+                    "teardown",
+                    _test_entry(
+                        100, _counts_block(0), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+                    ),
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        rows = [row for row in payload["by_process"] if row["pid"] == 100]
+        assert len(rows) == 1
+        assert rows[0]["total_calls"] == 0
+        assert rows[0]["complete"] is False
+
+    def test_module_less_session_with_end_states_forces_incomplete(self, tmp_path: Path) -> None:
+        # B3: the module-less complete formula's end_states arm for a
+        # session-backed pid -- a ran-zero session with a reconciled
+        # crash disposition reads incomplete.
+        session = _session_record(
+            100, _counts_block(0), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+        )
+        lost = _lost_record()
+        del lost["worker_uuid"]
+        assert schema.is_lost_record(lost) is True
+        payload = _extract_report([session, lost], tmp_path)
+        assert payload is not None
+        assert payload["complete"] is False
+        assert payload["by_process"] == [
+            {
+                "pid": 100,
+                "isolation": "file",
+                "total_calls": 0,
+                "complete": False,
+                "worker_uuid": _UUID_A,
+                "end_state": "crashed",
+            }
+        ]
+
+    def test_module_less_session_with_marker_forces_incomplete(self, tmp_path: Path) -> None:
+        # B3: the module-less complete formula's persistence arm -- a
+        # durability-degraded ran-zero pid reads incomplete with the
+        # reason shown (the module-row twin is pinned elsewhere).
+        session = _session_record(
+            100,
+            _counts_block(0),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "persistence_pending": {"checkpoint": "return", "unit": "a.py", "attempt": 0},
+            },
+        )
+        assert schema.is_session_record(session) is True
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["complete"] is False
+        assert payload["by_process"] == [
+            {
+                "pid": 100,
+                "isolation": "file",
+                "total_calls": 0,
+                "complete": False,
+                "worker_uuid": _UUID_A,
+                "persistence_pending": True,
+            }
+        ]
+
+    def test_probes_lost_repeats_on_each_module_row(self, tmp_path: Path) -> None:
+        # B3: pid-level losses repeat on EACH of the pid's rows
+        # (do-not-sum), so per-pid reconciliation never under-reads.
+        m1 = _counts_block(5, module="m1")["by_module"]["m1"]
+        m2 = _counts_block(5, module="m2")["by_module"]["m2"]
+        session = _session_record(
+            100,
+            {"total_calls": 10, "by_module": {"m1": m1, "m2": m2}},
+            extra={"worker_uuid": _UUID_A, "run_id": _RUN, "probes_lost": 2},
+        )
+        assert schema.is_session_record(session) is True
+        payload = _extract_report([session], tmp_path)
+        assert payload is not None
+        assert payload["complete"] is False
+        rows = payload["by_process"]
+        assert len(rows) == 2
+        assert all(row.get("probes_lost") == 2 for row in rows)
+
     def test_strip_tolerates_mixed_rows(self) -> None:
         from pkcs11_check.core._jsonl_extract import _strip_single_module_tag
 
