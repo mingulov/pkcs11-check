@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check._plugin_state import _is_testcase_item
+from pkcs11_check.core._counters_durability import reject_reserved_run_id
 from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_PROPERTY,
     CALL_COUNTERS_REPORT_TYPE,
@@ -122,6 +123,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
             entry["isolation"] = os.environ.get(ISOLATION_ENV, "unknown")
             run_id = os.environ.get(RUN_ID_ENV)
             if run_id is not None:
+                reject_reserved_run_id(run_id)
                 entry["run_id"] = run_id
             mark = item.stash.get(_RECEIPTS_MARK_KEY, frozenset())
             window_receipts = sorted(
@@ -225,6 +227,7 @@ def build_session_record() -> dict[str, Any]:
     # extractor folds such records into the implicit "" round.
     run_id = os.environ.get(RUN_ID_ENV)
     if run_id is not None:
+        reject_reserved_run_id(run_id)
         record["run_id"] = run_id
     receipts = current_receipts()
     if receipts:

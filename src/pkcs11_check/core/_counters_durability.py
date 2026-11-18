@@ -118,6 +118,25 @@ SEAL_FILENAME = "SEALED"
 #: Reserved: a manual PKCS11_CHECK_RUN_ID=unknown would merge with
 #: corrupt evidence (the CLI seeds structured run ids, never this).
 _UNKNOWN_RUN = "unknown"
+
+
+def reject_reserved_run_id(run_id: str | None) -> None:
+    """Raise ``CounterPersistenceError`` when ``run_id`` abuses the sentinel.
+
+    ``"unknown"`` stamps corrupt-evidence rounds (see ``_UNKNOWN_RUN``):
+    no live producer may run under it, or its session would silently
+    supersede corrupt checkpoints sharing its uuid (codex R9-F2).
+    Anything else (including None/unset) passes. Enforced everywhere
+    live evidence takes a run: registration, session records, and
+    per-test window entries.
+    """
+    if run_id == _UNKNOWN_RUN:
+        raise CounterPersistenceError(
+            "reserved run_id 'unknown': it stamps corrupt-evidence rounds and "
+            "must never identify a live run"
+        )
+
+
 SIDECAR_SUFFIX = ".partial.json"
 JOURNAL_SUFFIX = ".windows.jsonl"
 RECOVERY_SUPPLEMENTS_SUFFIX = ".recovery-counters.jsonl"
@@ -451,6 +470,7 @@ def register_worker(
     resolved = Path(root)
     if not isinstance(run_id, str):
         raise CounterPersistenceError(f"invalid run_id: {run_id!r}")
+    reject_reserved_run_id(run_id)
     if not isinstance(unit, str) or not unit:
         raise CounterPersistenceError(f"invalid unit: {unit!r}")
     if not _is_nonneg_int(attempt):
@@ -2884,6 +2904,14 @@ def prepare_resume(
             if any(rec.get("end_state") == "unresolved" for rec in records)
         }
     )
+    # Run-granular authority (known residual, codex R9-F1): staging is
+    # file-granular but the sweep deletes by run match, so a same-run
+    # straggler unreadable during the barrier is swept as a leftover
+    # once readable -- and these branches double as staged-source
+    # cleanup, so they cannot simply be removed. Staged-identity
+    # authority is resume-design work (post-0.3.0). Fresh runs are
+    # immune: they sweep with empty collected_runs, which makes the
+    # run-match branches dead code there.
     plan["collected_runs"] = sorted(seen_runs - retained_runs)
     if plan["cache_records"]:
         if not _write_barrier_staging(root, plan["cache_records"], plan["consumed"]):
@@ -3025,6 +3053,7 @@ __all__ = [
     "read_json_file",
     "read_registry_file",
     "register_worker",
+    "reject_reserved_run_id",
     "seal",
     "supplements_path",
     "sweep_orphans",
