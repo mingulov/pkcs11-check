@@ -249,6 +249,7 @@ def write_coverage(
     receipt: dict[str, Any] | None = None,
     receipts: list[dict[str, Any]] | None = None,
     lost_keys: list[dict[str, Any]] | None = None,
+    strict: bool = False,
 ) -> None:
     """Write function/mechanism counts and their successful/return-value subsets (I6).
 
@@ -265,7 +266,10 @@ def write_coverage(
     byte-identical). ``lost_keys`` carries the child's keyed-loss set
     (omitted when None/empty, same legacy rule); the parent unions it and
     treats the scalar minus its length as unkeyed.
-    No-op when the environment variable is absent.
+    No-op when the environment variable is absent. Write failures are
+    swallowed (best-effort exit path) unless ``strict`` is set, in
+    which case they propagate so the caller can warn loudly (the fork
+    grandchild's ``CHILD_WARN:gcov-unwritten``).
     """
     path = _coverage_path()
     if not path:
@@ -289,7 +293,8 @@ def write_coverage(
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     except (OSError, TypeError, ValueError):
-        pass
+        if strict:
+            raise
 
 
 def probe_coverage_receipt() -> dict[str, Any] | None:

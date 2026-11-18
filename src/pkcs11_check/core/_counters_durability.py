@@ -963,7 +963,14 @@ def _claimed_receipts_from_jsonl(path: Path | str | None) -> dict[str, set[tuple
             if not is_worker_uuid(uuid):
                 continue
             assert isinstance(uuid, str)
-            keys = _receipt_keys(entry.get("receipts"))
+            # Entry receipts and entry consumed proofs both claim
+            # before orphan adoption: a teardown entry that survives
+            # a failed journal publish still suppresses the retained
+            # orphan (codex RC4-R3). Suppression-only: claims never
+            # earn extractor rows.
+            keys = _receipt_keys(entry.get("receipts")) | _receipt_keys(
+                entry.get("consumed_probes")
+            )
         else:
             continue
         if keys:
@@ -1085,13 +1092,17 @@ def write_probe_sidecar(
     counters: list[Any],
     lost_keys: list[dict[str, Any]] | None = None,
     identity: dict[str, Any] | None = None,
+    finalized: bool = True,
 ) -> None:
     """Write one probe sidecar atomically (single attempt, tmp + replace).
 
     The single writer behind the exit flush and the mid-run record-path
-    trigger, so both emit byte-identical shapes: worker/seq/counters,
-    then ``lost_keys`` when non-empty, then the F2 identity block in
-    wire order. A crash lands the old or the new content, never a mix.
+    trigger: worker/seq/counters, then ``lost_keys`` when non-empty,
+    then the F2 identity block in wire order. Mid-run snapshots add
+    ``"finalized": false`` (fold but never heal: the tail they never
+    saw stays a named loss); finalized snapshots omit the key, so the
+    exit shape stays byte-identical to legacy. A crash lands the old
+    or the new content, never a mix.
 
     Raises:
         OSError: When the file cannot be written.
@@ -1108,6 +1119,8 @@ def write_probe_sidecar(
     for field in _PROBE_IDENTITY_WIRE_ORDER:
         if identity and field in identity:
             payload[field] = identity[field]
+    if not finalized:
+        payload["finalized"] = False
     tmp = f"{path}.tmp-{os.getpid()}"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -1148,12 +1161,16 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
 
 def _read_probe_orphan(
     path: Path,
-) -> tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any]] | None:
-    """Return ``(child_uuid, seq, counters, lost_keys, identity)`` from a probe sidecar.
+) -> tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool] | None:
+    """Return ``(child_uuid, seq, counters, lost_keys, identity, finalized)``.
 
     ``identity`` is the F2 self-describing block (parent_uuid/run_id/unit/
     attempt/role/isolation, each present only when well-typed); legacy
-    sidecars yield ``{}``. Returns None unless the core shape parses.
+    sidecars yield ``{}``. ``finalized`` is False for explicit
+    mid-run snapshots (absent or explicit ``true`` reads finalized:
+    legacy and exit writes; any other present value reads
+    non-finalized, failing closed toward a named loss).
+    Returns None unless the core shape parses.
     """
     data = read_json_file(path)
     if not isinstance(data, dict):
@@ -1188,7 +1205,8 @@ def _read_probe_orphan(
         # only (an exact parent_uuid implies the registration and hence
         # the attempt, so matching it would be vacuous).
         identity["attempt"] = attempt
-    return (uuid, seq, list(counters), frozenset(keys), identity)
+    finalized = data.get("finalized", True) is True
+    return (uuid, seq, list(counters), frozenset(keys), identity, finalized)
 
 
 def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
@@ -1262,10 +1280,18 @@ def _durable_receipts(sidecar: Any | None, journal_lines: list[str]) -> set[tupl
     Committed windows count too: their receipts live on in the JSONL
     entries that superseded them, so either holder proves the evidence
     durable and a covered orphan must suppress rather than fold twice.
+    Sidecar ``consumed_probes`` (fallback absorptions pending delete)
+    join the same set: absorbed counts already sit in the checkpoint,
+    so a retained orphan with a consumed key suppresses too (codex
+    RC4-R1-2). Journal windows carry the same key for the same reason:
+    a death between the window append and the boundary sidecar
+    replacement strands journal-first counts that must still suppress
+    (codex RC4-R2). Malformed entries never parse, here or anywhere.
     """
     keys: set[tuple[str, int]] = set()
     if isinstance(sidecar, dict):
         keys.update(_receipt_keys(sidecar.get("receipts")))
+        keys.update(_receipt_keys(sidecar.get("consumed_probes")))
     for line in journal_lines:
         try:
             window = json.loads(line)
@@ -1273,6 +1299,7 @@ def _durable_receipts(sidecar: Any | None, journal_lines: list[str]) -> set[tupl
             continue
         if isinstance(window, dict):
             keys.update(_receipt_keys(window.get("receipts")))
+            keys.update(_receipt_keys(window.get("consumed_probes")))
     return keys
 
 
@@ -1329,10 +1356,12 @@ def _adopt_probe_orphans(
     or non-dict) files are provably unrecoverable debris and consume with
     the fold.
 
-    Residual: a probe ingested via the live sidecar-fallback path (whose
-    receipt is suppressed by design), followed by a failed parent flush
-    and a pre-flush death, folds once via its committed entry and once
-    here. That triple fault stays fail-visible through the lost record.
+    Residual: entry-claim suppression needs the entry's
+    ``consumed_probes`` proof, so evidence predating it (or entries
+    whose proof failed validation) still double-folds on the triple
+    fault -- live sidecar-fallback ingest, failed parent flush,
+    pre-flush death -- and stays fail-visible through the lost
+    record.
     Adopted orphans' nested receipts are dropped, never propagated:
     probe sidecars carry counters, keyed losses, and F2 identity only,
     and only the orphan's own receipt is claimed here.
@@ -1354,6 +1383,7 @@ def _adopt_probe_orphans(
         counters: list[Any],
         keys: frozenset[tuple[str, int]],
         filename_seq: int,
+        finalized: bool,
     ) -> None:
         if (child_uuid, seq) in coverage:
             consumed.append(path)
@@ -1365,7 +1395,10 @@ def _adopt_probe_orphans(
         # claim need a block. (.update, not |=: rebinding the closure
         # name would raise UnboundLocalError.)
         orphan_keys.update(keys)
-        if seq == filename_seq:
+        # Healing gates on finalized: a mid-run prefix folds its counts
+        # but never heals, since the tail it never saw stays genuinely
+        # outstanding (codex RC4-R1-1).
+        if finalized and seq == filename_seq:
             recovered.append((worker_uuid, seq))
         block = _probe_rows_to_block(counters)
         if block is not None:
@@ -1377,9 +1410,11 @@ def _adopt_probe_orphans(
     # any orphan folds. A marker's counts already sit in the parent
     # checkpoint, so its identity joins coverage and the marker itself
     # consumes. Torn markers are debris: unparseable content folds nothing.
-    # Valid markers still heal (their evidence is checkpoint-durable) and
-    # union their nested keys. Filename-prefix match only, and only when
-    # the prefix is unambiguous, exactly as before the reunion passes.
+    # Valid FINALIZED markers still heal (their evidence is checkpoint-
+    # durable); prefix markers suppress without healing, since the tail
+    # they never saw stays outstanding. Both union their nested keys.
+    # Filename-prefix match only, and only when the prefix is
+    # unambiguous, exactly as before the reunion passes.
     if unambiguous:
         for path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
             parsed_name = _parse_consumed_probe_filename(path.name)
@@ -1387,10 +1422,11 @@ def _adopt_probe_orphans(
                 continue
             orphan = _read_probe_orphan(path)
             if orphan is not None:
-                coverage.add((orphan[0], orphan[1]))
-                orphan_keys |= orphan[3]
-                if orphan[1] == parsed_name[1]:
-                    recovered.append((worker_uuid, orphan[1]))
+                marker_child, marker_seq, _, marker_keys, _, marker_finalized = orphan
+                coverage.add((marker_child, marker_seq))
+                orphan_keys |= marker_keys
+                if marker_finalized and marker_seq == parsed_name[1]:
+                    recovered.append((worker_uuid, marker_seq))
             consumed.append(path)
     ambiguous_reporter = colliders[:1] == [worker_uuid]
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
@@ -1403,7 +1439,7 @@ def _adopt_probe_orphans(
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
-        child_uuid, seq, counters, keys, identity = orphan
+        child_uuid, seq, counters, keys, identity, finalized = orphan
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
@@ -1433,7 +1469,7 @@ def _adopt_probe_orphans(
                     stacklevel=2,
                 )
                 continue
-            _fold(path, child_uuid, seq, counters, keys, parsed_name[1])
+            _fold(path, child_uuid, seq, counters, keys, parsed_name[1], finalized)
             continue
         # Pass 2: legacy filename fallback (no content identity). Under a
         # prefix collision the orphan could belong to any collider, so it
@@ -1447,7 +1483,7 @@ def _adopt_probe_orphans(
                     stacklevel=2,
                 )
             continue
-        _fold(path, child_uuid, seq, counters, keys, parsed_name[1])
+        _fold(path, child_uuid, seq, counters, keys, parsed_name[1], finalized)
     if merged["total_calls"] == 0:
         return None, [], consumed, sorted(set(recovered)), orphan_keys
     claimed.sort(key=lambda item: (item["worker_uuid"], item["probe_seq"]))

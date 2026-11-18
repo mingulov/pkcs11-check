@@ -371,6 +371,9 @@ def _fork_child_exit_with_coverage(raw: Any, code: int) -> None:
             receipt=probe_coverage_receipt(),
             receipts=current_receipts() or None,
             lost_keys=lost_probe_keys() or None,
+            # Strict: a swallowed write would silence the CHILD_WARN
+            # below (codex RC4-R1-3); the exit code still wins.
+            strict=True,
         )
     except Exception as exc:  # noqa: BLE001 - exit path: trace, never fail the exit
         try:

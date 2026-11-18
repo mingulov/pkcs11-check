@@ -285,15 +285,19 @@ def ingest_probe_payload(
             "probe_seq": fallback.get("probe_seq"),
         }
         fallback_counters = fallback.get("counters")
-        if validate_probe_receipt(fallback_receipt, seq) is not None and isinstance(
-            fallback_counters, (list, tuple)
-        ):
+        validated_fallback = validate_probe_receipt(fallback_receipt, seq)
+        if validated_fallback is not None and isinstance(fallback_counters, (list, tuple)):
+            # The consumed identity rides inside the ingest transaction:
+            # no checkpoint ever carries absorbed counts without their
+            # anti-double-fold proof (codex RC4-R1-2; a post-ingest
+            # note would leave a death window after the K auto-flush).
             ingest_child_evidence(
                 list(fallback_counters),
                 0,
                 (),
                 lost_keys=fallback.get("lost_keys", ()),
                 source=source,
+                consumed_probe=validated_fallback,
             )
             _commit_probe_sidecar(sidecar)
             return "partial"
