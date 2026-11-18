@@ -4116,6 +4116,59 @@ class TestProbeOrphanAdoption:
         assert payload["probes_lost"] == 1
         assert payload["complete"] is False
 
+    def test_read_jsonl_lines_missing_file_reads_none(self, tmp_path: Path) -> None:
+        # The tri-state's failure leg is a real I/O miss, not a mock
+        # artifact: a missing file reads None (absent path handled by
+        # callers), a present file reads its raw lines.
+        assert durability._read_jsonl_lines(tmp_path / "nope.jsonl") is None
+        child = tmp_path / "child.jsonl"
+        child.write_bytes(b'{"a": 1}\n{"b": 2}\n')
+        assert durability._read_jsonl_lines(child) == [b'{"a": 1}', b'{"b": 2}', b""]
+
+    def test_unreadable_registry_retained_for_later_pass(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R3: reaping must target provably-torn content, never an
+        # unreadable file -- a transient registry read fault with no
+        # parent checkpoint yet must retain the registry (deleting it
+        # would orphan the retained probe sidecar from every later
+        # pass). A healed re-collection then adopts it exactly once.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth)
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        failing: list[bool] = [True]
+        real_read_text = Path.read_text
+
+        def _flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+            if failing[0] and self == Path(planted["registry"]):
+                raise OSError("transient read failure")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        assert (
+            durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+            )
+            == []
+        )
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        failing[0] = False
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 4
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 4
+
     def test_unreadable_child_degrades_to_retain_all_plus_conflict(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4137,14 +4190,14 @@ class TestProbeOrphanAdoption:
             [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
         )
         failing: list[bool] = [True]
-        real_read_text = Path.read_text
+        real_read_lines = durability._read_jsonl_lines
 
-        def _flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-            if failing[0] and self == child:
-                raise OSError("transient read failure")
-            return real_read_text(self, *args, **kwargs)
+        def _flaky_read_lines(path: Path) -> Any:
+            if failing[0] and path == child:
+                return None
+            return real_read_lines(path)
 
-        monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        monkeypatch.setattr(durability, "_read_jsonl_lines", _flaky_read_lines)
         with pytest.warns(UserWarning, match="cannot read"):
             records = durability.collect_unit(
                 engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
@@ -4205,6 +4258,147 @@ class TestProbeOrphanAdoption:
         assert payload["total_calls"] == 5
         assert payload["probes_lost"] == 1
         assert payload["complete"] is False
+
+    def test_committed_garbage_rows_never_heals(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex R3-F3: vacuous needs a genuinely empty wire list -- rows
+        # present-but-unparseable prove nothing about zero calls, so the
+        # claim stands even though no block folds.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Login", 0, "4"]],
+        )
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert records == []
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_u2028_in_session_string_does_not_split_collect_read(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R3-F1: framing must match the extractor (binary LF
+        # split), not str.splitlines (which splits U+2028): a session
+        # carrying a literal U+2028 must be visible to collection's
+        # lenient set, or the gap heal pierces the supersede the
+        # extractor applies (silent 5/True).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "isolation": "a b",
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        lines = [
+            json.dumps({"$report_type": "SessionStart"}),
+            json.dumps(_marker("a.py", 0)),
+            json.dumps(session, ensure_ascii=False),
+            json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+        ]
+        child = tmp_path / "child.jsonl"
+        child.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        assert " " in child.read_text(encoding="utf-8"), "literal U+2028 on disk"
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert all(rec.get("recovered_keys", []) == [] for rec in records)
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_bad_byte_line_skipped_identically_both_sides(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R3-F1: an undecodable line is skipped by collection
+        # exactly like extraction (strict per-line decode), so both
+        # sides agree the session is absent and the gap path folds
+        # tail + orphan coherently (9, complete) instead of diverging
+        # (collect-sees/supersede-drops vs extract-blind).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "isolation": "ISOMARK",
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        lines = [
+            json.dumps({"$report_type": "SessionStart"}).encode(),
+            json.dumps(_marker("a.py", 0)).encode(),
+            json.dumps(session).encode().replace(b"ISOMARK", b"a\xffb"),
+            json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}).encode(),
+        ]
+        child = tmp_path / "child.jsonl"
+        child.write_bytes(b"\n".join(lines) + b"\n")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 9
+        assert payload["complete"] is False, "crash record still dispositions"
 
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path

@@ -48,7 +48,7 @@ import signal
 import sys
 import time
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -861,33 +861,40 @@ def end_state_for_attempt(*, status: str, returncode: int | None, timed_out: boo
     return "unknown"
 
 
-def _read_jsonl_text(path: Path) -> str | None:
-    """Read one JSONL file; None when unreadable (never raises)."""
+def _read_jsonl_lines(path: Path) -> list[bytes] | None:
+    """Read one JSONL file as raw lines; None when unreadable (never raises)."""
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, ValueError):
+        with path.open("rb") as fh:
+            return fh.read().split(b"\n")
+    except OSError:
         return None
 
 
-def _iter_jsonl_text_records(text: str) -> Iterator[dict[str, Any]]:
-    """Yield parsed dict records from JSONL text (bad lines skipped)."""
-    for line in text.splitlines():
+def _iter_jsonl_line_records(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
+    """Yield parsed dict records from raw JSONL lines (bad lines skipped).
+
+    Framing and decoding mirror ``report_log.iter_report_log_records``
+    exactly (binary ``b"\\n"`` split, strict per-line UTF-8, blank and
+    unparseable lines skipped), so collection and extraction always
+    agree on which records exist. In particular this must NOT use
+    ``str.splitlines`` (which splits U+2028 and friends inside JSON
+    strings) or lossy whole-file decoding (which lets one bad byte
+    poison or fabricate neighboring records) -- either would reopen a
+    silent collect/extract split (codex R3).
+    """
+    for raw in lines:
+        try:
+            line = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
         if not line.strip():
             continue
         try:
             record = json.loads(line)
-        except ValueError:
+        except (RecursionError, ValueError):
             continue
         if isinstance(record, dict):
             yield record
-
-
-def _iter_jsonl_records(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield parsed dict records from a JSONL file (bad lines skipped)."""
-    text = _read_jsonl_text(path)
-    if text is None:
-        return
-    yield from _iter_jsonl_text_records(text)
 
 
 def _committed_from_jsonl(
@@ -923,10 +930,10 @@ def _committed_from_jsonl(
     lenient: set[str] = set()
     if path is None:
         return sessions, entries, lenient
-    text = _read_jsonl_text(Path(path))
-    if text is None:
+    lines = _read_jsonl_lines(Path(path))
+    if lines is None:
         return None
-    for record in _iter_jsonl_text_records(text):
+    for record in _iter_jsonl_line_records(lines):
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
             uuid = record.get("worker_uuid")
@@ -970,10 +977,10 @@ def _claimed_receipts_from_jsonl(
     claims: dict[str, set[tuple[str, int]]] = {}
     if path is None:
         return claims
-    text = _read_jsonl_text(Path(path))
-    if text is None:
+    lines = _read_jsonl_lines(Path(path))
+    if lines is None:
         return None
-    for record in _iter_jsonl_text_records(text):
+    for record in _iter_jsonl_line_records(lines):
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
             if not is_session_record(record):
@@ -1483,10 +1490,12 @@ def _adopt_probe_orphans(
         # (persistent sidecar failure + survival) reads spurious-
         # incomplete instead of exact-complete; loud beats silent, and
         # full linkage awaits the heal-linkage design. Vacuous evidence
-        # (zero counts, zero scalar) still heals: the session trivially
-        # contains nothing. Markers heal on every path: a marker proves
-        # a live absorb the session includes.
-        if finalized and seq == filename_seq and (heal_orphans or (block is None and scalar == 0)):
+        # (wire-empty counters, zero scalar) still heals: the session
+        # trivially contains nothing -- but present-yet-unparseable rows
+        # prove nothing about zero calls, so they never heal (codex R3).
+        # Markers heal on every path: a marker proves a live absorb the
+        # session includes.
+        if finalized and seq == filename_seq and (heal_orphans or (not counters and scalar == 0)):
             recovered.append((worker_uuid, seq))
         if block is not None:
             merge_module_first(merged, block)
@@ -2095,7 +2104,17 @@ def collect_unit(
 
 
 def _reap_torn_registry(root: Path, registry_path: Path) -> None:
-    """Delete a torn registry only when no sidecar could still adopt it."""
+    """Delete a torn registry only when no sidecar could still adopt it.
+
+    Readability-gated: an unreadable file is retained, never reaped --
+    a transient read fault must not destroy the producer record a later
+    pass needs to discover its orphans (codex R3). Reaping is for
+    provably-torn content only.
+    """
+    try:
+        registry_path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return
     uuid = parse_registry_filename(registry_path.name)
     if uuid is not None and list(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}")):
         return
