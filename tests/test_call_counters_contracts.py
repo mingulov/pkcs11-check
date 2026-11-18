@@ -493,6 +493,7 @@ class TestShapePredicates:
             "end_state": "timeout",
             "round": _R1,
             "shard": "shard0",
+            "probes_lost": 2,
         }
         assert schema.is_process_row(full) is True
 
@@ -506,6 +507,8 @@ class TestShapePredicates:
         assert schema.is_process_row({**base, "end_state": "vaporized"}) is False
         assert schema.is_process_row({**base, "round": ""}) is False
         assert schema.is_process_row({**base, "mystery": 1}) is False
+        assert schema.is_process_row({**base, "probes_lost": -1}) is False
+        assert schema.is_process_row({**base, "probes_lost": "2"}) is False
 
     def test_scalar_predicates(self) -> None:
         assert schema.is_worker_uuid(_UUID_A) is True
