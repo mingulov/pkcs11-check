@@ -861,12 +861,16 @@ def end_state_for_attempt(*, status: str, returncode: int | None, timed_out: boo
     return "unknown"
 
 
-def _iter_jsonl_records(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield parsed dict records from a JSONL file (bad lines skipped)."""
+def _read_jsonl_text(path: Path) -> str | None:
+    """Read one JSONL file; None when unreadable (never raises)."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except (OSError, ValueError):
-        return
+        return None
+
+
+def _iter_jsonl_text_records(text: str) -> Iterator[dict[str, Any]]:
+    """Yield parsed dict records from JSONL text (bad lines skipped)."""
     for line in text.splitlines():
         if not line.strip():
             continue
@@ -878,12 +882,24 @@ def _iter_jsonl_records(path: Path) -> Iterator[dict[str, Any]]:
             yield record
 
 
-def _committed_from_jsonl(path: Path | str | None) -> tuple[set[str], set[tuple[str, str]]]:
-    """Return committed ``(session uuids, (uuid, nodeid) entries)`` from JSONL.
+def _iter_jsonl_records(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield parsed dict records from a JSONL file (bad lines skipped)."""
+    text = _read_jsonl_text(path)
+    if text is None:
+        return
+    yield from _iter_jsonl_text_records(text)
+
+
+def _committed_from_jsonl(
+    path: Path | str | None,
+) -> tuple[set[str], set[tuple[str, str]], set[str]] | None:
+    """Return ``(session uuids, (uuid, nodeid) entries, lenient sessions)``.
 
     Sessions are authoritative for their whole producer; entries are
     authoritative per test window. Used to compute the sidecar gap (full
     entry supersedes same-(uuid, test) partial) and delete-after-commit.
+    Returns None when the file exists but cannot be read (fail-closed:
+    the caller degrades instead of reasoning from an empty snapshot).
 
     Authority equals extractor acceptance: sessions gate on
     ``is_session_record`` and entries on the extractor's own first-match
@@ -891,23 +907,34 @@ def _committed_from_jsonl(path: Path | str | None) -> tuple[set[str], set[tuple[
     cycle through ``call_counters``). Every gate-admitted record is one
     the extractor folds (identical pid/total/counters/uuid/role/round
     checks); the gate is only stricter (unknown keys, non-string
-    isolation, partly-malformed receipts). That denied direction is benign
-    for sessions (files retained; re-collection folds exactly once under
-    the authoritative ``(run, uuid)`` staging key, which supersedes the
-    gap partial), and writer-unreachable for entries (fixed keys, valid
-    receipts, string isolation), so real-run authority is exactly
-    extractor acceptance in both directions.
+    isolation, partly-malformed receipts). That denied direction is
+    benign for path choice and deletion (files retained; re-collection
+    folds exactly once under the authoritative ``(run, uuid)`` staging
+    key, which supersedes the gap partial), and writer-unreachable for
+    entries (fixed keys, valid receipts, string isolation) -- but it is
+    NOT benign for orphan healing (a gap-path heal would pierce the
+    supersede the extractor applies), so healing consults the lenient
+    set instead: any session-shaped record with a valid uuid, whatever
+    the strict schema says. Overshoot there only ever yields
+    spurious-incomplete, never silent-complete.
     """
     sessions: set[str] = set()
     entries: set[tuple[str, str]] = set()
+    lenient: set[str] = set()
     if path is None:
-        return sessions, entries
-    for record in _iter_jsonl_records(Path(path)):
+        return sessions, entries, lenient
+    text = _read_jsonl_text(Path(path))
+    if text is None:
+        return None
+    for record in _iter_jsonl_text_records(text):
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
+            uuid = record.get("worker_uuid")
+            if is_worker_uuid(uuid):
+                assert isinstance(uuid, str)
+                lenient.add(uuid)
             if not is_session_record(record):
                 continue
-            uuid = record.get("worker_uuid")
             if is_worker_uuid(uuid):
                 assert isinstance(uuid, str)
                 sessions.add(uuid)
@@ -924,10 +951,12 @@ def _committed_from_jsonl(path: Path | str | None) -> tuple[set[str], set[tuple[
             if is_worker_uuid(uuid):
                 assert isinstance(uuid, str)
                 entries.add((uuid, nodeid))
-    return sessions, entries
+    return sessions, entries, lenient
 
 
-def _claimed_receipts_from_jsonl(path: Path | str | None) -> dict[str, set[tuple[str, int]]]:
+def _claimed_receipts_from_jsonl(
+    path: Path | str | None,
+) -> dict[str, set[tuple[str, int]]] | None:
     """Return per-producer folded-probe claims ``{uuid: {(uuid, seq)}}`` from JSONL.
 
     Claims ride C4-valid sessions and valid per-test entries (first-match
@@ -935,12 +964,16 @@ def _claimed_receipts_from_jsonl(path: Path | str | None) -> dict[str, set[tuple
     records claim nothing (unattributable). The orphan collector unions
     these with the producer's durable file receipts: either holder proves
     the probe evidence durable, so the orphan suppresses instead of
-    folding twice.
+    folding twice. Returns None when the file exists but cannot be read
+    (the caller degrades instead of suppressing nothing).
     """
     claims: dict[str, set[tuple[str, int]]] = {}
     if path is None:
         return claims
-    for record in _iter_jsonl_records(Path(path)):
+    text = _read_jsonl_text(Path(path))
+    if text is None:
+        return None
+    for record in _iter_jsonl_text_records(text):
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
             if not is_session_record(record):
@@ -1167,7 +1200,9 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
 
 def _read_probe_orphan(
     path: Path,
-) -> tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int] | None:
+) -> (
+    tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int | None] | None
+):
     """Return ``(child_uuid, seq, counters, lost_keys, identity, finalized, scalar)``.
 
     ``identity`` is the F2 self-describing block (parent_uuid/run_id/unit/
@@ -1176,9 +1211,11 @@ def _read_probe_orphan(
     mid-run snapshots (absent or explicit ``true`` reads finalized:
     legacy and exit writes; any other present value reads
     non-finalized, failing closed toward a named loss). ``scalar`` is
-    the child's cumulative loss total (absent or malformed reads 0,
-    garbage-tolerant like the coverage scalar; counts still fold;
-    adoption forwards the unkeyed remainder over the nested keys).
+    the child's cumulative loss total (absent reads 0; present-but-
+    malformed reads None -- unknown, never zero-evidence -- so the
+    vacuous-heal gate cannot mistake corruption for emptiness; counts
+    still fold; adoption forwards the unkeyed remainder over the
+    nested keys with None flooring to 0).
     Returns None unless the core shape parses.
     """
     data = read_json_file(path)
@@ -1215,9 +1252,13 @@ def _read_probe_orphan(
         # the attempt, so matching it would be vacuous).
         identity["attempt"] = attempt
     finalized = data.get("finalized", True) is True
-    raw_scalar = data.get("probes_lost", 0)
-    scalar = raw_scalar if _is_nonneg_int(raw_scalar) else 0
-    assert isinstance(scalar, int)
+    if "probes_lost" not in data:
+        scalar: int | None = 0
+    elif _is_nonneg_int(data["probes_lost"]):
+        assert isinstance(data["probes_lost"], int)
+        scalar = data["probes_lost"]
+    else:
+        scalar = None
     return (uuid, seq, list(counters), frozenset(keys), identity, finalized, scalar)
 
 
@@ -1406,7 +1447,7 @@ def _adopt_probe_orphans(
         keys: frozenset[tuple[str, int]],
         filename_seq: int,
         finalized: bool,
-        scalar: int,
+        scalar: int | None,
     ) -> None:
         if (child_uuid, seq) in coverage:
             consumed.append(path)
@@ -1427,7 +1468,9 @@ def _adopt_probe_orphans(
         # Remainder, not total: nested keys union separately while the
         # extractor subtracts only part_keys, so forwarding the total
         # would count every adopted keyed loss twice (batch-2 review).
-        adopted_lost.append(max(0, scalar - len(keys)))
+        # A corrupt scalar (None) floors to 0 here but never reads
+        # vacuous below (codex R2-F3).
+        adopted_lost.append(max(0, (scalar or 0) - len(keys)))
         block = _probe_rows_to_block(counters)
         # Healing gates on finalized: a mid-run prefix folds its counts
         # but never heals, since the tail it never saw stays genuinely
@@ -1769,6 +1812,54 @@ def _lost_record(
     return record
 
 
+def _collect_unreadable_child(
+    root: Path,
+    reg_dir: Path,
+    child_path: Path,
+    unit: str,
+    current_run: str | None,
+) -> list[dict[str, Any]]:
+    """Degrade loudly when the child JSONL exists but cannot be read.
+
+    Sessions, entries, and claims are all unknown, so every fold risks
+    doubling what extraction later sees: fold nothing, retain every
+    file for a later pass, and name one conflict per dead producer in
+    unit (codex R2-F1a). Never raises (collection cannot fail verdicts).
+    """
+    warnings.warn(
+        f"call-counter collection cannot read {child_path.name}: "
+        "retaining evidence, naming conflict",
+        UserWarning,
+        stacklevel=3,
+    )
+    appended: list[dict[str, Any]] = []
+    for registry_path in sorted(reg_dir.glob("*.json")):
+        content = read_registry_file(registry_path)
+        if content is None:
+            _reap_torn_registry(root, registry_path)
+            continue
+        uuid = content["worker_uuid"]
+        if content["unit"] != unit:
+            continue
+        if current_run is not None and content["run_id"] != current_run:
+            continue
+        if verify_producer(content) != "dead":
+            continue
+        lost = _lost_record(
+            end_state="conflict",
+            worker_uuid=uuid,
+            pid=content["pid"],
+            run_id=content["run_id"],
+            unit=content["unit"],
+            attempt=content["attempt"],
+            role=content["role"],
+            isolation=content.get("isolation", "unknown"),
+        )
+        if lost is not None and _append_collected(child_path, [lost]):
+            appended.append(lost)
+    return appended
+
+
 def collect_unit(
     counters_dir: Path | str,
     *,
@@ -1807,8 +1898,16 @@ def collect_unit(
         return []
     child_path = Path(child_jsonl)
     child_arg = child_path if child_path.exists() else None
-    sessions, entries = _committed_from_jsonl(child_arg)
+    committed = _committed_from_jsonl(child_arg)
     claims = _claimed_receipts_from_jsonl(child_arg)
+    if committed is None or claims is None:
+        # Unreadable child: sessions, entries, and claims are all
+        # unknown, so every fold risks doubling what extraction later
+        # sees. Degrade loudly: retain every file for a later pass and
+        # name one conflict per dead producer (codex R2-F1a).
+        return _collect_unreadable_child(root, reg_dir, child_path, unit, current_run)
+    sessions, entries, lenient_sessions = committed
+    assert claims is not None
     known_uuids = _known_producer_uuids(root)
     end_state = end_state_for_attempt(status=status, returncode=returncode, timed_out=timed_out)
     appended: list[dict[str, Any]] = []
@@ -1846,6 +1945,7 @@ def collect_unit(
             root=root,
             known_uuids=known_uuids,
             claims=claims,
+            heal_orphans=uuid not in lenient_sessions,
         )
         if _append_collected(child_path, records):
             appended.extend(records)
@@ -1898,7 +1998,7 @@ def collect_unit(
             known_uuids=known_uuids,
             producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
             producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
-            heal_orphans=uuid not in sessions,
+            heal_orphans=uuid not in lenient_sessions,
         )
         if uuid in sessions:
             records = []
@@ -2051,6 +2151,7 @@ def _collect_dead_producer(
     root: Path,
     known_uuids: set[str],
     claims: dict[str, set[tuple[str, int]]],
+    heal_orphans: bool = True,
 ) -> tuple[list[dict[str, Any]], list[Path]]:
     """Build the partial+lost records for one dead producer (reads orphans only).
 
@@ -2090,6 +2191,7 @@ def _collect_dead_producer(
         known_uuids=known_uuids,
         producer_run=content["run_id"],
         producer_unit=content["unit"],
+        heal_orphans=heal_orphans,
     )
     if orphan_block is not None:
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
@@ -2461,8 +2563,13 @@ def prepare_resume(
     to_consume: list[Path] = []
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
     prior_arg = prior if prior and prior.exists() else None
-    sessions, entries = _committed_from_jsonl(prior_arg)
+    # Resume track (postponed past 0.3.0): an unreadable prior keeps the
+    # legacy empty-reading here; behavior preserved exactly.
+    committed = _committed_from_jsonl(prior_arg)
+    sessions, entries = committed[:2] if committed is not None else (set(), set())
     claims = _claimed_receipts_from_jsonl(prior_arg)
+    if claims is None:
+        claims = {}
     known_uuids = _known_producer_uuids(root)
     reg_dir = root / REGISTRY_DIRNAME
     seen_runs: set[str] = set()

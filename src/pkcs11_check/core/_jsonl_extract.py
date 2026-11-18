@@ -1149,6 +1149,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             int,
             frozenset[tuple[str, int]],
             frozenset[tuple[str, int]],
+            frozenset[tuple[str, int]],
         ]
     ] = []
     scope = 0
@@ -1300,12 +1301,14 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 part_orphan_keys,
                 part_recovered,
             ) = parsed_partial
-            _union_receipts(part_run, part_receipts)
-            # Recoveries harvest at stage time (like receipts): exact healing
-            # must pierce session-supersede, which would otherwise skip this
-            # partial's whole contribution at fold time. Keys naming another
+            # Recoveries harvest at stage time: exact healing must pierce
+            # session-supersede, which would otherwise skip this partial's
+            # whole contribution at fold time. Keys naming another
             # producer are forged (adoption only ever heals its own uuid),
             # so they drop here instead of erasing a real loss (robustness M2).
+            # Receipts do NOT union here: folded means counts included,
+            # so only partials that survive supersede earn rows (codex
+            # R2-F2); the union happens in the fold loop below.
             own_recovered = {key for key in part_recovered if key[0] == part_uuid}
             recovered_by_run.setdefault(part_run, set()).update(own_recovered)
             staged_partials.append(
@@ -1320,6 +1323,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                     part_lost,
                     part_keys,
                     part_orphan_keys,
+                    part_receipts,
                 )
             )
             continue
@@ -1401,6 +1405,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             part_lost,
             part_keys,
             part_orphan_keys,
+            part_receipts,
         ) = staged
         if part_orphan_keys:
             _group((part_run, part_scope, part_target, part_attempt)).loss.union_orphans(
@@ -1413,6 +1418,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         if (part_run, uuid) in folded_partials:
             continue
         folded_partials.add((part_run, uuid))
+        _union_receipts(part_run, part_receipts)
         _fold(part_run, block)
         fold_group = _group((part_run, part_scope, part_target, part_attempt))
         fold_group.has_partial = True
