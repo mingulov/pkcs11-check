@@ -115,6 +115,8 @@ SEAL_FILENAME = "SEALED"
 #: Round stamp for corrupt sidecar runs: present-but-unusable (null,
 #: mistyped) reads this sentinel, never the implicit round, so
 #: explicitly corrupt rounds stay distinguishable from absent ones.
+#: Reserved: a manual PKCS11_CHECK_RUN_ID=unknown would merge with
+#: corrupt evidence (the CLI seeds structured run ids, never this).
 _UNKNOWN_RUN = "unknown"
 SIDECAR_SUFFIX = ".partial.json"
 JOURNAL_SUFFIX = ".windows.jsonl"
@@ -2234,7 +2236,7 @@ def _sidecar_run(sidecar: dict[str, Any]) -> str:
     """Return the sidecar's run stamp (tolerant).
 
     Sidecars are unvalidated evidence (unlike registries). An absent
-    run reads implicit (legacy omits the key; live no-run-id flows
+    run reads implicit (legacy omits the key; live no-run-id sidecars
     stamp ``""``). A present string stamps itself. Anything else
     (null, mistyped) stamps the ``"unknown"`` sentinel, never
     ``str(value)`` and never implicit: stringifying ``None`` would

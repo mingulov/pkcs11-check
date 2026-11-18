@@ -4795,7 +4795,7 @@ class TestProbeOrphanAdoption:
         # sentinel, never str(None) and never implicit -- a null-run
         # checkpoint plus a literal-"None" session are disjoint
         # evidence (5 + 7), not one round. The unknown round reads
-        # truncated (dead producer, no session); pre-fix True was
+        # truncated (dead producer, no session); pre-R7 True was
         # supersede laundering the death into the live round.
         pid, birth = _dead_pid_with_birth()
         planted = _plant_producer(
