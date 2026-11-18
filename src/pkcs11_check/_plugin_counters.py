@@ -45,7 +45,6 @@ from pkcs11_check.core.call_counters import (
     pending_marker,
     probes_lost,
     publish_test_window,
-    registration_info,
     serialize_current,
     take_snapshot,
 )
@@ -178,13 +177,7 @@ def attach_call_counters(item: pytest.Item, report: Any) -> None:
     if not isinstance(user_properties, list):
         return
     entry = item.stash.get(_ENTRY_KEY, None)
-    if not entry:
-        return
-    if (
-        not entry.get("total_calls")
-        and not entry.get("receipts")
-        and not entry.get("consumed_probes")
-    ):
+    if not entry or not entry.get("total_calls"):
         return
     if not any(name == CALL_COUNTERS_PROPERTY for name, _ in user_properties):
         user_properties.append((CALL_COUNTERS_PROPERTY, entry))
@@ -201,35 +194,7 @@ def _publish_window_best_effort(nodeid: str, entry: dict[str, Any]) -> None:
     try:
         publish_test_window(nodeid, block)
     except CounterPersistenceError as exc:
-        _downgrade_entry_on_publish_failure(entry)
         warnings.warn(f"call-counter publish failed for {nodeid}: {exc}", UserWarning, stacklevel=3)
-
-
-def _downgrade_entry_on_publish_failure(entry: dict[str, Any]) -> None:
-    """Drop a failed window's counts when the tail already covers them.
-
-    The collector folds the sidecar tail unconditionally but skips only
-    journaled windows for committed entries, so a serialized full entry
-    beside a current tail would double-fold on death (P1). The boundary
-    retry first lands the tail when it can; a retry that raises leaves
-    the producer dirty (the failed flush retains everything), so the
-    full entry stays. A retry that returns cleanly with this pid
-    registered proves currency -- either it just wrote, or the flush
-    skipped clean (a skip without registration would mean disengaged,
-    sealed, or forked, none of which can hold a current tail) -- and
-    the entry goes claim-only: counts zeroed, receipts and consumed
-    proofs kept for suppression. Runs before the warn so a warn-as-error
-    config cannot skip the mutation. When the full entry stays, the
-    crash record downstream flags the degraded span incomplete.
-    """
-    try:
-        flush_counters()
-    except CounterPersistenceError:
-        return
-    if registration_info() is None:
-        return
-    entry["total_calls"] = 0
-    entry["by_module"] = {}
 
 
 def build_session_record() -> dict[str, Any]:
