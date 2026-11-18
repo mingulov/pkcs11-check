@@ -4791,12 +4791,12 @@ class TestProbeOrphanAdoption:
     def test_torn_unknown_run_never_collides_with_named_round(
         self, engaged: Path, tmp_path: Path
     ) -> None:
-        # Codex R7-F1: unknown-run evidence stamps the implicit round,
-        # never str(None) -- a null-run checkpoint plus a literal-
-        # "None" session are disjoint evidence (5 + 7), not one round.
-        # The implicit round reads truncated (dead producer, no
-        # session); pre-fix True was supersede laundering the death
-        # into the live round.
+        # Codex R7-F1/R8-F1: a null run stamps the "unknown"
+        # sentinel, never str(None) and never implicit -- a null-run
+        # checkpoint plus a literal-"None" session are disjoint
+        # evidence (5 + 7), not one round. The unknown round reads
+        # truncated (dead producer, no session); pre-fix True was
+        # supersede laundering the death into the live round.
         pid, birth = _dead_pid_with_birth()
         planted = _plant_producer(
             engaged,
@@ -4829,12 +4829,96 @@ class TestProbeOrphanAdoption:
         )
         partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
         assert len(partials) == 1
-        assert partials[0].get("run_id", "") == ""
+        assert partials[0]["run_id"] == "unknown"
         assert partials[0]["total_calls"] == 5
         payload = extract_call_counters_from_jsonl(child)
         assert payload is not None
         assert payload["total_calls"] == 12
         assert payload["complete"] is False
+
+    def test_torn_null_run_never_merges_into_implicit_session(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R8-F1: explicit-null and absent are different rounds --
+        # a null-run checkpoint plus a runless session for the same
+        # uuid are disjoint evidence (5 + 7); merging them into the
+        # implicit round would let the session supersede the
+        # checkpoint silently (7, complete).
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        planted["registry"].unlink()
+        sidecar_data = json.loads(planted["sidecar"].read_text(encoding="utf-8"))
+        sidecar_data["run_id"] = None
+        planted["sidecar"].write_text(json.dumps(sidecar_data), encoding="utf-8")
+        session = _session_record(pid, _counts_block(7), extra={"worker_uuid": _UUID_A})
+        assert schema.is_session_record(session) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["run_id"] == "unknown"
+        assert partials[0]["total_calls"] == 5
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 12
+        assert payload["complete"] is False
+
+    def test_torn_absent_run_merges_into_implicit_session(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Companion: a legacy runless checkpoint plus a runless
+        # session ARE one implicit round -- the session supersedes
+        # the gap (7, complete), never doubling to 12. This is why
+        # absent reads implicit while explicit-null reads "unknown".
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        planted["registry"].unlink()
+        sidecar_data = json.loads(planted["sidecar"].read_text(encoding="utf-8"))
+        del sidecar_data["run_id"]
+        planted["sidecar"].write_text(json.dumps(sidecar_data), encoding="utf-8")
+        session = _session_record(pid, _counts_block(7), extra={"worker_uuid": _UUID_A})
+        assert schema.is_session_record(session) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert "run_id" not in partials[0]
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 7
+        assert payload["complete"] is True
 
     def test_collect_retains_registry_on_sticky_read_failure(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4868,6 +4952,50 @@ class TestProbeOrphanAdoption:
         ]
         assert Path(planted["registry"]).exists()
         assert not Path(planted["sidecar"]).exists()
+
+    def test_barrier_never_credits_junk_run_to_sweep(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R8-F2: sweep authority needs a genuine stamp -- a
+        # null-run checkpoint adopted by the barrier must not credit
+        # "None" to collected_runs, or the sweep deletes a "None"-
+        # stamped checkpoint it never staged (unreadable during the
+        # barrier scan, readable again before the sweep).
+        pid_a, birth_a = _dead_pid_with_birth()
+        planted_a = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid_a, birth=birth_a, in_progress=_counts_block(5)
+        )
+        planted_a["registry"].unlink()
+        sidecar_a = json.loads(planted_a["sidecar"].read_text(encoding="utf-8"))
+        sidecar_a["run_id"] = None
+        planted_a["sidecar"].write_text(json.dumps(sidecar_a), encoding="utf-8")
+        pid_b, birth_b = _dead_pid_with_birth()
+        planted_b = _plant_producer(
+            engaged, uuid=_UUID_B, pid=pid_b, birth=birth_b, in_progress=_counts_block(5)
+        )
+        planted_b["registry"].unlink()
+        sidecar_b = json.loads(planted_b["sidecar"].read_text(encoding="utf-8"))
+        sidecar_b["run_id"] = "None"
+        planted_b["sidecar"].write_text(json.dumps(sidecar_b), encoding="utf-8")
+        fault_on = True
+        real_read_text = Path.read_text
+
+        def _gated_fault(self: Path, *args: Any, **kwargs: Any) -> str:
+            if fault_on and self == Path(planted_b["sidecar"]):
+                raise OSError("transient barrier-phase fault")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _gated_fault)
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert "None" not in plan["collected_runs"]
+        fault_on = False
+        durability.sweep_orphans(
+            engaged,
+            current_run=_RUN,
+            collected_runs=frozenset(plan["collected_runs"]),
+        )
+        assert Path(planted_b["sidecar"]).exists()
 
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
