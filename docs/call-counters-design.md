@@ -710,7 +710,11 @@ states surfaced as `conflict`. The scope index rebases to the assembly
 scope. `lost_processes` and
 `probes_detail` render only when non-empty, top-level and per-round, and
 merge carries both (lost rows shard-tagged past one shard, details
-unioned). A producer that died with zero recoverable evidence still
+unioned). Folded rows follow inclusion, not staging: a partial that
+dies to session-supersede earns no row even when it claims receipts
+(counts included is the contract), so absorbed-but-never-flushed
+evidence keeps exact totals with a documented per-probe attribution
+gap rather than a false folded row. A producer that died with zero recoverable evidence still
 names itself with a loss record; a validated zero-call normal exit stays
 silent.
 
@@ -899,8 +903,10 @@ the completeness formula under Normative contracts).
 - Producer sidecars carry the `role` / `isolation` attribution stamp;
   probe sidecars carry the F2 parent-identity block, a `finalized`
   flag on mid-run snapshots (absent means finalized), and the child's
-  cumulative `probes_lost` scalar when nonzero (absent or malformed
-  reads 0; adoption forwards the unkeyed remainder over nested keys).
+  cumulative `probes_lost` scalar when nonzero (absent reads 0;
+  malformed reads unknown -- floors to 0 for addition, never vacuous
+  for healing; adoption forwards the unkeyed remainder over nested
+  keys).
 - Every session record renders its pid's `by_process` row, even with
   zero calls (complete when clean), so a ran-zero process reads
   distinctly from a missing one; zero-call rows also render for pids

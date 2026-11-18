@@ -1688,8 +1688,9 @@ def test_probe_sidecar_scalar_omitted_when_zero(tmp_path: Path) -> None:
     from pkcs11_check.core._counters_durability import _read_probe_orphan, write_probe_sidecar
 
     # B2: the unkeyed-loss scalar rides the sidecar wire, omitted when
-    # zero (legacy byte-identical); absent reads 0, malformed reads 0
-    # (garbage-tolerant like the coverage scalar, counts still fold).
+    # zero (legacy byte-identical); absent reads 0, malformed reads
+    # None (unknown: floors to 0 for addition, never vacuous for
+    # healing); counts still fold either way.
     bare = tmp_path / "bare.json"
     write_probe_sidecar(bare, worker_uuid="b" * 32, probe_seq=0, counters=[["m", "C_Login", 0, 1]])
     assert "probes_lost" not in json.loads(bare.read_text(encoding="utf-8"))
@@ -1716,7 +1717,7 @@ def test_probe_sidecar_scalar_omitted_when_zero(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    assert _read_probe_orphan(garbage)[6] == 0
+    assert _read_probe_orphan(garbage)[6] is None
 
 
 def test_probe_slot_flush_forwards_nonzero_scalar(

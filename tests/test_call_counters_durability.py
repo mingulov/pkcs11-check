@@ -653,9 +653,9 @@ class TestProbeChannel:
         from pkcs11_check.testcases._probes.runner import ingest_probe_payload
 
         # Codex R2: the retained sidecar is adopted once readable --
-        # a single transient read failure costs nothing but the
-        # fail-visible loss note (the live key); collection folds the
-        # evidence exactly once.
+        # a single transient read failure costs nothing at ingest
+        # level (the run_probe caller would note the live keyed loss);
+        # collection folds the evidence exactly once.
         seq = call_counters.assign_probe_seq()
         cov = tmp_path / "cov.json"
         cov.write_text('{"call_log": ', encoding="utf-8")
@@ -803,6 +803,9 @@ class TestExtractorDurability:
         # Both input orders in ONE scope (the real crash-replay shape: a
         # parent crash between commit and consume re-collects the sidecar
         # into the session's own scope): the authoritative session wins.
+        # Folded rows follow inclusion, not staging: the superseded
+        # partial's receipt 3 earns no row (its counts died to
+        # supersede); the session's own 1 and 2 still do (codex R2-F2).
         for records in (
             [
                 {"$report_type": "SessionStart"},
@@ -827,7 +830,6 @@ class TestExtractorDurability:
             assert payload["probes_detail"] == [
                 {"worker_uuid": _UUID_A, "probe_seq": 1, "status": "folded"},
                 {"worker_uuid": _UUID_A, "probe_seq": 2, "status": "folded"},
-                {"worker_uuid": _UUID_A, "probe_seq": 3, "status": "folded"},
             ]
             assert payload["by_round"][_RUN]["probes_detail"] == payload["probes_detail"]
 
@@ -4016,8 +4018,9 @@ class TestProbeOrphanAdoption:
         assert payload["total_calls"] == 5
         assert payload["probes_lost"] == 1
         assert payload["complete"] is False
+        # No folded row for the superseded orphan: folded means counts
+        # included (codex R2-F2), and the session dropped this block.
         assert payload["probes_detail"] == [
-            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"},
             {"worker_uuid": _UUID_A, "probe_seq": 0, "status": "lost"},
         ]
 
@@ -4062,6 +4065,145 @@ class TestProbeOrphanAdoption:
         assert payload["total_calls"] == 5
         assert payload["probes_lost"] == 0
         assert payload["complete"] is True
+
+    def test_mistyped_session_never_heals_nor_supersedes_silently(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R2-F1b: collect rejects this session (strict schema)
+        # while extraction stages it (lenient isolation default), so
+        # the gap path runs but must not heal -- otherwise the partial
+        # dies to supersede while the heal pierces it (silent 5/True).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "isolation": 123,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        assert schema.is_session_record(session) is False
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9, "gap folds tail 5 + orphan 4"
+        assert partials[0].get("recovered_keys", []) == [], "but never heals it"
+        assert not orphan.exists(), "gap path still consumes the adopted orphan"
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_unreadable_child_degrades_to_retain_all_plus_conflict(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R2-F1a: an unreadable child JSONL blinds sessions,
+        # entries, and claims together -- collection must fold nothing
+        # (any fold risks doubling what extraction later sees), retain
+        # every file for a later pass, and name the conflict loudly.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        failing: list[bool] = [True]
+        real_read_text = Path.read_text
+
+        def _flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+            if failing[0] and self == child:
+                raise OSError("transient read failure")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        assert [rec["$report_type"] for rec in records] == ["CallCountersLost"]
+        assert records[0]["end_state"] == "conflict"
+        assert Path(planted["sidecar"]).exists()
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        failing[0] = False
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 0
+        assert payload["complete"] is False
+
+    def test_committed_malformed_scalar_never_heals(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex R2-F3: a corrupt scalar is not evidence of zero -- an
+        # empty-counters orphan with a malformed scalar must not heal
+        # on the committed path (its losses are unknown, not absent).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged, parent_uuid=_UUID_A, seq=0, counters=[], probes_lost="many"
+        )
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        # No heal, no counts, no keys: nothing to emit. The session's
+        # own loss claim stands (see below); the orphan still consumes.
+        assert records == []
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
 
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
@@ -4123,7 +4265,13 @@ class TestProbeOrphanAdoption:
         orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
         # The session holds the counts (ingest succeeded in memory) but not
         # the receipt (partial-path suppression + failed flush): the orphan
-        # fold claims it. The partial is superseded, so counts stay exact.
+        # fold claims it, and the partial is superseded, so counts stay
+        # exact. The claim earns no folded ROW: folded means counts
+        # included, and this block was dropped (codex R2-F2) -- the
+        # absorbed-unflushed attribution gap is documented, not silent.
+        # (No loss claim rides this plant; real retained orphans always
+        # come with a parent note -- see the never-heals pin -- which
+        # would stand here and read incomplete.)
         session = _session_record(
             pid, _counts_block(13), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
         )
@@ -4149,9 +4297,7 @@ class TestProbeOrphanAdoption:
         assert payload is not None
         assert payload["total_calls"] == 13, "session supersedes the claim partial"
         assert payload["complete"] is True
-        assert payload["probes_detail"] == [
-            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"}
-        ]
+        assert payload.get("probes_detail", []) == []
 
     def test_sweep_reaps_torn_probe_files_and_retains_valid(self, engaged: Path) -> None:
         durability.ensure_layout(engaged)
