@@ -347,6 +347,19 @@ class TestRecoveryIncluded:
         )
         assert seen["counters"] is None
 
+    def test_recovery_probe_rejects_reserved_unknown_run_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # First-tier R9: preflight/recovery engagement stamps the
+        # ambient run id into synth/partial/lost/note records, so it
+        # guards the reservation at resolve time -- fail-closed
+        # before engagement, never a partial "unknown" run.
+        monkeypatch.setenv("PKCS11_CHECK_COUNTERS_DIR", str(tmp_path / "counters"))
+        monkeypatch.setenv(RUN_ID_ENV, "unknown")
+        monkeypatch.setenv(PREFLIGHT_EVIDENCE_ENV, str(tmp_path / "preflight-counters.jsonl"))
+        with pytest.raises(CounterPersistenceError, match="reserved run_id"):
+            PreflightCounters.resolve_from_env(unit="recovery", attempt=1)
+
 
 class TestDoctorExcluded:
     def test_doctor_passes_no_counters(
