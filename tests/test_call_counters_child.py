@@ -1719,6 +1719,50 @@ def test_probe_sidecar_scalar_omitted_when_zero(tmp_path: Path) -> None:
     assert _read_probe_orphan(garbage)[6] == 0
 
 
+def test_probe_slot_flush_forwards_nonzero_scalar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core._counters_durability import (
+        COUNTERS_DIR_ENV,
+        PROBE_SEQ_ENV,
+        PROBE_SIDECAR_ENV,
+    )
+
+    # Codex R2: the mid-run slot trigger forwards a nonzero scalar,
+    # not just counts -- driven in-process (disengaged child shape).
+    monkeypatch.delenv(COUNTERS_DIR_ENV, raising=False)
+    slot = tmp_path / "probe-slot.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(slot))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "0")
+    call_counters.note_lost_probe()
+    call_counters.record_call("C_Login", module="m")
+    payload = json.loads(slot.read_text(encoding="utf-8"))
+    assert payload["probes_lost"] == 1
+    assert payload["finalized"] is False
+
+
+@pytest.mark.parametrize("writer", ["session", "raw"])
+def test_probe_exit_flush_forwards_nonzero_scalar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: str
+) -> None:
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV, PROBE_SIDECAR_ENV
+
+    # Codex R2: both exit-flush paths stamp the child's scalar.
+    slot = tmp_path / "probe-sidecar.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(slot))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "3")
+    call_counters.note_lost_probe()
+    call_counters.record_call("C_Login", module="m")
+    if writer == "session":
+        session._write_coverage(_fake_raw())
+    else:
+        raw_session._write_raw_coverage()
+    payload = json.loads(slot.read_text(encoding="utf-8"))
+    assert payload["probes_lost"] == 1
+    assert payload["probe_seq"] == 3
+    assert "finalized" not in payload
+
+
 def test_probe_sidecar_malformed_attempt_omits_attempt_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
