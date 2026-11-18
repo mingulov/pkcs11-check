@@ -967,7 +967,14 @@ def ingest_child_evidence(
             _consumed_probes.add(consumed_key)
         if src is not None:
             _ingested_sources.add(src)
-        if parsed or lost_count or receipt_keys or key_set or consumed_key is not None:
+        if (
+            parsed
+            or lost_count
+            or receipt_keys
+            or key_set
+            or malformed_keys
+            or consumed_key is not None
+        ):
             try:
                 units = sum(count for _, _, _, count in parsed) if parsed else 1
                 _mark_dirty_locked(calls=units)

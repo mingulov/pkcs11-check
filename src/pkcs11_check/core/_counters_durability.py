@@ -1520,7 +1520,8 @@ def _adopt_probe_orphans(
         # would count every adopted keyed loss twice (batch-2 review).
         # The reader precomputes the remainder (a total minus its
         # surviving keys, a floor standing alone); a corrupt scalar
-        # floors to 0 here but never reads vacuous below (R2-F3).
+        # with no malformed items floors to 0 here but never reads
+        # vacuous below (R2-F3).
         adopted_lost.append(adopted)
         block = _probe_rows_to_block(counters)
         # Healing gates on finalized: a mid-run prefix folds its counts
@@ -2771,9 +2772,11 @@ def prepare_resume(
         if adopted is None:
             continue
         uuid, sidecar = adopted
-        # str(), not _implicit_run(): an unknown run must match no
-        # barrier, so the evidence retains (implicit "" could match an
-        # implicit-run barrier and reap evidence of unknown origin).
+        # str(), not _implicit_run(): crediting "" for unknown
+        # evidence would license the sweep to delete genuine ""-run
+        # sidecars it never staged (raw-content match). The junk token
+        # ("None"/"7"/...) can never equal a real run, so unknown
+        # evidence retains and credits nothing.
         seen_runs.add(str(sidecar.get("run_id", "")))
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
