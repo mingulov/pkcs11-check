@@ -1212,26 +1212,23 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
 
 def _read_probe_orphan(
     path: Path,
-) -> (
-    tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int | None, bool]
-    | None
-):
-    """Return ``(child_uuid, seq, counters, keys, identity, finalized, scalar, keys_corrupt)``.
+) -> tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int, bool] | None:
+    """Return ``(child_uuid, seq, counters, keys, identity, finalized, adopted, vacuous_ok)``.
 
     ``identity`` is the F2 self-describing block (parent_uuid/run_id/unit/
     attempt/role/isolation, each present only when well-typed); legacy
     sidecars yield ``{}``. ``finalized`` is False for explicit
     mid-run snapshots (absent or explicit ``true`` reads finalized:
     legacy and exit writes; any other present value reads
-    non-finalized, failing closed toward a named loss). ``scalar`` is
-    the child's cumulative loss total: absent reads the malformed-key
-    count (the only signal when no total was ever written); a valid
-    scalar stands alone (it already includes every loss counted at
-    write time, so malformed items must not bump it again); a
-    malformed scalar reads the malformed count, or None when there is
-    none (unknown, never zero-evidence). Counts still fold in every
-    case. ``keys_corrupt`` flags any malformed nested-key content so
-    the vacuous-heal gate cannot mistake corruption for emptiness.
+    non-finalized, failing closed toward a named loss). ``adopted`` is
+    the unkeyed remainder this orphan contributes: a valid scalar is
+    the child's TOTAL (keyed + unkeyed), so adoption forwards the
+    remainder over the surviving valid keys; without a usable total
+    (absent, zero, or malformed scalar) each malformed item floors one
+    unkeyed loss on its own and valid keys are never subtracted (they
+    were never inside any total). ``vacuous_ok`` is True only beside
+    an absent-or-zero scalar with clean keys (a malformed scalar is
+    unknown, never zero-evidence). Counts still fold in every case.
     Returns None unless the core shape parses.
     """
     data = read_json_file(path)
@@ -1281,15 +1278,27 @@ def _read_probe_orphan(
         # the attempt, so matching it would be vacuous).
         identity["attempt"] = attempt
     finalized = data.get("finalized", True) is True
+    # The remainder is computed here (the reader holds every fact: the
+    # fold cannot tell a total from a floor). A positive total
+    # provably counted something -- in-memory keys are always
+    # valid-shaped when counted, so malformed items were inside it and
+    # the remainder already carries them. A zero total counted
+    # nothing, so malformed items beside it bump loud rather than
+    # trust the zero (codex R7-F3).
     if "probes_lost" not in data:
-        scalar: int | None = malformed_keys
+        adopted = malformed_keys
+        vacuous_ok = malformed_keys == 0
     elif _is_nonneg_int(data["probes_lost"]):
         assert isinstance(data["probes_lost"], int)
-        scalar = data["probes_lost"]
+        total = data["probes_lost"]
+        adopted = max(0, total - len(keys)) + (malformed_keys if total == 0 else 0)
+        vacuous_ok = total == 0 and malformed_keys == 0
     elif malformed_keys:
-        scalar = malformed_keys
+        adopted = malformed_keys
+        vacuous_ok = False
     else:
-        scalar = None
+        adopted = 0
+        vacuous_ok = False
     return (
         uuid,
         seq,
@@ -1297,8 +1306,8 @@ def _read_probe_orphan(
         frozenset(keys),
         identity,
         finalized,
-        scalar,
-        malformed_keys > 0,
+        adopted,
+        vacuous_ok,
     )
 
 
@@ -1487,8 +1496,8 @@ def _adopt_probe_orphans(
         keys: frozenset[tuple[str, int]],
         filename_seq: int,
         finalized: bool,
-        scalar: int | None,
-        keys_corrupt: bool,
+        adopted: int,
+        vacuous_ok: bool,
     ) -> None:
         if (child_uuid, seq) in coverage:
             consumed.append(path)
@@ -1509,9 +1518,10 @@ def _adopt_probe_orphans(
         # Remainder, not total: nested keys union separately while the
         # extractor subtracts only part_keys, so forwarding the total
         # would count every adopted keyed loss twice (batch-2 review).
-        # A corrupt scalar (None) floors to 0 here but never reads
-        # vacuous below (codex R2-F3).
-        adopted_lost.append(max(0, (scalar or 0) - len(keys)))
+        # The reader precomputes the remainder (a total minus its
+        # surviving keys, a floor standing alone); a corrupt scalar
+        # floors to 0 here but never reads vacuous below (R2-F3).
+        adopted_lost.append(adopted)
         block = _probe_rows_to_block(counters)
         # Healing gates on finalized: a mid-run prefix folds its counts
         # but never heals, since the tail it never saw stays genuinely
@@ -1530,11 +1540,7 @@ def _adopt_probe_orphans(
         # calls, so they never heal (codex R3/R6). Markers heal on
         # every path: a marker proves a live absorb the session
         # includes.
-        if (
-            finalized
-            and seq == filename_seq
-            and (heal_orphans or (not counters and scalar == 0 and not keys_corrupt))
-        ):
+        if finalized and seq == filename_seq and (heal_orphans or (not counters and vacuous_ok)):
             recovered.append((worker_uuid, seq))
         if block is not None:
             merge_module_first(merged, block)
@@ -1574,7 +1580,7 @@ def _adopt_probe_orphans(
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
-        child_uuid, seq, counters, keys, identity, finalized, scalar, keys_corrupt = orphan
+        child_uuid, seq, counters, keys, identity, finalized, adopted, vacuous_ok = orphan
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
@@ -1612,8 +1618,8 @@ def _adopt_probe_orphans(
                 keys,
                 parsed_name[1],
                 finalized,
-                scalar,
-                keys_corrupt,
+                adopted,
+                vacuous_ok,
             )
             continue
         # Pass 2: legacy filename fallback (no content identity). Under a
@@ -1628,9 +1634,7 @@ def _adopt_probe_orphans(
                     stacklevel=2,
                 )
             continue
-        _fold(
-            path, child_uuid, seq, counters, keys, parsed_name[1], finalized, scalar, keys_corrupt
-        )
+        _fold(path, child_uuid, seq, counters, keys, parsed_name[1], finalized, adopted, vacuous_ok)
     adopted = sum(adopted_lost)
     if merged["total_calls"] == 0:
         return None, [], consumed, sorted(set(recovered)), orphan_keys, adopted
@@ -2078,7 +2082,7 @@ def collect_unit(
                 records.append(
                     _partial_record(
                         worker_uuid=uuid,
-                        run_id=str(sidecar.get("run_id", "")),
+                        run_id=_implicit_run(sidecar),
                         unit=str(sidecar.get("unit", "")),
                         attempt=sidecar.get("attempt", 0)
                         if _is_nonneg_int(sidecar.get("attempt"))
@@ -2120,7 +2124,7 @@ def collect_unit(
             records.append(
                 _partial_record(
                     worker_uuid=uuid,
-                    run_id=str(sidecar.get("run_id", "")),
+                    run_id=_implicit_run(sidecar),
                     unit=str(sidecar.get("unit", "")),
                     attempt=sidecar.get("attempt", 0)
                     if _is_nonneg_int(sidecar.get("attempt"))
@@ -2140,7 +2144,7 @@ def collect_unit(
             end_state="conflict" if conflict else end_state,
             worker_uuid=uuid,
             pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-            run_id=str(sidecar.get("run_id", "")),
+            run_id=_implicit_run(sidecar),
             unit=str(sidecar.get("unit", "")),
             attempt=sidecar.get("attempt") if _is_nonneg_int(sidecar.get("attempt")) else None,
             role=stamp_role,
@@ -2152,9 +2156,10 @@ def collect_unit(
             appended.extend(records)
             _consume_producer_files([sidecar_path, _journal_for_sidecar(sidecar_path)])
             _consume_producer_files(consumed)
-            torn_twin = reg_dir / f"{uuid}.json"
-            if read_registry_file(torn_twin) is None and torn_twin.exists():
-                _consume_producer_files([torn_twin])
+            # The twin funnels through the reaper (valid content and
+            # I/O failure retain; only provably-torn content reaps),
+            # exactly like the sweep and the main loop (codex R7-F2).
+            _reap_torn_registry(root, reg_dir / f"{uuid}.json")
     return appended
 
 
@@ -2218,6 +2223,20 @@ def _sidecar_stamp(sidecar: dict[str, Any]) -> tuple[str, str]:
     stamped_role = role if isinstance(role, str) and is_role(role) else "unit"
     stamped_isolation = isolation if isinstance(isolation, str) else "unknown"
     return (stamped_role, stamped_isolation)
+
+
+def _implicit_run(sidecar: dict[str, Any]) -> str:
+    """Return the sidecar's run stamp, implicit when unusable (tolerant).
+
+    Sidecars are unvalidated evidence (unlike registries). An absent
+    or mistyped run stamps the implicit round (matching the
+    extractor's absent-run default), never ``str(value)``:
+    stringifying ``None`` would mint a fake ``"None"`` round that
+    collides with a real session's authority and drops the checkpoint
+    silently (codex R7-F1).
+    """
+    run = sidecar.get("run_id")
+    return run if isinstance(run, str) and run else ""
 
 
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
@@ -2752,6 +2771,9 @@ def prepare_resume(
         if adopted is None:
             continue
         uuid, sidecar = adopted
+        # str(), not _implicit_run(): an unknown run must match no
+        # barrier, so the evidence retains (implicit "" could match an
+        # implicit-run barrier and reap evidence of unknown origin).
         seen_runs.add(str(sidecar.get("run_id", "")))
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
@@ -2781,7 +2803,7 @@ def prepare_resume(
                 claim_records.append(
                     _partial_record(
                         worker_uuid=uuid,
-                        run_id=str(sidecar.get("run_id", "")),
+                        run_id=_implicit_run(sidecar),
                         unit=str(sidecar.get("unit", "")),
                         attempt=sidecar.get("attempt", 0)
                         if _is_nonneg_int(sidecar.get("attempt"))
@@ -2808,7 +2830,7 @@ def prepare_resume(
             records.append(
                 _partial_record(
                     worker_uuid=uuid,
-                    run_id=str(sidecar.get("run_id", "")),
+                    run_id=_implicit_run(sidecar),
                     unit=str(sidecar.get("unit", "")),
                     attempt=sidecar.get("attempt", 0)
                     if _is_nonneg_int(sidecar.get("attempt"))
@@ -2824,7 +2846,7 @@ def prepare_resume(
             end_state="conflict" if conflict else "unknown",
             worker_uuid=uuid,
             pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-            run_id=str(sidecar.get("run_id", "")),
+            run_id=_implicit_run(sidecar),
             unit=str(sidecar.get("unit", "")),
             attempt=sidecar.get("attempt") if _is_nonneg_int(sidecar.get("attempt")) else None,
             role=barrier_stamp_role,

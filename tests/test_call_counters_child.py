@@ -1585,6 +1585,27 @@ def test_ingest_forwards_nested_lost_keys(ingest: _IngestFn, tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_absent_scalar_mixed_keys_keep_malformed_loss(
+    ingest: _IngestFn, tmp_path: Path
+) -> None:
+    # Codex R7-F3 (live leg): malformed keys never vanish on ingest
+    # either -- with no positive total each floors one unkeyed loss
+    # (1 valid + 1 malformed reads 1 keyed + 1 unkeyed, never 1).
+    payload = _child_payload()
+    payload.pop("probes_lost", None)
+    payload["lost_keys"] = [
+        {"parent_uuid": _CHILD_UUID, "probe_seq": 0},
+        {"parent_uuid": _CHILD_UUID, "probe_seq": "0"},
+    ]
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is True
+    assert sorted(
+        (key["parent_uuid"], key["probe_seq"]) for key in call_counters.lost_probe_keys()
+    ) == [(_CHILD_UUID, 0)]
+    assert call_counters.probes_lost() == 2
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
 def test_ingest_drops_keys_when_counters_unusable(ingest: _IngestFn, tmp_path: Path) -> None:
     # Mirrors the scalar rule: an unusable channel drops inner claims
     # (keys and scalar alike); the launcher owns one loss instead.
@@ -1688,9 +1709,10 @@ def test_probe_sidecar_scalar_omitted_when_zero(tmp_path: Path) -> None:
     from pkcs11_check.core._counters_durability import _read_probe_orphan, write_probe_sidecar
 
     # B2: the unkeyed-loss scalar rides the sidecar wire, omitted when
-    # zero (legacy byte-identical); absent reads 0, malformed reads
-    # None (unknown: floors to 0 for addition, never vacuous for
-    # healing); counts still fold either way.
+    # zero (legacy byte-identical); absent reads adopted 0, malformed
+    # reads adopted 0 but never vacuous-ok (unknown: floors to 0 for
+    # addition, never heals); counts still fold either way (R7-F3
+    # computes the remainder in the reader).
     bare = tmp_path / "bare.json"
     write_probe_sidecar(bare, worker_uuid="b" * 32, probe_seq=0, counters=[["m", "C_Login", 0, 1]])
     assert "probes_lost" not in json.loads(bare.read_text(encoding="utf-8"))
@@ -1717,7 +1739,10 @@ def test_probe_sidecar_scalar_omitted_when_zero(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    assert _read_probe_orphan(garbage)[6] is None
+    garbage_read = _read_probe_orphan(garbage)
+    assert garbage_read is not None
+    assert garbage_read[6] == 0
+    assert garbage_read[7] is False
 
 
 def test_probe_slot_flush_forwards_nonzero_scalar(

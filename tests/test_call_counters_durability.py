@@ -4747,6 +4747,127 @@ class TestProbeOrphanAdoption:
         assert payload is not None
         assert payload["probes_lost"] == 1
 
+    def test_gap_absent_scalar_mixed_keys_keep_malformed_loss(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R7-F3: without a usable total the malformed bump is a
+        # floor, not a total -- valid keys were never inside it, so the
+        # remainder must not subtract them (1 valid + 1 malformed reads
+        # 1 keyed + 1 unkeyed, never 1 keyed + 0).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            lost_keys=[
+                {"parent_uuid": _UUID_B, "probe_seq": 7},
+                {"parent_uuid": _UUID_B, "probe_seq": "7"},
+            ],
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9
+        assert partials[0]["probes_lost"] == 1
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["probes_lost"] == 2
+
+    def test_torn_unknown_run_never_collides_with_named_round(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R7-F1: unknown-run evidence stamps the implicit round,
+        # never str(None) -- a null-run checkpoint plus a literal-
+        # "None" session are disjoint evidence (5 + 7), not one round.
+        # The implicit round reads truncated (dead producer, no
+        # session); pre-fix True was supersede laundering the death
+        # into the live round.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        planted["registry"].unlink()
+        sidecar_data = json.loads(planted["sidecar"].read_text(encoding="utf-8"))
+        sidecar_data["run_id"] = None
+        planted["sidecar"].write_text(json.dumps(sidecar_data), encoding="utf-8")
+        session = _session_record(
+            pid,
+            _counts_block(7),
+            extra={"worker_uuid": _UUID_A, "run_id": "None"},
+        )
+        assert schema.is_session_record(session) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0].get("run_id", "") == ""
+        assert partials[0]["total_calls"] == 5
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 12
+        assert payload["complete"] is False
+
+    def test_collect_retains_registry_on_sticky_read_failure(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R7-F2: the torn-twin cleanup funnels through the same
+        # validity triage as the sweep -- a registry that fails every
+        # read is retained (a fault must never destroy the producer
+        # record the sidecar evidence just rode in on).
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
+        )
+        real_read_text = Path.read_text
+
+        def _sticky_fault(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self == Path(planted["registry"]):
+                raise OSError("sticky read failure")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _sticky_fault)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert Path(planted["registry"]).exists()
+        assert not Path(planted["sidecar"]).exists()
+
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
     ) -> None:
