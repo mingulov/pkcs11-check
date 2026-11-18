@@ -36,6 +36,7 @@ from pkcs11_check.core.call_counters import (
     CounterPersistenceError,
     Snapshot,
     _phase,
+    current_consumed,
     current_receipts,
     diff_snapshots,
     flush_counters,
@@ -51,6 +52,7 @@ from pkcs11_check.core.call_counters import (
 _BASELINE_KEY: pytest.StashKey[Snapshot] = pytest.StashKey()
 _ENTRY_KEY: pytest.StashKey[dict[str, Any]] = pytest.StashKey()
 _RECEIPTS_MARK_KEY: pytest.StashKey[frozenset[tuple[str, int]]] = pytest.StashKey()
+_CONSUMED_MARK_KEY: pytest.StashKey[frozenset[tuple[str, int]]] = pytest.StashKey()
 
 
 # Note on the wrapper protocol: pluggy replaces the hook outcome with a
@@ -71,6 +73,9 @@ def pytest_runtest_setup(item: pytest.Item) -> Any:
     item.stash[_BASELINE_KEY] = take_snapshot()
     item.stash[_RECEIPTS_MARK_KEY] = frozenset(
         (receipt["worker_uuid"], receipt["probe_seq"]) for receipt in current_receipts()
+    )
+    item.stash[_CONSUMED_MARK_KEY] = frozenset(
+        (proof["worker_uuid"], proof["probe_seq"]) for proof in current_consumed()
     )
     with _phase("setup_teardown"):
         result = yield
@@ -126,6 +131,20 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
             if window_receipts:
                 entry["receipts"] = [
                     {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in window_receipts
+                ]
+            consumed_mark = item.stash.get(_CONSUMED_MARK_KEY, frozenset())
+            window_consumed = sorted(
+                {(proof["worker_uuid"], proof["probe_seq"]) for proof in current_consumed()}
+                - set(consumed_mark)
+            )
+            if window_consumed:
+                # Anti-double-fold proofs for fallback absorptions in
+                # this window (codex RC4-R3): collection claims them
+                # before orphan adoption, so an entry that survives a
+                # failed journal publish still suppresses the retained
+                # orphan. Never read by the extractor: no rows earned.
+                entry["consumed_probes"] = [
+                    {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in window_consumed
                 ]
             entry.update(diff_snapshots(baseline, take_snapshot()))
             item.stash[_ENTRY_KEY] = entry

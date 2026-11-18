@@ -1654,6 +1654,36 @@ def test_probe_sidecar_omits_identity_when_unset(
     assert "isolation" not in payload
 
 
+def test_probe_sidecar_finalized_flag_round_trips(tmp_path: Path) -> None:
+    from pkcs11_check.core._counters_durability import _read_probe_orphan, write_probe_sidecar
+
+    # Codex RC4-R1-1: mid-run snapshots carry finalized:false (fold but
+    # never heal); the exit shape omits the key (byte-identical legacy).
+    mid = tmp_path / "mid.json"
+    write_probe_sidecar(
+        mid,
+        worker_uuid="b" * 32,
+        probe_seq=0,
+        counters=[["m", "C_Login", 0, 1]],
+        finalized=False,
+    )
+    final = tmp_path / "final.json"
+    write_probe_sidecar(
+        final,
+        worker_uuid="b" * 32,
+        probe_seq=0,
+        counters=[["m", "C_Login", 0, 1]],
+    )
+    assert json.loads(mid.read_text(encoding="utf-8"))["finalized"] is False
+    assert "finalized" not in json.loads(final.read_text(encoding="utf-8"))
+    mid_read = _read_probe_orphan(mid)
+    assert mid_read is not None
+    assert mid_read[5] is False
+    final_read = _read_probe_orphan(final)
+    assert final_read is not None
+    assert final_read[5] is True
+
+
 def test_probe_sidecar_malformed_attempt_omits_attempt_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1851,7 +1881,10 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         assert merged is not None
         assert merged["total_calls"] == 3
         assert claimed == [{"worker_uuid": payload["worker_uuid"], "probe_seq": 0}]
-        assert recovered == [(parent, 0)]
+        # Prefix evidence folds but never heals: the 2-unit tail stays
+        # the parent's keyed loss (codex RC4-R1-1).
+        assert payload["finalized"] is False
+        assert recovered == []
         assert consumed == [slot]
     finally:
         if proc.poll() is None:

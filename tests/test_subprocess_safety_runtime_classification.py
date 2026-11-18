@@ -1977,6 +1977,36 @@ def test_fork_child_writes_gcov_delta_not_parent_traffic(
                 pass
 
 
+def test_fork_exit_warns_when_gcov_unwritable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from pkcs11_check.core import call_counters
+
+    # Codex RC4-R1-3: the fork-exit helper writes strict, so a real
+    # writer failure surfaces as CHILD_WARN while the exit code wins.
+    class _Raw:
+        def __init__(self) -> None:
+            self.call_log: dict[str, int] = {}
+            self.mechanism_counts: dict[int, int] = {}
+            self.call_log_ok: dict[str, int] = {}
+            self.mechanism_rv_counts: dict[int, dict[int, int]] = {}
+
+    def fake_exit(code: int) -> None:
+        raise SystemExit(code)
+
+    call_counters.reset_for_tests()
+    monkeypatch.delenv("_P11CHECK_SUBPROCESS_COVERAGE", raising=False)
+    monkeypatch.setenv(subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV, str(tmp_path))
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            subprocess_safety_probe._fork_child_exit_with_coverage(_Raw(), 7)
+        assert exc_info.value.code == 7
+        assert "CHILD_WARN:gcov-unwritten:" in capsys.readouterr().err
+    finally:
+        call_counters.reset_for_tests()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
 def test_fork_parent_folds_gcov_without_note(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

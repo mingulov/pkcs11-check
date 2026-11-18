@@ -134,6 +134,13 @@ _flush_k_cache: int | None = None
 _probe_pending_calls = 0
 #: Whether the probe-slot degraded-mode warning already fired this process.
 _probe_flush_warned = False
+#: (child uuid, seq) pairs absorbed via sidecar fallback, pending delete.
+#: Persisted with the checkpoint (same flush as the absorbed counts), so a
+#: parent death between fallback persistence and sidecar deletion suppresses
+#: the retained orphan instead of double-folding it (codex RC4-R1-2).
+#: Distinct from ``_receipts`` (claimed folds with detail rows); consumed
+#: pairs never earn rows.
+_consumed_probes: set[tuple[str, int]] = set()
 _receipts: set[tuple[str, int]] = set()
 _probe_seq = 0
 _inprog_entry: Counter[tuple[str, str, str]] = Counter()
@@ -283,6 +290,9 @@ def _flush_locked() -> None:
         "journal_seq": _journal_len,
         "in_progress": _serialize(Counter(_inprog_entry), Counter(_inprog_exit)),
         "receipts": [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)],
+        "consumed_probes": [
+            {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_consumed_probes)
+        ],
         "probes_lost": len(_lost_keys) + _unkeyed_lost,
         "lost_keys": [
             {"parent_uuid": parent, "probe_seq": seq} for parent, seq in sorted(_lost_keys)
@@ -411,6 +421,7 @@ def _flush_probe_slot_locked() -> None:
             ]
             or None,
             identity=probe_sidecar_identity_from_env(os.environ),
+            finalized=False,
         )
     except (OSError, TypeError, ValueError) as exc:
         if not _probe_flush_warned:
@@ -865,8 +876,17 @@ def ingest_child_evidence(
     bucket: str | None = None,
     lost_keys: Any = (),
     source: Any = None,
+    consumed_probe: Any = None,
 ) -> None:
     """Merge one child's evidence atomically: counts + losses + receipts.
+
+    ``consumed_probe`` is a validated ``(child_uuid, probe_seq)`` pair
+    for a sidecar-fallback absorption: it lands in ``_consumed_probes``
+    under the same lock acquisition, BEFORE any K auto-flush, so no
+    checkpoint ever carries absorbed counts without their
+    anti-double-fold proof (a parent death between the auto-flush and
+    a later note would otherwise double-fold the retained orphan).
+    Malformed values are ignored like any other garbage item.
 
     ONE atomic transaction under the counters lock (validate counts,
     propagated losses, keys, and receipt inserts, apply, mark dirty):
@@ -897,6 +917,7 @@ def ingest_child_evidence(
     receipt_keys = _parse_receipts(receipts)
     key_set = _parse_lost_keys(lost_keys)
     src = _parse_ingest_source(source)
+    consumed_key = _parse_ingest_source(consumed_probe)
     with _lock:
         target = _resolve_bucket_locked(bucket)
         _ensure_registered_locked()
@@ -913,9 +934,11 @@ def ingest_child_evidence(
         _lost_keys |= key_set
         _unkeyed_lost += max(0, lost_count - len(key_set))
         _receipts |= receipt_keys
+        if consumed_key is not None:
+            _consumed_probes.add(consumed_key)
         if src is not None:
             _ingested_sources.add(src)
-        if parsed or lost_count or receipt_keys or key_set:
+        if parsed or lost_count or receipt_keys or key_set or consumed_key is not None:
             try:
                 units = sum(count for _, _, _, count in parsed) if parsed else 1
                 _mark_dirty_locked(calls=units)
@@ -1054,6 +1077,17 @@ def current_receipts() -> list[dict[str, Any]]:
         return [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)]
 
 
+def current_consumed() -> list[dict[str, Any]]:
+    """Return the consumed fallback-absorption proofs so far (sorted, detached).
+
+    Same shape as :func:`current_receipts`, disjoint meaning: these
+    suppress retained orphans at collection but never earn detail
+    rows. Teardown entries snapshot the window-scoped delta.
+    """
+    with _lock:
+        return [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_consumed_probes)]
+
+
 def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> None:
     """Publish one test window to the journal and reset the in-progress tail.
 
@@ -1095,6 +1129,14 @@ def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> 
                     "receipts": [
                         {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)
                     ],
+                    # The anti-double-fold proof rides with the counts:
+                    # a death between this append and the boundary
+                    # sidecar replacement below must still suppress the
+                    # retained orphan (codex RC4-R2).
+                    "consumed_probes": [
+                        {"worker_uuid": uuid, "probe_seq": seq}
+                        for uuid, seq in sorted(_consumed_probes)
+                    ],
                 },
             )
         except OSError as exc:
@@ -1114,6 +1156,7 @@ def reset_for_tests() -> None:
     global _unkeyed_lost, _phase_name, _worker_uuid, _worker_uuid_pid
     global _registration, _registration_pid, _dirty, _pending_calls, _probe_seq, _journal_len
     global _persistence_pending, _flush_k_cache, _probe_pending_calls, _probe_flush_warned
+    global _consumed_probes
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
@@ -1131,6 +1174,7 @@ def reset_for_tests() -> None:
         _flush_k_cache = None
         _probe_pending_calls = 0
         _probe_flush_warned = False
+        _consumed_probes.clear()
         _receipts.clear()
         _probe_seq = 0
         _inprog_entry.clear()
@@ -1152,6 +1196,7 @@ __all__ = [
     "assign_probe_seq",
     "counted_bucket",
     "current_bucket",
+    "current_consumed",
     "current_receipts",
     "diff_snapshots",
     "ensure_registered",

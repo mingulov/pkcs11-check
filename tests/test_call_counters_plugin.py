@@ -323,6 +323,31 @@ def test_teardown_wrapper_computes_windowed_entry() -> None:
     assert "C_Before" not in provisioning
 
 
+def test_teardown_entry_carries_window_scoped_consumed() -> None:
+    # Codex RC4-R3: the teardown entry stamps fallback-absorption
+    # proofs absorbed inside the window only (pre-window proofs stay
+    # out), in entry-schema-valid shape.
+    pre_uuid = "a" * 32
+    in_uuid = "b" * 32
+    call_counters.ingest_child_evidence([["m", "C_Pre", 0, 1]], 0, (), consumed_probe=(pre_uuid, 0))
+    item = _testcase_item()
+    _drive_phase(plugin_counters.pytest_runtest_setup, item)
+    call_counters.ingest_child_evidence([["m", "C_In", 0, 1]], 0, (), consumed_probe=(in_uuid, 3))
+    _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
+    entry = item.stash[plugin_counters._ENTRY_KEY]
+    assert entry["consumed_probes"] == [{"worker_uuid": in_uuid, "probe_seq": 3}]
+    assert "receipts" not in entry
+    assert schema.is_test_entry(entry) is True
+
+
+def test_teardown_entry_omits_consumed_when_window_empty() -> None:
+    item = _testcase_item()
+    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
+    _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
+    entry = item.stash[plugin_counters._ENTRY_KEY]
+    assert "consumed_probes" not in entry
+
+
 def test_teardown_wrapper_skip_in_setup_yields_setup_only_entry() -> None:
     item = _testcase_item()
     _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))

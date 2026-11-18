@@ -3246,6 +3246,189 @@ class TestProbeFlushCommit:
 
 
 class TestProbeOrphanAdoption:
+    def test_fallback_ingest_persists_consumed_identity(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Codex RC4-R1-2 (write half): a fallback absorption records its
+        # (child, seq) identity into the checkpoint it flushes with.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        status = ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan))
+        assert status == "partial"
+        assert not orphan.exists(), "commit deletes after flushing"
+        sidecar = _read_sidecar()
+        assert sidecar["consumed_probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 0}]
+
+    def test_publish_window_carries_consumed_proof(self, engaged: Path, tmp_path: Path) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Codex RC4-R2 (writer pin): the journal window carries the
+        # consumed proof alongside the counts it journals.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        call_counters.publish_test_window("a.py::t1", None)
+        info = call_counters.registration_info()
+        assert info is not None
+        lines = Path(info["journal_path"]).read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        window = json.loads(lines[0])
+        assert window["block"]["total_calls"] == 4
+        assert window["consumed_probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 0}]
+
+    def test_k100_failed_commit_journal_window_still_suppresses(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Codex RC4-R2 (live interrupt): K=100 keeps the fallback
+        # memory-only; the explicit commit fails (orphan retained,
+        # sidecar stays at its pre-ingest stale mark); teardown
+        # publishes the window to the journal and the boundary sidecar
+        # replacement fails too -- the process "dies" with
+        # journal-first counts. Collection must fold the window once,
+        # exclude the subsumed stale snapshot, and suppress the
+        # orphan (6, never 10).
+        monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "100")
+        _record_calls(2)
+        assert call_counters.flush_counters() is True
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan))
+        assert orphan.exists(), "failed commit retains the orphan"
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.publish_test_window("a.py::t1", None)
+        info = call_counters.registration_info()
+        assert info is not None
+        stale = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
+        assert stale["journal_seq"] == 0
+        assert stale["in_progress"]["total_calls"] == 2
+        # Post-death surgery: the live test process registered
+        # itself, but collection only reaps dead producers. The
+        # orphan is also re-prefixed to the live producer (a real
+        # child slots under its own parent; the plant used _UUID_A).
+        live_uuid = call_counters.get_worker_uuid()
+        orphan.rename(orphan.with_name(f"probe-{live_uuid[:8]}-0-feedface.json"))
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        reg_files = list((engaged / "registrations").glob("*.json"))
+        assert len(reg_files) == 1
+        reg_content = json.loads(reg_files[0].read_text(encoding="utf-8"))
+        reg_content["pid"] = dead_pid
+        reg_content["birth_token"] = dead_birth if dead_birth is not None else 0
+        reg_files[0].write_text(json.dumps(reg_content), encoding="utf-8")
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 6
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 6
+
+    def test_first_checkpoint_already_carries_consumed_identity(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Codex RC4-R1-2 (atomicity pin): the consumed identity rides
+        # inside the ingest transaction, so even the FIRST checkpoint
+        # the fallback writes already carries it -- a parent death
+        # between the ingest auto-flush and the commit can never
+        # strand counts ahead of their anti-double-fold proof.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        snapshots: list[dict[str, Any]] = []
+        real_flush = call_counters._flush_locked
+
+        def _spy() -> None:
+            real_flush()
+            info = call_counters.registration_info()
+            assert info is not None
+            snapshots.append(json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8")))
+
+        monkeypatch.setattr(call_counters, "_flush_locked", _spy)
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        assert snapshots, "fallback must checkpoint at least once"
+        first = snapshots[0]
+        assert first["in_progress"]["total_calls"] == 4
+        assert first["consumed_probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 0}]
+
+    def test_empty_fallback_still_persists_consumed_identity(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Variant of the R1-2 window: an empty snapshot absorbs zero
+        # counts, so ONLY the consumed identity dirties the producer --
+        # the commit must still persist the anti-double-fold proof.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, counters=[])
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        assert not orphan.exists()
+        sidecar = _read_sidecar()
+        assert sidecar["in_progress"]["total_calls"] == 0
+        assert sidecar["consumed_probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 0}]
+
+    def test_garbage_consumed_probe_ignored(self, engaged: Path) -> None:
+        # Garbage tolerance: a malformed consumed identity never
+        # breaks the ingest it rides with, and persists nothing.
+        for garbage in (
+            "not-a-pair",
+            ("not-a-uuid", 0),
+            (_UUID_B, -1),
+            (_UUID_B, 0, "extra"),
+            {"worker_uuid": _UUID_B, "probe_seq": 0},
+        ):
+            call_counters.ingest_child_evidence(
+                [["m", "C_Login", 0, 1]], 0, (), consumed_probe=garbage
+            )
+        sidecar = _read_sidecar()
+        assert sidecar["consumed_probes"] == []
+        assert sidecar["in_progress"]["total_calls"] == 5
+
+    def test_consumed_orphan_suppresses_instead_of_doubling(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex RC4-R1-2 (read half): parent persisted the fallback
+        # prefix, then died before deleting the sidecar. Collection
+        # folds the checkpoint gap once and suppresses the retained
+        # orphan (3, never 6).
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(3)
+        )
+        sidecar_path = Path(planted["sidecar"])
+        content = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        content["consumed_probes"] = [{"worker_uuid": _UUID_B, "probe_seq": 0}]
+        sidecar_path.write_text(json.dumps(content), encoding="utf-8")
+        _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, counters=[["m", "C_Login", 0, 3]])
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 3
+
     def test_empty_orphan_still_heals_and_unions_keys(self, engaged: Path) -> None:
         # Robustness M1: a zero-counters orphan carries no counts but its
         # identity still heals the parent's live claim and its nested keys
@@ -3410,6 +3593,52 @@ class TestProbeOrphanAdoption:
         assert payload["probes_detail"] == [
             {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"}
         ]
+
+    def test_entry_consumed_proof_suppresses_orphan_without_rows(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        pid, birth = _dead_pid_with_birth()
+        # Codex RC4-R3: journal publish failed (the warn path) after a
+        # fallback absorb, but the teardown entry committed with the
+        # probe's counts and its consumed proof. The entry claim must
+        # suppress the retained orphan (4, never 8) while earning no
+        # folded detail row for the consumed pair.
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Tail"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        entry = _test_entry(
+            pid,
+            _counts_block(4),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "consumed_probes": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+            },
+        )
+        assert schema.is_test_entry(entry) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _test_report("a.py::t1", "teardown", entry),
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        assert records[0]["total_calls"] == 2, "tail only; the entry holds the probe"
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 6, "entry 4 + tail 2, counted exactly once"
+        assert payload["probes_lost"] == 0
+        assert payload.get("probes_detail", []) == []
 
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
@@ -5844,6 +6073,93 @@ class TestCommittedRecoveryOnlyClaim:
         assert payload["complete"] is True
         assert payload["probes_lost"] == 0
         assert payload.get("probes_detail", []) == []
+
+    @pytest.mark.parametrize(
+        ("flag", "heals"),
+        [
+            (None, False),  # explicit null: malformed, never heals
+            (0, False),  # explicit 0: malformed, never heals
+            ("false", False),  # explicit string: malformed, never heals
+            (False, False),  # mid-run prefix: folds, never heals
+            (True, True),  # explicit finalized: heals
+            ("<absent>", True),  # legacy/exit shape: heals
+        ],
+    )
+    def test_finalized_flag_shape_decides_healing(
+        self, engaged: Path, tmp_path: Path, flag: Any, heals: bool
+    ) -> None:
+        # Codex RC4-R1-1 hardening: only absent-or-true reads
+        # finalized; any other present value fails closed toward a
+        # named loss rather than a healed one.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5))
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        if flag != "<absent>":
+            content = json.loads(orphan.read_text(encoding="utf-8"))
+            content["finalized"] = flag
+            orphan.write_text(json.dumps(content), encoding="utf-8")
+        durability.mark_probe_consumed(orphan)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                self._committed_session(pid),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        if heals:
+            partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+            assert len(partials) == 1
+            assert partials[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}]
+        else:
+            assert records == [], "non-finalized recovery emits nothing; the loss stands"
+
+    def test_prefix_marker_suppresses_without_healing(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex RC4-R1-1: a mid-run (prefix) marker suppresses duplicates
+        # but must never heal: the tail it never saw stays a named loss.
+        # (A finalized marker heals -- see the tests above.)
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5))
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        content = json.loads(orphan.read_text(encoding="utf-8"))
+        content["finalized"] = False
+        orphan.write_text(json.dumps(content), encoding="utf-8")
+        marker = durability.mark_probe_consumed(orphan)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(5),
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "probes_lost": 1,
+                        "lost_keys": [{"parent_uuid": _UUID_A, "probe_seq": 0}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert records == [], "prefix recovery emits nothing; the loss stands"
+        assert not marker.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["complete"] is False
+        assert payload["probes_lost"] == 1
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_A, "probe_seq": 0, "status": "lost"}
+        ]
 
     def test_torn_committed_recovery_emits_zero_claim_and_heals(
         self, engaged: Path, tmp_path: Path

@@ -66,7 +66,7 @@ SESSION_OPTIONAL_KEYS = frozenset(
 SESSION_ALLOWED_KEYS = SESSION_REQUIRED_KEYS | SESSION_OPTIONAL_KEYS
 ENTRY_REQUIRED_KEYS = frozenset({"pid", "total_calls"})
 ENTRY_OPTIONAL_KEYS = frozenset(
-    {"buckets", "by_module", "run_id", "worker_uuid", "isolation", "receipts"}
+    {"buckets", "by_module", "run_id", "worker_uuid", "isolation", "receipts", "consumed_probes"}
 )
 ENTRY_ALLOWED_KEYS = ENTRY_REQUIRED_KEYS | ENTRY_OPTIONAL_KEYS
 PARTIAL_REQUIRED_KEYS = frozenset({"$report_type", "worker_uuid", "truncated", "total_calls"})
@@ -452,7 +452,9 @@ def is_test_entry(value: object) -> TypeGuard[dict[str, Any]]:
         return False
     if "worker_uuid" in value and not is_worker_uuid(value["worker_uuid"]):
         return False
-    return "receipts" not in value or _receipts_valid(value["receipts"])
+    if "receipts" in value and not _receipts_valid(value["receipts"]):
+        return False
+    return "consumed_probes" not in value or _receipts_valid(value["consumed_probes"])
 
 
 def is_sidecar_partial(value: object) -> TypeGuard[dict[str, Any]]:
