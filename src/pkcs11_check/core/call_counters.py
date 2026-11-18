@@ -858,6 +858,20 @@ def _parse_lost_keys(value: Any) -> set[tuple[str, int]]:
     return keys
 
 
+def _count_malformed_lost_keys(value: Any) -> int:
+    """Count malformed lost-key items (each floors one unkeyed loss).
+
+    Mirrors the probe-orphan reader: explicit null reads absent (the
+    ingest parser's tolerance), a non-list field counts one corrupt
+    blob, else each ill-formed item counts one. Never raises.
+    """
+    if value is None:
+        return 0
+    if not isinstance(value, (list, tuple)):
+        return 1
+    return sum(1 for entry in value if not is_lost_key(entry))
+
+
 def _parse_ingest_source(value: Any) -> tuple[str, int] | None:
     """Return a well-formed ingest source ``(parent_uuid, probe_seq)``, else None."""
     if not isinstance(value, tuple) or len(value) != 2:
@@ -887,7 +901,11 @@ def ingest_child_evidence(
     checkpoint ever carries absorbed counts without their
     anti-double-fold proof (a parent death between the auto-flush and
     a later note would otherwise double-fold the retained orphan).
-    Malformed values are ignored like any other garbage item.
+    Malformed rows, loss values, and receipts are ignored like any
+    other garbage item; malformed lost keys instead floor unkeyed
+    losses (each proves a loss without naming it, exactly what the
+    unkeyed remainder means), so corrupt key metadata can never
+    vanish silently (codex R7-F3).
 
     ONE atomic transaction under the counters lock (validate counts,
     propagated losses, keys, and receipt inserts, apply, mark dirty):
@@ -897,7 +915,10 @@ def ingest_child_evidence(
     ``counted_bucket``. Keyed losses union (idempotent); the scalar covers
     the child's whole loss total, so the unkeyed remainder is
     ``max(0, scalar - len(keys))`` (identities win over an inconsistent
-    scalar, fail closed toward incomplete). A well-formed ``source``
+    scalar, fail closed toward incomplete), plus the malformed-key
+    floor when no positive total was propagated (a positive total
+    already includes every loss counted at write time). A well-formed
+    ``source``
     ``(parent_uuid, probe_seq)`` makes repeat ingests of one payload a
     no-op (same source implies same payload); sourceless payloads always
     apply (no fresh-run vector re-ingests them). When durability is engaged
@@ -917,6 +938,7 @@ def ingest_child_evidence(
     lost_count = _parse_lost_count(lost)
     receipt_keys = _parse_receipts(receipts)
     key_set = _parse_lost_keys(lost_keys)
+    malformed_keys = _count_malformed_lost_keys(lost_keys)
     src = _parse_ingest_source(source)
     consumed_key = _parse_ingest_source(consumed_probe)
     with _lock:
@@ -933,7 +955,13 @@ def ingest_child_evidence(
                 if _registration is not None:
                     _inprog_exit[(module, target, fn, rv)] += count
         _lost_keys |= key_set
-        _unkeyed_lost += max(0, lost_count - len(key_set))
+        # Without a positive total nothing was ever counted inside
+        # it, so each malformed item floors one unkeyed loss on its
+        # own (a positive total already includes them: the remainder
+        # carries them, never the bump too).
+        _unkeyed_lost += max(0, lost_count - len(key_set)) + (
+            malformed_keys if lost_count == 0 else 0
+        )
         _receipts |= receipt_keys
         if consumed_key is not None:
             _consumed_probes.add(consumed_key)
