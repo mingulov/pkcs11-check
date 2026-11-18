@@ -323,19 +323,15 @@ Counted nowhere, by design:
   can neither register nor flush -- even when a caller exports a counters
   dir, which the `test` CLI drops outright in favor of its own run-owned
   dir and `doctor` never sets).
-- External-tool interop children (`p11-kit`, `openssl` binaries spawned
-  by the interop tests): foreign executables with no coverage channel,
-  so their calls never enter any counter. Call totals and `complete`
-  describe instrumented framework activity, including instrumented probe
-  subprocesses. Compare external traces over the same call scope.
-  These tests run only with `P11TEST_ENABLE_EXTERNAL_TOOL_INTEROP=1`.
+- External-tool interop children (`p11-kit` and `openssl` binaries spawned
+  by the interop tests, including grandchild processes): foreign
+  executables with no coverage channel, so their calls never enter any
+  counter. Call totals and `complete` describe instrumented framework
+  activity, including instrumented probe subprocesses. Compare external
+  traces over the same call scope. These tests run only with
+  `P11TEST_ENABLE_EXTERNAL_TOOL_INTEROP=1`.
 - Collection/discovery `--collect-only` children (no report-log channel,
   fixtures never run, no provider calls -- inert even with an identity).
-- The openssl-interop grandchild binary (third-party, uninstrumentable).
-- The openssl-interop direct children in `test_interop_openssl.py`: the
-  `openssl list -providers -provider pkcs11` CLI call (with the target as
-  `PKCS11_PROVIDER_MODULE`) and the `p11-kit list-modules` call
-  (third-party, uninstrumentable - same class as the grandchild).
 - Operator-supplied external provision commands and token-mint tools
   (third-party, uninstrumentable - same class as openssl-interop).
 
