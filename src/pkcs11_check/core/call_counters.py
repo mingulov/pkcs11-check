@@ -56,11 +56,15 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_ROLE_ENV,
     COUNTERS_UNIT_ENV,
     FLUSH_WINDOW_K,
+    PROBE_SEQ_ENV,
+    PROBE_SIDECAR_ENV,
     CounterPersistenceError,
     Registration,
     append_journal,
     durability_dir,
+    probe_sidecar_identity_from_env,
     register_worker,
+    write_probe_sidecar,
     write_sidecar_atomic,
 )
 from pkcs11_check.core.counters_schema import (
@@ -124,6 +128,12 @@ _pending_calls = 0
 #: Effective sidecar flush cadence (None until first read, then cached for
 #: the process; children inherit via env, so a normal run is consistent).
 _flush_k_cache: int | None = None
+#: Evidence units since the last probe-slot flush (probe children only;
+#: registered processes use ``_pending_calls``). Read fresh from the
+#: environment-gated branch below, never cached across fork.
+_probe_pending_calls = 0
+#: Whether the probe-slot degraded-mode warning already fired this process.
+_probe_flush_warned = False
 _receipts: set[tuple[str, int]] = set()
 _probe_seq = 0
 _inprog_entry: Counter[tuple[str, str, str]] = Counter()
@@ -366,14 +376,70 @@ def effective_flush_k() -> int:
         return _effective_flush_k_locked()
 
 
+def _probe_slot_seq() -> int | None:
+    """Return this probe child's assigned seqno, else None. Holds ``_lock``."""
+    try:
+        seq = int(os.environ.get(PROBE_SEQ_ENV, ""))
+    except (TypeError, ValueError):
+        return None
+    return seq if seq >= 0 else None
+
+
+def _flush_probe_slot_locked() -> None:
+    """Persist flattened counters to the assigned probe slot. Holds ``_lock``.
+
+    Best-effort by design: counter plumbing must never break provider
+    stimulus, so a failure warns once per process and keeps counting in
+    memory (the exit coverage write still folds via TMPDIR). The pending
+    window resets either way, bounding retry attempts under a persistently
+    broken slot.
+    """
+    global _probe_pending_calls, _probe_flush_warned
+    slot = os.environ.get(PROBE_SIDECAR_ENV, "")
+    seq = _probe_slot_seq()
+    _probe_pending_calls = 0
+    if not slot or seq is None:
+        return
+    try:
+        write_probe_sidecar(
+            slot,
+            worker_uuid=get_worker_uuid(),
+            probe_seq=seq,
+            counters=flatten_current(),
+            lost_keys=[
+                {"parent_uuid": uuid, "probe_seq": seq_no} for uuid, seq_no in sorted(_lost_keys)
+            ]
+            or None,
+            identity=probe_sidecar_identity_from_env(os.environ),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        if not _probe_flush_warned:
+            _probe_flush_warned = True
+            warnings.warn(
+                f"probe sidecar slot unwritable ({slot}): {exc}; counting continues in memory",
+                UserWarning,
+                stacklevel=2,
+            )
+
+
 def _mark_dirty_locked(calls: int = 0) -> None:
     """Mark evidence mutated; flush when the K window fills. Holds ``_lock``."""
-    global _dirty, _pending_calls
+    global _dirty, _pending_calls, _probe_pending_calls
     _dirty = True
     if _registration is not None and _registration_pid == os.getpid():
         _pending_calls += calls
         if _pending_calls >= _effective_flush_k_locked():
             _flush_locked()
+    elif os.environ.get(PROBE_SIDECAR_ENV):
+        # Disengaged probe child with an assigned slot: persist the
+        # flattened snapshot at the same K cadence, so a mid-run kill
+        # leaves foldable evidence (fw#73 lost-probe recovery). The slot
+        # is read fresh every mark (never cached): a fork child unsets
+        # it and must stop flushing immediately. A leaked slot in a
+        # registered process is ignored: the registration wins.
+        _probe_pending_calls += calls
+        if _probe_pending_calls >= _effective_flush_k_locked():
+            _flush_probe_slot_locked()
 
 
 def _unadmit(counter: Counter[Any], key: Any) -> None:
@@ -1041,7 +1107,7 @@ def reset_for_tests() -> None:
     """Clear counters, phase, regions, losses, identity, receipts, and durability."""
     global _unkeyed_lost, _phase_name, _worker_uuid, _worker_uuid_pid
     global _registration, _registration_pid, _dirty, _pending_calls, _probe_seq, _journal_len
-    global _persistence_pending, _flush_k_cache
+    global _persistence_pending, _flush_k_cache, _probe_pending_calls, _probe_flush_warned
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
@@ -1057,6 +1123,8 @@ def reset_for_tests() -> None:
         _dirty = False
         _pending_calls = 0
         _flush_k_cache = None
+        _probe_pending_calls = 0
+        _probe_flush_warned = False
         _receipts.clear()
         _probe_seq = 0
         _inprog_entry.clear()

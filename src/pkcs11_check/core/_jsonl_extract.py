@@ -894,6 +894,12 @@ def _decorate_process_row(row: dict[str, Any], state: _CountersPid, *, module: s
         row["worker_uuid"] = state.worker_uuid
     if state.role is not None and state.role != "unit":
         row["role"] = state.role
+    # Pid-level like end_state (repeated on each of the pid's rows,
+    # do-not-sum): present exactly when the pid holds ledger losses, so
+    # global losses reconcile per pid instead of reading null (fw#78).
+    pid_losses = state.loss.total()
+    if pid_losses > 0:
+        row["probes_lost"] = pid_losses
     if module is not None and module in state.partial_modules:
         row["truncated"] = True
     if state.sessions_persistence_pending:
@@ -920,7 +926,8 @@ def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]
     renders ``role``. A pid with incomplete-visible evidence but no modules
     (fallback evidence, a loss disposition, outstanding ledger losses, or a
     degraded marker) renders one module-less row so the evidence is never
-    invisible; a clean zero-call session stays silent. No round/shard keys;
+    invisible, as does every session-backed pid even with zero calls
+    (complete when clean). No round/shard keys;
     the caller tags those, and strips ``module`` when the block holds a
     single distinct module (see :func:`_strip_single_module_tag`).
     """
@@ -947,16 +954,26 @@ def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]
         _decorate_process_row(row, state, module=module)
         rows.append(row)
     if not modules and (
-        state.fallback_used
+        state.has_session
+        or state.fallback_used
         or state.end_states
         or state.loss.total() > 0
         or state.sessions_persistence_pending
     ):
+        # Every session renders its row, even with zero calls (fw#78
+        # item 5): a ran-zero process must read distinctly from a
+        # missing one. Complete follows the same rule as module rows.
         row = {
             "pid": pid,
             "isolation": state.isolation,
             "total_calls": 0,
-            "complete": False,
+            "complete": (
+                state.has_session
+                and not state.fallback_used
+                and state.loss.total() == 0
+                and not state.end_states
+                and not state.sessions_persistence_pending
+            ),
         }
         _decorate_process_row(row, state, module=None)
         rows.append(row)

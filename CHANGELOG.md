@@ -40,6 +40,11 @@ validated by a full provider round (see Known limitations).
 - **Report compatibility: 0.3.0 adds the `unattributed_segments` list
   and the provisioning bucket split; readers that ignore unknown keys
   keep working, and the empty round block no longer renders.**
+- **Lost probe processes now recover the calls they recorded before
+  dying, and every test process appears in per-process rows --
+  including zero-call runs, with per-process loss counts.**
+- **Forked probe grandchildren report their calls instead of dropping
+  them silently.**
 
 ### Fixed
 

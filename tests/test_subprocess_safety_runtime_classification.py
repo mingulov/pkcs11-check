@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -1750,6 +1752,25 @@ def test_cx1_isolation_child_env_scrubs_sidecar_slot_but_keeps_seq(
     assert list(tmp_path.glob("*.json")) == []
 
 
+def test_fork_child_isolate_counters_drops_channels_keeps_seq(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Option B safety: the fork grandchild must not inherit the outer
+    # probe's slot (its record-path flushes would alias it), the standard
+    # coverage key (its writes must fall through to gcov), or the counters
+    # identity (it must never register as a phantom producer); the seq
+    # stays for the gcov receipt chain.
+    monkeypatch.setenv("_P11CHECK_PROBE_SIDECAR", "/tmp/outer.json")
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", "/tmp/outer-cov.json")
+    monkeypatch.setenv("PKCS11_CHECK_COUNTERS_DIR", "/tmp/counters")
+    monkeypatch.setenv("_P11CHECK_PROBE_SEQ", "3")
+    subprocess_safety_probe._fork_child_isolate_counters()
+    assert "_P11CHECK_PROBE_SIDECAR" not in os.environ
+    assert "_P11CHECK_SUBPROCESS_COVERAGE" not in os.environ
+    assert "PKCS11_CHECK_COUNTERS_DIR" not in os.environ
+    assert os.environ["_P11CHECK_PROBE_SEQ"] == "3"
+
+
 def test_f13_isolation_child_probe_registered() -> None:
     assert "session_object_isolation_child" in subprocess_safety_probe._PROBES
 
@@ -1840,6 +1861,12 @@ def test_f13_fork_probe_child_reports_phases(monkeypatch: pytest.MonkeyPatch) ->
         def C_Finalize(self, _args: object) -> int:  # noqa: N802
             return 0
 
+        def reset_call_log(self) -> None:
+            pass
+
+        def reset_used_mechanisms(self) -> None:
+            pass
+
     if hasattr(os, "fork"):
         monkeypatch.setattr(os, "fork", lambda: 0)
 
@@ -1853,7 +1880,152 @@ def test_f13_fork_probe_child_reports_phases(monkeypatch: pytest.MonkeyPatch) ->
         events.append(str(args[0]))
 
     monkeypatch.setattr(subprocess_safety_probe, "print", emit, raising=False)
-    with pytest.raises(SystemExit) as exc_info:
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            subprocess_safety_probe._fork_after_initialize(
+                cast(
+                    ProbeContext,
+                    SimpleNamespace(
+                        raw=_Raw(), sh=None, slot_id=None, cleanup=lambda: None, module_path=""
+                    ),
+                ),
+                {},
+            )
+    finally:
+        gcov_path = os.environ.pop(subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV, None)
+        if gcov_path:
+            try:
+                os.unlink(gcov_path)
+            except OSError:
+                pass
+    assert exc_info.value.code == 0
+    assert events == [
+        "CHILD_PHASE:FinalizeInherited",
+        "CHILD_PHASE:Init",
+        "CHILD_PHASE:Slot",
+        "CHILD_PHASE:Finalize",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
+def test_fork_child_writes_gcov_delta_not_parent_traffic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pkcs11_check.core import call_counters
+
+    # The fork child's gcov carries exactly its own calls: pre-fork
+    # parent traffic must not repeat (no double-count on ingest).
+    call_counters.reset_for_tests()
+    for _ in range(5):
+        call_counters.record_call("C_Login", module="m")
+
+    class _Raw:
+        def __init__(self) -> None:
+            self.call_log: dict[str, int] = {}
+            self.mechanism_counts: dict[int, int] = {}
+            self.call_log_ok: dict[str, int] = {}
+            self.mechanism_rv_counts: dict[int, dict[int, int]] = {}
+
+        def C_Initialize(self, _args: object) -> int:  # noqa: N802
+            call_counters.record_call("C_Initialize", module="m")
+            call_counters.record_return("C_Initialize", 0, module="m")
+            return 0
+
+        def C_Finalize(self, _args: object) -> int:  # noqa: N802
+            call_counters.record_call("C_Finalize", module="m")
+            call_counters.record_return("C_Finalize", 0, module="m")
+            return 0
+
+        def reset_call_log(self) -> None:
+            pass
+
+        def reset_used_mechanisms(self) -> None:
+            pass
+
+    if hasattr(os, "fork"):
+        monkeypatch.setattr(os, "fork", lambda: 0)
+
+    def fake_exit(code: int) -> None:
+        raise SystemExit(code)
+
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    monkeypatch.setattr(subprocess_safety_probe, "get_slot_ids", lambda _raw: [7])
+    monkeypatch.setattr(subprocess_safety_probe, "print", lambda *a, **k: None, raising=False)
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            subprocess_safety_probe._fork_after_initialize(
+                cast(
+                    ProbeContext,
+                    SimpleNamespace(
+                        raw=_Raw(), sh=None, slot_id=None, cleanup=lambda: None, module_path=""
+                    ),
+                ),
+                {},
+            )
+        assert exc_info.value.code == 0
+        gcov_path = os.environ[subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV]
+        payload = json.loads(Path(gcov_path).read_text(encoding="utf-8"))
+        total = sum(row[3] for row in payload["call_counters"])
+        assert total == 3, "Finalize + Init + Finalize, never the 5 parent calls"
+    finally:
+        call_counters.reset_for_tests()
+        gcov_path = os.environ.pop(subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV, None)
+        if gcov_path:
+            try:
+                os.unlink(gcov_path)
+            except OSError:
+                pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
+def test_fork_parent_folds_gcov_without_note(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from pkcs11_check.core import call_counters
+
+    # A fork child whose gcov arrives folds exactly (no lost probe):
+    # pre-existing parent traffic plus the delta, nothing doubled.
+    planted = tmp_path / "planted-gcov.json"
+    planted.write_text(
+        json.dumps(
+            {
+                "call_log": {},
+                "mechanism_counts": {},
+                "call_log_ok": {},
+                "mechanism_rv_counts": {},
+                "probes_lost": 0,
+                "call_counters": [["m", "C_Initialize", 0, 2]],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Raw:
+        def C_Initialize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Finalize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+        def reset_call_log(self) -> None:
+            pass
+
+        def reset_used_mechanisms(self) -> None:
+            pass
+
+    if hasattr(os, "fork"):
+        monkeypatch.setattr(os, "fork", lambda: 4242)
+    monkeypatch.setattr(
+        subprocess_safety_probe, "_wait_child_bounded", lambda _pid, _t: ("exit", 0)
+    )
+
+    def _planted_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        return os.open(planted, os.O_RDONLY), str(planted)
+
+    monkeypatch.setattr(tempfile, "mkstemp", _planted_mkstemp)
+    monkeypatch.setattr(subprocess_safety_probe, "print", lambda *a, **k: None, raising=False)
+    call_counters.reset_for_tests()
+    try:
         subprocess_safety_probe._fork_after_initialize(
             cast(
                 ProbeContext,
@@ -1863,13 +2035,52 @@ def test_f13_fork_probe_child_reports_phases(monkeypatch: pytest.MonkeyPatch) ->
             ),
             {},
         )
-    assert exc_info.value.code == 0
-    assert events == [
-        "CHILD_PHASE:FinalizeInherited",
-        "CHILD_PHASE:Init",
-        "CHILD_PHASE:Slot",
-        "CHILD_PHASE:Finalize",
-    ]
+        assert call_counters.serialize_current()["total_calls"] == 2
+        assert call_counters.probes_lost() == 0
+        assert not planted.exists(), "parent consumes the gcov file"
+    finally:
+        call_counters.reset_for_tests()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
+def test_fork_parent_notes_missing_gcov(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pkcs11_check.core import call_counters
+
+    # Today's behavior preserved: no gcov (crash/timeout/corrupt) still
+    # counts one lost probe.
+    class _Raw:
+        def C_Initialize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Finalize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+        def reset_call_log(self) -> None:
+            pass
+
+        def reset_used_mechanisms(self) -> None:
+            pass
+
+    if hasattr(os, "fork"):
+        monkeypatch.setattr(os, "fork", lambda: 4242)
+    monkeypatch.setattr(
+        subprocess_safety_probe, "_wait_child_bounded", lambda _pid, _t: ("exit", 0)
+    )
+    monkeypatch.setattr(subprocess_safety_probe, "print", lambda *a, **k: None, raising=False)
+    call_counters.reset_for_tests()
+    try:
+        subprocess_safety_probe._fork_after_initialize(
+            cast(
+                ProbeContext,
+                SimpleNamespace(
+                    raw=_Raw(), sh=None, slot_id=None, cleanup=lambda: None, module_path=""
+                ),
+            ),
+            {},
+        )
+        assert call_counters.probes_lost() == 1
+    finally:
+        call_counters.reset_for_tests()
 
 
 def test_f13_isolation_child_handler_reports_not_found(

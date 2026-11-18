@@ -1082,6 +1082,62 @@ def test_extract_loss_only_partial_pid_gets_zero_row(tmp_path: Path) -> None:
             "total_calls": 0,
             "complete": False,
             "worker_uuid": "c" * 32,
+            "probes_lost": 1,
+        }
+    ]
+
+
+def test_extract_clean_zero_session_renders_complete_row(tmp_path: Path) -> None:
+    # fw#78 item 5: every session record renders its pid's row, even with
+    # zero calls -- a ran-zero process must be distinguishable from a
+    # missing one (the rc3 clean-zero suppression is dropped per the
+    # consumer's repeated report). Real zero sessions carry an empty
+    # module map (serialize_current with no counts), not a zero module.
+    session = _session_record(100, 0, {"total_calls": 0, "by_module": {}})
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            session,
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is True
+    assert payload["total_calls"] == 0
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 0, "complete": True}
+    ]
+
+
+def test_extract_session_row_carries_pid_losses(tmp_path: Path) -> None:
+    # fw#78 item 5 follow-up: rows carry their pid's ledger loss total
+    # when nonzero (pid-level like end_state: repeated on each of the
+    # pid's rows, do-not-sum), so global losses reconcile per pid instead
+    # of reading null.
+    session = _session_record(100, 5, probes_lost=2)
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            session,
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["probes_lost"] == 2
+    assert payload["by_process"] == [
+        {
+            "pid": 100,
+            "isolation": "file",
+            "total_calls": 5,
+            "complete": False,
+            "probes_lost": 2,
         }
     ]
 
