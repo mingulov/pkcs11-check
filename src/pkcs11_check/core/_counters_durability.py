@@ -73,7 +73,7 @@ from pkcs11_check.core.counters_schema import (
     parse_registry_filename,
     wrap_module_first,
 )
-from pkcs11_check.core.report_log import user_property
+from pkcs11_check.core.report_log import parse_report_log_line, user_property
 
 COUNTERS_DIR_ENV = "PKCS11_CHECK_COUNTERS_DIR"
 COUNTERS_UNIT_ENV = "PKCS11_CHECK_COUNTERS_UNIT"
@@ -873,27 +873,14 @@ def _read_jsonl_lines(path: Path) -> list[bytes] | None:
 def _iter_jsonl_line_records(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
     """Yield parsed dict records from raw JSONL lines (bad lines skipped).
 
-    Framing and decoding mirror ``report_log.iter_report_log_records``
-    exactly (binary ``b"\\n"`` split, strict per-line UTF-8, blank and
-    unparseable lines skipped), so collection and extraction always
-    agree on which records exist. In particular this must NOT use
-    ``str.splitlines`` (which splits U+2028 and friends inside JSON
-    strings) or lossy whole-file decoding (which lets one bad byte
-    poison or fabricate neighboring records) -- either would reopen a
-    silent collect/extract split (codex R3).
+    Parses through the shared ``report_log`` line parser (never a local
+    reimplementation): collection and extraction agree on record
+    existence by construction, since a framing or decoding split
+    between them silently breaks reconciliation (codex R3/R4).
     """
     for raw in lines:
-        try:
-            line = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except (RecursionError, ValueError):
-            continue
-        if isinstance(record, dict):
+        record = parse_report_log_line(raw)
+        if record is not None:
             yield record
 
 

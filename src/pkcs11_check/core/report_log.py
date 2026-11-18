@@ -89,6 +89,29 @@ class SessionCompletionTracker:
         return self._exitstatuses[0] if self._exitstatuses else None
 
 
+def parse_report_log_line(raw: bytes) -> dict[str, Any] | None:
+    """Parse one raw JSONL line; None when blank/undecodable/unparseable/non-dict.
+
+    Shared by the report-log iterator and the counter collector's JSONL
+    reads so both sides always agree on which records exist -- a framing
+    or decoding split between them silently breaks collect/extract
+    reconciliation (heals piercing supersedes they cannot see). Strip
+    before parsing: surrounding whitespace (including NBSP) never hides
+    a record.
+    """
+    try:
+        line = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+    except (RecursionError, ValueError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 def iter_report_log_records(
     path: Path, *, on_invalid: Callable[[], None] | None = None
 ) -> Iterator[dict[str, Any]]:
@@ -115,25 +138,19 @@ def iter_report_log_records(
         return
     with fh:
         for raw_bytes in fh:
-            try:
-                raw_line = raw_bytes.decode("utf-8")
-            except UnicodeDecodeError:
+            if not raw_bytes.strip():
+                continue
+            record = parse_report_log_line(raw_bytes)
+            if record is None:
+                # One deliberate delta from the pre-refactor flow: a line
+                # that is blank only after Unicode-aware stripping (e.g. a
+                # lone NBSP) now counts as invalid rather than silently
+                # blank. Conservative direction: garbage lines taint
+                # completion tracking instead of vanishing from it.
                 if on_invalid is not None:
                     on_invalid()
                 continue
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except (RecursionError, ValueError):
-                if on_invalid is not None:
-                    on_invalid()
-                continue
-            if isinstance(obj, dict):
-                yield obj
-            elif on_invalid is not None:
-                on_invalid()
+            yield record
 
 
 def map_report_outcome(raw_outcome: str, wasxfail: object) -> str:

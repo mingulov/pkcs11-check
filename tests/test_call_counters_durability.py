@@ -4329,7 +4329,7 @@ class TestProbeOrphanAdoption:
             extra={
                 "worker_uuid": _UUID_A,
                 "run_id": _RUN,
-                "isolation": "a b",
+                "isolation": "a\u2028b",
                 "lost_keys": [_lost_key(_UUID_A, 0)],
             },
         )
@@ -4341,7 +4341,51 @@ class TestProbeOrphanAdoption:
         ]
         child = tmp_path / "child.jsonl"
         child.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        assert " " in child.read_text(encoding="utf-8"), "literal U+2028 on disk"
+        assert "\u2028" in child.read_text(encoding="utf-8"), "literal U+2028 on disk"
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert all(rec.get("recovered_keys", []) == [] for rec in records)
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_nbsp_prefixed_session_visible_to_collection(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R4: collection must strip lines before parsing exactly
+        # like extraction -- an NBSP-prefixed session line must land in
+        # the lenient set, or the gap heal pierces the supersede the
+        # extractor applies (silent 5/True).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        lines = [
+            json.dumps({"$report_type": "SessionStart"}).encode(),
+            json.dumps(_marker("a.py", 0)).encode(),
+            "\u00a0".encode() + json.dumps(session).encode(),
+            json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}).encode(),
+        ]
+        child = tmp_path / "child.jsonl"
+        child.write_bytes(b"\n".join(lines) + b"\n")
         records = durability.collect_unit(
             engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
         )
