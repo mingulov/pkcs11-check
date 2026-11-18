@@ -67,11 +67,7 @@ def test_list_modules_skipped_without_opt_in(
 
     assert pkcs11_check.__file__ is not None
     node = (
-        str(
-            Path(pkcs11_check.__file__).parent
-            / "testcases"
-            / "test_interop_openssl.py"
-        )
+        str(Path(pkcs11_check.__file__).parent / "testcases" / "test_interop_openssl.py")
         + "::TestP11KitProxy::test_p11kit_list_modules"
     )
     # Plugin disabled: the stock plugin skips every testcase item without
