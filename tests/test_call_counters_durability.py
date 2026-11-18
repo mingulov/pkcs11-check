@@ -4997,6 +4997,67 @@ class TestProbeOrphanAdoption:
         )
         assert Path(planted_b["sidecar"]).exists()
 
+    def test_reject_reserved_run_id_contract(self) -> None:
+        # Codex R9-F2: the "unknown" round sentinel is reserved --
+        # only that exact value raises; unset, empty, and named runs
+        # all pass.
+        with pytest.raises(call_counters.CounterPersistenceError, match="reserved run_id"):
+            durability.reject_reserved_run_id("unknown")
+        durability.reject_reserved_run_id(None)
+        durability.reject_reserved_run_id("")
+        durability.reject_reserved_run_id("R1")
+
+    def test_registration_rejects_reserved_unknown_run_id(self, engaged: Path) -> None:
+        # Codex R9-F2: no live producer may run under the sentinel --
+        # its session would silently supersede corrupt checkpoints
+        # sharing its uuid. Loud at registration, before any provider
+        # work, with no registry left behind.
+        with pytest.raises(call_counters.CounterPersistenceError, match="reserved run_id"):
+            durability.register_worker(
+                engaged,
+                run_id="unknown",
+                unit="a.py",
+                attempt=0,
+                role="unit",
+                isolation="file",
+                worker_uuid=_UUID_A,
+                pid=os.getpid(),
+            )
+        assert list((engaged / "registrations").glob("*.json")) == []
+
+    def test_session_record_rejects_reserved_unknown_run_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R9-F2: direct-pytest sessions stamp the ambient run id
+        # without registering, so the session record guards the
+        # reservation itself -- no "unknown" session can ever be
+        # emitted to authorize a silent merge.
+        from pkcs11_check import _plugin_counters as plugin_counters
+        from pkcs11_check.core.call_counters import RUN_ID_ENV
+
+        monkeypatch.setenv(RUN_ID_ENV, "unknown")
+        with pytest.raises(call_counters.CounterPersistenceError, match="reserved run_id"):
+            plugin_counters.build_session_record()
+
+    def test_sweep_empty_collected_runs_sweeps_no_run_match(self, engaged: Path) -> None:
+        # Codex R9-F1 blast radius: fresh runs sweep with empty
+        # collected_runs, so the run-match branches are dead code
+        # there -- a prior-run checkpoint retains unconditionally
+        # (the run-granular residual needs a resume barrier's plan).
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="R0",
+            in_progress=_counts_block(5),
+        )
+        planted["registry"].unlink()
+        result = durability.sweep_orphans(engaged, current_run=_RUN)
+        assert Path(planted["sidecar"]).exists()
+        assert result["removed"] == 0
+
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
     ) -> None:
