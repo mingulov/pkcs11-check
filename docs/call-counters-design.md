@@ -147,7 +147,9 @@ merge orders yield the identical leaf including the name.
   only) iff more than one distinct shard appears, and `module` iff more
   than one distinct module appears among the block's rows (same conditional
   rule, decided per block); single-round single-shard single-module output
-  reads exactly like rc1 on every row key.
+  reads exactly like rc1 on every row key, except that every session now
+  renders its row even with zero calls and rows carry `probes_lost` when
+  the pid holds ledger losses (see 0.3.0 deltas).
 - `by_round` maps each round's run id to its own block with the exact
   top-level shape (`complete`, `total_calls`, `by_module`, `probes_lost`,
   `by_process`); the top level stays the GLOBAL roll-up across rounds.
@@ -173,9 +175,16 @@ A `user_properties` entry on the teardown report: `pid`, `worker_uuid`,
 plus the module-first baseline-to-now window diff (setup-phase calls in
 `setup_teardown`, body calls in `test`), plus `run_id` under the same
 omit-when-absent rule as the session record, plus the window's
-folded-probe receipts. Setup/call reports predate the computation and
-always carry nothing. No entry is attached when the window holds no
-calls. A skip in setup still yields a setup-only entry.
+folded-probe receipts and its `consumed_probes` fallback-absorption
+proofs (same receipt shape, suppression-only: collection claims them
+before orphan adoption, the extractor never reads them, so they earn
+no detail rows). A malformed `consumed_probes` value fails the whole
+entry closed (counts dropped with the proof). Setup/call reports
+predate the computation and always carry nothing. No entry is attached
+when the window holds no calls and no claims; a failed journal publish
+beside a current tail emits a claim-only entry (zeroed counts, proofs
+kept) so the tail folds exactly once. A skip in setup still yields a
+setup-only entry.
 
 ### Child wire format
 
@@ -440,8 +449,9 @@ Small seams, each following an existing pattern.
   additionally skips undecodable markers per marker (`JSONDecodeError`,
   `RecursionError`, `ValueError`) without changing valid-trace behavior.
 - Below the probe child: the isolation grandchild writes a private coverage
-  path the probe child ingests; the fork child (untransmittable via
-  `os._exit` by design) is accounted lost by its reaping parent; the
+  path the probe child ingests; the fork child transmits a gcov delta
+  that the reaping parent folds, noting a loss only when it never
+  arrives; the
   threading workload child prints a `P11_CALL_COUNTERS_JSON:` stdout marker
   the parent folds in, accounting lost when it is absent or unusable.
 
@@ -671,9 +681,11 @@ probe, otherwise folded into the parent's partial with the receipt
 claimed -- so below-K ingests survive a worker death. Probe children
 additionally persist their flattened counters to the assigned sidecar
 slot on the record path at the run's K cadence (default every unit),
-so a mid-run kill leaves a foldable prefix that the unchanged
-partial-fold and orphan-adoption paths pick up; the unflushed tail
-stays the parent's keyed loss. Sidecar writes are best-effort in
+so a mid-run kill leaves a foldable prefix that the partial-fold
+and orphan-adoption paths pick up; a `finalized: false` flag on
+mid-run snapshots gates healing (a prefix folds its counts but never
+heals, since the tail it never saw stays genuinely outstanding), and
+the unflushed tail stays the parent's keyed loss. Sidecar writes are best-effort in
 children (warn once, keep counting): counter plumbing never breaks
 provider stimulus. A leaked slot in a registered process is ignored
 (the registration wins), and fork grandchildren drop the slot (they
@@ -884,7 +896,10 @@ the completeness formula under Normative contracts).
 - Results blocks may carry `unattributed_segments`
   (`{scope_index, unit, attempt}`); no degenerate `""` round renders.
 - Producer sidecars carry the `role` / `isolation` attribution stamp;
-  probe sidecars carry the F2 parent-identity block.
+  probe sidecars carry the F2 parent-identity block, a `finalized`
+  flag on mid-run snapshots (absent means finalized), and the child's
+  cumulative `probes_lost` scalar when nonzero (absent or malformed
+  reads 0; adoption forwards the unkeyed remainder over nested keys).
 - Every session record renders its pid's `by_process` row, even with
   zero calls (complete when clean), so a ran-zero process reads
   distinctly from a missing one; zero-call rows also render for pids
@@ -925,7 +940,7 @@ counter state).
 | Record | Wire form | Required fields | Optional fields |
 |---|---|---|---|
 | Session | `$report_type: CallCountersReport` | `pid`, `probes_lost`, `total_calls`, counters | `isolation`, `run_id`, `worker_uuid`, `role`, `receipts` |
-| Per-test entry | `pkcs11_call_counters` user property | `pid`, `total_calls`, counters | `run_id`, `worker_uuid`, `isolation` (Task 5), `receipts` |
+| Per-test entry | `pkcs11_call_counters` user property | `pid`, `total_calls`, counters | `run_id`, `worker_uuid`, `isolation` (Task 5), `receipts`, `consumed_probes` (suppression-only) |
 | Sidecar-partial | `$report_type: CallCountersPartial` (gap-only) | `worker_uuid`, `truncated: true`, `total_calls`, counters | `run_id`, `unit`, `attempt`, `pid`, `receipts`, `role`, `isolation` |
 | Preflight-synth | session-shaped, `role: preflight` | session fields | session optionals; counters must be module-first with only `preflight` content (other buckets absent or zero-call) |
 | Lost | `$report_type: CallCountersLost` (never counts) | `end_state`, `scope_index` | identity (`worker_uuid` and/or `pid`, at least one), `run_id`, `unit`, `attempt`, `origin_shard` |
