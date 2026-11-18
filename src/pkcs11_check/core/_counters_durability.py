@@ -527,14 +527,9 @@ def register_worker(
     )
 
 
-def read_registry_file(path: Path | str) -> dict[str, Any] | None:
-    """Read one registry file; torn/invalid/mismatched reads as absent (None)."""
-    resolved = Path(path)
-    if parse_registry_filename(resolved.name) is None:
-        return None
-    try:
-        raw = resolved.read_text(encoding="utf-8")
-    except (OSError, ValueError):
+def _parse_registry_content(name: str, raw: str) -> dict[str, Any] | None:
+    """Parse registry file content; None unless filename/shape/uuid all check out."""
+    if parse_registry_filename(name) is None:
         return None
     try:
         content = json.loads(raw)
@@ -542,9 +537,19 @@ def read_registry_file(path: Path | str) -> dict[str, Any] | None:
         return None
     if not is_registry_content(content):
         return None
-    if content["worker_uuid"] != parse_registry_filename(resolved.name):
+    if content["worker_uuid"] != parse_registry_filename(name):
         return None
     return dict(content)
+
+
+def read_registry_file(path: Path | str) -> dict[str, Any] | None:
+    """Read one registry file; torn/invalid/mismatched reads as absent (None)."""
+    resolved = Path(path)
+    try:
+        raw = resolved.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    return _parse_registry_content(resolved.name, raw)
 
 
 def read_json_file(path: Path | str) -> Any | None:
@@ -886,14 +891,19 @@ def _iter_jsonl_line_records(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]
 
 def _committed_from_jsonl(
     path: Path | str | None,
-) -> tuple[set[str], set[tuple[str, str]], set[str]] | None:
-    """Return ``(session uuids, (uuid, nodeid) entries, lenient sessions)``.
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]] | None:
+    """Return ``(sessions, entries, lenient sessions)``, runs included.
 
     Sessions are authoritative for their whole producer; entries are
     authoritative per test window. Used to compute the sidecar gap (full
     entry supersedes same-(uuid, test) partial) and delete-after-commit.
     Returns None when the file exists but cannot be read (fail-closed:
     the caller degrades instead of reasoning from an empty snapshot).
+    Session sets key on ``(run, uuid)`` exactly like the extractor's
+    authority staging (absent run reads ``""``, malformed run skips the
+    record): uuid-only matching would let a cross-round session divert
+    a foreign checkpoint into the committed path and delete its gap
+    (codex R5).
 
     Authority equals extractor acceptance: sessions gate on
     ``is_session_record`` and entries on the extractor's own first-match
@@ -912,9 +922,9 @@ def _committed_from_jsonl(
     the strict schema says. Overshoot there only ever yields
     spurious-incomplete, never silent-complete.
     """
-    sessions: set[str] = set()
+    sessions: set[tuple[str, str]] = set()
     entries: set[tuple[str, str]] = set()
-    lenient: set[str] = set()
+    lenient: set[tuple[str, str]] = set()
     if path is None:
         return sessions, entries, lenient
     lines = _read_jsonl_lines(Path(path))
@@ -924,14 +934,18 @@ def _committed_from_jsonl(
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
             uuid = record.get("worker_uuid")
-            if is_worker_uuid(uuid):
-                assert isinstance(uuid, str)
-                lenient.add(uuid)
+            # Mirror _parse_round exactly (a _parse_* import would cycle):
+            # absent run reads implicit, malformed run stages nothing.
+            run = record.get("run_id", "")
+            run_ok = isinstance(run, str) and (bool(run) or "run_id" not in record)
+            if is_worker_uuid(uuid) and run_ok:
+                assert isinstance(uuid, str) and isinstance(run, str)
+                lenient.add((run, uuid))
             if not is_session_record(record):
                 continue
             if is_worker_uuid(uuid):
-                assert isinstance(uuid, str)
-                sessions.add(uuid)
+                assert isinstance(uuid, str) and isinstance(run, str)
+                sessions.add((run, uuid))
         elif report_type == "TestReport":
             nodeid = record.get("nodeid")
             if not isinstance(nodeid, str) or not nodeid:
@@ -1209,7 +1223,9 @@ def _read_probe_orphan(
     malformed reads None -- unknown, never zero-evidence -- so the
     vacuous-heal gate cannot mistake corruption for emptiness; counts
     still fold; adoption forwards the unkeyed remainder over the
-    nested keys with None flooring to 0).
+    nested keys with None flooring to 0). Malformed nested-key items
+    degrade into the scalar (+1 each; a non-list field counts one):
+    each proves a loss without naming it, which is exactly unkeyed.
     Returns None unless the core shape parses.
     """
     data = read_json_file(path)
@@ -1227,10 +1243,23 @@ def _read_probe_orphan(
     assert isinstance(uuid, str) and isinstance(seq, int)
     raw_keys = data.get("lost_keys", ())
     keys: set[tuple[str, int]] = set()
-    if isinstance(raw_keys, (list, tuple)):
+    # Malformed key items degrade to unkeyed losses instead of
+    # vanishing: each proves a loss occurred without naming it, which
+    # is exactly what the unkeyed remainder means. A non-list field
+    # counts one corrupt blob; explicit null reads absent (matches the
+    # ingest parser's tolerance). Without this, malformed keys would
+    # drop silently AND read vacuous (codex R5).
+    malformed_keys = 0
+    if raw_keys is None:
+        pass
+    elif isinstance(raw_keys, (list, tuple)):
         for entry in raw_keys:
             if is_lost_key(entry):
                 keys.add((entry["parent_uuid"], entry["probe_seq"]))
+            else:
+                malformed_keys += 1
+    else:
+        malformed_keys = 1
     identity: dict[str, Any] = {}
     parent = data.get("parent_uuid")
     if is_worker_uuid(parent):
@@ -1247,10 +1276,12 @@ def _read_probe_orphan(
         identity["attempt"] = attempt
     finalized = data.get("finalized", True) is True
     if "probes_lost" not in data:
-        scalar: int | None = 0
+        scalar: int | None = malformed_keys
     elif _is_nonneg_int(data["probes_lost"]):
         assert isinstance(data["probes_lost"], int)
-        scalar = data["probes_lost"]
+        scalar = data["probes_lost"] + malformed_keys
+    elif malformed_keys:
+        scalar = malformed_keys
     else:
         scalar = None
     return (uuid, seq, list(counters), frozenset(keys), identity, finalized, scalar)
@@ -1922,7 +1953,7 @@ def collect_unit(
             continue
         if current_run is not None and content["run_id"] != current_run:
             continue
-        if uuid in sessions:
+        if (content["run_id"], uuid) in sessions:
             claim_records, consumed = _collect_committed_producer(
                 content, uuid, root=root, known_uuids=known_uuids, claims=claims
             )
@@ -1941,7 +1972,7 @@ def collect_unit(
             root=root,
             known_uuids=known_uuids,
             claims=claims,
-            heal_orphans=uuid not in lenient_sessions,
+            heal_orphans=_orphan_heal_allowed(lenient_sessions, content["run_id"], uuid),
         )
         if _append_collected(child_path, records):
             appended.extend(records)
@@ -1994,9 +2025,13 @@ def collect_unit(
             known_uuids=known_uuids,
             producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
             producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
-            heal_orphans=uuid not in lenient_sessions,
+            heal_orphans=_orphan_heal_allowed(
+                lenient_sessions,
+                sidecar_run if isinstance(sidecar_run, str) else None,
+                uuid,
+            ),
         )
-        if uuid in sessions:
+        if isinstance(sidecar_run, str) and (sidecar_run, uuid) in sessions:
             records = []
             # Recovery-only evidence still emits its zero-call claim
             # partial (same CX2 rule as the registry-committed path):
@@ -2090,17 +2125,40 @@ def collect_unit(
     return appended
 
 
+def _orphan_heal_allowed(
+    lenient_sessions: set[tuple[str, str]], run: str | None, uuid: str
+) -> bool:
+    """Whether orphan heals are safe for one producer pass.
+
+    Heals are unsafe exactly when extraction could supersede this
+    pass's partial (same ``(run, uuid)`` authority staged): the counts
+    would die to supersede while the heal pierced it. A known run
+    checks membership precisely; an unknown run (torn evidence)
+    falls back to uuid-only matching (conservative: extra no-heals
+    read spurious-incomplete, never silent-complete).
+    """
+    if run is None:
+        return all(known_uuid != uuid for _, known_uuid in lenient_sessions)
+    return (run, uuid) not in lenient_sessions
+
+
 def _reap_torn_registry(root: Path, registry_path: Path) -> None:
     """Delete a torn registry only when no sidecar could still adopt it.
 
-    Readability-gated: an unreadable file is retained, never reaped --
-    a transient read fault must not destroy the producer record a later
-    pass needs to discover its orphans (codex R3). Reaping is for
-    provably-torn content only.
+    Triaged on a single read: I/O failure retains (a transient fault
+    must never destroy the producer record a later pass needs);
+    undecodable or invalid content reaps when no sidecar matches (the
+    project writes strict UTF-8, so undecodable bytes are provably
+    torn); valid content retains (a fault that healed between the
+    caller's read and this one must not delete a healthy record).
     """
     try:
-        registry_path.read_text(encoding="utf-8")
-    except (OSError, ValueError):
+        raw: str | None = registry_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    except ValueError:
+        raw = None
+    if raw is not None and _parse_registry_content(registry_path.name, raw) is not None:
         return
     uuid = parse_registry_filename(registry_path.name)
     if uuid is not None and list(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}")):
@@ -2594,7 +2652,9 @@ def prepare_resume(
         uuid = content["worker_uuid"]
         seen_uuids.add(uuid)
         seen_runs.add(content["run_id"])
-        if uuid in sessions:
+        # Resume track (postponed): uuid-only matching preserves the
+        # frozen committed-vs-gap routing exactly.
+        if any(known_uuid == uuid for _, known_uuid in sessions):
             claim_records, consumed = _collect_committed_producer(
                 content, uuid, root=root, known_uuids=known_uuids, claims=claims
             )
@@ -2677,7 +2737,9 @@ def prepare_resume(
                 producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
             )
         )
-        if uuid in sessions:
+        # Resume track (postponed): uuid-only matching preserves the
+        # frozen claim-vs-gap routing exactly.
+        if any(known_uuid == uuid for _, known_uuid in sessions):
             claim_records = []
             if orphan_block is not None:
                 barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)

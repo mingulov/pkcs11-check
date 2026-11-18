@@ -4169,6 +4169,109 @@ class TestProbeOrphanAdoption:
         assert payload is not None
         assert payload["total_calls"] == 4
 
+    def test_oneshot_registry_failure_retains_valid_registry(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R5: when the collect-loop read fails transiently but the
+        # reaper's own read succeeds on valid content, the registry must
+        # be retained (it is provably healthy, not torn) -- reaping it
+        # would strand the retained orphan from every later pass.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth)
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        real_read_text = Path.read_text
+        attempts: list[str] = []
+
+        def _flaky_twice(self: Path, *args: Any, **kwargs: Any) -> str:
+            # Fail the pre-loop scan and the loop read; the reaper's
+            # own read then succeeds on valid content.
+            if len(attempts) < 2 and self == Path(planted["registry"]):
+                attempts.append("read")
+                raise OSError("transient read failure")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _flaky_twice)
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        assert attempts == ["read", "read"], "fault was exercised twice"
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        assert records == []
+
+    def test_undecodable_registry_reaps_when_nothing_adopts_it(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R5: undecodable bytes are provably torn (the project
+        # writes strict UTF-8), so reaping still applies when no
+        # sidecar could adopt -- only I/O failure retains.
+        engaged.mkdir(parents=True, exist_ok=True)
+        reg = engaged / "registrations" / f"{_UUID_A}.json"
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        reg.write_bytes(b'{"worker_uuid": "\xff"}')
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        assert records == []
+        assert not reg.exists()
+
+    def test_cross_round_session_never_consumes_foreign_gap(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R5: session authority is (run, uuid), never uuid alone
+        # -- an R2 session for this producer's uuid must not divert
+        # the R1 checkpoint into the committed path (which would drop
+        # its gap while deleting its files). The gap folds; both runs
+        # keep their own evidence.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="R1",
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        session = _session_record(
+            pid,
+            _counts_block(7),
+            extra={"worker_uuid": _UUID_A, "run_id": "R2"},
+        )
+        assert schema.is_session_record(session) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9, "R1 gap 5 + adopted orphan 4"
+        assert partials[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}], (
+            "gap heals still fire (evidence folds here)"
+        )
+        assert not orphan.exists()
+        assert Path(planted["sidecar"]).exists() is False
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 16, "R1 gap 9 + R2 session 7"
+        assert payload["complete"] is False
+
     def test_unreadable_child_degrades_to_retain_all_plus_conflict(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4443,6 +4546,94 @@ class TestProbeOrphanAdoption:
         assert payload is not None
         assert payload["total_calls"] == 9
         assert payload["complete"] is False, "crash record still dispositions"
+
+    def test_committed_malformed_keys_never_heal(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex R5-F3: corrupt loss metadata is not evidence of zero --
+        # malformed nested keys degrade to unkeyed losses (visible) and
+        # block the vacuous heal (their losses are unknown, not absent).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[],
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": "7"}],
+        )
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert all(rec.get("recovered_keys", []) == [] for rec in records)
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        # Standing claim only: the adopted bump dies to supersede with
+        # the claim partial (session authoritative) -- exact surfacing
+        # of adopted scalars on this path awaits the heal-linkage
+        # design; what matters here is the claim stands (no heal).
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
+    def test_gap_malformed_keys_surface_as_unkeyed(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex R5: on the gap path (no supersede) the degraded bump
+        # surfaces numerically -- one malformed nested key reads as
+        # one unkeyed loss in the partial and the report.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": "7"}],
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9
+        assert partials[0]["probes_lost"] == 1
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 9
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
 
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
