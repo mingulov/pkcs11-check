@@ -43,6 +43,7 @@ from pkcs11_check.core._counters_durability import (
     PROBE_SEQ_ENV,
     PROBE_SIDECAR_ENV,
     PROBE_UNIT_ENV,
+    CounterPersistenceError,
     durability_dir,
     mark_probe_consumed,
     validate_probe_receipt,
@@ -459,7 +460,18 @@ def run_probe(
             ingest_raw_subprocess_coverage(cov_path, ingest_counters=False)  # I6
         else:
             ingest_subprocess_coverage(cov_path, ingest_counters=False)  # I6
-        counters_status = ingest_probe_payload(cov_path, seq=probe_seq, sidecar_path=probe_sidecar)
+        try:
+            counters_status = ingest_probe_payload(
+                cov_path, seq=probe_seq, sidecar_path=probe_sidecar
+            )
+        except CounterPersistenceError:
+            # A failed commit holds absorbed-or-absent evidence with no
+            # durable checkpoint: strictly worse than "partial", so it
+            # earns the same keyed loss note before the error propagates
+            # (codex 6.2 F1). Without the note the run could read
+            # complete with the child's unflushed tail silently missing.
+            note_lost_probe(parent_uuid=get_worker_uuid(), probe_seq=probe_seq)
+            raise
         if counters_status != "folded":
             # The child's C_* traffic never fully arrived (crash, corrupt
             # file, unattributable receipt, or sidecar-only partial
