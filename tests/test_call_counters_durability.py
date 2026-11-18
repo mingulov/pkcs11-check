@@ -594,6 +594,21 @@ class TestProbeChannel:
         assert call_counters.serialize_current()["total_calls"] == 0
         assert not sidecar.exists()
 
+    def test_torn_bytes_sidecar_is_deleted(self, engaged: Path, tmp_path: Path) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Batch-1 review minor: unparseable bytes on the sidecar arm
+        # are a definitive miss (deleted), unlike unreadable files
+        # (retained) -- completing the tri-state matrix.
+        seq = call_counters.assign_probe_seq()
+        cov = tmp_path / "cov.json"
+        cov.write_text('{"call_log": ', encoding="utf-8")
+        sidecar = tmp_path / "probe-torn.json"
+        sidecar.write_bytes(b"\x00\x01{not json")
+        assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "lost"
+        assert call_counters.serialize_current()["total_calls"] == 0
+        assert not sidecar.exists()
+
     def test_unreadable_sidecar_is_retained_for_retry(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
