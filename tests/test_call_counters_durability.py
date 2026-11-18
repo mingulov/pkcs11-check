@@ -4145,9 +4145,10 @@ class TestProbeOrphanAdoption:
             return real_read_text(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", _flaky_read_text)
-        records = durability.collect_unit(
-            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
-        )
+        with pytest.warns(UserWarning, match="cannot read"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+            )
         assert [rec["$report_type"] for rec in records] == ["CallCountersLost"]
         assert records[0]["end_state"] == "conflict"
         assert Path(planted["sidecar"]).exists()
