@@ -71,6 +71,9 @@ validated by a full provider round (see Known limitations).
 - **Crashed probe sidecars reunite with their parent by full identity
   instead of a filename hint; stale evidence from other runs or units
   stays visible instead of misfolding.**
+- **The run name `unknown` is reserved for recovered crash evidence;
+  runs requesting it fail fast with guidance instead of risking
+  misattributed results.**
 
 ### Known limitations
 
