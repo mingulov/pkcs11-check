@@ -4626,8 +4626,9 @@ class TestProbeOrphanAdoption:
         self, engaged: Path, tmp_path: Path
     ) -> None:
         # Codex R6: an explicit-zero scalar does not make corrupt keys
-        # vacuous -- the keys flag blocks the heal independently of the
-        # numeric total (which reads a clean 0 here).
+        # vacuous -- the corruption blocks the heal (the total floors
+        # loud to 1 here, R7-F3), and the committed path never heals
+        # non-vacuous orphans (their counts die to supersede).
         pid, birth = _dead_pid_with_birth()
         _plant_producer(
             engaged,
@@ -6308,6 +6309,24 @@ class TestIngestLedger:
         assert len(call_counters.lost_probe_keys()) == 2
         # Scalar-anchored total conserved: 5 − 2 keyed = 3 unkeyed.
         assert call_counters.probes_lost() == 5
+
+    def test_ingest_malformed_only_marks_dirty(self, engaged: Path) -> None:
+        # First-tier R7: the malformed floor mutates the ledger, so a
+        # malformed-only ingest must mark dirty like every sibling
+        # bump path -- otherwise a crash before the next dirty event
+        # loses the floored loss with no trace.
+        call_counters.ingest_child_evidence(
+            [],
+            0,
+            [],
+            lost_keys=[{"bogus": 1}],
+            source=(_UUID_B, 0),
+        )
+        assert call_counters.probes_lost() == 1
+        info = call_counters.registration_info()
+        assert info is not None
+        sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
+        assert sidecar["probes_lost"] == 1
 
     def test_ingest_unknown_source_never_skips(self, engaged: Path) -> None:
         # Documents the residual: sourceless payloads cannot dedupe, so
