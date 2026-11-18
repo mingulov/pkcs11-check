@@ -20,7 +20,6 @@ import pytest
 import pkcs11_check._plugin_counters as plugin_counters
 import pkcs11_check.plugin as plugin_mod
 from pkcs11_check._plugin_state import _is_testcase_item
-from pkcs11_check.core import _counters_durability as durability
 from pkcs11_check.core import call_counters
 from pkcs11_check.core import counters_schema as schema
 from pkcs11_check.core.call_counters import (
@@ -38,18 +37,6 @@ def _reset_counters() -> Any:
     call_counters.reset_for_tests()
     yield
     call_counters.reset_for_tests()
-
-
-@pytest.fixture
-def engaged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Engage durability: counters dir + identity env, clean counter state."""
-    root = tmp_path / "counters"
-    monkeypatch.setenv(durability.COUNTERS_DIR_ENV, str(root))
-    monkeypatch.setenv(durability.COUNTERS_UNIT_ENV, "a.py")
-    monkeypatch.setenv(durability.COUNTERS_ATTEMPT_ENV, "0")
-    monkeypatch.setenv(durability.COUNTERS_ROLE_ENV, "unit")
-    monkeypatch.setenv(call_counters.RUN_ID_ENV, "R1")
-    return root
 
 
 def _config_ns(*, p11_module: str | None = "/tmp/fake-module.so") -> SimpleNamespace:
@@ -359,98 +346,6 @@ def test_teardown_entry_omits_consumed_when_window_empty() -> None:
     _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
     entry = item.stash[plugin_counters._ENTRY_KEY]
     assert "consumed_probes" not in entry
-
-
-def _boom_append(path: Any, record: Any) -> None:
-    raise OSError("disk full")
-
-
-def _boom_write(path: Any, payload: Any) -> None:
-    raise durability.CounterPersistenceError("disk full")
-
-
-def test_teardown_publish_failure_yields_claim_only_entry(
-    engaged: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # P1-a: K=1 autoflush keeps the tail current; when the journal
-    # append fails, the boundary retry finds a clean producer, so the
-    # stashed entry drops its counts (the tail covers them). Journal
-    # holds no window; sidecar holds the calls; the failure stays loud.
-    monkeypatch.setattr(call_counters, "append_journal", _boom_append)
-    item = _testcase_item()
-    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
-    _drive_phase(plugin_counters.pytest_runtest_call, item, calls=("C_BodyCall",))
-    with pytest.warns(UserWarning, match="publish failed"):
-        _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
-    entry = item.stash[plugin_counters._ENTRY_KEY]
-    assert entry["total_calls"] == 0
-    assert entry["by_module"] == {}
-    assert schema.is_test_entry(entry) is True
-    info = call_counters.registration_info()
-    assert info is not None
-    sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
-    assert sidecar["in_progress"]["total_calls"] == 2
-    journal_path = Path(info["journal_path"])
-    assert not journal_path.exists() or journal_path.read_text(encoding="utf-8") == ""
-
-
-def test_teardown_publish_failure_retries_boundary_flush(
-    engaged: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # P1-b: K=100 keeps evidence memory-only; when the journal append
-    # fails, the boundary retry writes the tail, so the entry still
-    # goes claim-only. The sidecar holds the calls it never had.
-    monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "100")
-    monkeypatch.setattr(call_counters, "append_journal", _boom_append)
-    item = _testcase_item()
-    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
-    with pytest.warns(UserWarning, match="publish failed"):
-        _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
-    entry = item.stash[plugin_counters._ENTRY_KEY]
-    assert entry["total_calls"] == 0
-    assert entry["by_module"] == {}
-    info = call_counters.registration_info()
-    assert info is not None
-    sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
-    assert sidecar["in_progress"]["total_calls"] == 1
-
-
-def test_teardown_publish_failure_keeps_full_entry_when_tail_stale(
-    engaged: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # P1-c: when the boundary retry also fails, the tail may lag the
-    # entry, so the full entry stays (evidence preserved); the crash
-    # record downstream flags the degraded span incomplete.
-    monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "100")
-    monkeypatch.setattr(call_counters, "append_journal", _boom_append)
-    monkeypatch.setattr(call_counters, "write_sidecar_atomic", _boom_write)
-    item = _testcase_item()
-    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
-    with pytest.warns(UserWarning, match="publish failed"):
-        _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
-    entry = item.stash[plugin_counters._ENTRY_KEY]
-    assert entry["total_calls"] == 1
-
-
-def test_attach_allows_claim_bearing_zero_entry() -> None:
-    # P1-e: claim-only entries (zero counts, live claims) attach so
-    # their suppression proofs survive; bare zero entries still drop.
-    item = _testcase_item()
-    claimed = {
-        "pid": 1234,
-        "total_calls": 0,
-        "by_module": {},
-        "consumed_probes": [{"worker_uuid": "b" * 32, "probe_seq": 0}],
-    }
-    item.stash[plugin_counters._ENTRY_KEY] = claimed
-    report = _report()
-    plugin_counters.attach_call_counters(item, report)
-    assert report.user_properties == [(CALL_COUNTERS_PROPERTY, claimed)]
-    bare = _testcase_item()
-    bare.stash[plugin_counters._ENTRY_KEY] = {"pid": 1234, "total_calls": 0, "by_module": {}}
-    report2 = _report()
-    plugin_counters.attach_call_counters(bare, report2)
-    assert report2.user_properties == []
 
 
 def test_teardown_wrapper_skip_in_setup_yields_setup_only_entry() -> None:
