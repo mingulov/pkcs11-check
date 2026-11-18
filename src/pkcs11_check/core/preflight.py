@@ -43,6 +43,7 @@ from pkcs11_check.core._counters_durability import (
     end_state_for_attempt,
     read_json_file,
     read_registry_file,
+    reject_reserved_run_id,
 )
 from pkcs11_check.core.call_counters import (
     RUN_ID_ENV,
@@ -124,6 +125,7 @@ class PreflightCounters:
         evidence = os.environ.get(PREFLIGHT_EVIDENCE_ENV, "").strip()
         if not counters_dir or not run_id or not evidence:
             return None
+        reject_reserved_run_id(run_id)
         return cls(
             counters_dir=Path(counters_dir),
             run_id=run_id,

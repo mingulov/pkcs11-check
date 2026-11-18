@@ -127,13 +127,14 @@ def reject_reserved_run_id(run_id: str | None) -> None:
     no live producer may run under it, or its session would silently
     supersede corrupt checkpoints sharing its uuid (codex R9-F2).
     Anything else (including None/unset) passes. Enforced everywhere
-    live evidence takes a run: registration, session records, and
-    per-test window entries.
+    live evidence takes a run: registration, session records,
+    per-test window entries, and preflight/recovery engagement.
     """
     if run_id == _UNKNOWN_RUN:
         raise CounterPersistenceError(
             "reserved run_id 'unknown': it stamps corrupt-evidence rounds and "
-            "must never identify a live run"
+            "must never identify a live run "
+            "(unset PKCS11_CHECK_RUN_ID or pick another run id)"
         )
 
 
@@ -2904,8 +2905,8 @@ def prepare_resume(
             if any(rec.get("end_state") == "unresolved" for rec in records)
         }
     )
-    # Run-granular authority (known residual, codex R9-F1): staging is
-    # file-granular but the sweep deletes by run match, so a same-run
+    # Run-granular authority (known residual, codex R9-F1): consumption
+    # is file-granular but the sweep deletes by run match, so a same-run
     # straggler unreadable during the barrier is swept as a leftover
     # once readable -- and these branches double as staged-source
     # cleanup, so they cannot simply be removed. Staged-identity

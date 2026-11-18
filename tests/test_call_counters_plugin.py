@@ -598,3 +598,16 @@ def test_teardown_entry_omits_run_id_when_env_absent(
     _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
     entry = item.stash[plugin_counters._ENTRY_KEY]
     assert "run_id" not in entry
+
+
+def test_teardown_entry_rejects_reserved_unknown_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # First-tier R9: the per-test window stamps the same ambient run
+    # id, so it guards the reservation too -- no "unknown" entry may
+    # flow into report user_properties.
+    monkeypatch.setenv(RUN_ID_ENV, "unknown")
+    item = _testcase_item()
+    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
+    with pytest.raises(call_counters.CounterPersistenceError, match="reserved run_id"):
+        _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
