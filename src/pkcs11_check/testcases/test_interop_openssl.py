@@ -73,9 +73,9 @@ def _external_tool_interop_enabled() -> bool:
 
     External tools (`p11-kit`, `openssl`) make provider calls no
     framework channel can see, so their tests run only under explicit
-    operator opt-in; default runs stay exactly reconcilable. Only the
-    exact value ``"1"`` enables; anything else (including garbage)
-    reads disabled.
+    operator opt-in; default runs exclude this source of out-of-scope
+    traffic. Only the exact value ``"1"`` enables; anything else
+    (including garbage) reads disabled.
     """
     return os.environ.get(_EXTERNAL_TOOL_INTEROP_ENV) == "1"
 
