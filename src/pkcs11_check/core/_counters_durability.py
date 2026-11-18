@@ -112,6 +112,10 @@ FLUSH_WINDOW_K = 1
 #: unconditional at any K. Read once per process; children inherit via env.
 COUNTERS_FLUSH_K_ENV = "PKCS11_CHECK_COUNTERS_FLUSH_K"
 SEAL_FILENAME = "SEALED"
+#: Round stamp for corrupt sidecar runs: present-but-unusable (null,
+#: mistyped) reads this sentinel, never the implicit round, so
+#: explicitly corrupt rounds stay distinguishable from absent ones.
+_UNKNOWN_RUN = "unknown"
 SIDECAR_SUFFIX = ".partial.json"
 JOURNAL_SUFFIX = ".windows.jsonl"
 RECOVERY_SUPPLEMENTS_SUFFIX = ".recovery-counters.jsonl"
@@ -2083,7 +2087,7 @@ def collect_unit(
                 records.append(
                     _partial_record(
                         worker_uuid=uuid,
-                        run_id=_implicit_run(sidecar),
+                        run_id=_sidecar_run(sidecar),
                         unit=str(sidecar.get("unit", "")),
                         attempt=sidecar.get("attempt", 0)
                         if _is_nonneg_int(sidecar.get("attempt"))
@@ -2125,7 +2129,7 @@ def collect_unit(
             records.append(
                 _partial_record(
                     worker_uuid=uuid,
-                    run_id=_implicit_run(sidecar),
+                    run_id=_sidecar_run(sidecar),
                     unit=str(sidecar.get("unit", "")),
                     attempt=sidecar.get("attempt", 0)
                     if _is_nonneg_int(sidecar.get("attempt"))
@@ -2145,7 +2149,7 @@ def collect_unit(
             end_state="conflict" if conflict else end_state,
             worker_uuid=uuid,
             pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-            run_id=_implicit_run(sidecar),
+            run_id=_sidecar_run(sidecar),
             unit=str(sidecar.get("unit", "")),
             attempt=sidecar.get("attempt") if _is_nonneg_int(sidecar.get("attempt")) else None,
             role=stamp_role,
@@ -2226,18 +2230,25 @@ def _sidecar_stamp(sidecar: dict[str, Any]) -> tuple[str, str]:
     return (stamped_role, stamped_isolation)
 
 
-def _implicit_run(sidecar: dict[str, Any]) -> str:
-    """Return the sidecar's run stamp, implicit when unusable (tolerant).
+def _sidecar_run(sidecar: dict[str, Any]) -> str:
+    """Return the sidecar's run stamp (tolerant).
 
     Sidecars are unvalidated evidence (unlike registries). An absent
-    or mistyped run stamps the implicit round (matching the
-    extractor's absent-run default), never ``str(value)``:
-    stringifying ``None`` would mint a fake ``"None"`` round that
-    collides with a real session's authority and drops the checkpoint
-    silently (codex R7-F1).
+    run reads implicit (legacy omits the key; live no-run-id flows
+    stamp ``""``). A present string stamps itself. Anything else
+    (null, mistyped) stamps the ``"unknown"`` sentinel, never
+    ``str(value)`` and never implicit: stringifying ``None`` would
+    mint a fake ``"None"`` round colliding with session authority
+    (codex R7-F1), and implicit would merge corrupt evidence into a
+    genuine implicit-round session's authority, dropping the
+    checkpoint silently (codex R8-F1).
     """
-    run = sidecar.get("run_id")
-    return run if isinstance(run, str) and run else ""
+    if "run_id" not in sidecar:
+        return ""
+    run = sidecar["run_id"]
+    if isinstance(run, str):
+        return run
+    return _UNKNOWN_RUN
 
 
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
@@ -2772,18 +2783,19 @@ def prepare_resume(
         if adopted is None:
             continue
         uuid, sidecar = adopted
-        # str(), not _implicit_run(): crediting "" for unknown
-        # evidence would license the sweep to delete genuine ""-run
-        # sidecars it never staged (raw-content match). The junk token
-        # ("None"/"7"/...) can never equal a real run, so unknown
-        # evidence retains and credits nothing.
-        seen_runs.add(str(sidecar.get("run_id", "")))
+        barrier_run = sidecar.get("run_id")
+        # Sweep authority needs a genuine stamp: only real strings
+        # credit a run ("" included -- live writers emit it when no
+        # run id is set). A junk token from unknown evidence ("None"
+        # from null, ...) must never authorize the sweep to delete
+        # same-token sidecars it never staged (codex R8-F2).
+        if isinstance(barrier_run, str):
+            seen_runs.add(barrier_run)
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
         # Resume track (postponed past 0.3.0): recovered/orphan-keys/
         # adopted scalar are unpacked but deliberately not wired yet;
         # behavior preserved exactly.
-        barrier_run = sidecar.get("run_id")
         barrier_unit = sidecar.get("unit")
         orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys, _adopted = (
             _adopt_probe_orphans(
@@ -2806,7 +2818,7 @@ def prepare_resume(
                 claim_records.append(
                     _partial_record(
                         worker_uuid=uuid,
-                        run_id=_implicit_run(sidecar),
+                        run_id=_sidecar_run(sidecar),
                         unit=str(sidecar.get("unit", "")),
                         attempt=sidecar.get("attempt", 0)
                         if _is_nonneg_int(sidecar.get("attempt"))
@@ -2833,7 +2845,7 @@ def prepare_resume(
             records.append(
                 _partial_record(
                     worker_uuid=uuid,
-                    run_id=_implicit_run(sidecar),
+                    run_id=_sidecar_run(sidecar),
                     unit=str(sidecar.get("unit", "")),
                     attempt=sidecar.get("attempt", 0)
                     if _is_nonneg_int(sidecar.get("attempt"))
@@ -2849,7 +2861,7 @@ def prepare_resume(
             end_state="conflict" if conflict else "unknown",
             worker_uuid=uuid,
             pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-            run_id=_implicit_run(sidecar),
+            run_id=_sidecar_run(sidecar),
             unit=str(sidecar.get("unit", "")),
             attempt=sidecar.get("attempt") if _is_nonneg_int(sidecar.get("attempt")) else None,
             role=barrier_stamp_role,
