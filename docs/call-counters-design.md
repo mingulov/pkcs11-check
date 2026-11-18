@@ -178,13 +178,14 @@ omit-when-absent rule as the session record, plus the window's
 folded-probe receipts and its `consumed_probes` fallback-absorption
 proofs (same receipt shape, suppression-only: collection claims them
 before orphan adoption, the extractor never reads them, so they earn
-no detail rows). A malformed `consumed_probes` value fails the whole
-entry closed (counts dropped with the proof). Setup/call reports
-predate the computation and always carry nothing. No entry is attached
-when the window holds no calls and no claims; a failed journal publish
-beside a current tail emits a claim-only entry (zeroed counts, proofs
-kept) so the tail folds exactly once. A skip in setup still yields a
-setup-only entry.
+no detail rows). Collection gates suppression claims on the strict
+entry schema, so malformed proof values earn no suppression; the
+entry's counts still fold as fallback on their own lenient parse (on
+a corrupt file with a journaled window that can replay the window and
+fold the entry together -- flagged by the crash record, never silent).
+Setup/call reports predate the computation and always carry nothing.
+No entry is attached when the window holds no calls. A skip in setup
+still yields a setup-only entry.
 
 ### Child wire format
 

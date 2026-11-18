@@ -647,6 +647,68 @@ class TestProbeChannel:
         assert call_counters.serialize_current()["total_calls"] == 0
         assert sidecar.exists(), "unreadable evidence is retained, not deleted"
 
+    def test_retained_unreadable_orphan_adopts_on_retry(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Codex R2: the retained sidecar is adopted once readable --
+        # a single transient read failure costs nothing but the
+        # fail-visible loss note (the live key); collection folds the
+        # evidence exactly once.
+        seq = call_counters.assign_probe_seq()
+        cov = tmp_path / "cov.json"
+        cov.write_text('{"call_log": ', encoding="utf-8")
+        engaged.mkdir(parents=True, exist_ok=True)
+        sidecar = engaged / "probe-flaky.json"
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": seq,
+                    "counters": [["m", "C_Login", 0, 4]],
+                }
+            ),
+            encoding="utf-8",
+        )
+        real_open = open
+        attempts: list[str] = []
+
+        def _flaky_once(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path) == str(sidecar) and not attempts:
+                attempts.append("read")
+                raise OSError("transient read failure")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", _flaky_once)
+        assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "lost"
+        assert attempts == ["read"]
+        assert sidecar.exists()
+        call_counters.ensure_registered()
+        call_counters.record_call("C_Login", module="m")
+        live_uuid = call_counters.get_worker_uuid()
+        sidecar.rename(sidecar.with_name(f"probe-{live_uuid[:8]}-{seq}-feedface.json"))
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        reg_files = list((engaged / "registrations").glob("*.json"))
+        assert len(reg_files) == 1
+        reg_content = json.loads(reg_files[0].read_text(encoding="utf-8"))
+        reg_content["pid"] = dead_pid
+        reg_content["birth_token"] = dead_birth if dead_birth is not None else 0
+        reg_files[0].write_text(json.dumps(reg_content), encoding="utf-8")
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 5, "own call 1 + adopted orphan 4"
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+
     def test_grandchild_receipts_propagate_recursively(self, engaged: Path, tmp_path: Path) -> None:
         from pkcs11_check.testcases._probes.runner import ingest_probe_payload
 
@@ -3906,6 +3968,101 @@ class TestProbeOrphanAdoption:
         assert payload["probes_lost"] == 0
         assert payload.get("probes_detail", []) == []
 
+    def test_committed_unabsorbed_orphan_never_heals(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex R2-F1: a session never absorbed this orphan (transient
+        # live miss + retained sidecar), so the committed path must not
+        # heal the parent's loss claim -- the partial's counts die to
+        # session-supersede while heals pierce it, and healing would
+        # report complete with real calls silently missing. The loss
+        # stands (fail-visible); exact recovery awaits the heal-linkage
+        # design (total 5 pins the honest-degraded contract, not 9).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, probes_lost=2)
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        assert schema.is_session_record(session) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 4
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+        assert payload["probes_detail"] == [
+            {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"},
+            {"worker_uuid": _UUID_A, "probe_seq": 0, "status": "lost"},
+        ]
+
+    def test_committed_empty_orphan_still_heals(self, engaged: Path, tmp_path: Path) -> None:
+        # Codex R2-F1 exception: vacuous evidence (zero counts, zero
+        # scalar) heals soundly on the committed path -- the session
+        # trivially contains nothing, so the claim resolves complete.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, counters=[])
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert [rec["$report_type"] for rec in records] == ["CallCountersPartial"]
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 0
+        assert payload["complete"] is True
+
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
     ) -> None:
@@ -5597,51 +5754,6 @@ class TestOrphanRecovery:
         assert payload["probes_lost"] == 0
         assert payload["complete"] is False
 
-    def test_session_plus_orphan_heals_fully(self, engaged: Path, tmp_path: Path) -> None:
-        pid, birth = _dead_pid_with_birth()
-        parent = call_counters.get_worker_uuid()
-        _plant_producer(engaged, uuid=parent, pid=pid, birth=birth, in_progress=_counts_block(9))
-        _plant_probe_orphan(engaged, parent_uuid=parent, seq=0)
-        session = _session_record(
-            pid,
-            _counts_block(13),
-            extra={
-                "worker_uuid": parent,
-                "run_id": _RUN,
-                "probes_lost": 1,
-                "lost_keys": [_lost_key(parent, 0)],
-            },
-        )
-        child = _write_jsonl(
-            tmp_path / "child.jsonl",
-            [
-                {"$report_type": "SessionStart"},
-                _marker("a.py", 0),
-                session,
-                {"$report_type": "SessionFinish", "exitstatus": 0},
-            ],
-        )
-        records = durability.collect_unit(
-            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
-        )
-        assert [rec["$report_type"] for rec in records] == ["CallCountersPartial"]
-        assert records[0]["recovered_keys"] == [_lost_key(parent, 0)]
-        report = _write_jsonl(
-            tmp_path / "report.jsonl",
-            [
-                {"$report_type": "SessionStart"},
-                _marker("a.py", 0),
-                session,
-                *records,
-                {"$report_type": "SessionFinish", "exitstatus": 0},
-            ],
-        )
-        payload = extract_call_counters_from_jsonl(report)
-        assert payload is not None
-        assert payload["total_calls"] == 13
-        assert payload["probes_lost"] == 0
-        assert payload["complete"] is True
-
     def test_seq_mismatch_suppresses_recovery(self, engaged: Path, tmp_path: Path) -> None:
         pid, birth = _dead_pid_with_birth()
         parent = call_counters.get_worker_uuid()
@@ -5890,7 +6002,10 @@ class TestZeroRows:
     def test_module_less_fallback_used_forces_incomplete(self, tmp_path: Path) -> None:
         # B3: the module-less complete formula's fallback_used arm --
         # a ran-zero pid with a session in one scope and fallback
-        # evidence in another reads incomplete, never complete.
+        # evidence in another reads incomplete, never complete. (The
+        # zero-count entry is synthetic -- the production writer omits
+        # claimless zeros -- but foreign evidence can carry the shape,
+        # and the arm must hold regardless.)
         jsonl = _write_jsonl(
             tmp_path / "report.jsonl",
             [

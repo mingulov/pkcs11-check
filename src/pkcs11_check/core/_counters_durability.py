@@ -1325,6 +1325,7 @@ def _adopt_probe_orphans(
     known_uuids: set[str],
     producer_run: str | None = None,
     producer_unit: str | None = None,
+    heal_orphans: bool = True,
 ) -> tuple[
     dict[str, Any] | None,
     list[dict[str, Any]],
@@ -1336,6 +1337,12 @@ def _adopt_probe_orphans(
     """Fold one producer's retained probe sidecars.
 
     Returns ``(block, receipts, consumed, recovered, orphan_keys, adopted_lost)``.
+
+    ``heal_orphans`` is False on the committed path (a live session is
+    authoritative): an uncovered orphan was never absorbed, so healing
+    its claim would pierce supersede while the counts die to it. Only
+    vacuous orphans heal there; markers always heal (absorbed-live
+    proof the session includes).
     Orphans covered by the producer's durable receipts (sidecar + all
     journal windows + JSONL session/entry claims) suppress silently: their
     evidence is already durable. Uncovered orphans fold into one
@@ -1421,12 +1428,23 @@ def _adopt_probe_orphans(
         # extractor subtracts only part_keys, so forwarding the total
         # would count every adopted keyed loss twice (batch-2 review).
         adopted_lost.append(max(0, scalar - len(keys)))
+        block = _probe_rows_to_block(counters)
         # Healing gates on finalized: a mid-run prefix folds its counts
         # but never heals, since the tail it never saw stays genuinely
-        # outstanding (codex RC4-R1-1).
-        if finalized and seq == filename_seq:
+        # outstanding (codex RC4-R1-1). On the committed path (session
+        # authoritative) orphan heals are disabled: an uncovered orphan
+        # was never absorbed, so the session lacks its counts, which
+        # supersede drops while a heal would pierce -- healing would
+        # report complete with real calls silently missing (codex R2
+        # F1). The known cost: absorbed-but-never-flushed evidence
+        # (persistent sidecar failure + survival) reads spurious-
+        # incomplete instead of exact-complete; loud beats silent, and
+        # full linkage awaits the heal-linkage design. Vacuous evidence
+        # (zero counts, zero scalar) still heals: the session trivially
+        # contains nothing. Markers heal on every path: a marker proves
+        # a live absorb the session includes.
+        if finalized and seq == filename_seq and (heal_orphans or (block is None and scalar == 0)):
             recovered.append((worker_uuid, seq))
-        block = _probe_rows_to_block(counters)
         if block is not None:
             merge_module_first(merged, block)
             claimed.append({"worker_uuid": child_uuid, "probe_seq": seq})
@@ -1880,6 +1898,7 @@ def collect_unit(
             known_uuids=known_uuids,
             producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
             producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
+            heal_orphans=uuid not in sessions,
         )
         if uuid in sessions:
             records = []
@@ -2151,6 +2170,7 @@ def _collect_committed_producer(
         known_uuids=known_uuids,
         producer_run=content["run_id"],
         producer_unit=content["unit"],
+        heal_orphans=False,
     )
     if orphan_block is None and not recovered and not orphan_keys and not adopted_lost:
         return [], consumed
