@@ -360,6 +360,19 @@ class TestRecoveryIncluded:
         with pytest.raises(CounterPersistenceError, match="reserved run_id"):
             PreflightCounters.resolve_from_env(unit="recovery", attempt=1)
 
+    def test_preflight_counters_rejects_reserved_run_id_direct(self, tmp_path: Path) -> None:
+        # Codex R10-F2: direct construction bypasses resolve_from_env,
+        # so the dataclass itself rejects the sentinel -- no
+        # "unknown" Lost row or note can be constructed by any path.
+        with pytest.raises(CounterPersistenceError, match="reserved run_id"):
+            PreflightCounters(
+                counters_dir=tmp_path / "counters",
+                run_id="unknown",
+                unit="recovery",
+                attempt=1,
+                evidence_path=tmp_path / "preflight-counters.jsonl",
+            )
+
 
 class TestDoctorExcluded:
     def test_doctor_passes_no_counters(
