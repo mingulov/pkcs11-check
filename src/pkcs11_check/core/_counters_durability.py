@@ -973,7 +973,11 @@ def _claimed_receipts_from_jsonl(
     these with the producer's durable file receipts: either holder proves
     the probe evidence durable, so the orphan suppresses instead of
     folding twice. Returns None when the file exists but cannot be read
-    (the caller degrades instead of suppressing nothing).
+    (the caller degrades instead of suppressing nothing). Claims stay
+    global across runs deliberately (receipt identities are unique per
+    probe child; per-round scoping would break cross-round dedup the
+    resume track relies on) -- see the review report for the full
+    tradeoff.
     """
     claims: dict[str, set[tuple[str, int]]] = {}
     if path is None:
@@ -1209,9 +1213,10 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
 def _read_probe_orphan(
     path: Path,
 ) -> (
-    tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int | None] | None
+    tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int | None, bool]
+    | None
 ):
-    """Return ``(child_uuid, seq, counters, lost_keys, identity, finalized, scalar)``.
+    """Return ``(child_uuid, seq, counters, keys, identity, finalized, scalar, keys_corrupt)``.
 
     ``identity`` is the F2 self-describing block (parent_uuid/run_id/unit/
     attempt/role/isolation, each present only when well-typed); legacy
@@ -1219,13 +1224,14 @@ def _read_probe_orphan(
     mid-run snapshots (absent or explicit ``true`` reads finalized:
     legacy and exit writes; any other present value reads
     non-finalized, failing closed toward a named loss). ``scalar`` is
-    the child's cumulative loss total (absent reads 0; present-but-
-    malformed reads None -- unknown, never zero-evidence -- so the
-    vacuous-heal gate cannot mistake corruption for emptiness; counts
-    still fold; adoption forwards the unkeyed remainder over the
-    nested keys with None flooring to 0). Malformed nested-key items
-    degrade into the scalar (+1 each; a non-list field counts one):
-    each proves a loss without naming it, which is exactly unkeyed.
+    the child's cumulative loss total: absent reads the malformed-key
+    count (the only signal when no total was ever written); a valid
+    scalar stands alone (it already includes every loss counted at
+    write time, so malformed items must not bump it again); a
+    malformed scalar reads the malformed count, or None when there is
+    none (unknown, never zero-evidence). Counts still fold in every
+    case. ``keys_corrupt`` flags any malformed nested-key content so
+    the vacuous-heal gate cannot mistake corruption for emptiness.
     Returns None unless the core shape parses.
     """
     data = read_json_file(path)
@@ -1279,12 +1285,21 @@ def _read_probe_orphan(
         scalar: int | None = malformed_keys
     elif _is_nonneg_int(data["probes_lost"]):
         assert isinstance(data["probes_lost"], int)
-        scalar = data["probes_lost"] + malformed_keys
+        scalar = data["probes_lost"]
     elif malformed_keys:
         scalar = malformed_keys
     else:
         scalar = None
-    return (uuid, seq, list(counters), frozenset(keys), identity, finalized, scalar)
+    return (
+        uuid,
+        seq,
+        list(counters),
+        frozenset(keys),
+        identity,
+        finalized,
+        scalar,
+        malformed_keys > 0,
+    )
 
 
 def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
@@ -1473,6 +1488,7 @@ def _adopt_probe_orphans(
         filename_seq: int,
         finalized: bool,
         scalar: int | None,
+        keys_corrupt: bool,
     ) -> None:
         if (child_uuid, seq) in coverage:
             consumed.append(path)
@@ -1508,12 +1524,17 @@ def _adopt_probe_orphans(
         # (persistent sidecar failure + survival) reads spurious-
         # incomplete instead of exact-complete; loud beats silent, and
         # full linkage awaits the heal-linkage design. Vacuous evidence
-        # (wire-empty counters, zero scalar) still heals: the session
-        # trivially contains nothing -- but present-yet-unparseable rows
-        # prove nothing about zero calls, so they never heal (codex R3).
-        # Markers heal on every path: a marker proves a live absorb the
-        # session includes.
-        if finalized and seq == filename_seq and (heal_orphans or (not counters and scalar == 0)):
+        # (wire-empty counters, zero scalar, clean keys) still heals:
+        # the session trivially contains nothing -- but present-yet-
+        # unparseable rows or corrupt keys prove nothing about zero
+        # calls, so they never heal (codex R3/R6). Markers heal on
+        # every path: a marker proves a live absorb the session
+        # includes.
+        if (
+            finalized
+            and seq == filename_seq
+            and (heal_orphans or (not counters and scalar == 0 and not keys_corrupt))
+        ):
             recovered.append((worker_uuid, seq))
         if block is not None:
             merge_module_first(merged, block)
@@ -1536,7 +1557,7 @@ def _adopt_probe_orphans(
                 continue
             orphan = _read_probe_orphan(path)
             if orphan is not None:
-                marker_child, marker_seq, _, marker_keys, _, marker_finalized, _ = orphan
+                marker_child, marker_seq, _, marker_keys, _, marker_finalized, _, _ = orphan
                 coverage.add((marker_child, marker_seq))
                 orphan_keys |= marker_keys
                 if marker_finalized and marker_seq == parsed_name[1]:
@@ -1553,7 +1574,7 @@ def _adopt_probe_orphans(
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
-        child_uuid, seq, counters, keys, identity, finalized, scalar = orphan
+        child_uuid, seq, counters, keys, identity, finalized, scalar, keys_corrupt = orphan
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
@@ -1583,7 +1604,17 @@ def _adopt_probe_orphans(
                     stacklevel=2,
                 )
                 continue
-            _fold(path, child_uuid, seq, counters, keys, parsed_name[1], finalized, scalar)
+            _fold(
+                path,
+                child_uuid,
+                seq,
+                counters,
+                keys,
+                parsed_name[1],
+                finalized,
+                scalar,
+                keys_corrupt,
+            )
             continue
         # Pass 2: legacy filename fallback (no content identity). Under a
         # prefix collision the orphan could belong to any collider, so it
@@ -1597,7 +1628,9 @@ def _adopt_probe_orphans(
                     stacklevel=2,
                 )
             continue
-        _fold(path, child_uuid, seq, counters, keys, parsed_name[1], finalized, scalar)
+        _fold(
+            path, child_uuid, seq, counters, keys, parsed_name[1], finalized, scalar, keys_corrupt
+        )
     adopted = sum(adopted_lost)
     if merged["total_calls"] == 0:
         return None, [], consumed, sorted(set(recovered)), orphan_keys, adopted
@@ -2142,7 +2175,7 @@ def _orphan_heal_allowed(
     return (run, uuid) not in lenient_sessions
 
 
-def _reap_torn_registry(root: Path, registry_path: Path) -> None:
+def _reap_torn_registry(root: Path, registry_path: Path) -> bool:
     """Delete a torn registry only when no sidecar could still adopt it.
 
     Triaged on a single read: I/O failure retains (a transient fault
@@ -2151,22 +2184,26 @@ def _reap_torn_registry(root: Path, registry_path: Path) -> None:
     project writes strict UTF-8, so undecodable bytes are provably
     torn); valid content retains (a fault that healed between the
     caller's read and this one must not delete a healthy record).
+    Returns True when the file was unlinked. All registry deletion
+    funnels through here (collection and sweep alike) so the triage
+    cannot be bypassed.
     """
     try:
         raw: str | None = registry_path.read_text(encoding="utf-8")
     except OSError:
-        return
+        return False
     except ValueError:
         raw = None
     if raw is not None and _parse_registry_content(registry_path.name, raw) is not None:
-        return
+        return False
     uuid = parse_registry_filename(registry_path.name)
     if uuid is not None and list(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}")):
-        return
+        return False
     try:
         registry_path.unlink(missing_ok=True)
     except OSError:
-        pass
+        return False
+    return True
 
 
 def _sidecar_stamp(sidecar: dict[str, Any]) -> tuple[str, str]:
@@ -2438,12 +2475,10 @@ def sweep_orphans(
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
         if content is None:
-            uuid = parse_registry_filename(registry_path.name)
-            siblings = list(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}")) if uuid is not None else []
-            if siblings:
-                retained += 1
+            if _reap_torn_registry(root, registry_path):
+                removed += 1
             else:
-                _remove([registry_path])
+                retained += 1
             continue
         uuid = content["worker_uuid"]
         if uuid in committed_uuids:

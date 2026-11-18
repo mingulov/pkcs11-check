@@ -4203,6 +4203,29 @@ class TestProbeOrphanAdoption:
         assert orphan.exists()
         assert records == []
 
+    def test_sweep_retains_registry_on_transient_read_failure(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R6: the sweep must use the same validity triage as
+        # collection -- a transient registry read failure with no
+        # parent checkpoint must retain (deleting would strand the
+        # retained probe sidecar from every later pass).
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth)
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        real_read_text = Path.read_text
+
+        def _flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self == Path(planted["registry"]):
+                raise OSError("transient read failure")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        result = durability.sweep_orphans(engaged, current_run=_RUN)
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        assert result["removed"] == 0
+
     def test_undecodable_registry_reaps_when_nothing_adopts_it(
         self, engaged: Path, tmp_path: Path
     ) -> None:
@@ -4599,6 +4622,57 @@ class TestProbeOrphanAdoption:
         assert payload["probes_lost"] == 1
         assert payload["complete"] is False
 
+    def test_committed_zero_scalar_malformed_keys_never_heal(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R6: an explicit-zero scalar does not make corrupt keys
+        # vacuous -- the keys flag blocks the heal independently of the
+        # numeric total (which reads a clean 0 here).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[],
+            probes_lost=0,
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": "7"}],
+        )
+        session = _session_record(
+            pid,
+            _counts_block(5, bucket="setup_teardown"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "lost_keys": [_lost_key(_UUID_A, 0)],
+            },
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert all(rec.get("recovered_keys", []) == [] for rec in records)
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+        assert payload["complete"] is False
+
     def test_gap_malformed_keys_surface_as_unkeyed(self, engaged: Path, tmp_path: Path) -> None:
         # Codex R5: on the gap path (no supersede) the degraded bump
         # surfaces numerically -- one malformed nested key reads as
@@ -4634,6 +4708,44 @@ class TestProbeOrphanAdoption:
         assert payload["total_calls"] == 9
         assert payload["probes_lost"] == 1
         assert payload["complete"] is False
+
+    def test_gap_malformed_keys_not_double_counted_in_scalar(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Codex R6: a valid scalar already includes every loss the
+        # child counted -- including ones whose keys later corrupted
+        # -- so malformed items must not bump it again (1 total + 1
+        # malformed key reads 1 unkeyed, never 2).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            probes_lost=1,
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": "7"}],
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9
+        assert partials[0]["probes_lost"] == 1
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["probes_lost"] == 1
 
     def test_committed_producer_orphan_suppressed_when_session_claims(
         self, engaged: Path, tmp_path: Path
