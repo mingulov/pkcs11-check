@@ -112,6 +112,11 @@ class PreflightCounters:
     attempt: int
     evidence_path: Path
 
+    def __post_init__(self) -> None:
+        # Direct construction bypasses resolve_from_env, so the
+        # dataclass itself rejects the sentinel (codex R10-F2).
+        reject_reserved_run_id(self.run_id)
+
     @classmethod
     def resolve_from_env(cls, *, unit: str, attempt: int) -> PreflightCounters | None:
         """Resolve engagement from the environment, else None (disengaged).

@@ -50,7 +50,6 @@ from pkcs11_check.core._counters_durability import (
 )
 from pkcs11_check.core.call_counters import (
     ISOLATION_ENV,
-    RUN_ID_ENV,
     assign_probe_seq,
     ensure_registered,
     flush_counters,
@@ -423,7 +422,8 @@ def run_probe(
         # published before the child can die, so a dead parent still leaves
         # attributable evidence for the reunion pass. Sealed raises before
         # the spawn (fail fast, no phantom traffic).
-        ensure_registered()
+        registration = ensure_registered()
+        assert registration is not None  # engaged above; sealed raises
         probe_sidecar = str(
             counters_root
             / f"probe-{get_worker_uuid()[:8]}-{probe_seq}-{mint_filename_nonce()}.json"
@@ -432,7 +432,10 @@ def run_probe(
         # F2: the child embeds these into its sidecar, making the orphan
         # self-describing even when the parent's registry is gone.
         env[PROBE_PARENT_ENV] = get_worker_uuid()
-        env[PROBE_RUN_ENV] = os.environ.get(RUN_ID_ENV, "")
+        # The run stamp comes from the validated registration, not
+        # ambient env: a mid-run mutation must not cross-wire the
+        # orphan's round (codex R10-F1).
+        env[PROBE_RUN_ENV] = registration["run_id"]
         env[PROBE_UNIT_ENV] = os.environ.get(COUNTERS_UNIT_ENV, "")
         env[PROBE_ATTEMPT_ENV] = os.environ.get(COUNTERS_ATTEMPT_ENV, "0")
         env[PROBE_ROLE_ENV] = os.environ.get(COUNTERS_ROLE_ENV, "")

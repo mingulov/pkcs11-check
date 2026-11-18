@@ -327,6 +327,34 @@ def test_run_probe_notes_lost_probe_on_abrupt_exit() -> None:
     assert call_counters.probes_lost() == 1
 
 
+def test_run_probe_exports_registered_run_not_ambient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex R10-F1: the probe child's run stamp comes from the
+    # validated registration, not ambient env -- a mid-run mutation
+    # (or "unknown" abuse) must not cross-wire the orphan's round
+    # (else collection declines to fold its retained calls).
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV, PROBE_RUN_ENV
+    from pkcs11_check.core.call_counters import RUN_ID_ENV
+
+    monkeypatch.setenv(COUNTERS_DIR_ENV, str(tmp_path / "counters"))
+    monkeypatch.setenv(RUN_ID_ENV, "R1")
+    call_counters.ensure_registered()
+    monkeypatch.setenv(RUN_ID_ENV, "unknown")
+    captured: dict[str, str] = {}
+
+    def _fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    try:
+        run_probe("_echo", {"module_path": "/nonexistent.so"}, timeout=30)
+    finally:
+        _drain_probe_side_effects()
+    assert captured[PROBE_RUN_ENV] == "R1"
+
+
 class _StubCFunc:
     """_FuncPtr-shaped double: callable with settable restype/argtypes/errcheck."""
 
