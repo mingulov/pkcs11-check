@@ -186,10 +186,15 @@ def test_threaded_workload_survives_bad_bytes(
     assert "marker-line � garbage" in out
 
 
-def test_interop_run_survives_bad_bytes_from_a_real_child() -> None:
+def test_interop_run_survives_bad_bytes_from_a_real_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The one site whose command is a parameter gets a true end-to-end test."""
     from pkcs11_check.testcases.test_interop_openssl import _run
 
+    # Opt in locally: this test exercises _run's decoding path itself,
+    # not an external tool's provider traffic.
+    monkeypatch.setenv("P11TEST_ENABLE_EXTERNAL_TOOL_INTEROP", "1")
     rc, out, _err = _run(
         [
             sys.executable,
