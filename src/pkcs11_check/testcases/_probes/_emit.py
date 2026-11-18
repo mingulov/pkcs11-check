@@ -329,7 +329,7 @@ def flush_probe_sidecar(
     suppressed) when the coverage file is torn. ``lost_keys`` carries the
     child's keyed-loss set (omitted when None/empty, so legacy sidecars
     are byte-identical). ``probes_lost`` carries the child's cumulative
-    unkeyed scalar the same way (omitted when 0). The F2 parent-identity block rides along when the
+    loss total the same way (omitted when 0). The F2 parent-identity block rides along when the
     runner exported it (each field omitted when unset or malformed, so a
     partial export still yields a parseable sidecar). No-op when the
     parent did not assign a sidecar path. Never raises. Delegates to the

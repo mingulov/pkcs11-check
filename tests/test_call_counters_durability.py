@@ -3447,9 +3447,10 @@ class TestProbeOrphanAdoption:
         self, engaged: Path, tmp_path: Path
     ) -> None:
         # B2: an orphan folded at collection carries its unkeyed scalar
-        # into the partial and the extracted report (never silently
-        # dropped, never double-counted against a live absorb -- folded
-        # implies uncovered implies unabsorbed).
+        # remainder into the partial and the extracted report (never
+        # silently dropped, never double-counted against a live absorb
+        # -- folded implies uncovered implies unabsorbed, outside the
+        # disclosed triple-fault window where the proof never lands).
         pid, birth = _dead_pid_with_birth()
         _plant_producer(
             engaged,
@@ -3477,6 +3478,118 @@ class TestProbeOrphanAdoption:
         assert payload["total_calls"] == 9
         assert payload["probes_lost"] == 2
         assert payload["complete"] is False
+
+    def test_adopted_keyed_scalar_counts_once_not_twice(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Batch-2 Important: the sidecar scalar is the child's TOTAL
+        # (keyed + unkeyed) while nested keys union separately, so
+        # adoption must forward the remainder -- a 1-key/1-scalar
+        # orphan reports exactly 1, never 1 keyed + 1 phantom-unkeyed.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            probes_lost=1,
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": 7}],
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0].get("probes_lost", 0) == 0, "remainder 1-1, not total 1"
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 9
+        assert payload["probes_lost"] == 1
+
+    def test_fallback_scalar_applies_remainder_over_keys(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Batch-2 review: the absorbed scalar is the child's TOTAL, so
+        # the live leg applies the remainder over the absorbed keys
+        # (3 total, 1 keyed -> 2 unkeyed + 1 keyed = 3, never 4).
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            probes_lost=3,
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": 7}],
+        )
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        assert call_counters.probes_lost() == 3
+        assert call_counters.lost_probe_keys() == [{"parent_uuid": _UUID_B, "probe_seq": 7}]
+
+    def test_fallback_garbage_scalar_folds_counts_without_loss(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Batch-2 review: a malformed scalar never breaks the absorb
+        # nor invents a loss -- counts still fold, scalar reads 0.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, probes_lost="many")
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        assert call_counters.serialize_current()["total_calls"] == 4
+        assert call_counters.probes_lost() == 0
+
+    def test_absorbed_scalar_not_doubled_when_orphan_retained(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Batch-2 review: live-absorbed scalar + retained duplicate
+        # orphan (died after persisting, before the delete) -- the
+        # orphan suppresses via the checkpoint proof, so the scalar
+        # counts once (2), never sidecar 2 + orphan 2.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, probes_lost=2)
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        assert not orphan.exists()
+        live_uuid = call_counters.get_worker_uuid()
+        retained = _plant_probe_orphan(engaged, parent_uuid=live_uuid, seq=0, probes_lost=2)
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        reg_files = list((engaged / "registrations").glob("*.json"))
+        assert len(reg_files) == 1
+        reg_content = json.loads(reg_files[0].read_text(encoding="utf-8"))
+        reg_content["pid"] = dead_pid
+        reg_content["birth_token"] = dead_birth if dead_birth is not None else 0
+        reg_files[0].write_text(json.dumps(reg_content), encoding="utf-8")
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 4
+        assert partials[0]["probes_lost"] == 2
+        assert not retained.exists(), "covered orphan consumes without folding"
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["probes_lost"] == 2
 
     def test_run_probe_notes_loss_when_commit_fails(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch

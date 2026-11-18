@@ -1099,8 +1099,9 @@ def write_probe_sidecar(
 
     The single writer behind the exit flush and the mid-run record-path
     trigger: worker/seq/counters, then ``lost_keys`` when non-empty,
-    then ``probes_lost`` when nonzero (the child's cumulative unkeyed
-    scalar, so a finalized heal cannot drop a loss that exists nowhere),
+    then ``probes_lost`` when nonzero (the child's cumulative total,
+    keyed + unkeyed, so a finalized heal cannot drop a loss that
+    exists nowhere),
     then the F2 identity block in wire order. Mid-run snapshots add
     ``"finalized": false`` (fold but never heal: the tail they never
     saw stays a named loss); finalized snapshots omit the key, so the
@@ -1175,9 +1176,9 @@ def _read_probe_orphan(
     mid-run snapshots (absent or explicit ``true`` reads finalized:
     legacy and exit writes; any other present value reads
     non-finalized, failing closed toward a named loss). ``scalar`` is
-    the child's cumulative unkeyed-loss scalar (absent or malformed
-    reads 0, garbage-tolerant like the coverage scalar; counts still
-    fold).
+    the child's cumulative loss total (absent or malformed reads 0,
+    garbage-tolerant like the coverage scalar; counts still fold;
+    adoption forwards the unkeyed remainder over the nested keys).
     Returns None unless the core shape parses.
     """
     data = read_json_file(path)
@@ -1373,7 +1374,8 @@ def _adopt_probe_orphans(
     whose proof failed validation) still double-folds on the triple
     fault -- live sidecar-fallback ingest, failed parent flush,
     pre-flush death -- and stays fail-visible through the lost
-    record.
+    record. The adopted scalar doubles with the counts there for the
+    same reason (the proof never lands); same visibility, same rarity.
     Adopted orphans' nested receipts are dropped, never propagated:
     probe sidecars carry counters, keyed losses, the unkeyed scalar,
     and F2 identity, and only the orphan's own receipt is claimed here.
@@ -1409,11 +1411,16 @@ def _adopt_probe_orphans(
         # claim need a block. (.update, not |=: rebinding the closure
         # name would raise UnboundLocalError.)
         orphan_keys.update(keys)
-        # The unkeyed scalar rides the same gate: folded implies
-        # uncovered implies never absorbed live, so adding here cannot
-        # double against a live absorb (suppressed orphans return
-        # above, their scalar already in the parent state).
-        adopted_lost.append(scalar)
+        # The unkeyed remainder rides the same gate: folded implies
+        # uncovered implies never absorbed live (except the disclosed
+        # triple-fault window below, where the proof never lands and
+        # the lost record keeps the outcome fail-visible), so adding
+        # here cannot double against a live absorb (suppressed orphans
+        # return above, their scalar already in the parent state).
+        # Remainder, not total: nested keys union separately while the
+        # extractor subtracts only part_keys, so forwarding the total
+        # would count every adopted keyed loss twice (batch-2 review).
+        adopted_lost.append(max(0, scalar - len(keys)))
         # Healing gates on finalized: a mid-run prefix folds its counts
         # but never heals, since the tail it never saw stays genuinely
         # outstanding (codex RC4-R1-1).
@@ -1883,7 +1890,7 @@ def collect_unit(
             claim_block = (
                 orphan_block if orphan_block is not None else {"total_calls": 0, "by_module": {}}
             )
-            if orphan_block is not None or recovered or orphan_keys:
+            if orphan_block is not None or recovered or orphan_keys or adopted_lost:
                 torn_stamp_role, torn_stamp_isolation = _sidecar_stamp(sidecar)
                 records.append(
                     _partial_record(
@@ -1896,6 +1903,7 @@ def collect_unit(
                         pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
                         block=claim_block,
                         receipts=orphan_receipts,
+                        probes_lost=adopted_lost,
                         role=torn_stamp_role,
                         isolation=torn_stamp_isolation,
                         orphan_keys=_keys_to_wire(orphan_keys),
@@ -2519,8 +2527,9 @@ def prepare_resume(
         seen_runs.add(str(sidecar.get("run_id", "")))
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
-        # Resume track (postponed past 0.3.0): recovered/orphan-keys are
-        # unpacked but deliberately not wired yet; behavior preserved exactly.
+        # Resume track (postponed past 0.3.0): recovered/orphan-keys/
+        # adopted scalar are unpacked but deliberately not wired yet;
+        # behavior preserved exactly.
         barrier_run = sidecar.get("run_id")
         barrier_unit = sidecar.get("unit")
         orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys, _adopted = (
