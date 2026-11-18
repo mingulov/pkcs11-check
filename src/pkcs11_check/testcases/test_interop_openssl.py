@@ -65,6 +65,21 @@ def _require_openssl() -> str:
     return openssl
 
 
+_EXTERNAL_TOOL_INTEROP_ENV = "P11TEST_ENABLE_EXTERNAL_TOOL_INTEROP"
+
+
+def _external_tool_interop_enabled() -> bool:
+    """Whether foreign-binary interop tests may spawn external tools.
+
+    External tools (`p11-kit`, `openssl`) make provider calls no
+    framework channel can see, so their tests run only under explicit
+    operator opt-in; default runs stay exactly reconcilable. Only the
+    exact value ``"1"`` enables; anything else (including garbage)
+    reads disabled.
+    """
+    return os.environ.get(_EXTERNAL_TOOL_INTEROP_ENV) == "1"
+
+
 def _run(
     cmd: list[str],
     env: dict[str, str] | None = None,
@@ -72,6 +87,11 @@ def _run(
     input_text: str | None = None,
 ) -> tuple[int, str, str]:
     """Run a command with argv isolation, return (exitcode, stdout, stderr)."""
+    if not _external_tool_interop_enabled():
+        pytest.skip(
+            "external-tool interop disabled "
+            f"(set {_EXTERNAL_TOOL_INTEROP_ENV}=1 to run foreign binaries)"
+        )
     full_env = os.environ.copy()
     if env:
         full_env.update(env)
