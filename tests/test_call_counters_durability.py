@@ -3860,6 +3860,53 @@ class TestProbeOrphanAdoption:
             {"worker_uuid": _UUID_B, "probe_seq": 0, "status": "folded"}
         ]
 
+    def test_claim_only_entry_plus_current_tail_counts_once(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # P1-d: the publish-failure shape -- a claim-only entry (counts
+        # dropped, proofs kept) beside a current tail -- folds the tail
+        # exactly once and suppresses the retained orphan (4, never 8),
+        # with no folded row for the consumed pair.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(4)
+        )
+        sidecar_path = Path(planted["sidecar"])
+        content = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        content["consumed_probes"] = [{"worker_uuid": _UUID_B, "probe_seq": 0}]
+        sidecar_path.write_text(json.dumps(content), encoding="utf-8")
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
+        entry = _test_entry(
+            pid,
+            _counts_block(0),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "consumed_probes": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+            },
+        )
+        assert schema.is_test_entry(entry) is True
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _test_report("a.py::t1", "teardown", entry),
+            ],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 4
+        assert not orphan.exists(), "covered orphan consumes without folding"
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 4, "tail 4 + claim-only 0, counted once"
+        assert payload["probes_lost"] == 0
+        assert payload.get("probes_detail", []) == []
+
     def test_entry_consumed_proof_suppresses_orphan_without_rows(
         self, engaged: Path, tmp_path: Path
     ) -> None:
