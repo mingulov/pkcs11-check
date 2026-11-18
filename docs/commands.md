@@ -60,7 +60,8 @@ uv run pkcs11-check test --module <so>               # full: everything (default
 
 `--skip-slow`/`--only-slow` compose with `--marker` (e.g. `--marker acvp
 --skip-slow` → `-m "(acvp) and (not slow)"`). The full profile still runs every
-case - `slow` is a *selection* profile, never a way to hide a finding.
+case subject to opt-in and capability checks - `slow` is a *selection*
+profile, never a way to hide a finding.
 
 ### External-tool interop (opt-in)
 

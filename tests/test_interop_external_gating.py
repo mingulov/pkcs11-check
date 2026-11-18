@@ -3,11 +3,12 @@
 `p11-kit`/`openssl` children spawned by the interop tests make provider
 calls no framework channel can see (foreign binaries: no coverage, no
 sidecar, no probe key). They run only with explicit operator opt-in so
-default runs stay exactly reconcilable against whole-tree observers.
+default runs exclude their unattributable traffic.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,7 +44,11 @@ def test_run_refuses_foreign_spawn_without_opt_in(monkeypatch: pytest.MonkeyPatc
     from pkcs11_check.testcases.test_interop_openssl import _run
     from tests._skip_assert import assert_skips
 
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise AssertionError("spawn attempted without opt-in")
+
     monkeypatch.delenv(OPT_IN_ENV, raising=False)
+    monkeypatch.setattr(subprocess, "run", _boom)
     assert_skips(_run, [sys.executable, "-c", "pass"], match="external-tool interop")
 
 
@@ -57,13 +62,16 @@ def test_run_spawns_with_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_list_modules_skipped_without_opt_in(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from pkcs11_check.testcases.test_interop_openssl import _have_p11kit
 
     if not _have_p11kit():
         pytest.skip("p11-kit not installed")
     monkeypatch.delenv(OPT_IN_ENV, raising=False)
+    # Trap the launch in the child: with no PATH entry for p11-kit, a
+    # regressed gate errors instead of enumerating host modules.
+    monkeypatch.setenv("PATH", str(tmp_path))
     import pkcs11_check
 
     assert pkcs11_check.__file__ is not None
