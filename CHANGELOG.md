@@ -27,8 +27,9 @@ validated by a full provider round (see Known limitations).
   literal census.**
 - **Post-quantum crypto: prehashed-parameter supply and conditional
   wrong-length verification.**
-- **Crash-exact call counters: at the default cadence every provider
-  call is recorded before it runs, so kills and crashes reconcile to
+- **Crash-exact call counters: at the default cadence every
+  instrumented provider call is recorded before it runs, so kills and
+  crashes reconcile to
   exact numbers or stay visibly incomplete; executed-but-counterless
   work lists as unattributed segments instead of an empty round.
   Speed-sensitive runs may batch snapshots with
@@ -77,6 +78,10 @@ validated by a full provider round (see Known limitations).
 
 ### Known limitations
 
+- PKCS#11 calls made inside external tools such as `p11-kit` and
+  `openssl` are outside the scope of call totals and lost-probe
+  reporting. A report marked complete can therefore show fewer calls
+  than a trace of the whole process tree.
 - No full provider-matrix round has validated this release; the
   verdict changes above are proved against scripted fakes and
   SoftHSM only.

@@ -62,6 +62,17 @@ uv run pkcs11-check test --module <so>               # full: everything (default
 --skip-slow` → `-m "(acvp) and (not slow)"`). The full profile still runs every
 case - `slow` is a *selection* profile, never a way to hide a finding.
 
+### External-tool interop (opt-in)
+
+Interop tests that shell out to foreign binaries (`p11-kit`,
+`openssl`) are skipped by default: those children make provider
+calls no framework channel can see, so running them would silently
+break whole-tree counter reconciliation. Opt in explicitly:
+
+```bash
+P11TEST_ENABLE_EXTERNAL_TOOL_INTEROP=1 uv run pkcs11-check test --module <so> --marker interop
+```
+
 ## Test vector data
 
 ```bash
