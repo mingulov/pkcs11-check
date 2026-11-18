@@ -668,7 +668,17 @@ the probe sidecar goes, and the sidecar is retained on flush failure.
 Retained orphans are adopted at collection under the parent uuid --
 suppressed when the parent's durable receipts already cover the
 probe, otherwise folded into the parent's partial with the receipt
-claimed -- so below-K ingests survive a worker death. Probe and
+claimed -- so below-K ingests survive a worker death. Probe children
+additionally persist their flattened counters to the assigned sidecar
+slot on the record path at the run's K cadence (default every unit),
+so a mid-run kill leaves a foldable prefix that the unchanged
+partial-fold and orphan-adoption paths pick up; the unflushed tail
+stays the parent's keyed loss. Sidecar writes are best-effort in
+children (warn once, keep counting): counter plumbing never breaks
+provider stimulus. A leaked slot in a registered process is ignored
+(the registration wins), and fork grandchildren drop the slot (they
+write a gcov delta instead, folded by the reaping parent or counted
+lost when it never arrives). Probe and
 workload grandchildren never touch the registry (their identity env is
 stripped at spawn): their channel is receipts-or-marker only, so their
 evidence can never double-count against a parent's sidecar.
@@ -862,7 +872,7 @@ losses, and zero conflicts; rounds AND their groups and the global
 flag ANDs the rounds AND the absence of unattributed segments (see
 the completeness formula under Normative contracts).
 
-## rc3 wire-shape deltas (outside the frozen rc2 contract below)
+## 0.3.0 wire-shape deltas (outside the frozen rc2 contract below)
 
 - `probes_detail[]` rows carry `status: folded` (a folded probe's
   child identity) or `status: lost` (the accounting parent of a
@@ -875,8 +885,12 @@ the completeness formula under Normative contracts).
   (`{scope_index, unit, attempt}`); no degenerate `""` round renders.
 - Producer sidecars carry the `role` / `isolation` attribution stamp;
   probe sidecars carry the F2 parent-identity block.
-- `by_process` zero-call rows render for pids with ledger losses or
-  end states (loss-attributed); clean-zero sessions stay silent.
+- Every session record renders its pid's `by_process` row, even with
+  zero calls (complete when clean), so a ran-zero process reads
+  distinctly from a missing one; zero-call rows also render for pids
+  with ledger losses or end states. Rows carry their pid's ledger
+  loss total as `probes_lost` exactly when nonzero (pid-level, like
+  `end_state`: repeated on each of the pid's rows, do-not-sum).
 
 ## Normative contracts (rc2) - frozen by Task 1
 

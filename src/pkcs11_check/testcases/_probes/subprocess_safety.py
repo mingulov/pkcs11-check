@@ -180,9 +180,15 @@ def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     if rv != CKR_OK:
         print(f"SETUP_XFAIL:Parent_Init:0x{rv:08x}")
         return
+    gcov_fd, gcov_path = tempfile.mkstemp(suffix=".json", prefix="p11-fork-child-cov-")
+    os.close(gcov_fd)
+    _prev_gcov = os.environ.get(GRANDCHILD_COVERAGE_ENV)
+    os.environ[GRANDCHILD_COVERAGE_ENV] = gcov_path
     pid = os.fork()
     if pid == 0:
         # Grandchild: os._exit so probe_main's atexit handlers do NOT run a second time.
+        _fork_child_isolate_counters()
+        _fork_child_reset_counters(raw)
         try:
             print("CHILD_PHASE:FinalizeInherited", flush=True)
             raw.C_Finalize(None)
@@ -190,34 +196,45 @@ def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
             rv = raw.C_Initialize(None)
             if rv != CKR_OK:
                 print(f"CHILD_FATAL:Init:0x{rv:08x}", flush=True)
-                os._exit(2)
+                _fork_child_exit_with_coverage(raw, 2)
             try:
                 print("CHILD_PHASE:Slot", flush=True)
                 get_slot_ids(raw)
             except CkrAssertionError as exc:
                 print(f"CHILD_FATAL:Slot:0x{exc.rv:08x}", flush=True)
-                os._exit(7)
+                _fork_child_exit_with_coverage(raw, 7)
             print("CHILD_PHASE:Finalize", flush=True)
             raw.C_Finalize(None)
-            os._exit(0)
+            _fork_child_exit_with_coverage(raw, 0)
         except Exception as exc:  # noqa: BLE001 - crash-safety: report child exception, never swallow
             print(f"CHILD_EXC:{type(exc).__name__}:{exc}", flush=True)
-            os._exit(1)
+            _fork_child_exit_with_coverage(raw, 1)
     else:
-        disposition, value = _wait_child_bounded(pid, _FORK_CHILD_TIMEOUT_S)
-        # The fork child dies via os._exit with its C_* traffic untransmitted
-        # by design; this reaping probe child accounts one lost probe (fw#73),
-        # which rides this child's own coverage write via the wire extension.
-        note_lost_probe()
-        if disposition == "timeout":
-            print("CHILD_TIMEOUT", flush=True)
-        elif value is None:
-            # Unreachable: the wait helper pairs every non-timeout disposition with a value.
-            raise AssertionError(f"missing {disposition} value")
-        elif disposition == "signal":
-            print(f"CHILD_SIGNAL:{value}", flush=True)
+        if _prev_gcov is None:
+            os.environ.pop(GRANDCHILD_COVERAGE_ENV, None)
         else:
-            print(f"CHILD_EXIT:{value}", flush=True)
+            os.environ[GRANDCHILD_COVERAGE_ENV] = _prev_gcov
+        try:
+            disposition, value = _wait_child_bounded(pid, _FORK_CHILD_TIMEOUT_S)
+            # Fold the fork child's gcov delta; a child whose counters
+            # never arrived (crash/timeout/corrupt) counts one lost probe
+            # (fw#73), as before.
+            if not ingest_subprocess_coverage(gcov_path):
+                note_lost_probe()
+            if disposition == "timeout":
+                print("CHILD_TIMEOUT", flush=True)
+            elif value is None:
+                # Unreachable: the wait helper pairs every non-timeout disposition with a value.
+                raise AssertionError(f"missing {disposition} value")
+            elif disposition == "signal":
+                print(f"CHILD_SIGNAL:{value}", flush=True)
+            else:
+                print(f"CHILD_EXIT:{value}", flush=True)
+        finally:
+            try:
+                os.unlink(gcov_path)
+            except OSError:
+                pass
         raw.C_Finalize(None)
 
 
@@ -267,6 +284,79 @@ def _stream_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode(errors="replace")
     return value
+
+
+def _fork_child_isolate_counters() -> None:
+    """Isolate a fork grandchild's counters from its parent (CoW copy).
+
+    Drops the inherited probe sidecar slot (the record-path trigger
+    reads it fresh every mark; flushing the outer probe's slot would
+    alias and false-heal), the standard coverage key (so writes fall
+    through to this child's gcov path), and the counters identity (so
+    the child never registers as a phantom producer). The seq stays
+    for the gcov receipt chain. All inherited-copy-only.
+    """
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV, PROBE_SIDECAR_ENV
+
+    os.environ.pop(PROBE_SIDECAR_ENV, None)
+    os.environ.pop("_P11CHECK_SUBPROCESS_COVERAGE", None)
+    os.environ.pop(COUNTERS_DIR_ENV, None)
+
+
+def _fork_child_reset_counters(raw: Any) -> None:
+    """Reset every counter accumulator to a fresh fork-child baseline.
+
+    Without this, the gcov write would repeat the parent's pre-fork
+    traffic and the parent's ingest would double-count it. Identity
+    remints automatically on next record (pid guard); buckets are moot
+    (flatten drops them; the parent applies its own). Direct calls (no
+    getattr guards): a missing reset is a silent double count, so it
+    must fail loud, never skip.
+    """
+    from pkcs11_check.core.call_counters import reset_for_tests
+
+    reset_for_tests()
+    raw.reset_call_log()
+    raw.reset_used_mechanisms()
+
+
+def _fork_child_exit_with_coverage(raw: Any, code: int) -> None:
+    """Write this fork child's gcov delta, then os._exit (never returns).
+
+    Best-effort: any failure still exits with the given code, with one
+    stderr line (the parent notes a lost probe when the gcov never
+    arrives, as before).
+    """
+    from pkcs11_check.core.call_counters import (
+        current_receipts,
+        flatten_current,
+        lost_probe_keys,
+        probes_lost,
+    )
+    from pkcs11_check.testcases._probes._emit import probe_coverage_receipt, write_coverage
+
+    try:
+        write_coverage(
+            dict(raw.call_log),
+            {str(k): v for k, v in raw.mechanism_counts.items()},
+            dict(raw.call_log_ok),
+            {
+                str(mechanism): {str(rv): count for rv, count in counts.items()}
+                for mechanism, counts in raw.mechanism_rv_counts.items()
+            },
+            call_counters=flatten_current(),
+            probes_lost=probes_lost(),
+            receipt=probe_coverage_receipt(),
+            receipts=current_receipts() or None,
+            lost_keys=lost_probe_keys() or None,
+        )
+    except Exception as exc:  # noqa: BLE001 - exit path: trace, never fail the exit
+        try:
+            sys.stderr.write(f"CHILD_WARN:gcov-unwritten:{exc}\n")
+            sys.stderr.flush()
+        except OSError:
+            pass
+    os._exit(code)
 
 
 def _isolation_child_env() -> dict[str, str]:

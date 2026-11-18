@@ -363,6 +363,8 @@ def run_probe(
     # the parent's evidence files (that would double-count on collection).
     # The F2 parent-context keys strip here too, so ambient values from an
     # enclosing probe never leak into this child's self-describing block.
+    # FLUSH_K is deliberately NOT stripped: cadence policy inherits, so a
+    # run batches uniformly (default 1 when unset anywhere).
     for counters_key in (
         COUNTERS_DIR_ENV,
         COUNTERS_UNIT_ENV,

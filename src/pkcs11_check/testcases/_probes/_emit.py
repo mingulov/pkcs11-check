@@ -325,16 +325,14 @@ def flush_probe_sidecar(
     are byte-identical). The F2 parent-identity block rides along when the
     runner exported it (each field omitted when unset or malformed, so a
     partial export still yields a parseable sidecar). No-op when the
-    parent did not assign a sidecar path. Never raises.
+    parent did not assign a sidecar path. Never raises. Delegates to the
+    core writer shared with the mid-run record-path trigger, so both
+    emit byte-identical shapes.
     """
     from pkcs11_check.core._counters_durability import (
-        PROBE_ATTEMPT_ENV,
-        PROBE_ISOLATION_ENV,
-        PROBE_PARENT_ENV,
-        PROBE_ROLE_ENV,
-        PROBE_RUN_ENV,
         PROBE_SIDECAR_ENV,
-        PROBE_UNIT_ENV,
+        probe_sidecar_identity_from_env,
+        write_probe_sidecar,
     )
 
     path = os.environ.get(PROBE_SIDECAR_ENV)
@@ -344,39 +342,16 @@ def flush_probe_sidecar(
     if receipt is None:
         return
     try:
-        payload: dict[str, Any] = {
-            "worker_uuid": receipt["worker_uuid"],
-            "probe_seq": receipt["probe_seq"],
-            "counters": counters,
-        }
-        if lost_keys:
-            payload["lost_keys"] = lost_keys
-        for env_key, field in (
-            (PROBE_PARENT_ENV, "parent_uuid"),
-            (PROBE_RUN_ENV, "run_id"),
-            (PROBE_UNIT_ENV, "unit"),
-            (PROBE_ROLE_ENV, "role"),
-            (PROBE_ISOLATION_ENV, "isolation"),
-        ):
-            value = os.environ.get(env_key)
-            if value:
-                payload[field] = value
-        attempt_raw = os.environ.get(PROBE_ATTEMPT_ENV)
-        if attempt_raw:
-            try:
-                payload["attempt"] = int(attempt_raw)
-            except ValueError:
-                pass
-        tmp = f"{path}.tmp-{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
-            fh.flush()
-        os.replace(tmp, path)
+        write_probe_sidecar(
+            path,
+            worker_uuid=receipt["worker_uuid"],
+            probe_seq=receipt["probe_seq"],
+            counters=counters,
+            lost_keys=lost_keys,
+            identity=probe_sidecar_identity_from_env(os.environ),
+        )
     except (OSError, TypeError, ValueError):
-        try:
-            os.unlink(f"{path}.tmp-{os.getpid()}")
-        except OSError:
-            pass
+        pass
 
 
 def emit_harness_error(exc: BaseException, *, phase: str) -> None:

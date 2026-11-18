@@ -13,6 +13,9 @@ import ctypes
 import json
 import os
 import subprocess
+import sys
+import time
+import warnings
 from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -1667,3 +1670,170 @@ def test_probe_sidecar_malformed_attempt_omits_attempt_only(
     assert "attempt" not in payload
     assert payload["parent_uuid"] == "p" * 32
     assert payload["unit"] == "a.py"
+
+
+def _probe_child_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, seq: str = "0") -> Path:
+    from pkcs11_check.core import _counters_durability as durability
+
+    sidecar = tmp_path / "probe-sidecar.json"
+    monkeypatch.delenv(durability.COUNTERS_DIR_ENV, raising=False)
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, seq)
+    _set_f2_env(monkeypatch)
+    return sidecar
+
+
+def test_probe_child_flushes_sidecar_on_record_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # fw#73 lost-probe recovery (Option B): a disengaged probe child
+    # persists its flattened counters to its assigned slot on the record
+    # path (K=1 default), so a mid-run kill leaves a foldable snapshot.
+    # No registration is created (children never register).
+    sidecar = _probe_child_env(monkeypatch, tmp_path)
+    call_counters.record_call("C_Login", module="m")
+    call_counters.record_return("C_Login", 0, module="m")
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert payload["worker_uuid"] == call_counters.get_worker_uuid()
+    assert payload["probe_seq"] == 0
+    assert payload["parent_uuid"] == "p" * 32
+    assert payload["counters"] == [["m", "C_Login", 0, 1]]
+    assert call_counters.registration_info() is None
+
+
+def test_probe_child_sidecar_cadence_follows_k(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+
+    sidecar = _probe_child_env(monkeypatch, tmp_path)
+    monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "3")
+    call_counters.reset_for_tests()
+    call_counters.record_call("C_Login", module="m")
+    call_counters.record_call("C_Login", module="m")
+    assert not sidecar.exists()
+    call_counters.record_call("C_Login", module="m")
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert payload["counters"] == [["m", "C_Login", None, 3]]
+
+
+def test_probe_child_flush_failure_warns_once_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+
+    # Counter plumbing must never break provider stimulus: a dead slot
+    # warns once and the child keeps counting in memory (exit coverage
+    # still folds via TMPDIR).
+    sidecar = tmp_path / "no-such-dir" / "probe-sidecar.json"
+    monkeypatch.delenv(durability.COUNTERS_DIR_ENV, raising=False)
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "0")
+    with pytest.warns(UserWarning, match="probe sidecar"):
+        call_counters.record_call("C_Login", module="m")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        call_counters.record_call("C_Login", module="m")
+    assert call_counters.serialize_current()["total_calls"] == 2
+
+
+def test_registered_process_ignores_probe_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+
+    # A leaked sidecar slot in a registered process: the registration
+    # wins (authoritative identity); the probe slot stays untouched.
+    counters = tmp_path / "counters"
+    monkeypatch.setenv(durability.COUNTERS_DIR_ENV, str(counters))
+    monkeypatch.setenv(durability.COUNTERS_UNIT_ENV, "a.py")
+    monkeypatch.setenv(durability.COUNTERS_ATTEMPT_ENV, "0")
+    monkeypatch.setenv(durability.COUNTERS_ROLE_ENV, "unit")
+    slot = tmp_path / "leaked-slot.json"
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(slot))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "0")
+    call_counters.record_call("C_Login", module="m")
+    assert not slot.exists()
+    info = call_counters.registration_info()
+    assert info is not None
+    assert Path(info["sidecar_path"]).exists()
+
+
+@pytest.mark.timeout(300)
+def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+
+    # fw#73 lost-probe recovery end to end: a real child records 5 units
+    # at K=3 (snapshot lands at 3), is SIGKILLed mid-run, and the
+    # parent-side adoption folds the prefix + heals the (parent, seq)
+    # claim. The unflushed 2-unit tail stays the parent's keyed loss
+    # (covered by the runner's note_lost_probe path, pinned in B).
+    root = tmp_path / "counters"
+    root.mkdir()
+    parent = "c" * 32
+    slot = root / f"probe-{parent[:8]}-0-feedface.json"
+    src = Path(call_counters.__file__).resolve().parent.parent
+    env = dict(os.environ)
+    env.pop(durability.COUNTERS_DIR_ENV, None)
+    env[durability.PROBE_SIDECAR_ENV] = str(slot)
+    env[durability.PROBE_SEQ_ENV] = "0"
+    env[durability.PROBE_PARENT_ENV] = parent
+    env[durability.PROBE_RUN_ENV] = "R1"
+    env[durability.PROBE_UNIT_ENV] = "a.py"
+    env[durability.PROBE_ATTEMPT_ENV] = "0"
+    env[durability.PROBE_ROLE_ENV] = "unit"
+    env[durability.PROBE_ISOLATION_ENV] = "file"
+    env[durability.COUNTERS_FLUSH_K_ENV] = "3"
+    env["PYTHONPATH"] = str(src) + os.pathsep + env.get("PYTHONPATH", "")
+    script = (
+        "import time",
+        "from pkcs11_check.core import call_counters",
+        "for _ in range(5):",
+        '    call_counters.record_call("C_Login", module="m")',
+        "time.sleep(30)",
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "\n".join(script)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+    )
+    try:
+        deadline = time.monotonic() + 20.0
+        total = -1
+        while time.monotonic() < deadline:
+            if slot.exists():
+                try:
+                    total = sum(
+                        row[3] for row in json.loads(slot.read_text(encoding="utf-8"))["counters"]
+                    )
+                except (OSError, ValueError, KeyError):
+                    pass
+            if total == 3:
+                break
+            time.sleep(0.1)
+        assert total == 3, "child must flush its 3-unit prefix before the kill"
+        proc.kill()
+        proc.wait(timeout=30)
+        payload = json.loads(slot.read_text(encoding="utf-8"))
+        assert payload["probe_seq"] == 0
+        assert payload["parent_uuid"] == parent
+        merged, claimed, consumed, recovered, _keys = durability._adopt_probe_orphans(
+            root,
+            worker_uuid=parent,
+            sidecar=None,
+            journal_lines=[],
+            claims={},
+            known_uuids={parent},
+            producer_run="R1",
+            producer_unit="a.py",
+        )
+        assert merged is not None
+        assert merged["total_calls"] == 3
+        assert claimed == [{"worker_uuid": payload["worker_uuid"], "probe_seq": 0}]
+        assert recovered == [(parent, 0)]
+        assert consumed == [slot]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)

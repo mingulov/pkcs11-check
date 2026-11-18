@@ -5352,9 +5352,9 @@ class TestZeroRows:
             }
         ]
 
-    def test_clean_zero_session_stays_silent(self, tmp_path: Path) -> None:
-        # Flood guard: a zero-call session with nothing outstanding earns
-        # no row (nothing to say); only incomplete-visible evidence does.
+    def test_clean_zero_session_renders_complete_row(self, tmp_path: Path) -> None:
+        # fw#78 item 5: a ran-zero session renders its row (complete) so it
+        # reads distinctly from a missing process.
         session = _session_record(
             100, _counts_block(0), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
         )
@@ -5362,7 +5362,15 @@ class TestZeroRows:
         assert payload is not None
         assert payload["total_calls"] == 0
         assert payload["complete"] is True
-        assert payload["by_process"] == []
+        assert payload["by_process"] == [
+            {
+                "pid": 100,
+                "isolation": "file",
+                "total_calls": 0,
+                "complete": True,
+                "worker_uuid": _UUID_A,
+            }
+        ]
 
     def test_zero_call_session_with_loss_gets_row(self, tmp_path: Path) -> None:
         session = _session_record(
@@ -5380,6 +5388,7 @@ class TestZeroRows:
                 "total_calls": 0,
                 "complete": False,
                 "worker_uuid": _UUID_A,
+                "probes_lost": 3,
             }
         ]
 
@@ -5488,6 +5497,26 @@ class TestEagerProbeRegistration:
         assert result.returncode == 0
         for key in f2_keys:
             assert key not in seen, "ambient probe context never leaks (H gap pin)"
+
+    def test_run_probe_child_inherits_flush_k(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        # Cadence policy inherits: the child batches (or not) exactly
+        # like its parent run (default 1 when unset anywhere).
+        monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "9")
+        seen: dict[str, str] = {}
+
+        def _capture(*args: Any, **kwargs: Any) -> Any:
+            seen.update(kwargs.get("env", {}))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        run_probe("_echo", {"module_path": "/x.so"})
+        assert seen[durability.COUNTERS_FLUSH_K_ENV] == "9"
 
     def test_run_probe_exports_parent_context(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch

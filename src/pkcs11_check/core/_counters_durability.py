@@ -1035,6 +1035,93 @@ def _parse_consumed_probe_filename(name: str) -> tuple[str, int] | None:
     return (parent8, int(seq))
 
 
+#: F2 identity fields in wire order (single source; both the exit flush
+#: and the mid-run record-path trigger build through here).
+_PROBE_IDENTITY_WIRE_ORDER = (
+    "parent_uuid",
+    "run_id",
+    "unit",
+    "role",
+    "isolation",
+    "attempt",
+)
+
+
+def probe_sidecar_identity_from_env(env: Any) -> dict[str, Any]:
+    """Read the F2 parent-identity block from a probe child's environment.
+
+    Each field is present only when set and well-typed (non-empty strings;
+    ``attempt`` must int-parse, negatives included -- the reader drops
+    out-of-range values). Never raises.
+    """
+    identity: dict[str, Any] = {}
+    try:
+        for env_key, field in (
+            (PROBE_PARENT_ENV, "parent_uuid"),
+            (PROBE_RUN_ENV, "run_id"),
+            (PROBE_UNIT_ENV, "unit"),
+            (PROBE_ROLE_ENV, "role"),
+            (PROBE_ISOLATION_ENV, "isolation"),
+        ):
+            value = env.get(env_key)
+            if value:
+                identity[field] = value
+        attempt_raw = env.get(PROBE_ATTEMPT_ENV)
+        if attempt_raw:
+            try:
+                identity["attempt"] = int(attempt_raw)
+            except (TypeError, ValueError):
+                pass
+    except (AttributeError, TypeError):
+        pass
+    return identity
+
+
+def write_probe_sidecar(
+    path: Path | str,
+    *,
+    worker_uuid: str,
+    probe_seq: int,
+    counters: list[Any],
+    lost_keys: list[dict[str, Any]] | None = None,
+    identity: dict[str, Any] | None = None,
+) -> None:
+    """Write one probe sidecar atomically (single attempt, tmp + replace).
+
+    The single writer behind the exit flush and the mid-run record-path
+    trigger, so both emit byte-identical shapes: worker/seq/counters,
+    then ``lost_keys`` when non-empty, then the F2 identity block in
+    wire order. A crash lands the old or the new content, never a mix.
+
+    Raises:
+        OSError: When the file cannot be written.
+        TypeError: When the payload cannot be encoded.
+        ValueError: When the payload cannot be encoded.
+    """
+    payload: dict[str, Any] = {
+        "worker_uuid": worker_uuid,
+        "probe_seq": probe_seq,
+        "counters": counters,
+    }
+    if lost_keys:
+        payload["lost_keys"] = lost_keys
+    for field in _PROBE_IDENTITY_WIRE_ORDER:
+        if identity and field in identity:
+            payload[field] = identity[field]
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+            fh.flush()
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError):
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def mark_probe_consumed(sidecar: Path | str) -> Path:
     """Rename a committed probe sidecar to its consumed marker (atomic).
 

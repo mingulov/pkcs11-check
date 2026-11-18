@@ -16,7 +16,8 @@ Conventions: `extract` = `tests/test_call_counters_extract.py`,
 `tests/test_call_counters_plugin.py`, `preflight` =
 `tests/test_call_counters_preflight.py`, `forensics` =
 `tests/test_call_counters_forensics.py`, `provisioning` =
-`tests/test_call_counters_provisioning.py`.
+`tests/test_call_counters_provisioning.py`, `subprocess_safety` =
+`tests/test_subprocess_safety_runtime_classification.py`.
 
 ## Buckets
 
@@ -63,7 +64,9 @@ Conventions: `extract` = `tests/test_call_counters_extract.py`,
 | Per-round completeness independent; global ANDs rounds and segments-empty | `extract::test_extract_round_completeness_is_independent` |
 | Same pid across rounds never fuses; reconciliation is run-scoped | `extract::test_extract_same_pid_across_rounds_never_fuses`, `...::test_extract_pid_reconciliation_is_run_scoped` |
 | `probes_detail`: folded rows first, then net lost rows | `durability::test_lost_rows_follow_folded`, `durability::test_merge_carries_lost_processes_and_probes_detail` |
-| Zero-call session with loss gets a row; clean-zero stays silent | `durability::test_zero_call_session_with_loss_gets_row`, `durability::test_clean_zero_session_stays_silent` |
+| Every session renders its row (clean-zero complete, not silent); loss rows carry `probes_lost` | `extract::test_extract_clean_zero_session_renders_complete_row`, `extract::test_extract_session_row_carries_pid_losses`, `durability::test_clean_zero_session_renders_complete_row`, `durability::test_zero_call_session_with_loss_gets_row` |
+| Probe children persist sidecar snapshots on the record path (K cadence); failures warn once and continue; registered processes ignore leaked slots | `child::test_probe_child_flushes_sidecar_on_record_path`, `child::test_probe_child_sidecar_cadence_follows_k`, `child::test_probe_child_flush_failure_warns_once_and_continues`, `child::test_registered_process_ignores_probe_slot`, `child::test_sigkill_mid_probe_run_recovers_flushed_prefix` |
+| Fork grandchildren isolate channels, reset to a delta baseline, write gcov; parent folds or notes | `subprocess_safety::test_fork_child_isolate_counters_drops_channels_keeps_seq`, `subprocess_safety::test_fork_child_writes_gcov_delta_not_parent_traffic`, `subprocess_safety::test_fork_parent_folds_gcov_without_note`, `subprocess_safety::test_fork_parent_notes_missing_gcov` |
 | Zero-call session record is data | `extract::test_extract_zero_call_session_record_is_data` |
 | Loss-anchored decoys own-group; C2b retained as segments | `structure::TestC2bAssociationInterplay` family |
 | End-state conflicts surface `conflict`, never a silent pick | `durability::test_conflicting_terminals_become_conflict` |
