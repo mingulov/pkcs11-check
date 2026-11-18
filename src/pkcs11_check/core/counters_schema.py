@@ -122,6 +122,7 @@ ROW_OPTIONAL_KEYS = frozenset(
         "round",
         "shard",
         "persistence_pending",
+        "probes_lost",
     }
 )
 ROW_ALLOWED_KEYS = ROW_REQUIRED_KEYS | ROW_OPTIONAL_KEYS
@@ -591,7 +592,9 @@ def is_process_row(value: object) -> TypeGuard[dict[str, Any]]:
         return False
     if "round" in value and not (isinstance(value["round"], str) and value["round"]):
         return False
-    return "shard" not in value or (isinstance(value["shard"], str) and bool(value["shard"]))
+    if "shard" in value and not (isinstance(value["shard"], str) and bool(value["shard"])):
+        return False
+    return "probes_lost" not in value or _is_nonneg_int(value["probes_lost"])
 
 
 def key_violations(

@@ -415,11 +415,17 @@ def _flush_probe_slot_locked() -> None:
     except (OSError, TypeError, ValueError) as exc:
         if not _probe_flush_warned:
             _probe_flush_warned = True
-            warnings.warn(
-                f"probe sidecar slot unwritable ({slot}): {exc}; counting continues in memory",
-                UserWarning,
-                stacklevel=2,
-            )
+            try:
+                warnings.warn(
+                    f"probe sidecar slot unwritable ({slot}): {exc}; counting continues in memory",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            except Warning:
+                # Best-effort stays best-effort even under -W error:
+                # stimulus must flow. The degradation stays visible as
+                # a missing sidecar (parent notes the loss).
+                pass
 
 
 def _mark_dirty_locked(calls: int = 0) -> None:

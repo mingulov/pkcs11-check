@@ -1759,7 +1759,7 @@ def test_fork_child_isolate_counters_drops_channels_keeps_seq(
     # probe's slot (its record-path flushes would alias it), the standard
     # coverage key (its writes must fall through to gcov), or the counters
     # identity (it must never register as a phantom producer); the seq
-    # stays for the gcov receipt chain.
+    # stays for shape-consistency (this leg drops receipts).
     monkeypatch.setenv("_P11CHECK_PROBE_SIDECAR", "/tmp/outer.json")
     monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", "/tmp/outer-cov.json")
     monkeypatch.setenv("PKCS11_CHECK_COUNTERS_DIR", "/tmp/counters")
@@ -2040,6 +2040,108 @@ def test_fork_parent_folds_gcov_without_note(
         assert not planted.exists(), "parent consumes the gcov file"
     finally:
         call_counters.reset_for_tests()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
+def test_fork_failure_releases_slot_and_reraises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # F2: fork raising (pid exhaustion) must not leak the gcov file or
+    # pollute the env; the OSError still propagates.
+    sentinel = tmp_path / "sentinel-gcov.json"
+    sentinel.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV, str(sentinel))
+
+    def _boom() -> int:
+        raise OSError("no fork today")
+
+    if hasattr(os, "fork"):
+        monkeypatch.setattr(os, "fork", _boom)
+
+    class _Raw:
+        def C_Initialize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Finalize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+    before = {
+        entry
+        for entry in os.listdir(tempfile.gettempdir())
+        if entry.startswith("p11-fork-child-cov-")
+    }
+    with pytest.raises(OSError, match="no fork today"):
+        subprocess_safety_probe._fork_after_initialize(
+            cast(
+                ProbeContext,
+                SimpleNamespace(
+                    raw=_Raw(), sh=None, slot_id=None, cleanup=lambda: None, module_path=""
+                ),
+            ),
+            {},
+        )
+    assert os.environ[subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV] == str(sentinel)
+    assert sentinel.read_text(encoding="utf-8") == "{}"
+    after = {
+        entry
+        for entry in os.listdir(tempfile.gettempdir())
+        if entry.startswith("p11-fork-child-cov-")
+    }
+    assert after - before == set()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
+def test_fork_reset_failure_exits_marked_without_gcov(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # F3': a reset failure (exotic shim without reset methods) exits
+    # marked (CHILD_EXC) with no gcov write -- writing unreset counters
+    # would double-count parent traffic on ingest.
+    events: list[str] = []
+
+    class _Raw:
+        def C_Initialize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Finalize(self, _args: object) -> int:  # noqa: N802
+            return 0
+
+    if hasattr(os, "fork"):
+        monkeypatch.setattr(os, "fork", lambda: 0)
+
+    def fake_exit(code: int) -> None:
+        raise SystemExit(code)
+
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    monkeypatch.setattr(subprocess_safety_probe, "get_slot_ids", lambda _raw: [7])
+
+    def emit(*args: object, **_kwargs: object) -> None:
+        events.append(str(args[0]))
+
+    monkeypatch.setattr(subprocess_safety_probe, "print", emit, raising=False)
+    gcov_path: str | None = None
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            subprocess_safety_probe._fork_after_initialize(
+                cast(
+                    ProbeContext,
+                    SimpleNamespace(
+                        raw=_Raw(), sh=None, slot_id=None, cleanup=lambda: None, module_path=""
+                    ),
+                ),
+                {},
+            )
+        assert exc_info.value.code == 1
+        assert any(event.startswith("CHILD_EXC:") for event in events)
+        gcov_path = os.environ[subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV]
+        assert Path(gcov_path).read_text(encoding="utf-8") == ""
+    finally:
+        if gcov_path:
+            try:
+                os.unlink(gcov_path)
+            except OSError:
+                pass
+        os.environ.pop(subprocess_safety_probe.GRANDCHILD_COVERAGE_ENV, None)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")

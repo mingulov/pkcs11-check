@@ -184,11 +184,19 @@ def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     os.close(gcov_fd)
     _prev_gcov = os.environ.get(GRANDCHILD_COVERAGE_ENV)
     os.environ[GRANDCHILD_COVERAGE_ENV] = gcov_path
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        _release_grandchild_slot(gcov_path, _prev_gcov)
+        raise
     if pid == 0:
         # Grandchild: os._exit so probe_main's atexit handlers do NOT run a second time.
         _fork_child_isolate_counters()
-        _fork_child_reset_counters(raw)
+        try:
+            _fork_child_reset_counters(raw)
+        except Exception as exc:  # noqa: BLE001 - marked exit, then bare: no gcov without a baseline
+            print(f"CHILD_EXC:{type(exc).__name__}:{exc}", flush=True)
+            os._exit(1)
         try:
             print("CHILD_PHASE:FinalizeInherited", flush=True)
             raw.C_Finalize(None)
@@ -293,8 +301,10 @@ def _fork_child_isolate_counters() -> None:
     reads it fresh every mark; flushing the outer probe's slot would
     alias and false-heal), the standard coverage key (so writes fall
     through to this child's gcov path), and the counters identity (so
-    the child never registers as a phantom producer). The seq stays
-    for the gcov receipt chain. All inherited-copy-only.
+    the child never registers as a phantom producer). The seq stays for
+    shape-consistency with the spawned-grandchild path (this leg
+    currently drops receipts rather than propagating them).
+    All inherited-copy-only.
     """
     from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV, PROBE_SIDECAR_ENV
 
@@ -318,6 +328,18 @@ def _fork_child_reset_counters(raw: Any) -> None:
     reset_for_tests()
     raw.reset_call_log()
     raw.reset_used_mechanisms()
+
+
+def _release_grandchild_slot(gcov_path: str, prev: str | None) -> None:
+    """Restore the pre-fork gcov env and remove the gcov file. Never raises."""
+    if prev is None:
+        os.environ.pop(GRANDCHILD_COVERAGE_ENV, None)
+    else:
+        os.environ[GRANDCHILD_COVERAGE_ENV] = prev
+    try:
+        os.unlink(gcov_path)
+    except OSError:
+        pass
 
 
 def _fork_child_exit_with_coverage(raw: Any, code: int) -> None:

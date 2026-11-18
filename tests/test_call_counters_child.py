@@ -1737,6 +1737,26 @@ def test_probe_child_flush_failure_warns_once_and_continues(
     assert call_counters.serialize_current()["total_calls"] == 2
 
 
+def test_probe_child_broken_slot_never_breaks_stimulus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+
+    # F5: best-effort stays best-effort even under -W error -- the
+    # record path must never raise out of provider stimulus. The
+    # degradation stays visible as a missing sidecar upstream.
+    sidecar = tmp_path / "no-such-dir" / "probe-sidecar.json"
+    monkeypatch.delenv(durability.COUNTERS_DIR_ENV, raising=False)
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "0")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        call_counters.record_call("C_Login", module="m")
+        call_counters.record_call("C_Login", module="m")
+    assert call_counters.serialize_current()["total_calls"] == 2
+    assert not sidecar.exists()
+
+
 def test_registered_process_ignores_probe_slot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

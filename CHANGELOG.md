@@ -41,10 +41,11 @@ validated by a full provider round (see Known limitations).
   and the provisioning bucket split; readers that ignore unknown keys
   keep working, and the empty round block no longer renders.**
 - **Lost probe processes now recover the calls they recorded before
-  dying, and every test process appears in per-process rows --
+  dying (batched cadences keep the unflushed tail as the parent's
+  keyed loss), and every test process appears in per-process rows --
   including zero-call runs, with per-process loss counts.**
-- **Forked probe grandchildren report their calls instead of dropping
-  them silently.**
+- **Forked probe grandchildren report their calls instead of counting
+  only an unkeyed loss.**
 
 ### Fixed
 
