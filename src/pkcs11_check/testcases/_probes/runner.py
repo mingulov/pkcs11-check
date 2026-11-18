@@ -325,7 +325,7 @@ def ingest_probe_payload(
             # note would leave a death window after the K auto-flush).
             ingest_child_evidence(
                 list(fallback_counters),
-                0,
+                fallback.get("probes_lost", 0),
                 (),
                 lost_keys=fallback.get("lost_keys", ()),
                 source=source,

@@ -126,7 +126,7 @@ def _write_coverage(raw: RawPKCS11 | _LegacyCoverageSnapshot) -> None:
     """
     flattened = flatten_current()
     keys = lost_probe_keys()
-    flush_probe_sidecar(flattened, lost_keys=keys or None)
+    flush_probe_sidecar(flattened, lost_keys=keys or None, probes_lost=probes_lost())
     write_coverage(
         raw.call_log,
         {str(k): v for k, v in raw.mechanism_counts.items()},

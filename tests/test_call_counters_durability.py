@@ -973,6 +973,7 @@ def _plant_probe_orphan(
     nonce: str = "feedface",
     lost_keys: list[dict[str, Any]] | None = None,
     identity: dict[str, Any] | None = None,
+    probes_lost: Any = None,
 ) -> Path:
     """Plant a retained probe sidecar ``probe-<parent8>-<seq>-<nonce>.json``.
 
@@ -981,6 +982,8 @@ def _plant_probe_orphan(
     the child's own keyed-loss set when given). ``identity`` seeds the F2
     self-describing block (parent_uuid/run_id/unit/attempt/role/isolation);
     omitted entirely for legacy shape (filename carries the only identity).
+    ``probes_lost`` seeds the child's unkeyed-loss scalar when given
+    (pass garbage to plant a mistyped scalar).
     """
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"probe-{parent_uuid[:8]}-{seq}-{nonce}.json"
@@ -991,6 +994,8 @@ def _plant_probe_orphan(
     }
     if lost_keys is not None:
         payload["lost_keys"] = lost_keys
+    if probes_lost is not None:
+        payload["probes_lost"] = probes_lost
     if identity is not None:
         payload.update(identity)
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -2166,13 +2171,15 @@ class TestProbeConsumedMarker:
         assert info is not None
         parent_sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
         assert parent_sidecar["in_progress"]["total_calls"] == 5, "1 parent + 4 probe"
-        merged, claimed, consumed, recovered, orphan_keys = durability._adopt_probe_orphans(
-            engaged,
-            worker_uuid=parent_uuid,
-            sidecar=parent_sidecar,
-            journal_lines=[],
-            claims={},
-            known_uuids={parent_uuid},
+        merged, claimed, consumed, recovered, orphan_keys, adopted = (
+            durability._adopt_probe_orphans(
+                engaged,
+                worker_uuid=parent_uuid,
+                sidecar=parent_sidecar,
+                journal_lines=[],
+                claims={},
+                known_uuids={parent_uuid},
+            )
         )
         assert merged is None, "parent checkpoint already holds the probe counts"
         assert claimed == []
@@ -2209,13 +2216,15 @@ class TestProbeConsumedMarker:
         engaged.mkdir(parents=True, exist_ok=True)
         marker = engaged / f"probe-consumed-{_UUID_A[:8]}-3-feedface.json"
         marker.write_text("{torn", encoding="utf-8")
-        merged, claimed, consumed, recovered, orphan_keys = durability._adopt_probe_orphans(
-            engaged,
-            worker_uuid=_UUID_A,
-            sidecar=None,
-            journal_lines=[],
-            claims={},
-            known_uuids={_UUID_A},
+        merged, claimed, consumed, recovered, orphan_keys, adopted = (
+            durability._adopt_probe_orphans(
+                engaged,
+                worker_uuid=_UUID_A,
+                sidecar=None,
+                journal_lines=[],
+                claims={},
+                known_uuids={_UUID_A},
+            )
         )
         assert merged is None
         assert claimed == []
@@ -3421,6 +3430,54 @@ class TestProbeOrphanAdoption:
         assert first["in_progress"]["total_calls"] == 4
         assert first["consumed_probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 0}]
 
+    def test_fallback_absorbs_child_unkeyed_scalar(self, engaged: Path, tmp_path: Path) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # B2: the sidecar's unkeyed-loss scalar crosses the fallback
+        # with the counts (scalar-anchored remainder rule), so a
+        # finalized heal later cannot drop a loss that exists nowhere.
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, probes_lost=2)
+        cov = tmp_path / "cov.json"
+        cov.write_bytes(b"{oops")
+        assert ingest_probe_payload(str(cov), seq=0, sidecar_path=str(orphan)) == "partial"
+        assert call_counters.probes_lost() == 2
+        assert call_counters.serialize_current()["total_calls"] == 4
+
+    def test_adopted_orphan_scalar_reaches_partial_and_report(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # B2: an orphan folded at collection carries its unkeyed scalar
+        # into the partial and the extracted report (never silently
+        # dropped, never double-counted against a live absorb -- folded
+        # implies uncovered implies unabsorbed).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, bucket="setup_teardown"),
+        )
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0, probes_lost=2)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 9
+        assert partials[0]["probes_lost"] == 2
+        assert schema.is_sidecar_partial(partials[0]) is True
+        assert not orphan.exists()
+        payload = extract_call_counters_from_jsonl(child)
+        assert payload is not None
+        assert payload["total_calls"] == 9
+        assert payload["probes_lost"] == 2
+        assert payload["complete"] is False
+
     def test_run_probe_notes_loss_when_commit_fails(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -3539,15 +3596,17 @@ class TestProbeOrphanAdoption:
             lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": 1}],
         )
         sidecar = durability.read_json_file(planted["sidecar"])
-        merged, claimed, consumed, recovered, orphan_keys = durability._adopt_probe_orphans(
-            engaged,
-            worker_uuid=_UUID_A,
-            sidecar=sidecar,
-            journal_lines=[],
-            claims={},
-            known_uuids={_UUID_A},
-            producer_run=_RUN,
-            producer_unit="a.py",
+        merged, claimed, consumed, recovered, orphan_keys, adopted = (
+            durability._adopt_probe_orphans(
+                engaged,
+                worker_uuid=_UUID_A,
+                sidecar=sidecar,
+                journal_lines=[],
+                claims={},
+                known_uuids={_UUID_A},
+                producer_run=_RUN,
+                producer_unit="a.py",
+            )
         )
         assert merged is None
         assert claimed == []
