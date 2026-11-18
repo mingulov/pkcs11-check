@@ -8,7 +8,6 @@ default runs stay exactly reconcilable against whole-tree observers.
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -42,10 +41,10 @@ def test_external_tool_gate_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_refuses_foreign_spawn_without_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.testcases.test_interop_openssl import _run
+    from tests._skip_assert import assert_skips
 
     monkeypatch.delenv(OPT_IN_ENV, raising=False)
-    with pytest.raises(pytest.skip.Exception, match="external-tool interop"):
-        _run([sys.executable, "-c", "pass"])
+    assert_skips(_run, [sys.executable, "-c", "pass"], match="external-tool interop")
 
 
 def test_run_spawns_with_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,7 +59,9 @@ def test_run_spawns_with_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_list_modules_skipped_without_opt_in(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if shutil.which("p11-kit") is None:
+    from pkcs11_check.testcases.test_interop_openssl import _have_p11kit
+
+    if not _have_p11kit():
         pytest.skip("p11-kit not installed")
     monkeypatch.delenv(OPT_IN_ENV, raising=False)
     import pkcs11_check
