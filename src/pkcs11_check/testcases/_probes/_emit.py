@@ -320,6 +320,7 @@ def flush_probe_sidecar(
     counters: list[list[str | int | None]] | None,
     *,
     lost_keys: list[dict[str, Any]] | None = None,
+    probes_lost: int = 0,
 ) -> None:
     """Write this probe child's counters sidecar for the parent's fallback.
 
@@ -327,7 +328,8 @@ def flush_probe_sidecar(
     (flush-then-delete) and folds it as partial evidence (receipt
     suppressed) when the coverage file is torn. ``lost_keys`` carries the
     child's keyed-loss set (omitted when None/empty, so legacy sidecars
-    are byte-identical). The F2 parent-identity block rides along when the
+    are byte-identical). ``probes_lost`` carries the child's cumulative
+    unkeyed scalar the same way (omitted when 0). The F2 parent-identity block rides along when the
     runner exported it (each field omitted when unset or malformed, so a
     partial export still yields a parseable sidecar). No-op when the
     parent did not assign a sidecar path. Never raises. Delegates to the
@@ -354,6 +356,7 @@ def flush_probe_sidecar(
             counters=counters,
             lost_keys=lost_keys,
             identity=probe_sidecar_identity_from_env(os.environ),
+            probes_lost=probes_lost,
         )
     except (OSError, TypeError, ValueError):
         pass

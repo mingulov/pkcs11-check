@@ -422,6 +422,7 @@ def _flush_probe_slot_locked() -> None:
             or None,
             identity=probe_sidecar_identity_from_env(os.environ),
             finalized=False,
+            probes_lost=probes_lost(),
         )
     except (OSError, TypeError, ValueError) as exc:
         if not _probe_flush_warned:

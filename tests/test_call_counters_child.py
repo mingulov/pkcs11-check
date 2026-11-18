@@ -1684,6 +1684,41 @@ def test_probe_sidecar_finalized_flag_round_trips(tmp_path: Path) -> None:
     assert final_read[5] is True
 
 
+def test_probe_sidecar_scalar_omitted_when_zero(tmp_path: Path) -> None:
+    from pkcs11_check.core._counters_durability import _read_probe_orphan, write_probe_sidecar
+
+    # B2: the unkeyed-loss scalar rides the sidecar wire, omitted when
+    # zero (legacy byte-identical); absent reads 0, malformed reads 0
+    # (garbage-tolerant like the coverage scalar, counts still fold).
+    bare = tmp_path / "bare.json"
+    write_probe_sidecar(bare, worker_uuid="b" * 32, probe_seq=0, counters=[["m", "C_Login", 0, 1]])
+    assert "probes_lost" not in json.loads(bare.read_text(encoding="utf-8"))
+    assert _read_probe_orphan(bare)[6] == 0
+    loaded = tmp_path / "loaded.json"
+    write_probe_sidecar(
+        loaded,
+        worker_uuid="b" * 32,
+        probe_seq=0,
+        counters=[["m", "C_Login", 0, 1]],
+        probes_lost=3,
+    )
+    assert json.loads(loaded.read_text(encoding="utf-8"))["probes_lost"] == 3
+    assert _read_probe_orphan(loaded)[6] == 3
+    garbage = tmp_path / "garbage.json"
+    garbage.write_text(
+        json.dumps(
+            {
+                "worker_uuid": "b" * 32,
+                "probe_seq": 0,
+                "counters": [["m", "C_Login", 0, 1]],
+                "probes_lost": "many",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _read_probe_orphan(garbage)[6] == 0
+
+
 def test_probe_sidecar_malformed_attempt_omits_attempt_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1868,7 +1903,7 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         payload = json.loads(slot.read_text(encoding="utf-8"))
         assert payload["probe_seq"] == 0
         assert payload["parent_uuid"] == parent
-        merged, claimed, consumed, recovered, _keys = durability._adopt_probe_orphans(
+        merged, claimed, consumed, recovered, _keys, _adopted = durability._adopt_probe_orphans(
             root,
             worker_uuid=parent,
             sidecar=None,
