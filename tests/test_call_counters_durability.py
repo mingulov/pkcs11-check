@@ -594,6 +594,44 @@ class TestProbeChannel:
         assert call_counters.serialize_current()["total_calls"] == 0
         assert not sidecar.exists()
 
+    def test_unreadable_sidecar_is_retained_for_retry(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        # Codex 6.2 F4: a read failure is not a definitive miss -- a
+        # transient OSError must retain the sidecar for collection to
+        # retry, instead of deleting possibly recoverable evidence.
+        # (Parsed-invalid files are still deleted -- see above. A
+        # directory would also fail the delete, so the transient fault
+        # is injected on open for the sidecar path only; the delete
+        # itself runs the real unlink.)
+        seq = call_counters.assign_probe_seq()
+        cov = tmp_path / "cov.json"
+        cov.write_text('{"call_log": ', encoding="utf-8")
+        sidecar = tmp_path / "probe-unreadable.json"
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": seq,
+                    "counters": [["m", "C_Login", 0, 4]],
+                }
+            ),
+            encoding="utf-8",
+        )
+        real_open = open
+
+        def _flaky_open(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path) == str(sidecar):
+                raise OSError("transient read failure")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", _flaky_open)
+        assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "lost"
+        assert call_counters.serialize_current()["total_calls"] == 0
+        assert sidecar.exists(), "unreadable evidence is retained, not deleted"
+
     def test_grandchild_receipts_propagate_recursively(self, engaged: Path, tmp_path: Path) -> None:
         from pkcs11_check.testcases._probes.runner import ingest_probe_payload
 

@@ -28,7 +28,7 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, final
 
 from pkcs11_check.core._counters_durability import (
     COUNTERS_ATTEMPT_ENV,
@@ -163,14 +163,34 @@ def _module_terminated_process(rc: int, stderr: str, cov_path: str) -> bool:
     return rc >= 0 and not _finalizer_ran(cov_path) and _PYTHON_TRACEBACK not in stderr
 
 
-def _read_probe_json(path: str | None) -> dict[str, Any] | None:
-    """Read one probe evidence file; missing/torn reads as absent (never raises)."""
+@final
+class _UnreadableEvidence:
+    """Sentinel: an evidence file exists but could not be read (I/O failure)."""
+
+    __slots__ = ()
+
+
+_UNREADABLE = _UnreadableEvidence()
+
+
+def _read_probe_json(path: str | None) -> dict[str, Any] | None | _UnreadableEvidence:
+    """Read one probe evidence file (never raises).
+
+    Missing files and torn/unparseable content read as absent (None);
+    a file that exists but fails to open/read reports _UNREADABLE, so
+    the caller can retain it for a later retry instead of deleting
+    possibly recoverable evidence (codex 6.2 F4).
+    """
     if not path:
         return None
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError, RecursionError):
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _UNREADABLE
+    except (ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -239,9 +259,10 @@ def ingest_probe_payload(
     parent checkpoint flushed (flush-then-delete); on flush failure the
     sidecar is retained and the persistence error propagates loud. A
     definitive miss still deletes the sidecar (validated-unusable, torn, or
-    missing: nothing recoverable remains). This function never accounts
-    loss itself: the caller owns ``note_lost_probe`` for ``"partial"`` and
-    ``"lost"`` alike (the single accounting site).
+    missing: nothing recoverable remains); an unreadable sidecar (I/O
+    failure) is retained for collection to retry. This function never
+    accounts loss itself: the caller owns ``note_lost_probe`` for
+    ``"partial"`` and ``"lost"`` alike (the single accounting site).
 
     Raises:
         CounterPersistenceError: When the parent checkpoint cannot be
@@ -249,6 +270,11 @@ def ingest_probe_payload(
     """
     sidecar = str(sidecar_path) if sidecar_path is not None else None
     data = _read_probe_json(str(cov_path))
+    if isinstance(data, _UnreadableEvidence):
+        # Coverage files are never retried (collection reads sidecars,
+        # never coverage), so an unreadable one falls through to the
+        # sidecar fallback exactly like a torn one.
+        data = None
     source = (get_worker_uuid(), seq)
     if data is not None:
         counters = data.get("call_counters")
@@ -280,6 +306,11 @@ def ingest_probe_payload(
                 _commit_probe_sidecar(sidecar)
                 return "folded"
     fallback = _read_probe_json(sidecar)
+    if isinstance(fallback, _UnreadableEvidence):
+        # A read failure is not a definitive miss: retain the sidecar
+        # so collection retries it later (codex 6.2 F4). The caller
+        # still accounts the loss, so the outcome stays fail-visible.
+        return "lost"
     if fallback is not None:
         fallback_receipt = {
             "worker_uuid": fallback.get("worker_uuid"),
