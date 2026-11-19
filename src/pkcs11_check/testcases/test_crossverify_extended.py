@@ -46,7 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import attr_or_record
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import (
@@ -352,7 +352,12 @@ def _gen_readable_rsa_or_xfail(rs: Any, bits: int, *, label: str) -> tuple[int, 
         kind="policy",
         inherit_mechanism=False,
     )
-    if sensitive is not False or extractable is not True:
+    if (
+        sensitive is MISSING_ATTRIBUTE
+        or extractable is MISSING_ATTRIBUTE
+        or sensitive is not False
+        or extractable is not True
+    ):
         xfail_as(
             "not_operational",
             kind="policy",

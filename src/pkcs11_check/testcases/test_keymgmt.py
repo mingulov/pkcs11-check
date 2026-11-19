@@ -84,7 +84,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._attribute_values import (
+    MISSING_ATTRIBUTE,
+    attr_or_record,
+    refusal_rv_for,
+)
 from pkcs11_check.testcases._copy_mutability import (
     COPY_FORBIDDEN_REFUSE_RVS,
     PROBE_INJECTED_VALUE,
@@ -1054,8 +1058,8 @@ def _sealed_value_unreadable_or_skip(rs: Any, key: int, *, label: str) -> None:
         # B3: only an OBSERVED CKR_ATTRIBUTE_SENSITIVE refusal proves the
         # seal; any other absence (unsupported type, plain gap, silent
         # sentinel) leaves it unproved, never assumed sealed.
-        refusal = read.refusals.get(int(CKA_VALUE))
-        if refusal is not None and int(refusal.ckr) == int(CKR_ATTRIBUTE_SENSITIVE):
+        refusal_rv = refusal_rv_for(read, CKA_VALUE)
+        if refusal_rv is not None and int(refusal_rv) == int(CKR_ATTRIBUTE_SENSITIVE):
             return
         xfail_as(
             "not_operational",
@@ -1127,8 +1131,8 @@ def _sealed_exponent_unreadable_or_skip(rs: Any, key: int, *, label: str) -> Non
     if sealed is MISSING_ATTRIBUTE:
         # B3: only an OBSERVED CKR_ATTRIBUTE_SENSITIVE refusal proves the
         # seal; any other absence leaves it unproved, never assumed sealed.
-        refusal = read.refusals.get(int(CKA_PRIVATE_EXPONENT))
-        if refusal is not None and int(refusal.ckr) == int(CKR_ATTRIBUTE_SENSITIVE):
+        refusal_rv = refusal_rv_for(read, CKA_PRIVATE_EXPONENT)
+        if refusal_rv is not None and int(refusal_rv) == int(CKR_ATTRIBUTE_SENSITIVE):
             return
         xfail_as(
             "not_operational",
@@ -1267,7 +1271,7 @@ def _copy_unchanged_control_or_skip(
             f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); verdict would be vacuous"
         )
     try:
-        outcome = check(rs, control, baseline)
+        outcome: GuessUseOutcome = check(rs, control, baseline)
         if outcome.preserved is not True:
             detail = (
                 f" (use refused with {ckr_name(outcome.use_rv)})"
