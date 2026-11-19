@@ -8,6 +8,7 @@ from _pytest.outcomes import Failed, Skipped, XFailed
 from pkcs11_check import classification
 from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_OK,
 )
@@ -21,8 +22,11 @@ def _out(
     find: int = _OK,
     final: int = _OK,
     handles: tuple[int, ...] = (),
+    complete: bool = True,
 ) -> sens._FindOutcome:
-    return sens._FindOutcome(init_rv=init, find_rv=find, final_rv=final, handles=handles)
+    return sens._FindOutcome(
+        init_rv=init, find_rv=find, final_rv=final, handles=handles, complete=complete
+    )
 
 
 def test_screen_member_match_xfails_spec_silent() -> None:
@@ -44,10 +48,44 @@ def test_screen_undefined_rv_fails() -> None:
         sens._screen_sealed_find(outcome=_out(find=0xDEAD), handle=42, label="sealed")
 
 
-def test_screen_full_page_without_member_skips() -> None:
-    """B1: a full page may hide the sealed handle on page 2: unproved."""
+def test_screen_incomplete_without_member_skips() -> None:
+    """R2A3: an unfinished search cannot prove absence: unproved."""
     with pytest.raises(Skipped):
-        sens._screen_sealed_find(outcome=_out(handles=tuple(range(8))), handle=42, label="sealed")
+        sens._screen_sealed_find(
+            outcome=_out(find=int(CKR_DEVICE_ERROR), handles=(7,), complete=False),
+            handle=42,
+            label="sealed",
+        )
+
+
+def test_screen_member_survives_final_refusal() -> None:
+    """R2A3: delivering pages prove the match even when Final refuses."""
+    with pytest.raises(XFailed):
+        sens._screen_sealed_find(
+            outcome=_out(final=int(CKR_ATTRIBUTE_VALUE_INVALID), handles=(42,)),
+            handle=42,
+            label="sealed",
+        )
+
+
+def test_screen_undefined_final_behind_refused_find_fails() -> None:
+    """R2A3: per-stage scan; no collapse hides an undefined Final."""
+    with pytest.raises(Failed):
+        sens._screen_sealed_find(
+            outcome=_out(find=int(CKR_DEVICE_ERROR), final=0xDEAD, complete=False),
+            handle=42,
+            label="sealed",
+        )
+
+
+def test_control_incomplete_skips() -> None:
+    """R2A3: a short page cannot prove exactly-one: unproved."""
+    with pytest.raises(Skipped):
+        sens._judge_find_control(
+            outcome=_out(find=int(CKR_DEVICE_ERROR), handles=(42,), complete=False),
+            handle=42,
+            label="control",
+        )
 
 
 def test_control_exact_handle_passes() -> None:
