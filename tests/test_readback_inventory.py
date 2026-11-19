@@ -1907,12 +1907,12 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "39c91cdf51d9d9535923eb763d9b3febd0bc9afab6150c47bb545267a57542af",
+            "962b9242c40d80a8bba6d319b65f898780dafe58c344a1d655e70fd3c4a574c3",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "0963671ff346e0b95c21070c2eb749fd6de73bc06ab148c94aac6e2e740ef9cc",
+            "24984b6e2b46ee643c4c91f6388243109422f3ed2082a354d55a81ec301c808b",
             characterization.candidate_digest,
         ),
         (
@@ -1920,7 +1920,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("explicit_mechanism_grouping", 2133),
                 ("explicit_mechanism_readback", 357),
-                ("non_readback", 1500),
+                ("non_readback", 1504),
                 ("safe_mechanism_free_readback", 2255),
                 ("unresolved", 2930),
                 ("unsafe_inherited_readback", 22),
