@@ -116,3 +116,26 @@ class TestMalformedRsaSignDownstream:
     def test_rsa_sign_downstream(self, p11_raw_session: Any, malformation: str) -> None:
         """Refused creation skips as inapplicable; admitted keys run the sign path."""
         _qc4._run_rsa_sign_downstream(p11_raw_session, malformation)
+
+
+class TestRsaSignWrongAlgorithm:
+    """QC4c (#56.3): RSA signing mechs against an EC-material franken object."""
+
+    @pytest.mark.parametrize(
+        "mech_name",
+        [
+            "RSA_PKCS",
+            "SHA1_RSA_PKCS",
+            "SHA224_RSA_PKCS",
+            "SHA256_RSA_PKCS",
+            "SHA384_RSA_PKCS",
+            "SHA512_RSA_PKCS",
+            "RSA_PKCS_PSS",
+            "RSA_X9_31",
+            "SHA1_RSA_X9_31",
+            "RSA_X_509",
+        ],
+    )
+    def test_rsa_sign_wrong_algo(self, p11_raw_session: Any, mech_name: str) -> None:
+        """Init/Sign recorded separately; CKR_OK output ECDSA-checked, never passed."""
+        _qc4._run_rsa_sign_wrong_algo(p11_raw_session, mech_name)

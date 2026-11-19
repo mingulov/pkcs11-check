@@ -5,6 +5,8 @@ They are intentionally strict:
 - PSS salt length is passed in exactly (never AUTO / PKCS1v15).
 - ECDSA uses curve-aware coord_len via split_raw_ecdsa.
 - MalformedSignature from split_raw_ecdsa is NOT caught here; callers map it.
+- ecdsa_der_local is the deliberate exception: DER from a confused module
+  may be garbage, so unparseable bytes verify as False (unproved output).
 """
 
 from __future__ import annotations
@@ -133,6 +135,26 @@ def rsa_pss_local_recover_mgf(
         except InvalidSignature:
             continue
     return None
+
+
+def ecdsa_der_local(
+    pub: ec.EllipticCurvePublicKey,
+    data: bytes,
+    sig_der: bytes,
+    hash_alg: hashes.HashAlgorithm,
+) -> bool:
+    """Verify a DER-encoded ECDSA signature over *data*.
+
+    Unlike :func:`ecdsa_local` (raw ``r || s`` with a strict length
+    contract), DER inputs from a confused module may be truncated or
+    garbage: unparseable bytes verify as False (never raise), so callers
+    can treat them as unproved output rather than a harness error.
+    """
+    try:
+        pub.verify(sig_der, data, ec.ECDSA(hash_alg))
+        return True
+    except (InvalidSignature, ValueError):
+        return False
 
 
 def ecdsa_local(
