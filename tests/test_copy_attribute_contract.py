@@ -5067,3 +5067,29 @@ def test_policy_shaped_sets_split_crypto_vs_keymgmt() -> None:
     assert cm.KEYMGMT_POLICY_SHAPED_REFUSE_RVS == frozenset(
         {_KEY_NOT_PERMITTED, _MECHANISM_INVALID}
     )
+
+
+def test_compare_reencoding_voids_with_value_preserved(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """D4: leading-zero-only differences are re-encoding, not a value change."""
+    recoded = b"\x00" + _COMPARE_SOURCE
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(empty=("ok", recoded), restated=("ok", _COMPARE_SOURCE))
+    (reason, kw), *_ = _compare_captures["xfail"]
+    assert reason == "honest_deviation"
+    assert "re-encoded" in kw["summary"], kw["summary"]
+    assert _compare_captures["fail"] == []
+
+
+def test_compare_mixed_int_equal_xfails_compat(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """D4: a re-encoded accepted leg with a refused sibling is compat, not FAIL."""
+    recoded = b"\x00\x00" + _COMPARE_SOURCE
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(empty=("ok", recoded), restated=("refused", _ATTR_READ_ONLY))
+    (reason, kw), *_ = _compare_captures["xfail"]
+    assert reason == "honest_deviation"
+    assert "compat" in kw["summary"], kw["summary"]
+    assert _compare_captures["fail"] == []

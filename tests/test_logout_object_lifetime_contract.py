@@ -1291,25 +1291,73 @@ def test_cross_token_logout_failed_skips() -> None:
 
 
 def test_cross_token_target_survived_fails() -> None:
-    with pytest.raises(Failed):
+    with pytest.raises(Failed) as excinfo:
         tssm._judge_cross_token_trace(_cross_token_trace(inv=(1, 1)))
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.operation == "C_Logout", record.summary
+    assert "still found" in (record.summary or ""), record.summary
 
 
 def test_cross_token_control_lost_fails() -> None:
-    with pytest.raises(Failed):
+    with pytest.raises(Failed) as excinfo:
         tssm._judge_cross_token_trace(_cross_token_trace(inv=(0, 0)))
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.operation == "C_Logout", record.summary
+    assert "lost without relogin" in (record.summary or ""), record.summary
 
 
 def test_cross_token_control_unusable_fails() -> None:
-    with pytest.raises(Failed):
+    with pytest.raises(Failed) as excinfo:
         tssm._judge_cross_token_trace(
             _cross_token_trace(control_use_rv=int(CKR_KEY_HANDLE_INVALID))
         )
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.operation == "C_GetAttributeValue", record.summary
+    assert record.actual_ckr == "CKR_KEY_HANDLE_INVALID", record.summary
 
 
 def test_cross_token_stale_usable_fails() -> None:
-    with pytest.raises(Failed):
+    with pytest.raises(Failed) as excinfo:
         tssm._judge_cross_token_trace(_cross_token_trace(stale_use_rv=int(CKR_OK)))
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "accepted_invalid", record.summary
+    assert "stale target handle" in (record.summary or ""), record.summary
+
+
+def test_cross_token_stale_usable_beats_find_skip() -> None:
+    """D1: a proved stale-handle effect grades before any find-refusal skip."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(
+                stale_use_rv=int(CKR_OK),
+                target_find_rv=int(CKR_DEVICE_ERROR),
+            )
+        )
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "accepted_invalid", record.summary
+
+
+def test_cross_token_control_unusable_beats_find_skip() -> None:
+    """D1: a proved control-use effect grades before any find-refusal skip."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(
+                control_use_rv=int(CKR_KEY_HANDLE_INVALID),
+                control_find_rv=int(CKR_DEVICE_ERROR),
+            )
+        )
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.operation == "C_GetAttributeValue", record.summary
 
 
 def test_cross_token_stale_other_clean_xfails() -> None:

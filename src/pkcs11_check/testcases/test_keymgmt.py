@@ -9,7 +9,9 @@ from collections.abc import Callable, Mapping
 from typing import Any, NoReturn
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import fail_as, xfail_as
@@ -1279,11 +1281,15 @@ def _copy_unchanged_control_or_skip(
         destroy_quietly(rs.raw, rs.sh, control)
 
 
-def _rsa_sign_baseline_or_xfail(rs: Any, key: int, *, label: str) -> bytes:
+def _rsa_sign_baseline_or_xfail(
+    rs: Any, key: int, *, label: str, public_numbers: tuple[bytes, bytes]
+) -> bytes:
     """Sign the probe message twice as the RSA material-behavior baseline.
 
     The double sign proves the v1.5 determinism premise the copy
-    comparisons rely on; a nondeterministic signer voids the leg.
+    comparisons rely on, and the signature must verify under the
+    known public half (deterministic garbage is not a baseline); a
+    nondeterministic or unverifying signer voids the leg.
     """
     try:
         first = sign_single(rs.raw, rs.sh, key, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
@@ -1315,6 +1321,22 @@ def _rsa_sign_baseline_or_xfail(rs: Any, key: int, *, label: str) -> bytes:
             mechanism="CKM_SHA256_RSA_PKCS",
             inherit_mechanism=False,
             summary=f"{label}: v1.5 signer nondeterministic; guess comparison void",
+        )
+    modulus, exponent = public_numbers
+    pub = rsa.RSAPublicNumbers(
+        int.from_bytes(exponent, "big"), int.from_bytes(modulus, "big")
+    ).public_key()
+    try:
+        pub.verify(first, _RSA_GUESS_MESSAGE, padding.PKCS1v15(), hashes.SHA256())
+    except InvalidSignature:
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: baseline use",
+            operation="C_Sign",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            inherit_mechanism=False,
+            summary=f"{label}: baseline signature does not verify; guess comparison void",
         )
     return first
 
@@ -1413,7 +1435,9 @@ class TestCopyForbiddenMutation:
             destroy_quietly(rs.raw, rs.sh, donor)
         try:
             _sealed_exponent_unreadable_or_skip(rs, sealed, label=label)
-            baseline_sig = _rsa_sign_baseline_or_xfail(rs, sealed, label=label)
+            baseline_sig = _rsa_sign_baseline_or_xfail(
+                rs, sealed, label=label, public_numbers=(components["n"], components["e"])
+            )
             _copy_unchanged_control_or_skip(
                 rs, sealed, baseline_sig, label=label, preserves=_copy_preserves_rsa_material
             )

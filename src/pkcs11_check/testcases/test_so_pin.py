@@ -830,12 +830,15 @@ def _run_qc11c_journey_node(
 def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
     """Judge concurrent SetPIN linearization (#52.8 threaded leg).
 
-    Threads race user-PIN changes; each tags its final PIN P1..P4
-    (P0 is the pre-race PIN). Exactly one candidate may work at the
-    end: the pre-race PIN plus successful writes. Zero workers means
-    corruption, several workers (or a failed write working) means an
-    invalid credential was accepted. Undefined thread RVs fail loud;
-    with no successful write the race is untestable (skip).
+    Threads race user-PIN changes from the same old PIN; each tags
+    its final PIN P1..P4 (P0 is the pre-race PIN). At most one write
+    may succeed (a second success accepted a stale old PIN); exactly
+    one candidate may work at the end, and a successful write must
+    retire P0. Zero workers means corruption (unless lockout blocked
+    the tail: then the winner may sit behind the lock and the leg
+    skips), several workers (or a failed write working) means an
+    invalid credential was accepted. Undefined RVs fail loud; with
+    no successful write the race is untestable (skip).
     """
     label = "QC11c concurrent PIN"
     thread_rvs = {step.name: step.rv for step in trace.steps if step.name.startswith("thread:")}
@@ -878,30 +881,85 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
         f"{label}: probe contract broken (final coverage {sorted(final)} "
         f"vs {sorted(expected_final)})"
     )
+    for tag, rv in sorted(final.items()):
+        if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: final:login:{tag}",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=f"{label}: final login returned undefined CK_RV {ckr_name(rv)}",
+            )
     successful = {f"P{int(i) + 1}" for i, rv in setpin.items() if rv == int(CKR_OK)}
     if not successful:
         pytest.skip(f"{label}: no SetPIN succeeded; races untestable")
+    if len(successful) > 1:
+        fail_as(
+            "accepted_invalid",
+            label=label,
+            operation="C_SetPIN",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: {len(successful)} writes succeeded from the same old PIN "
+                f"({', '.join(sorted(successful))}); all but one accepted a stale PIN"
+            ),
+            detail={"successful": sorted(successful)},
+        )
     working = {tag for tag, rv in final.items() if rv == int(CKR_OK)}
+    locked = {tag for tag, rv in final.items() if rv == int(CKR_PIN_LOCKED)}
     detail = {
         "successful": sorted(successful),
         "working": sorted(working),
+        "locked": sorted(locked),
         "final": {tag: ckr_name(rv) for tag, rv in sorted(final.items())},
     }
+    if not working:
+        if locked:
+            pytest.skip(
+                f"{label}: no PIN works and {len(locked)} final checks hit "
+                "CKR_PIN_LOCKED; the winner may sit behind the lockout"
+            )
+        fail_as(
+            "self_contradiction",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=f"{label}: 0 PINs work after the race (none); exactly one must",
+            detail=detail,
+        )
     if len(working) != 1:
         fail_as(
-            "accepted_invalid" if working else "self_contradiction",
+            "accepted_invalid",
             label=label,
             operation="C_Login",
             mechanism=None,
             inherit_mechanism=False,
             summary=(
                 f"{label}: {len(working)} PINs work after the race "
-                f"({', '.join(sorted(working)) or 'none'}); exactly one must"
+                f"({', '.join(sorted(working))}); exactly one must"
             ),
             detail=detail,
         )
     sole = next(iter(working))
-    if sole not in ({"P0"} | successful):
+    if sole == "P0":
+        fail_as(
+            "self_contradiction",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: pre-race PIN still works after a successful write "
+                f"({', '.join(sorted(successful))}); the write had no effect"
+            ),
+            detail=detail,
+        )
+    if sole not in successful:
         fail_as(
             "accepted_invalid",
             label=label,

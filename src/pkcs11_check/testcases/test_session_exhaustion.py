@@ -91,8 +91,13 @@ def _close_owned_sessions(
     owned: list[tuple[int, str]],
     deferred: list[classification.Classification],
     cleanup_errors: list[BaseException],
-) -> None:
-    """Attempt each owned handle exactly once, preserving every cleanup observation."""
+) -> int:
+    """Attempt each owned handle exactly once, preserving every cleanup observation.
+
+    Returns the count of verified clean closes, so callers can tell a
+    freed handle (reopen must succeed) from an unproved one.
+    """
+    closed = 0
     for handle, phase in owned:
         try:
             expect_rv(raw.C_CloseSession(handle), CKR_OK)
@@ -109,7 +114,10 @@ def _close_owned_sessions(
         except BaseException as exc:
             exc.add_note(f"C_CloseSession cleanup raised for owned handle {handle} during {phase}")
             cleanup_errors.append(exc)
+        else:
+            closed += 1
     owned.clear()
+    return closed
 
 
 def _strongest_deferred(
@@ -145,6 +153,13 @@ def _finish_session_attempt(
                 classification.raise_for_record(selected)
             except BaseException as terminal:
                 raise terminal from pending
+        else:
+            # A failing pending outcome still carries the cleanup RVs as
+            # notes: deferred close refusals are evidence, never dropped.
+            for record in deferred:
+                pending.add_note(
+                    f"cleanup also recorded {record.reason} ({record.operation} {record.summary})"
+                )
         raise pending
     if deferred:
         classification.raise_for_record(_strongest_deferred(deferred))
@@ -455,12 +470,17 @@ def _judge_capacity_returned(
     baseline_total: int | None,
     total_after_close_all: int | None,
     reopen_rv: int | None,
+    own_opens: int,
+    verified_closes: int,
+    reread_rv: int,
 ) -> None:
     """Judge capacity restoration after closing saturation sessions (QC11b).
 
     Called after closing every owned session and attempting one reopen:
-    the reopen must succeed (a handle was just freed) and the ambient
-    total must return to its pre-saturation baseline. Unknown counts
+    the reopen must succeed once a close is verified (a handle was just
+    freed) and the ambient total must return to its pre-saturation
+    baseline. A refused reopen with zero verified closes voids the leg
+    (nothing was freed, so the refusal is expected). Unknown counts
     skip the count leg (fail-safe, like the exhaustion judge); a
     missing reopen attempt breaks the caller contract.
     """
@@ -471,8 +491,16 @@ def _judge_capacity_returned(
         "baseline_total": baseline_total,
         "observed_total": total_after_close_all,
         "reopen_rv": reopen_rv,
+        "own_opens": own_opens,
+        "verified_closes": verified_closes,
+        "reread_rv": ckr_name(reread_rv),
     }
     if reopen_rv != int(CKR_OK):
+        if verified_closes == 0:
+            pytest.skip(
+                f"{label}: reopen refused with {ckr_name(reopen_rv)} but no owned "
+                "close verified; restoration unproved"
+            )
         classification.fail_as(
             "self_contradiction",
             kind="metadata",
@@ -732,13 +760,51 @@ class TestAdvertisedSessionLimits:
                         refused_rv = exc.rv
                         break
                     owned.append((handle, "saturation"))
+                own_opens = len(owned)
                 if refused_rv is None:
                     pytest.skip(
                         "QC11b: provider admitted the full safety cap "
                         f"({_QC11B_SESSION_SAFETY_CAP} opens) without refusal; "
                         "saturation untestable, reopen leg vacuous"
                     )
-                _close_owned_sessions(rs.raw, owned, deferred, cleanup_errors)
+                if own_opens == 0:
+                    pytest.skip(
+                        f"QC11b: first open refused ({ckr_name(refused_rv)}); "
+                        "no saturation to restore from, reopen leg vacuous"
+                    )
+                if not (is_standard_ckr(refused_rv) or is_vendor_defined_ckr(refused_rv)):
+                    classification.fail_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label="QC11b capacity return",
+                        operation="C_OpenSession",
+                        mechanism=None,
+                        inherit_mechanism=False,
+                        actual=refused_rv,
+                        summary=("QC11b capacity return: saturation refusal is an undefined CK_RV"),
+                        detail={"own_opens": own_opens},
+                    )
+                if is_vendor_defined_ckr(refused_rv):
+                    classification.xfail_as(
+                        "nonspec_reject",
+                        kind="metadata",
+                        label="QC11b capacity return",
+                        operation="C_OpenSession",
+                        mechanism=None,
+                        inherit_mechanism=False,
+                        actual=refused_rv,
+                        summary=(
+                            "QC11b capacity return: saturation refused with vendor-defined "
+                            f"{ckr_name(refused_rv)} (alternate refusal; restoration unproved)"
+                        ),
+                        detail={"own_opens": own_opens},
+                    )
+                if refused_rv != int(CKR_SESSION_COUNT):
+                    pytest.skip(
+                        f"QC11b: saturation refused with {ckr_name(refused_rv)}, not "
+                        "CKR_SESSION_COUNT; capacity boundary unproved, reopen leg vacuous"
+                    )
+                verified_closes = _close_owned_sessions(rs.raw, owned, deferred, cleanup_errors)
                 owned.clear()
                 try:
                     reopened = raw_open_session(
@@ -749,12 +815,15 @@ class TestAdvertisedSessionLimits:
                 else:
                     reopen_rv = int(CKR_OK)
                     close_session_quietly(rs.raw, reopened)
-                reread, _ = _read_session_policy(rs.raw, rs.slot_id)
+                reread, reread_rv = _read_session_policy(rs.raw, rs.slot_id)
                 total_after_close_all = reread.ambient_total if reread is not None else None
                 _judge_capacity_returned(
                     baseline_total=baseline_total,
                     total_after_close_all=total_after_close_all,
                     reopen_rv=reopen_rv,
+                    own_opens=own_opens,
+                    verified_closes=verified_closes,
+                    reread_rv=reread_rv,
                 )
             except BaseException as exc:
                 pending = exc
