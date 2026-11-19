@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKA_ALWAYS_AUTHENTICATE,
     CKA_EXTRACTABLE,
     CKA_LABEL,
+    CKA_PRIVATE_EXPONENT,
     CKA_SENSITIVE,
     CKA_VALUE,
     CKM_AES_ECB,
@@ -120,6 +121,19 @@ COPY_MUTABILITY_TABLE: tuple[CopyMutabilityRow, ...] = (
         ),
     ),
     CopyMutabilityRow(
+        key="private_exponent",
+        attr=int(CKA_PRIVATE_EXPONENT),
+        attr_name="CKA_PRIVATE_EXPONENT",
+        copy_rule="forbidden",
+        set_rule="forbidden",
+        citation=(
+            "PKCS#11 v3.2 §4.1.2/§4.1.3 'described as being modifiable' rule: "
+            "RSA private key material (CKA_PRIVATE_EXPONENT) carries no "
+            "modifiable marking, so different-value changes are forbidden "
+            "via copy and set"
+        ),
+    ),
+    CopyMutabilityRow(
         key="label",
         attr=int(CKA_LABEL),
         attr_name="CKA_LABEL",
@@ -144,6 +158,7 @@ TABLE_PROBES: tuple[str, ...] = (
     "always_authenticate",
     "sensitive_downgrade",
     "extractable_escalate",
+    "private_exponent",
     "label_control",
 )
 
@@ -154,6 +169,7 @@ PROBE_ROW: dict[str, str] = {
     "always_authenticate": "always_authenticate",
     "sensitive_downgrade": "sensitive",
     "extractable_escalate": "extractable",
+    "private_exponent": "private_exponent",
     "label_control": "label",
 }
 
@@ -463,6 +479,83 @@ def classify_ignored_or_mutated(
         spec_ref=spec_ref,
         summary=ignored_summary,
         detail=detail,
+    )
+
+
+def judge_guess_confirm(
+    *,
+    correct_exc: CkrAssertionError | None,
+    wrong_exc: CkrAssertionError | None,
+    correct_preserved: bool,
+    wrong_preserved: bool,
+    created_on_refusal: bool,
+    expected_rvs: tuple[Any, ...],
+    label: str,
+    operation: str,
+    spec_ref: str,
+) -> None:
+    """Cross-leg verdict for a C_CopyObject secret-guess pair (#55.1).
+
+    The correct-guess leg (true sealed value) and the wrong-guess leg must
+    behave identically: same refusal code, or both accepted with material
+    preserved (a recorded safe-ignore deviation). Any asymmetric outcome is
+    a copy oracle and fails, as does a refused leg that still creates an
+    object. Accepted legs inherit the sibling accepted-change tiers. The oracle
+    failures cite no spec clause: identical treatment of correct and wrong
+    guesses is a pkcs11-check consistency rule (#55.1), carried by the
+    summary text.
+    """
+    if created_on_refusal:
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            summary="a refused guess-confirm leg created a session object",
+            detail={"label": label},
+        )
+    if correct_exc is not None and wrong_exc is not None:
+        if correct_exc.rv != wrong_exc.rv:
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=correct_exc.rv,
+                summary=("refusal codes differ between correct and wrong guesses (copy oracle)"),
+                detail={"correct_rv": correct_exc.rv, "wrong_rv": wrong_exc.rv},
+            )
+        classify_forbidden_change_refusal(
+            correct_exc, expected_rvs, label=label, operation=operation
+        )
+        classify_forbidden_change_refusal(wrong_exc, expected_rvs, label=label, operation=operation)
+        return
+    if correct_exc is None and wrong_exc is None:
+        classify_ignored_or_mutated(
+            mutated=not (correct_preserved and wrong_preserved),
+            label=label,
+            operation=operation,
+            spec_ref=spec_ref,
+            ignored_summary=("both guesses accepted with sealed material preserved (safe ignore)"),
+            mutated_summary="an accepted guess mutated sealed material",
+            detail={
+                "correct_preserved": correct_preserved,
+                "wrong_preserved": wrong_preserved,
+            },
+        )
+    fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        summary="guess legs disagree: one accepted, one refused (copy oracle)",
+        detail={
+            "correct_refused": correct_exc is not None,
+            "wrong_refused": wrong_exc is not None,
+        },
     )
 
 

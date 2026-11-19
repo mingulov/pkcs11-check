@@ -5,6 +5,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any, NoReturn
 
 import pytest
@@ -14,30 +15,40 @@ from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import mech_ecdh
+from pkcs11_check.raw.pack import mech_ecdh, template_from_dict
 from pkcs11_check.raw.recipes import (
+    RSAUsage,
     copy_object,
     decrypt_single,
     derive_key,
     destroy_quietly,
     encrypt_single,
+    find_objects,
     import_secret_key,
     read_attributes,
+    sign_single,
     wrap_key,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
+    CKA_COEFFICIENT,
     CKA_COPYABLE,
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_ENCRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
+    CKA_PRIVATE_EXPONENT,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
+    CKA_SIGN,
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
@@ -50,6 +61,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
     CKM_ECDH1_DERIVE,
+    CKM_SHA256_RSA_PKCS,
     CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
@@ -80,6 +92,7 @@ from pkcs11_check.testcases._copy_mutability import (
     classify_forbidden_change_refusal,
     classify_ignored_or_mutated,
     classify_rv_validity_or_none,
+    judge_guess_confirm,
     read_qc3_attributes,
     row_by_key,
     validate_qc3_shape,
@@ -95,6 +108,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    import_rsa_private_key_negotiated,
     import_secret_key_negotiated,
     skip_unless_create_object_supported,
     skip_unless_mechanism,
@@ -628,11 +642,13 @@ _QC3A_IDENTITY_CITATION = (
 )
 
 
-def _import_copy_mutability_source(rs: Any) -> int:
+def _import_copy_mutability_source(rs: Any, *, sealed: bool = False) -> int:
     """Import the known-value AES source for the QC3a copy legs.
 
     The source sets CKA_COPYABLE so the copy premise is explicit; a
     module that cannot provide a copyable source fails setup visibly.
+    ``sealed`` requests CKA_SENSITIVE/!CKA_EXTRACTABLE for the
+    guess-confirm legs, which need a genuinely unreadable fixture.
     """
     try:
         return import_secret_key(
@@ -643,8 +659,8 @@ def _import_copy_mutability_source(rs: Any) -> int:
             attrs={
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
-                CKA_EXTRACTABLE: True,
-                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: not sealed,
+                CKA_SENSITIVE: sealed,
                 CKA_COPYABLE: True,
                 CKA_TOKEN: False,
             },
@@ -827,6 +843,298 @@ def _check_copy_identity_override(
     )
 
 
+_RSA_GUESS_MESSAGE = b"pkcs11-check guess-confirm probe"
+
+
+def _count_session_objects(rs: Any) -> int | None:
+    """Count session objects; None when the inventory itself fails."""
+    try:
+        return len(find_objects(rs.raw, rs.sh, template_from_dict({CKA_TOKEN: False})))
+    except CkrAssertionError:  # audit-ok: best-effort inventory; None skips the no-object check
+        return None
+
+
+def _copy_preserves_aes_material(rs: Any, target: int, baseline_ct: bytes) -> bool:
+    """Non-raising material check for an accepted AES guess leg."""
+    try:
+        return encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, PROBE_PLAINTEXT) == baseline_ct
+    except CkrAssertionError:  # audit-ok: boolean probe; False fails loud via the judge
+        return False
+
+
+def _copy_preserves_rsa_material(rs: Any, target: int, baseline_sig: bytes) -> bool:
+    """Non-raising material check for an accepted RSA guess leg.
+
+    RSA v1.5 signs deterministically, so a signature comparison is a
+    material-equality proof for the private exponent.
+    """
+    try:
+        return (
+            sign_single(rs.raw, rs.sh, target, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
+            == baseline_sig
+        )
+    except CkrAssertionError:  # audit-ok: boolean probe; False fails loud via the judge
+        return False
+
+
+def _read_rsa_components_or_xfail(rs: Any, key: int, *, label: str) -> dict[str, bytes]:
+    """Read the CRT components of a generated unsealed RSA key for re-import."""
+    wanted = {
+        "n": CKA_MODULUS,
+        "e": CKA_PUBLIC_EXPONENT,
+        "d": CKA_PRIVATE_EXPONENT,
+        "p": CKA_PRIME_1,
+        "q": CKA_PRIME_2,
+        "dmp1": CKA_EXPONENT_1,
+        "dmq1": CKA_EXPONENT_2,
+        "iqmp": CKA_COEFFICIENT,
+    }
+    try:
+        read = read_attributes(rs.raw, rs.sh, key, list(wanted.values()))
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: component readback",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: component readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(
+                f"{label}: module will not disclose generated RSA components; "
+                "cannot build a known-answer sealed fixture"
+            ),
+        )
+    components: dict[str, bytes] = {}
+    for name, attr in wanted.items():
+        value = attr_or_record(
+            read,
+            attr,
+            label=f"{label}: component {name} readback",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        if value is MISSING_ATTRIBUTE or not isinstance(value, bytes) or not value:
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: component readback",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: {name} readback is not usable key "
+                    "material; cannot build a known-answer sealed fixture"
+                ),
+            )
+        components[name] = value
+    return components
+
+
+def _import_sealed_rsa_or_xfail(rs: Any, components: Mapping[str, bytes], *, label: str) -> int:
+    """Import a sealed RSA private key from known CRT components."""
+    try:
+        return import_rsa_private_key_negotiated(
+            rs,
+            n=components["n"],
+            e=components["e"],
+            d=components["d"],
+            p=components["p"],
+            q=components["q"],
+            dmp1=components["dmp1"],
+            dmq1=components["dmq1"],
+            iqmp=components["iqmp"],
+            attrs={
+                CKA_SIGN: True,
+                CKA_EXTRACTABLE: False,
+                CKA_SENSITIVE: True,
+                CKA_COPYABLE: True,
+                CKA_TOKEN: False,
+            },
+            purpose="sealed RSA guess-confirm source",
+            preserve_policy_attrs=True,
+        )
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: sealed import",
+            operation="C_CreateObject",
+            kind="policy",
+        )
+        xfail_qc3_setup_refusal(
+            exc,
+            _COPY_SOURCE_SETUP_REJECT_RVS,
+            label=f"{label}: sealed import",
+        )
+
+
+def _sealed_value_unreadable_or_skip(rs: Any, key: int, *, label: str) -> None:
+    """Prove the sealed AES fixture is genuinely sealed; skip when it is not.
+
+    A guess-confirm leg against a readable value is vacuous (and would
+    conflate #55.1 with the #55.2 value-mutation rule), so a readable
+    value skips with a pointer at the sensitivity tests that own it.
+    """
+    try:
+        read = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: seal premise",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        return
+    sealed = attr_or_record(
+        read,
+        CKA_VALUE,
+        label=f"{label}: seal premise",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if sealed is MISSING_ATTRIBUTE or not isinstance(sealed, bytes):
+        return
+    pytest.skip(
+        f"{label}: module discloses the sealed value; "
+        "guess-confirm is vacuous (see sensitivity tests)"
+    )
+
+
+def _sealed_exponent_unreadable_or_skip(rs: Any, key: int, *, label: str) -> None:
+    """Prove the sealed fixture is genuinely sealed; skip when it is not.
+
+    A guess-confirm leg against a readable exponent is vacuous (and would
+    conflate #55.1 with the #55.2 value-mutation rule), so a readable
+    exponent skips with a pointer at the sensitivity tests that own it.
+    """
+    try:
+        read = read_attributes(rs.raw, rs.sh, key, [CKA_PRIVATE_EXPONENT])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: seal premise",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        return
+    sealed = attr_or_record(
+        read,
+        CKA_PRIVATE_EXPONENT,
+        label=f"{label}: seal premise",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if sealed is MISSING_ATTRIBUTE or not isinstance(sealed, bytes):
+        return
+    pytest.skip(
+        f"{label}: module discloses the sealed private exponent; "
+        "guess-confirm is vacuous (see sensitivity tests)"
+    )
+
+
+def _run_guess_legs(
+    rs: Any,
+    original: int,
+    attr: int,
+    guesses: tuple[bytes, bytes],
+    baseline: bytes,
+    preserves: Callable[[Any, int, bytes], bool],
+) -> tuple[CkrAssertionError | None, CkrAssertionError | None, bool, bool, bool]:
+    """Run the correct/wrong guess legs for #55.1.
+
+    Returns ``(correct_exc, wrong_exc, correct_ok, wrong_ok, created)``
+    where an ``exc`` of None means the leg accepted (with ``ok`` reporting
+    the material check), and ``created`` reports a refused leg that still
+    grew the session inventory.
+    """
+    excs: list[CkrAssertionError | None] = []
+    oks: list[bool] = []
+    created = False
+    for guess in guesses:
+        before = _count_session_objects(rs)
+        try:
+            copy = copy_object(rs.raw, rs.sh, original, {attr: guess})
+        except CkrAssertionError as exc:
+            excs.append(exc)
+            oks.append(True)
+            after = _count_session_objects(rs)
+            if before is not None and after is not None and after > before:
+                created = True
+            continue
+        excs.append(None)
+        try:
+            oks.append(preserves(rs, copy, baseline))
+        finally:
+            destroy_quietly(rs.raw, rs.sh, copy)
+    correct_exc, wrong_exc = excs
+    correct_ok, wrong_ok = oks
+    return correct_exc, wrong_exc, correct_ok, wrong_ok, created
+
+
+def _copy_unchanged_control_or_skip(
+    rs: Any, original: int, baseline_ct: bytes, *, label: str
+) -> None:
+    """Prove a no-op copy of the sealed source works; skip the override otherwise.
+
+    A module that refuses every copy would let the override legs pass
+    vacuously, so an empty-template duplicate (which must succeed) plus a
+    use check gates them.
+    """
+    try:
+        control = copy_object(rs.raw, rs.sh, original, {})
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: unchanged control",
+            operation="C_CopyObject",
+            kind="policy",
+        )
+        pytest.skip(
+            f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); "
+            "override verdict would be vacuous"
+        )
+    try:
+        if not _copy_preserves_aes_material(rs, control, baseline_ct):
+            pytest.skip(
+                f"{label}: empty-template duplicate is unusable; override verdict would be vacuous"
+            )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, control)
+
+
+def _rsa_sign_baseline_or_xfail(rs: Any, key: int, *, label: str) -> bytes:
+    """Sign the probe message as the RSA material-behavior baseline."""
+    try:
+        return sign_single(rs.raw, rs.sh, key, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: baseline use",
+            operation="C_Sign",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            kind="policy",
+        )
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: baseline use",
+            operation="C_Sign",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=f"{label}: sealed RSA source will not sign",
+        )
+
+
 class TestCopyForbiddenMutation:
     """QC3a: copies must not mutate material or object identity (#55.1/.2)."""
 
@@ -865,6 +1173,81 @@ class TestCopyForbiddenMutation:
                 destroy_quietly(rs.raw, rs.sh, copy)
         finally:
             destroy_quietly(rs.raw, rs.sh, original)
+
+    def test_copy_sealed_value_guess_confirm_identical(self, p11_raw_session: Any) -> None:
+        """Correct and wrong sealed-value guesses must behave identically (#55.1)."""
+        rs = p11_raw_session
+        skip_unless_mechanism(rs, "AES_ECB")
+        label = "C_CopyObject sealed CKA_VALUE guess-confirm (QC3a oracle)"
+        row = row_by_key("value")
+        original = _import_copy_mutability_source(rs, sealed=True)
+        try:
+            _sealed_value_unreadable_or_skip(rs, original, label=label)
+            baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
+            correct_exc, wrong_exc, correct_ok, wrong_ok, created = _run_guess_legs(
+                rs,
+                original,
+                CKA_VALUE,
+                (PROBE_ORIGINAL_VALUE, PROBE_INJECTED_VALUE),
+                baseline_ct,
+                _copy_preserves_aes_material,
+            )
+            judge_guess_confirm(
+                correct_exc=correct_exc,
+                wrong_exc=wrong_exc,
+                correct_preserved=correct_ok,
+                wrong_preserved=wrong_ok,
+                created_on_refusal=created,
+                expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
+                label=label,
+                operation="C_CopyObject",
+                spec_ref=row.citation,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, original)
+
+    def test_copy_sealed_rsa_exponent_guess_confirm_identical(self, p11_raw_session: Any) -> None:
+        """Correct and wrong sealed-exponent guesses must behave identically (#55.1)."""
+        rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        label = "C_CopyObject sealed CKA_PRIVATE_EXPONENT guess-confirm (QC3a oracle)"
+        row = row_by_key("value")
+        _, donor = gen_rsa_keypair_or_xfail(
+            rs,
+            usage=RSAUsage.SIGN,
+            private_attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+        )
+        try:
+            components = _read_rsa_components_or_xfail(rs, donor, label=label)
+            sealed = _import_sealed_rsa_or_xfail(rs, components, label=label)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, donor)
+        try:
+            _sealed_exponent_unreadable_or_skip(rs, sealed, label=label)
+            baseline_sig = _rsa_sign_baseline_or_xfail(rs, sealed, label=label)
+            correct = components["d"]
+            wrong = bytes([correct[0] ^ 0x01]) + correct[1:]
+            correct_exc, wrong_exc, correct_ok, wrong_ok, created = _run_guess_legs(
+                rs,
+                sealed,
+                CKA_PRIVATE_EXPONENT,
+                (correct, wrong),
+                baseline_sig,
+                _copy_preserves_rsa_material,
+            )
+            judge_guess_confirm(
+                correct_exc=correct_exc,
+                wrong_exc=wrong_exc,
+                correct_preserved=correct_ok,
+                wrong_preserved=wrong_ok,
+                created_on_refusal=created,
+                expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
+                label=label,
+                operation="C_CopyObject",
+                spec_ref=row.citation,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sealed)
 
     def test_copy_key_type_override_ignored_or_refused(self, p11_raw_session: Any) -> None:
         """Copy with a CKA_KEY_TYPE override must refuse or have no effect."""
@@ -907,6 +1290,74 @@ class TestCopyForbiddenMutation:
         original = _import_copy_mutability_source(rs)
         try:
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
+            try:
+                copy = copy_object(rs.raw, rs.sh, original, {CKA_CLASS: CKO_PRIVATE_KEY})
+            except CkrAssertionError as exc:
+                classify_forbidden_change_refusal(
+                    exc,
+                    COPY_FORBIDDEN_REFUSE_RVS,
+                    label=label,
+                    operation="C_CopyObject",
+                )
+                return
+            try:
+                _check_copy_identity_override(
+                    rs,
+                    copy,
+                    baseline_ct,
+                    override_attr=int(CKA_CLASS),
+                    original_identity=int(CKO_SECRET_KEY),
+                    override_identity=int(CKO_PRIVATE_KEY),
+                    label=label,
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, copy)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, original)
+
+    def test_copy_sealed_key_type_override_ignored_or_refused(self, p11_raw_session: Any) -> None:
+        """Sealed copy with a CKA_KEY_TYPE override must refuse or have no effect (#55.2)."""
+        rs = p11_raw_session
+        skip_unless_mechanism(rs, "AES_ECB")
+        label = "C_CopyObject sealed CKA_KEY_TYPE override (QC3a identity)"
+        original = _import_copy_mutability_source(rs, sealed=True)
+        try:
+            baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
+            _copy_unchanged_control_or_skip(rs, original, baseline_ct, label=label)
+            try:
+                copy = copy_object(rs.raw, rs.sh, original, {CKA_KEY_TYPE: CKK_GENERIC_SECRET})
+            except CkrAssertionError as exc:
+                classify_forbidden_change_refusal(
+                    exc,
+                    COPY_FORBIDDEN_REFUSE_RVS,
+                    label=label,
+                    operation="C_CopyObject",
+                )
+                return
+            try:
+                _check_copy_identity_override(
+                    rs,
+                    copy,
+                    baseline_ct,
+                    override_attr=int(CKA_KEY_TYPE),
+                    original_identity=int(CKK_AES),
+                    override_identity=int(CKK_GENERIC_SECRET),
+                    label=label,
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, copy)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, original)
+
+    def test_copy_sealed_class_override_ignored_or_refused(self, p11_raw_session: Any) -> None:
+        """Sealed copy with a CKA_CLASS override must refuse or have no effect (#55.2)."""
+        rs = p11_raw_session
+        skip_unless_mechanism(rs, "AES_ECB")
+        label = "C_CopyObject sealed CKA_CLASS override (QC3a identity)"
+        original = _import_copy_mutability_source(rs, sealed=True)
+        try:
+            baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
+            _copy_unchanged_control_or_skip(rs, original, baseline_ct, label=label)
             try:
                 copy = copy_object(rs.raw, rs.sh, original, {CKA_CLASS: CKO_PRIVATE_KEY})
             except CkrAssertionError as exc:
