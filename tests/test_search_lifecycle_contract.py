@@ -1937,3 +1937,129 @@ def test_reuse_fresh_final_failure_preserves_resurrection_fail_p5(
     assert len(xfails) == 1, [(r.reason, r.operation) for r in records]
     assert xfails[0].operation == "C_FindObjectsFinal", xfails[0].operation
     assert raw.closed == [_S1, _S2_REUSED]
+
+
+class _ScriptedFindRaw:
+    """Find surface scripted by Init order: one handle page per search leg."""
+
+    # noqa comments below: raw PKCS#11 entry-point names are mandated.
+
+    def __init__(self, pages: list[tuple[int, ...]]) -> None:
+        self._pages = list(pages)
+        self.inits = 0
+        self._page: tuple[int, ...] = ()
+        self._served = True
+
+    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
+        self.inits += 1
+        self._page = self._pages.pop(0)
+        self._served = False
+        return _OK
+
+    def C_FindObjects(  # noqa: N802
+        self, _sh: int, handles: Any, _max_count: int, found_ptr: Any
+    ) -> int:
+        if self._served:
+            page: tuple[int, ...] = ()
+        else:
+            page = self._page
+            self._served = True
+        for i, handle in enumerate(page):
+            handles[i] = handle
+        ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = len(page)
+        return _OK
+
+    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
+        return _OK
+
+
+_SEP_DERIVED = 101
+_SEP_ORIGINAL = 102
+_SEP_BYTES = b"shared-provider-bytes"
+_SEP_BYTES_D = b"derived-provider-bytes"
+_SEP_BYTES_O = b"original-provider-bytes"
+
+
+def _sep_records(pages: list[tuple[int, ...]], **kw: Any) -> list[Any]:
+    from pkcs11_check.testcases._exact_search import separate_search_records
+
+    raw = _ScriptedFindRaw(pages)
+    rs = SimpleNamespace(raw=raw, sh=1)
+    return separate_search_records(rs, attr=int(CKA_EC_PARAMS), attr_name="params", **kw)
+
+
+def test_separate_search_agreeing_bytes_both_present_passes() -> None:
+    """Shared bytes returning both handles produce no records."""
+    records = _sep_records(
+        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL), ()],
+        derived=(_SEP_DERIVED, _SEP_BYTES),
+        original=(_SEP_ORIGINAL, _SEP_BYTES),
+        label="sep",
+    )
+    assert records == [None] * 6
+
+
+def test_separate_search_agreeing_bytes_derived_missing_fails() -> None:
+    """Shared bytes hiding the derived key fail (the #58.2 defect)."""
+    records = _sep_records(
+        [(_SEP_ORIGINAL,), (_SEP_DERIVED, _SEP_ORIGINAL), ()],
+        derived=(_SEP_DERIVED, _SEP_BYTES),
+        original=(_SEP_ORIGINAL, _SEP_BYTES),
+        label="sep",
+    )
+    fails = [record for record in records if record is not None]
+    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
+    assert fails[0].reason == "self_contradiction"
+    assert fails[0].outcome == "fail"
+
+
+def test_separate_search_agreeing_bytes_cross_missing_fails() -> None:
+    """The cross leg fails when the sibling search hides a shared-bytes key."""
+    records = _sep_records(
+        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_ORIGINAL,), ()],
+        derived=(_SEP_DERIVED, _SEP_BYTES),
+        original=(_SEP_ORIGINAL, _SEP_BYTES),
+        label="sep",
+    )
+    fails = [record for record in records if record is not None]
+    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
+    assert fails[0].reason == "self_contradiction"
+    assert "cross" in (fails[0].summary or "")
+
+
+def test_separate_search_changed_match_fails() -> None:
+    """A changed-value search returning a staged key fails."""
+    records = _sep_records(
+        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED,)],
+        derived=(_SEP_DERIVED, _SEP_BYTES),
+        original=(_SEP_ORIGINAL, _SEP_BYTES),
+        label="sep",
+    )
+    fails = [record for record in records if record is not None]
+    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
+    assert fails[0].reason == "self_contradiction"
+    assert "changed-value" in (fails[0].summary or "")
+
+
+def test_separate_search_diverging_bytes_self_present_passes() -> None:
+    """Diverging bytes need only per-key membership (no cross assertion)."""
+    records = _sep_records(
+        [(_SEP_DERIVED,), (_SEP_ORIGINAL,), (), ()],
+        derived=(_SEP_DERIVED, _SEP_BYTES_D),
+        original=(_SEP_ORIGINAL, _SEP_BYTES_O),
+        label="sep",
+    )
+    assert records == [None] * 6
+
+
+def test_separate_search_diverging_bytes_self_missing_fails() -> None:
+    """A key missing from its own-bytes search fails."""
+    records = _sep_records(
+        [(), (_SEP_ORIGINAL,), (), ()],
+        derived=(_SEP_DERIVED, _SEP_BYTES_D),
+        original=(_SEP_ORIGINAL, _SEP_BYTES_O),
+        label="sep",
+    )
+    fails = [record for record in records if record is not None]
+    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
+    assert fails[0].reason == "self_contradiction"

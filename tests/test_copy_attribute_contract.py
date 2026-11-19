@@ -4841,3 +4841,137 @@ def test_qc6b_public_different_value_verify_refused_unproved_xfails(
     record = _assert_xfail_record("honest_deviation")
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
     _assert_cleaned_up(fake)
+
+
+# -- QC6b empty/restated compare judge (#58.3) ----------------------------------------
+
+
+class _CompareVerdictError(Exception):
+    """Sentinel raised by the verdict captures to stop the judge flow."""
+
+
+@pytest.fixture()
+def _compare_captures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    seen: dict[str, list[tuple[str, dict[str, Any]]]] = {
+        "fail": [],
+        "xfail": [],
+        "record": [],
+    }
+
+    def _fail(reason: str, **kw: Any) -> Any:
+        seen["fail"].append((reason, kw))
+        raise _CompareVerdictError(f"fail_as {reason}")
+
+    def _xfail(reason: str, **kw: Any) -> Any:
+        seen["xfail"].append((reason, kw))
+        raise _CompareVerdictError(f"xfail_as {reason}")
+
+    def _record(reason: str, **kw: Any) -> Any:
+        seen["record"].append((reason, kw))
+        return None
+
+    monkeypatch.setattr(cm, "fail_as", _fail)
+    monkeypatch.setattr(cm, "xfail_as", _xfail)
+    monkeypatch.setattr(cm.C, "classify", _record)
+    return seen
+
+
+_COMPARE_LABEL = "empty/restated compare"
+_COMPARE_OPERATION = "C_CopyObject"
+_COMPARE_SPEC = "QC6b #58.3 empty-vs-unchanged compare"
+_COMPARE_SOURCE = b"source-public-value"
+
+
+def _judge_compare(**kw: Any) -> None:
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    base: dict[str, Any] = {
+        "source_value": _COMPARE_SOURCE,
+        "label": _COMPARE_LABEL,
+        "operation": _COMPARE_OPERATION,
+        "spec_ref": _COMPARE_SPEC,
+    }
+    base.update(kw)
+    cm.judge_copy_compare(**base)
+
+
+def test_compare_both_preserved_passes(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    _judge_compare(empty=("ok", _COMPARE_SOURCE), restated=("ok", _COMPARE_SOURCE))
+    assert _compare_captures == {"fail": [], "xfail": [], "record": []}
+
+
+def test_compare_changed_value_fails(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(empty=("ok", _COMPARE_SOURCE), restated=("ok", b"mutated-value!"))
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("wrong_result", "crypto")
+    ]
+
+
+def test_compare_same_refusal_passes_with_two_records(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    _judge_compare(empty=("refused", _ATTR_READ_ONLY), restated=("refused", _ATTR_READ_ONLY))
+    assert _compare_captures["fail"] == []
+    assert _compare_captures["xfail"] == []
+    assert [reason for reason, _ in _compare_captures["record"]] == [
+        "sanctioned_refusal",
+        "sanctioned_refusal",
+    ]
+
+
+def test_compare_mixed_ok_and_refusal_xfails_compat(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(empty=("ok", _COMPARE_SOURCE), restated=("refused", _ATTR_READ_ONLY))
+    (reason, kw), *_ = _compare_captures["xfail"]
+    assert reason == "honest_deviation"
+    assert "compat" in kw["summary"]
+
+
+def test_compare_different_refusals_xfail_compat(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(
+            empty=("refused", _ATTR_READ_ONLY),
+            restated=("refused", _ACTION_PROHIBITED),
+        )
+    (reason, kw), *_ = _compare_captures["xfail"]
+    assert reason == "honest_deviation"
+    assert "compat" in kw["summary"]
+
+
+def test_compare_unreadable_value_voids(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(empty=("ok", _COMPARE_SOURCE), restated=("ok", None))
+    assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
+
+
+def test_compare_undefined_refusal_fails_metadata(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(empty=("refused", 0xDEAD), restated=("refused", _ATTR_READ_ONLY))
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("self_contradiction", "metadata")
+    ]
+
+
+def test_compare_vendor_refusal_xfails_alternate(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(empty=("refused", 0x80000001), restated=("refused", _ATTR_READ_ONLY))
+    assert [reason for reason, _ in _compare_captures["xfail"]] == ["nonspec_reject"]
