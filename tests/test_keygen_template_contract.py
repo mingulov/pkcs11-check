@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification
+from pkcs11_check.raw.recipes import RSAUsage
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
@@ -22,6 +23,7 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_SENSITIVE,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
@@ -93,10 +95,18 @@ def test_ckr_kem_helper_omits_sensitive_keeps_restrictive(
 
 
 class _GenStub:
-    """Raw stub with a scripted C_GenerateKeyPair RV."""
+    """Raw stub with a scripted C_GenerateKeyPair RV and stored flag readback."""
 
-    def __init__(self, rv: int) -> None:
+    def __init__(
+        self,
+        rv: int,
+        *,
+        stored: tuple[bool, bool] = (False, True),
+        read_rv: int | None = None,
+    ) -> None:
         self._rv = rv
+        self._stored = stored
+        self._read_rv = read_rv
 
     def C_GenerateKeyPair(  # noqa: N802
         self,
@@ -112,6 +122,20 @@ class _GenStub:
         ctypes.cast(pub_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 301
         ctypes.cast(priv_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 302
         return self._rv
+
+    def C_GetAttributeValue(self, _sh: int, _handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        if self._read_rv is not None:
+            return self._read_rv
+        for i in range(int(count)):
+            attr = int(tmpl[i].type)
+            flag = self._stored[0] if attr == int(CKA_SENSITIVE) else self._stored[1]
+            value = b"\x01" if flag else b"\x00"
+            if tmpl[i].pValue is None:
+                tmpl[i].ulValueLen = len(value)
+            else:
+                ctypes.memmove(tmpl[i].pValue, value, len(value))
+                tmpl[i].ulValueLen = len(value)
+        return int(CKR_OK)
 
 
 def _gen_readable(rs_raw: Any, **kw: Any) -> Any:
@@ -133,7 +157,9 @@ def test_readable_rsa_template_inconsistent_xfails_named() -> None:
         _gen_readable(_GenStub(int(CKR_TEMPLATE_INCONSISTENT)))
     (record,) = classification.get_records()
     assert record.reason == "not_operational"
-    assert "non-sensitive private keys" in (record.summary or "")
+    assert "decrypt-purpose readable private-key template" in (record.summary or "")
+    assert "CKR_TEMPLATE_INCONSISTENT" in (record.summary or "")
+    assert "does not make" not in (record.summary or "")
 
 
 def test_readable_rsa_read_only_xfails_named() -> None:
@@ -143,7 +169,9 @@ def test_readable_rsa_read_only_xfails_named() -> None:
         _gen_readable(_GenStub(int(CKR_ATTRIBUTE_READ_ONLY)))
     (record,) = classification.get_records()
     assert record.reason == "not_operational"
-    assert "non-sensitive private keys" in (record.summary or "")
+    assert "decrypt-purpose readable private-key template" in (record.summary or "")
+    assert "CKR_ATTRIBUTE_READ_ONLY" in (record.summary or "")
+    assert "does not make" not in (record.summary or "")
 
 
 def test_readable_rsa_other_refusal_reraises() -> None:
@@ -155,6 +183,7 @@ def test_readable_rsa_keeps_readable_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The helper still asks SENSITIVE False + EXTRACTABLE True (needed to read)."""
+    from pkcs11_check.raw.recipes import AttrReadResult
     from pkcs11_check.testcases import test_crossverify_extended as xv_mod
 
     seen: dict[str, Any] = {}
@@ -163,7 +192,37 @@ def test_readable_rsa_keeps_readable_template(
         seen.update(kwargs)
         return (301, 302)
 
+    def _flags(*args: Any) -> Any:
+        result = AttrReadResult()
+        result[int(CKA_SENSITIVE)] = False
+        result[int(CKA_EXTRACTABLE)] = True
+        return result
+
     monkeypatch.setattr(xv_mod, "gen_rsa_keypair", _capture)
+    monkeypatch.setattr(xv_mod, "read_attributes", _flags)
     rs = SimpleNamespace(raw=object(), sh=1)
     assert xv_mod._gen_readable_rsa_or_xfail(rs, 2048, label="L") == (301, 302)
     assert seen["private_attrs"] == {CKA_SENSITIVE: False, CKA_EXTRACTABLE: True}
+    assert seen["usage"] == RSAUsage.DECRYPT
+
+
+def test_readable_rsa_normalized_flags_void() -> None:
+    """C5: stored flags differing from the readable request void the leg."""
+    from _pytest.outcomes import XFailed
+
+    with pytest.raises(XFailed):
+        _gen_readable(_GenStub(int(CKR_OK), stored=(True, False)))
+    (record,) = classification.get_records()
+    assert record.reason == "not_operational"
+    assert "differ from the readable request" in (record.summary or "")
+
+
+def test_readable_rsa_unreadable_flags_void() -> None:
+    """C5: unreadable stored flags void the leg with the RV named."""
+    from _pytest.outcomes import XFailed
+
+    with pytest.raises(XFailed):
+        _gen_readable(_GenStub(int(CKR_OK), read_rv=int(CKR_DEVICE_ERROR)))
+    (record,) = classification.get_records()
+    assert record.reason == "not_operational"
+    assert "CKR_DEVICE_ERROR" in (record.summary or "")

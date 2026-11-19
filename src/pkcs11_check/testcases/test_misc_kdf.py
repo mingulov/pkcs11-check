@@ -75,6 +75,9 @@ from pkcs11_check.raw.types_std import (
     CKK_DES3,
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
+    CKM_BLAKE2B_160_KEY_DERIVE,
+    CKM_BLAKE2B_256_KEY_DERIVE,
+    CKM_BLAKE2B_384_KEY_DERIVE,
     CKM_BLAKE2B_512_KEY_DERIVE,
     CKM_CONCATENATE_BASE_AND_DATA,
     CKM_CONCATENATE_BASE_AND_KEY,
@@ -84,6 +87,7 @@ from pkcs11_check.raw.types_std import (
     CKM_EXTRACT_KEY_FROM_KEY,
     CKM_HKDF_DERIVE,
     CKM_SHA1_KEY_DERIVATION,
+    CKM_SHA3_224_KEY_DERIVATION,
     CKM_SHA3_256_KEY_DERIVATION,
     CKM_SHA3_384_KEY_DERIVATION,
     CKM_SHA3_512_KEY_DERIVATION,
@@ -3254,8 +3258,10 @@ _SHA1_PARITY_BASE = bytes((0x20 + i) % 256 for i in range(20))
 _KAT_BLOCK = bytes.fromhex("0123456789abcdef")
 
 #: Digest parity mechs: name -> (ckm, oracle_kind, digest_len). oracle_kind
-#: "hash:<hashlib>" slices the digest; "blake2b512" and "xof:<hashlib>"
-#: compute directly. DES3 is excluded on every digest mech (pending ruling).
+#: "hash:<hashlib>" slices the digest; "blake2b:<size>" hashes unkeyed
+#: (the repo's settled BLAKE2b position: mech_simple carries no key);
+#: "xof:<hashlib>" reads directly. DES3 is excluded on every digest
+#: mech (pending ruling).
 _DIGEST_PARITY_MECHS: dict[str, tuple[int, str, int | None]] = {
     "CKM_SHA224_KEY_DERIVATION": (int(CKM_SHA224_KEY_DERIVATION), "hash:sha224", 28),
     "CKM_SHA256_KEY_DERIVATION": (int(CKM_SHA256_KEY_DERIVATION), "hash:sha256", 32),
@@ -3271,10 +3277,14 @@ _DIGEST_PARITY_MECHS: dict[str, tuple[int, str, int | None]] = {
         "hash:sha512_256",
         32,
     ),
+    "CKM_SHA3_224_KEY_DERIVATION": (int(CKM_SHA3_224_KEY_DERIVATION), "hash:sha3_224", 28),
     "CKM_SHA3_256_KEY_DERIVATION": (int(CKM_SHA3_256_KEY_DERIVATION), "hash:sha3_256", 32),
     "CKM_SHA3_384_KEY_DERIVATION": (int(CKM_SHA3_384_KEY_DERIVATION), "hash:sha3_384", 48),
     "CKM_SHA3_512_KEY_DERIVATION": (int(CKM_SHA3_512_KEY_DERIVATION), "hash:sha3_512", 64),
-    "CKM_BLAKE2B_512_KEY_DERIVE": (int(CKM_BLAKE2B_512_KEY_DERIVE), "blake2b512", 64),
+    "CKM_BLAKE2B_160_KEY_DERIVE": (int(CKM_BLAKE2B_160_KEY_DERIVE), "blake2b:20", 20),
+    "CKM_BLAKE2B_256_KEY_DERIVE": (int(CKM_BLAKE2B_256_KEY_DERIVE), "blake2b:32", 32),
+    "CKM_BLAKE2B_384_KEY_DERIVE": (int(CKM_BLAKE2B_384_KEY_DERIVE), "blake2b:48", 48),
+    "CKM_BLAKE2B_512_KEY_DERIVE": (int(CKM_BLAKE2B_512_KEY_DERIVE), "blake2b:64", 64),
     "CKM_SHAKE_128_KEY_DERIVATION": (
         int(CKM_SHAKE_128_KEY_DERIVATION),
         "xof:shake_128",
@@ -3340,8 +3350,10 @@ def _digest_parity_materials(mech_name: str, out_len: int) -> tuple[bytes, bytes
         digest = hashlib.new(kind[5:], base, usedforsecurity=False).digest()
         assert digest_len is not None and len(digest) == digest_len, (mech_name, len(digest))
         return base, digest[:out_len]
-    if kind == "blake2b512":
-        digest = hashlib.blake2b(base, digest_size=64, usedforsecurity=False).digest()
+    if kind.startswith("blake2b:"):
+        size = int(kind.split(":")[1])
+        digest = hashlib.blake2b(base, digest_size=size, usedforsecurity=False).digest()
+        assert digest_len is not None and len(digest) == digest_len, (mech_name, len(digest))
         return base, digest[:out_len]
     if kind.startswith("xof:"):
         shake = hashlib.shake_128 if kind == "xof:shake_128" else hashlib.shake_256
@@ -3675,55 +3687,55 @@ class TestDerivedDesParity:
             for handle in sources:
                 destroy_quietly(rs.raw, rs.sh, handle)
 
-    def test_sha1_derive_des_parity(self, p11_raw_session: Any) -> None:
-        """SHA-1 derive to DES/DES2/CDMF: DES3 is excluded, never asserted."""
+    @pytest.mark.parametrize("type_name", _DES_PARITY_SHA1_TYPES)
+    def test_sha1_derive_des_parity(self, p11_raw_session: Any, type_name: str) -> None:
+        """SHA-1 derive to one DES-family type per node (DES3 excluded, never asserted)."""
         rs = p11_raw_session
         if not rs.has_mechanism("SHA1_KEY_DERIVATION"):
             pytest.skip("CKM_SHA1_KEY_DERIVATION not supported")
         label = "qc8c-CKM_SHA1_KEY_DERIVATION"
         base_bytes = _SHA1_PARITY_BASE
         digest = hashlib.sha1(base_bytes, usedforsecurity=False).digest()
+        key_type, out_len = _DES_PARITY_TYPES[type_name]
+        raw_expected = digest[:out_len]
+        _require_even_parity_premise(raw_expected, label=f"{label}->{type_name}")
         sources: list[int] = []
         children: list[int] = []
         try:
             sources.append(
                 _import_parity_source(rs, base_bytes, label=label, mech_name=_SHA1_DERIVATION_NAME)
             )
-            for type_name in _DES_PARITY_SHA1_TYPES:
-                key_type, out_len = _DES_PARITY_TYPES[type_name]
-                raw_expected = digest[:out_len]
-                _require_even_parity_premise(raw_expected, label=f"{label}->{type_name}")
-                child = _derive_parity_child(
-                    rs,
-                    mech_name=_SHA1_DERIVATION_NAME,
-                    mech_id=int(CKM_SHA1_KEY_DERIVATION),
-                    base=sources[0],
-                    mech_param=mech_simple(CKM_SHA1_KEY_DERIVATION),
-                    child_attrs=_des_child_attrs(key_type, out_len),
-                    label=f"{label}->{type_name}: derive",
-                )
-                children.append(child)
-                _assert_des_child_value(
-                    rs,
-                    child,
-                    mech_name=_SHA1_DERIVATION_NAME,
-                    type_name=type_name,
-                    out_len=out_len,
-                    raw_expected=raw_expected,
-                )
-                twin = _derive_parity_child(
-                    rs,
-                    mech_name=_SHA1_DERIVATION_NAME,
-                    mech_id=int(CKM_SHA1_KEY_DERIVATION),
-                    base=sources[0],
-                    mech_param=mech_simple(CKM_SHA1_KEY_DERIVATION),
-                    child_attrs=_generic_child_attrs(out_len),
-                    label=f"{label}->generic: twin derive",
-                )
-                children.append(twin)
-                _assert_generic_child_value(
-                    rs, twin, mech_name=_SHA1_DERIVATION_NAME, raw_expected=raw_expected
-                )
+            child = _derive_parity_child(
+                rs,
+                mech_name=_SHA1_DERIVATION_NAME,
+                mech_id=int(CKM_SHA1_KEY_DERIVATION),
+                base=sources[0],
+                mech_param=mech_simple(CKM_SHA1_KEY_DERIVATION),
+                child_attrs=_des_child_attrs(key_type, out_len),
+                label=f"{label}->{type_name}: derive",
+            )
+            children.append(child)
+            _assert_des_child_value(
+                rs,
+                child,
+                mech_name=_SHA1_DERIVATION_NAME,
+                type_name=type_name,
+                out_len=out_len,
+                raw_expected=raw_expected,
+            )
+            twin = _derive_parity_child(
+                rs,
+                mech_name=_SHA1_DERIVATION_NAME,
+                mech_id=int(CKM_SHA1_KEY_DERIVATION),
+                base=sources[0],
+                mech_param=mech_simple(CKM_SHA1_KEY_DERIVATION),
+                child_attrs=_generic_child_attrs(out_len),
+                label=f"{label}->{type_name}->generic: twin derive",
+            )
+            children.append(twin)
+            _assert_generic_child_value(
+                rs, twin, mech_name=_SHA1_DERIVATION_NAME, raw_expected=raw_expected
+            )
         finally:
             for handle in children:
                 destroy_quietly(rs.raw, rs.sh, handle)
@@ -3740,13 +3752,13 @@ class TestDerivedDesParity:
         DES2/CDMF are admission-gated rows: a clean refusal xfails
         visibly. DES3 is excluded (pending ruling), never asserted, as is
         SHA-512/t (recorded-unresolved registry). The generic twin runs
-        first: on settled-semantics mechs a twin deviation fails, on
-        BLAKE2b (keyed-vs-unkeyed unconfirmed) it voids the row.
+        first and a twin deviation fails on every mech, BLAKE2b included
+        (unkeyed semantics are settled and mech_simple carries no key).
         """
         rs = p11_raw_session
         if not rs.has_mechanism(mech_name.removeprefix("CKM_")):
             pytest.skip(f"{mech_name} not supported")
-        mech_id, kind, _digest_len = _DIGEST_PARITY_MECHS[mech_name]
+        mech_id = _DIGEST_PARITY_MECHS[mech_name][0]
         key_type, out_len = _DES_PARITY_TYPES[type_name]
         label = f"qc8c-{mech_name}->{type_name}"
         base_bytes, raw_expected = _digest_parity_materials(mech_name, out_len)
@@ -3766,33 +3778,7 @@ class TestDerivedDesParity:
                 label=f"{label}->generic: twin derive",
             )
             children.append(twin)
-            if kind == "blake2b512":
-                twin_value = _read_derived_value(
-                    rs, twin, label=f"{label}->generic:CKA_VALUE readback"
-                )
-                _assert_misc_bytes_length(
-                    twin_value,
-                    expected_len=len(raw_expected),
-                    label=f"{label}->generic:derived value length",
-                    mechanism=mech_name,
-                )
-                if twin_value != raw_expected:
-                    xfail_as(
-                        "not_operational",
-                        label=f"{label}->generic:twin oracle",
-                        operation="C_DeriveKey",
-                        mechanism=mech_name,
-                        inherit_mechanism=False,
-                        summary=(
-                            f"{label}: generic twin deviates from the unkeyed "
-                            "BLAKE2b oracle; derive semantics unconfirmed, "
-                            "parity unjudged"
-                        ),
-                    )
-            else:
-                _assert_generic_child_value(
-                    rs, twin, mech_name=mech_name, raw_expected=raw_expected
-                )
+            _assert_generic_child_value(rs, twin, mech_name=mech_name, raw_expected=raw_expected)
             child = _derive_parity_child(
                 rs,
                 mech_name=mech_name,

@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_object_identity as identity_case
 from tests._skip_assert import assert_skips, assert_xfails
@@ -99,6 +100,11 @@ class _IdentityRaw:
         self.override_ok_existing_handle: int | None = None
         # R1 knob: plant an unrelated token object during the refused op.
         self.override_foreign_delta_by_op: dict[str, bool] = {}
+        # C3 knobs: per-call derive/unwrap RV scripts (None = success).
+        self.derive_script: list[int | None] = []
+        self.unwrap_script: list[int | None] = []
+        self.derived_handles: list[int] = []
+        self.unwrapped_handles: list[int] = []
         self.foreign_delta_handle: int | None = None
 
     def _fresh_uid(self) -> bytes:
@@ -278,8 +284,14 @@ class _IdentityRaw:
         self, _sh: int, _mech: Any, base: int, tmpl: Any, count: int, handle_ptr: Any
     ) -> int:
         assert int(base) in self.objects, f"derive from unknown handle {base}"
+        if self.derive_script:
+            scripted = self.derive_script.pop(0)
+            if scripted is not None:
+                return scripted
         attrs = _decode_template(tmpl, int(count))
-        _write_handle(handle_ptr, self._alloc(attrs))
+        handle = self._alloc(attrs)
+        self.derived_handles.append(handle)
+        _write_handle(handle_ptr, handle)
         return _OK
 
     def C_WrapKey(  # noqa: N802
@@ -307,8 +319,14 @@ class _IdentityRaw:
         handle_ptr: Any,
     ) -> int:
         assert int(unwrapping) in self.objects, f"unwrap with unknown handle {unwrapping}"
+        if self.unwrap_script:
+            scripted = self.unwrap_script.pop(0)
+            if scripted is not None:
+                return scripted
         attrs = _decode_template(tmpl, int(count))
-        _write_handle(handle_ptr, self._alloc(attrs))
+        handle = self._alloc(attrs)
+        self.unwrapped_handles.append(handle)
+        _write_handle(handle_ptr, handle)
         return _OK
 
     def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
@@ -443,9 +461,41 @@ def test_cross_creator_stays_live_without_derive_unwrap() -> None:
     """The shared check runs on when derive/unwrap mechs are unavailable."""
     fake = _IdentityRaw()
     identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(
-        _rs(fake, mechs=set())
+        _rs(fake, mechs={"AES_KEY_GEN", "RSA_PKCS_KEY_PAIR_GEN"})
     )
     _assert_cleanup(fake)
+    # The shared check really ran: every staged object's ID was read.
+    assert len(fake.attr_reads) >= 8, fake.attr_reads
+
+
+def test_cross_creator_partial_derive_stays_live() -> None:
+    """C3: a refused 2nd derive keeps the 1st output live for the shared check."""
+    fake = _IdentityRaw()
+    fake.derive_script = [None, int(CKR_TEMPLATE_INCONSISTENT)]
+    identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    _assert_cleanup(fake)
+    assert len(fake.derived_handles) == 1, fake.derived_handles
+    assert fake.derived_handles[0] in fake.attr_reads, fake.attr_reads
+
+
+def test_cross_creator_partial_unwrap_stays_live() -> None:
+    """C3: a refused 2nd unwrap keeps the 1st output live for the shared check."""
+    fake = _IdentityRaw()
+    fake.unwrap_script = [None, int(CKR_TEMPLATE_INCONSISTENT)]
+    identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    _assert_cleanup(fake)
+    assert len(fake.unwrapped_handles) == 1, fake.unwrapped_handles
+    assert fake.unwrapped_handles[0] in fake.attr_reads, fake.attr_reads
+
+
+def test_cross_creator_undefined_staging_rv_fails() -> None:
+    """C3: an undefined staging RV fails loud instead of voiding silently."""
+    from _pytest.outcomes import Failed
+
+    fake = _IdentityRaw()
+    fake.derive_script = [0xDEAD]
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
 
 
 def test_kem_outputs_have_unique_ids_pass() -> None:

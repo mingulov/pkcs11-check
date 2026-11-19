@@ -1466,7 +1466,12 @@ class _PolicyFake:
         if pqc_issue is not None:
             self._pqc_issued.add(pqc_issue)
         self._sign_op = None
-        ctypes.memmove(out, payload, len(payload))
+        writable = len(payload)
+        if isinstance(out, ctypes.Array):
+            # Never overflow a fixed caller buffer while reporting an
+            # over-capacity length (the length lie is the defect under test).
+            writable = min(writable, len(out))
+        ctypes.memmove(out, payload, writable)
         _fill_ulong(out_len, len(payload))
         return _OK
 
@@ -5242,6 +5247,41 @@ def test_qc4c_wrong_algo_hashless_ok_xfails_unproved() -> None:
     record = _assert_xfail_record("honest_deviation")
     assert "no hash to verify under" in (record.summary or ""), record.summary
     _assert_cleaned_up(fake)
+
+
+def test_qc4c_wrong_algo_over_capacity_length_fails() -> None:
+    """C1: a CKR_OK length above the buffer capacity fails, never clamp-slices."""
+    fake = _PolicyFake(sign_output=b"G" * 600)
+    _run_must_fail(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert "512-byte buffer" in (record.summary or ""), record.summary
+    _assert_cleaned_up(fake)
+
+
+def test_qc4c_wrong_algo_message_per_mech() -> None:
+    """C1: raw mechs sign encoded input; combined mechs sign the probe message."""
+    import hashlib
+
+    mod = _policy_module()
+    rows = {entry.name: entry for entry in mod._RSA_SIGN_MECHS}
+    assert (
+        mod._wrong_algo_message(rows["RSA_PKCS_PSS"])
+        == hashlib.sha256(mod.QC4_SIGN_DATA, usedforsecurity=False).digest()
+    )
+    x931 = mod._wrong_algo_message(rows["RSA_X9_31"])
+    assert x931[:-1] == hashlib.sha1(mod.QC4_SIGN_DATA, usedforsecurity=False).digest()
+    assert x931[-1] == 0x33
+    for name in (
+        "RSA_PKCS",
+        "SHA1_RSA_PKCS",
+        "SHA224_RSA_PKCS",
+        "SHA256_RSA_PKCS",
+        "SHA384_RSA_PKCS",
+        "SHA512_RSA_PKCS",
+        "SHA1_RSA_X9_31",
+        "RSA_X_509",
+    ):
+        assert mod._wrong_algo_message(rows[name]) == mod.QC4_SIGN_DATA, name
 
 
 def test_qc4c_unsupported_create_skips() -> None:
