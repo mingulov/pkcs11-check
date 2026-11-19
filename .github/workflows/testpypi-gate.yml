@@ -25,7 +25,10 @@ name: TestPyPI gate
 # consecutive identical reads, awaits the release files on the simple
 # index, and only then releases the pinned version to the matrix. An
 # explicitly requested version skips the settle but keeps the file wait
-# (instant for already-published releases).
+# (instant for already-published releases). Prepare's wait ran on one
+# runner's CDN edge, so each validate leg additionally awaits the pinned
+# files on ITS OWN index view before installing (up to 5 minutes):
+# otherwise a stale edge fails pip resolution after a green prepare.
 #
 # This workflow never publishes, tags, or releases anything: it is read-only
 # (contents: read for the checkout) plus installs from TestPyPI.
@@ -172,6 +175,50 @@ jobs:
           # Oldest supported interpreter (requires-python >=3.12) is the
           # strictest install target, so the gate pins it on every OS.
           python-version: "3.12"
+
+      - name: Await version on this runner's index
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          import urllib.request
+
+          SIMPLE_URL = "https://test.pypi.org/simple/pkcs11-check/"
+          READ_TIMEOUT = 30
+          WAIT_INTERVAL = 15
+          WAIT_DEADLINE = 300
+
+          version = os.environ["VERSION"]
+
+
+          def simple_page() -> str:
+              with urllib.request.urlopen(SIMPLE_URL, timeout=READ_TIMEOUT) as response:
+                  return response.read().decode("utf-8", "replace")
+
+
+          # Prepare's wait ran on another runner's CDN edge: this leg must see
+          # the pinned release files on ITS OWN index view before pip does,
+          # or resolution fails with "No matching distribution" (run 44460105408
+          # attempt 1: prepare green, ubuntu wheel leg red on 0.3.0rc5).
+          wheel_marker = f"-{version}-"
+          sdist_marker = f"-{version}.tar.gz"
+          deadline = time.monotonic() + WAIT_DEADLINE
+          while True:
+              try:
+                  page = simple_page()
+              except Exception as exc:
+                  print(f"simple-index read failed ({exc}); retrying")
+                  page = ""
+              if wheel_marker in page and sdist_marker in page:
+                  print(f"wheel+sdist for {version} visible from this runner")
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit(f"pkcs11-check {version} files not visible after {WAIT_DEADLINE}s")
+              print(f"waiting for {version} files on this runner's index ...")
+              time.sleep(WAIT_INTERVAL)
+          PY
 
       - name: Install ${{ matrix.artifact }} from TestPyPI
         env:

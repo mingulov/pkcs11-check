@@ -228,6 +228,36 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
         assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}", needle
 
 
+def test_gate_waits_for_version_on_each_runner_before_install() -> None:
+    """Each validate leg must await the pinned version on ITS OWN index view
+    before installing. Prepare's single-vantage wait cannot cover other
+    runners' CDN edges: run 44460105408 attempt 1 passed prepare, then the
+    ubuntu wheel leg's pip saw an index without 0.3.0rc5 (other legs saw
+    it) and failed with 'No matching distribution'."""
+    job = _workflow()["jobs"]["validate"]
+    steps = _steps(job)
+
+    await_idx = _step_index(steps, "Await version on this runner's index")
+    install_idx = _step_index(steps, "Install ${{ matrix.artifact }} from TestPyPI")
+    setup_idx = _step_index(steps, _SETUP_PYTHON_ACTION)
+    assert setup_idx < await_idx < install_idx
+
+    step = steps[await_idx]
+    assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}"
+    run_body = _run_of(steps, "Await version on this runner's index")
+    # Same markers pip will need, on the same index pip will read.
+    assert "https://test.pypi.org/simple/pkcs11-check/" in run_body
+    assert ".tar.gz" in run_body and "-{version}-" in run_body
+    # Bounded wait (~5 minutes), loud failure, bounded network I/O.
+    assert "WAIT_DEADLINE = 300" in run_body
+    assert "WAIT_INTERVAL" in run_body
+    assert "raise SystemExit" in run_body
+    assert "timeout=" in run_body
+    # Still the one pinned version: no per-leg resolution or JSON latest.
+    assert "steps.candidate" not in run_body
+    assert "test.pypi.org/pypi/pkcs11-check/json" not in run_body
+
+
 def _find_gnu_bash() -> str | None:
     """First `bash` that is really GNU bash, not the WSL launcher stub.
 
