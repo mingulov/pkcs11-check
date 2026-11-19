@@ -39,6 +39,7 @@ from pkcs11_check.raw.pack import (
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
+    digest_single_with_key,
     find_objects,
     gen_aes_key,
     pack_attrs,
@@ -2906,6 +2907,193 @@ class TestByteKdfShortChild:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
             destroy_quietly(rs.raw, rs.sh, base)
+
+
+_RECOVERY_BASE = bytes(range(32))
+_RECOVERY_XOR_FULL_DATA = b"\xa5" * 32
+
+
+def _judge_byte_recovery(
+    *, derive_rv: int, recovered: bool | None, control_ok: bool, label: str
+) -> None:
+    """Judge one 1-byte recovery leg (#54.3).
+
+    Refusal (any defined code; the control proves the shape works)
+    is the ideal posture. A recovered byte fails (a never-extractable
+    base yielded material — self-evident, no oracle needed); an
+    unproven/blocked chain xfails when the control calibrated the
+    oracle, else skips. Malformed RVs fail.
+    """
+    if not _is_defined_rv(derive_rv):
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=derive_rv,
+            summary=f"{label}: derive returned undefined CK_RV {ckr_name(derive_rv)}",
+        )
+    if derive_rv != int(CKR_OK):
+        return
+    if recovered is True:
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_DigestKey",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=f"{label}: sealed base byte recovered through 1-byte child",
+        )
+    if not control_ok:
+        pytest.skip(f"{label}: control unproven; recovery verdict untestable")
+    if recovered is None:
+        xfail_as(
+            "honest_deviation",
+            label=label,
+            operation="C_DigestKey",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=f"{label}: derivation permitted but recovery blocked; residual accepted",
+        )
+    xfail_as(
+        "honest_deviation",
+        label=label,
+        operation="C_DigestKey",
+        mechanism=None,
+        inherit_mechanism=False,
+        summary=f"{label}: derivation permitted; recovery did not complete",
+    )
+
+
+def _recover_byte_via_digest(rs: Any, child: int) -> bytes | None:
+    """Brute-force a 1-byte child via DigestKey; None when no match.
+
+    Raises NotImplementedError when DigestKey is unsupported and
+    propagates CkrAssertionError for refused/errored digest ops.
+    """
+    observed = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, child)
+    for candidate in range(256):
+        if hashlib.sha256(bytes([candidate])).digest() == observed:
+            return bytes([candidate])
+    return None
+
+
+def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
+    """Run one sealed-vs-control 1-byte recovery comparison (#54.3)."""
+    if shape == "extract":
+        expected = _RECOVERY_BASE[:1]
+    elif shape == "xor_zeros":
+        expected = _RECOVERY_BASE[:1]
+    elif shape == "xor_full":
+        expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_FULL_DATA[0]])
+    else:
+        raise ValueError(f"unknown recovery shape {shape!r}")
+
+    def derive(base: int) -> tuple[int, int]:
+        child_attrs: dict[int, Any] = {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_TOKEN: False,
+            CKA_LABEL: label,
+            CKA_VALUE_LEN: _SHORT_CHILD_LEN,
+        }
+        if shape == "extract":
+            return _derive_byte_child(rs, _EXTRACT_NAME, [base], child_attrs)
+        data = b"\x00" if shape == "xor_zeros" else _RECOVERY_XOR_FULL_DATA
+        return _derive_raw(
+            rs,
+            int(CKM_XOR_BASE_AND_DATA),
+            base,
+            child_attrs,
+            mech_param=mech_string_data(int(CKM_XOR_BASE_AND_DATA), data),
+        )
+
+    try:
+        cbase = import_secret_key_negotiated(
+            rs,
+            CKK_GENERIC_SECRET,
+            _RECOVERY_BASE,
+            attrs={
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_DERIVE: True,
+            },
+        )
+    except CkrAssertionError as exc:
+        pytest.skip(f"{label}: control import refused ({ckr_name(exc.rv)}); fixture unbuildable")
+    control_ok = False
+    try:
+        crv, cchild = derive(cbase)
+        if crv != int(CKR_OK):
+            pytest.skip(f"{label}: control derive refused ({ckr_name(crv)}); fixture unbuildable")
+        try:
+            cfound = _recover_byte_via_digest(rs, cchild)
+        except NotImplementedError:
+            pytest.skip(f"{label}: C_DigestKey unsupported; oracle untestable")
+        assert_correct(
+            actual=cfound,
+            expected=expected,
+            label=f"{label}:control recovery KAT",
+            operation="C_DigestKey",
+            mechanism="CKM_SHA256",
+        )
+        control_ok = True
+    finally:
+        destroy_quietly(rs.raw, rs.sh, cbase)
+    try:
+        sbase = import_secret_key_negotiated(
+            rs,
+            CKK_GENERIC_SECRET,
+            _RECOVERY_BASE,
+            attrs={
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: False,
+                CKA_DERIVE: True,
+            },
+        )
+    except CkrAssertionError as exc:
+        pytest.skip(f"{label}: sealed import refused ({ckr_name(exc.rv)}); fixture unbuildable")
+    try:
+        srv, schild = derive(sbase)
+        recovered: bool | None = False
+        if srv == int(CKR_OK):
+            try:
+                sfound = _recover_byte_via_digest(rs, schild)
+            except NotImplementedError:
+                recovered = None
+            except CkrAssertionError as exc:
+                if not _is_defined_rv(exc.rv):
+                    raise
+                recovered = None
+            else:
+                recovered = sfound is not None
+        _judge_byte_recovery(derive_rv=srv, recovered=recovered, control_ok=control_ok, label=label)
+    finally:
+        destroy_quietly(rs.raw, rs.sh, sbase)
+
+
+class TestByteRecoveryOracle:
+    """QC12b recovery: composed 1-byte recovery must fail or be refused (#54.3)."""
+
+    def test_extract_1byte_recovery(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("EXTRACT_KEY_FROM_KEY"):
+            pytest.skip("CKM_EXTRACT_KEY_FROM_KEY not supported")
+        _run_byte_recovery_case(p11_raw_session, shape="extract", label="qc12b-rec-extract")
+
+    def test_xor_zeros_1byte_recovery(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
+            pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
+        _run_byte_recovery_case(p11_raw_session, shape="xor_zeros", label="qc12b-rec-xor0")
+
+    def test_xor_full_1byte_recovery(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
+            pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
+        _run_byte_recovery_case(p11_raw_session, shape="xor_full", label="qc12b-rec-xorfull")
 
 
 class TestHkdfInheritanceScope:
