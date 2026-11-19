@@ -8,7 +8,9 @@ the run to fit the observer.
 ## Processes, not one PID
 
 The default (`--isolation auto`) runs each test file in a fresh
-`python -m pytest` subprocess. Short-lived helper subprocesses also
+`python -m pytest` subprocess. Files that crash repeatedly are
+promoted to per-test subprocesses instead, so one crashing file
+fans out further. Short-lived helper subprocesses also
 load the module, for collection and the capability probe. See
 `docs/file-isolation.md` for the runner design.
 
@@ -42,10 +44,12 @@ discovered mid-run.
 ## Run durations
 
 Plan by profile, slowest first. Rough magnitudes on the SoftHSM
-reference module (container, shared host): the smoke selection takes
-a couple of minutes, the fast profile (`--skip-slow`) several
-minutes, and a full run tens of minutes. Other providers differ
-considerably; HSM-class modules can take several times longer.
+reference module, measured in a single container on a shared host
+with `pkcs11-check test -m <softhsm>`: the smoke selection
+(`--marker smoke`) takes a couple of minutes, the fast profile
+(`--skip-slow`) several minutes, and a full run tens of minutes.
+Other providers differ considerably; HSM-class modules can take
+several times longer.
 
 To time your own setup, run each profile once with `time` and the
 exact selection you intend to keep; provider, machine, and vector

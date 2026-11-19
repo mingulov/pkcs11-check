@@ -98,14 +98,15 @@ validated by a full provider round (see Known limitations).
   counter design.
 - Startup-check counter evidence can fail warn-only under disk I/O
   pathology (loud warning, no loss record).
-- Return-value counters can lose a code when the provider crashes
-  mid-call: the call itself is recorded before the provider runs, but
-  its return code is journaled after, so a crash in between orphans
-  the code (observed only in runs with intentional crash tests, and
-  rare there). Persisting
-  every return before the counters rewrite would roughly double
-  flush I/O for negligible gain, so it stays deferred; tracked as
-  follow-up work.
+- Return-value counters distinguish two crash shapes. A call that never
+  returns (provider crash mid-call) is counted as a call with no return
+  code: none exists to record. Separately, a code that did return can be
+  lost before persistence: the call is recorded before the provider runs
+  but its return code is journaled after, so a crash in between orphans
+  the code (observed only in runs with intentional crash tests, and rare
+  there). Persisting every return before the counters rewrite would add
+  a flush per call for negligible gain, so it stays deferred; tracked
+  as follow-up work (fw#88).
 - Crash-exactness needs the CLI runner (or an exported counters
   directory): bare-pytest runs count in memory only, so a crash can
   lose unflushed calls, and their rows read isolation unknown.

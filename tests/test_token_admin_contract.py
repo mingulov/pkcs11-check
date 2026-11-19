@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKF_USER_PIN_FINAL_TRY,
     CKF_USER_PIN_INITIALIZED,
     CKF_USER_PIN_LOCKED,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_OK,
@@ -499,6 +500,7 @@ def test_session_exhaustion_keeps_the_historical_hundred_session_cap(
 
 
 _OK = int(CKR_OK)
+_DEVICE_ERROR = int(CKR_DEVICE_ERROR)
 _PIN_INCORRECT = int(CKR_PIN_INCORRECT)
 _PIN_LOCKED = int(CKR_PIN_LOCKED)
 _PIN_LEN_RANGE = int(CKR_PIN_LEN_RANGE)
@@ -5170,6 +5172,9 @@ def test_capacity_returned_reopen_ok_counts_restored_passes() -> None:
         baseline_total=3,
         total_after_close_all=3,
         reopen_rv=_OK,
+        own_opens=4,
+        verified_closes=4,
+        reread_rv=_OK,
     )
     assert classification.get_records() == []
 
@@ -5180,6 +5185,9 @@ def test_capacity_returned_reopen_refused_fails() -> None:
         baseline_total=3,
         total_after_close_all=3,
         reopen_rv=_SESSION_COUNT,
+        own_opens=4,
+        verified_closes=4,
+        reread_rv=_OK,
     )
     rec = _assert_fail_record("self_contradiction", "metadata")
     assert rec.detail["reopen_rv"] == _SESSION_COUNT
@@ -5191,6 +5199,9 @@ def test_capacity_returned_leaked_sessions_fail() -> None:
         baseline_total=3,
         total_after_close_all=5,
         reopen_rv=_OK,
+        own_opens=4,
+        verified_closes=4,
+        reread_rv=_OK,
     )
     _assert_fail_record("self_contradiction", "metadata")
 
@@ -5200,8 +5211,24 @@ def test_capacity_returned_unknown_counts_skip_count_leg() -> None:
         baseline_total=None,
         total_after_close_all=None,
         reopen_rv=_OK,
+        own_opens=4,
+        verified_closes=4,
+        reread_rv=_DEVICE_ERROR,
     )
     assert classification.get_records() == []
+
+
+def test_capacity_returned_unverified_close_skips_reopen_refusal() -> None:
+    """D2: a refused reopen with zero verified closes voids instead of failing."""
+    with pytest.raises(Skipped):
+        tse._judge_capacity_returned(
+            baseline_total=3,
+            total_after_close_all=3,
+            reopen_rv=_SESSION_COUNT,
+            own_opens=4,
+            verified_closes=0,
+            reread_rv=_OK,
+        )
 
 
 def _same_process_out(first: token_admin.AdminTrace, second: str) -> str:
@@ -5309,7 +5336,7 @@ def _concurrent_trace(
 
 def test_concurrent_clean_linearization_passes() -> None:
     trace = _concurrent_trace(
-        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
+        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
         {
             "P0": _PIN_INCORRECT,
             "P1": _PIN_INCORRECT,
@@ -5324,8 +5351,8 @@ def test_concurrent_clean_linearization_passes() -> None:
 
 def test_concurrent_two_pin_work_fails() -> None:
     trace = _concurrent_trace(
-        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
-        {"P0": _OK, "P1": _PIN_INCORRECT, "P2": _OK, "P3": _PIN_INCORRECT, "P4": _PIN_INCORRECT},
+        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {"P0": _PIN_INCORRECT, "P1": _PIN_INCORRECT, "P2": _OK, "P3": _PIN_INCORRECT, "P4": _OK},
     )
     with pytest.raises(Failed):
         sopin_case._judge_concurrent_pin_trace(trace)
@@ -5333,7 +5360,7 @@ def test_concurrent_two_pin_work_fails() -> None:
 
 def test_concurrent_zero_pin_work_fails() -> None:
     trace = _concurrent_trace(
-        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
+        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
         {
             "P0": _PIN_INCORRECT,
             "P1": _PIN_INCORRECT,
@@ -5348,7 +5375,7 @@ def test_concurrent_zero_pin_work_fails() -> None:
 
 def test_concurrent_failed_pin_works_fails() -> None:
     trace = _concurrent_trace(
-        {0: _GENERAL_ERROR, 1: _OK, 2: _OK, 3: _OK},
+        {0: _GENERAL_ERROR, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
         {
             "P0": _PIN_INCORRECT,
             "P1": _OK,
@@ -5389,3 +5416,76 @@ def test_concurrent_no_success_skips() -> None:
     )
     with pytest.raises(Skipped):
         sopin_case._judge_concurrent_pin_trace(trace)
+
+
+def test_concurrent_multi_success_fails_stale_write() -> None:
+    """D2: two OKs from the same old PIN means a stale write was accepted."""
+    trace = _concurrent_trace(
+        {0: _OK, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _OK,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+    (record,) = classification.get_records()
+    assert record.reason == "accepted_invalid", record.summary
+    assert "stale PIN" in (record.summary or ""), record.summary
+
+
+def test_concurrent_p0_surviving_write_fails() -> None:
+    """D2: P0 working after a successful write means the write had no effect."""
+    trace = _concurrent_trace(
+        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {
+            "P0": _OK,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+    (record,) = classification.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert "no effect" in (record.summary or ""), record.summary
+
+
+def test_concurrent_locked_tail_skips() -> None:
+    """D2: no worker behind a lockout skips; the winner may sit behind the lock."""
+    trace = _concurrent_trace(
+        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_LOCKED,
+            "P3": _PIN_LOCKED,
+            "P4": _PIN_LOCKED,
+        },
+    )
+    with pytest.raises(Skipped):
+        sopin_case._judge_concurrent_pin_trace(trace)
+
+
+def test_concurrent_undefined_final_rv_fails() -> None:
+    """D2: an undefined final-login RV fails the metadata contract."""
+    trace = _concurrent_trace(
+        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _OK,
+            "P3": 0xDEAD,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+    (record,) = classification.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.operation == "C_Login", record.summary

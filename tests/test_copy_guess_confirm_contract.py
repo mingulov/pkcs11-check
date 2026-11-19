@@ -188,6 +188,9 @@ def test_both_accepted_preserved_xfails(
         ("honest_deviation", "policy")
     ]
     assert captures["fail"] == []
+    (reason, kw), *_ = captures["xfail"]
+    assert "C_Encrypt" in kw["summary"], kw["summary"]
+    assert kw["detail"]["use_operation"] == "C_Encrypt", kw["detail"]
 
 
 def test_mutated_material_fails(
@@ -477,3 +480,73 @@ def test_seal_disclosed_value_skips() -> None:
     raw = _SealRaw(int(CKR_OK), int(CKR_OK), length=16, value=b"v" * 16)
     with pytest.raises(Skipped):
         km._sealed_value_unreadable_or_skip(_seal_rs(raw), 100, label="t")
+
+
+class _SignStub:
+    """Raw stub serving scripted C_Sign payloads (two-call convention)."""
+
+    def __init__(self, payloads: list[bytes]) -> None:
+        self._payloads = list(payloads)
+
+    def C_SignInit(self, _sh: int, _mech: Any, _key: int) -> int:  # noqa: N802
+        from pkcs11_check.raw.types_std import CKR_OK
+
+        return int(CKR_OK)
+
+    def C_Sign(  # noqa: N802
+        self, _sh: int, _in_buf: Any, _in_len: int, out: Any, out_len: Any
+    ) -> int:
+        import ctypes as _ct
+
+        from pkcs11_check.raw.types_std import CK_ULONG, CKR_OK
+
+        out_len_ref = _ct.cast(out_len, _ct.POINTER(CK_ULONG)).contents
+        if out is None:
+            out_len_ref.value = len(self._payloads[0])
+            return int(CKR_OK)
+        payload = self._payloads.pop(0)
+        _ct.memmove(out, payload, len(payload))
+        out_len_ref.value = len(payload)
+        return int(CKR_OK)
+
+
+def _rsa_baseline_key() -> Any:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def test_rsa_baseline_verifying_double_sign_returns() -> None:
+    """D4: a deterministic, verifying baseline is returned as-is."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    key = _rsa_baseline_key()
+    sig = key.sign(km._RSA_GUESS_MESSAGE, padding.PKCS1v15(), hashes.SHA256())
+    numbers = key.public_key().public_numbers()
+    n = int(numbers.n).to_bytes(256, "big")
+    e = int(numbers.e).to_bytes((int(numbers.e).bit_length() + 7) // 8, "big")
+    rs = SimpleNamespace(raw=_SignStub([sig, sig]), sh=1)
+    assert km._rsa_sign_baseline_or_xfail(rs, 100, label="t", public_numbers=(n, e)) == sig
+
+
+def test_rsa_baseline_unverifying_double_sign_voids(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D4: deterministic garbage is not a baseline; the leg voids."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    _patch_km_verdicts(monkeypatch, captures)
+    key = _rsa_baseline_key()
+    numbers = key.public_key().public_numbers()
+    n = int(numbers.n).to_bytes(256, "big")
+    e = int(numbers.e).to_bytes((int(numbers.e).bit_length() + 7) // 8, "big")
+    rs = SimpleNamespace(raw=_SignStub([b"G" * 256, b"G" * 256]), sh=1)
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        km._rsa_sign_baseline_or_xfail(rs, 100, label="t", public_numbers=(n, e))
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "not_operational"
+    assert "does not verify" in kw["summary"], kw["summary"]

@@ -426,6 +426,37 @@ def _discover_slot(ctx: ProbeContext) -> int | None:
     return int(sl[0])
 
 
+_BURN_TOKEN_LABEL = b"qc11-admin-test"
+
+
+def _rediscover_burn_slot(ctx: ProbeContext) -> tuple[int | None, int]:
+    """Find the burn token by label after restart; return (slot, enum_rv).
+
+    The enumeration RV rides out separately so a refused enumeration
+    stays visible (setup step) instead of collapsing into NO_SLOTS;
+    only a clean enumeration with no label match means genuinely
+    absent. The pre-restart slot is never reused blindly: slot
+    numbering may shift across C_Finalize/C_Initialize.
+    """
+    sc = ctypes.c_ulong(0)
+    rv = int(ctx.raw.C_GetSlotList(1, None, ctypes.byref(sc)))
+    if rv != int(CKR_OK):
+        return None, rv
+    if sc.value == 0:
+        return None, int(CKR_OK)
+    sl = (ctypes.c_ulong * sc.value)()
+    rv = int(ctx.raw.C_GetSlotList(1, sl, ctypes.byref(sc)))
+    if rv != int(CKR_OK):
+        return None, rv
+    for i in range(int(sc.value)):
+        info = CK_TOKEN_INFO()
+        if int(ctx.raw.C_GetTokenInfo(int(sl[i]), ctypes.byref(info))) != int(CKR_OK):
+            continue
+        if bytes(info.label).rstrip(b" \x00") == _BURN_TOKEN_LABEL:
+            return int(sl[i]), int(CKR_OK)
+    return None, int(CKR_OK)
+
+
 def _open_rw(ctx: ProbeContext, slot: int) -> tuple[int, int]:
     sess = ctypes.c_ulong(0)
     rv = ctx.raw.C_OpenSession(
@@ -761,7 +792,7 @@ def _qc11b_pin_lengths(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _init_token(
-    ctx: ProbeContext, slot: int, so_pin: bytes, label: bytes = b"qc11-admin-test"
+    ctx: ProbeContext, slot: int, so_pin: bytes, label: bytes = _BURN_TOKEN_LABEL
 ) -> int:
     padded = label.ljust(32)
     return int(ctx.raw.C_InitToken(slot, _buf(so_pin), len(so_pin), _buf(padded)))
@@ -1030,6 +1061,20 @@ def _read_value_rv(ctx: ProbeContext, sh: int, handle: int) -> int:
     return int(ctx.raw.C_GetAttributeValue(sh, handle, ctypes.byref(attr), 1))
 
 
+def _read_witness_bytes(ctx: ProbeContext, sh: int, handle: int) -> tuple[int, bytes]:
+    """Read the witness value bytes; (rv, b\"\") unless the read succeeds."""
+    buf = (ctypes.c_ubyte * 64)()
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_VALUE
+    attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
+    attr.ulValueLen = len(buf)
+    rv = int(ctx.raw.C_GetAttributeValue(sh, handle, ctypes.byref(attr), 1))
+    if rv != int(CKR_OK):
+        return rv, b""
+    length = int(attr.ulValueLen)
+    return rv, bytes(buf[:length])
+
+
 def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     """QC9b (#52.3): logout on one token leaves another token's login usable.
 
@@ -1062,6 +1107,10 @@ def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             return
         inited.append(slots[0])
     target_slot, control_slot = inited
+    if target_slot == control_slot:
+        print("ASSUMPTION_FAILED:target and control share one slot")
+        print("OK")
+        return
     topen, tsh = _open_rw(ctx, target_slot)
     _step("setup:target_open", topen)
     copen, csh = _open_rw(ctx, control_slot)
@@ -1102,6 +1151,19 @@ def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if twrv != int(CKR_OK) or cwrv != int(CKR_OK):
         print("OK")
         return
+    # Premise (D1): both witnesses read back byte-exact before logout,
+    # so later use verdicts isolate the logout effect. A mismatch voids
+    # the fixture (skip), never the verdict.
+    for sh, handle, name in ((tsh, thandle, "target"), (csh, chandle, "control")):
+        prv, pbytes = _read_witness_bytes(ctx, sh, handle)
+        _step(f"setup:{name}_witness_read", prv)
+        if prv != int(CKR_OK):
+            print("OK")
+            return
+        if pbytes != _QC9B_WITNESS_VALUE:
+            print(f"ASSUMPTION_FAILED:{name} witness content mismatch")
+            print("OK")
+            return
     lrv = int(ctx.raw.C_Logout(tsh))
     _step("target_logout", lrv)
     tfrv, tcount = _count_labeled(ctx, tsh, _QC9B_TARGET_WITNESS_LABEL)
@@ -1156,9 +1218,11 @@ def _qc11a_same_process(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if frv != int(CKR_OK) or irv != int(CKR_OK):
         print("OK")
         return
-    slot2 = _discover_slot(ctx)
+    slot2, enum_rv = _rediscover_burn_slot(ctx)
+    _step("setup:phase2_enumerate", enum_rv)
     if slot2 is None:
-        print("NO_SLOTS")
+        if enum_rv == int(CKR_OK):
+            print("NO_SLOTS")
         print("OK")
         return
     _read_phase(ctx, slot2, role)
@@ -1175,7 +1239,8 @@ def _qc11c_concurrent_pin(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     Re-initializes with OS locking (threads under the entry NULL init
     would be application misuse), then four threads race SetPIN with
     distinct new PINs from a barrier. Each thread prints login/setpin
-    steps; the sequential tail tries every candidate PIN (tags P0..P4)
+    steps; the sequential tail tries every candidate PIN (reported
+    winners first, then P0, then failed writers, so retries burn last)
     and the parent requires exactly one to work. Workers return lines
     for ordered printing (no interleaved stdout); unexpected worker
     exceptions propagate loud (harness bugs must fail, never mask).
@@ -1242,9 +1307,18 @@ def _qc11c_concurrent_pin(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     for lines in results:
         for name, rv in lines:
             _step(name, rv)
-    candidates = [("P0", TEST_USER_PIN)] + [
-        (f"P{i + 1}", pin) for i, pin in enumerate(_QC11C_RACE_PINS)
-    ]
+    # D2: verify reported winners first. Every failed tail login burns a
+    # retry; trying successful writers before P0 and failed writers keeps
+    # a conformant token from locking before its winner is attempted.
+    winners: set[int] = set()
+    for lines in results:
+        for name, rv in lines:
+            if name.endswith(":setpin") and rv == int(CKR_OK):
+                winners.add(int(name.split(":")[1]))
+    ordered = [i for i in range(_QC11C_RACE_THREADS) if i in winners]
+    ordered += [i for i in range(_QC11C_RACE_THREADS) if i not in winners]
+    candidates = [(f"P{i + 1}", _QC11C_RACE_PINS[i]) for i in ordered]
+    candidates.insert(len(winners), ("P0", TEST_USER_PIN))
     for tag, pin in candidates:
         orv, fsh = _open_rw(ctx, slot)
         if orv != int(CKR_OK):
