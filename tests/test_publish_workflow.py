@@ -112,21 +112,32 @@ def test_release_verifies_pypi_files_before_github_release() -> None:
 
     assert set(job["needs"]) == {"verify", "build", "publish"}
     assert job["permissions"] == {"contents": "read"}
+    assert job["timeout-minutes"] == "15"
     release = workflow["jobs"]["github-release"]
     assert "verify-pypi" in release["needs"]
 
     steps = job["steps"]
     download = next(step for step in steps if "distributions" in str(step.get("with", "")))
     assert download["with"] == {"name": "distributions", "path": "dist/"}
+    publish_download = next(
+        step
+        for step in _workflow()["jobs"]["publish"]["steps"]
+        if "distributions" in str(step.get("with", ""))
+    )
+    assert download["uses"] == publish_download["uses"]
+    assert re.fullmatch(r"actions/download-artifact@[0-9a-f]{40}", download["uses"])
     check = next(step for step in steps if "Await and verify" in str(step.get("name", "")))
     assert check["env"]["VERSION"] == "${{ needs.verify.outputs.version }}"
     run_body = str(check["run"])
     assert "https://pypi.org/simple/pkcs11-check/" in run_body
     assert "-{version}-" in run_body and "-{version}.tar.gz" in run_body
+    assert "wheel_name in hrefs and sdist_name in hrefs" in run_body
     assert "WAIT_DEADLINE = 300" in run_body
+    assert "WAIT_INTERVAL = 15" in run_body
     assert "time.monotonic() >= deadline" in run_body
-    assert "raise SystemExit" in run_body
-    assert "timeout=" in run_body
+    assert "time.sleep(WAIT_INTERVAL)" in run_body
+    assert run_body.count("raise SystemExit") == 2
+    assert run_body.count("timeout=READ_TIMEOUT") == 2
     # The published bytes must equal the official local artifacts.
     assert "sha256" in run_body
     assert "pkcs11_check-{version}" in run_body
