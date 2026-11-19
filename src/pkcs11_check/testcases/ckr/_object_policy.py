@@ -5242,6 +5242,22 @@ def _genkey_templates(
     )
 
 
+def _aes_width_or_none(value: bytes, *, label: str) -> bytes | None:
+    """Admit a read key to the local AES oracle only at AES widths (B5).
+
+    The oracle models AES-128/192/256; any other width leaves the use
+    unverifiable (mirroring the create/unwrap/generate callers' inline
+    guards), never an unclassified local exception.
+    """
+    if len(value) not in (16, 24, 32):
+        _note_qc4_observation(
+            f"{label}: read key width {len(value)} outside AES widths; use unverifiable",
+            "QC4b #56.2 use adjudication",
+        )
+        return None
+    return value
+
+
 def _genkey_acceptance_uses(
     rs: Any, handle: int, *, label: str, spec_ref: str
 ) -> list[_UseOutcome]:
@@ -5278,7 +5294,7 @@ def _genkey_acceptance_uses(
         elif not isinstance(claimed, bytes) or not claimed:
             value = None
         else:
-            value = claimed
+            value = _aes_width_or_none(claimed, label=label)
     if value is None:
         outcome = _UseOutcome(use_kind="aes", attempted=True, rvs=[])
         assert outcome.rvs is not None

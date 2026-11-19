@@ -88,6 +88,7 @@ from pkcs11_check.testcases._copy_mutability import (
     PROBE_INJECTED_VALUE,
     PROBE_ORIGINAL_VALUE,
     PROBE_PLAINTEXT,
+    GuessUseOutcome,
     check_ecb_baseline_or_fail,
     check_material_preserved,
     classify_forbidden_change_refusal,
@@ -867,27 +868,49 @@ def _session_object_set(rs: Any, *, label: str) -> tuple[set[int] | None, int | 
         return None, exc.rv
 
 
-def _copy_preserves_aes_material(rs: Any, target: int, baseline_ct: bytes) -> bool:
-    """Non-raising material check for an accepted AES guess leg."""
-    try:
-        return encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, PROBE_PLAINTEXT) == baseline_ct
-    except CkrAssertionError:  # audit-ok: boolean probe; False fails loud via the judge
-        return False
+def _copy_preserves_aes_material(rs: Any, target: int, baseline_ct: bytes) -> GuessUseOutcome:
+    """Material-use evidence for an accepted AES guess leg (B3).
 
-
-def _copy_preserves_rsa_material(rs: Any, target: int, baseline_sig: bytes) -> bool:
-    """Non-raising material check for an accepted RSA guess leg.
-
-    RSA v1.5 signs deterministically, so a signature comparison is a
-    material-equality proof for the private exponent.
+    A refused use rides as preserved=None with its RV: the comparison
+    is void, never a mutation claim.
     """
     try:
-        return (
+        observed = encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, PROBE_PLAINTEXT)
+        preserved = observed == baseline_ct
+    except CkrAssertionError as exc:
+        return GuessUseOutcome(
+            preserved=None, use_rv=exc.rv, operation="C_Encrypt", mechanism="CKM_AES_ECB"
+        )
+    return GuessUseOutcome(
+        preserved=preserved, use_rv=None, operation="C_Encrypt", mechanism="CKM_AES_ECB"
+    )
+
+
+def _copy_preserves_rsa_material(rs: Any, target: int, baseline_sig: bytes) -> GuessUseOutcome:
+    """Material-use evidence for an accepted RSA guess leg (B3).
+
+    RSA v1.5 signs deterministically, so a signature comparison is a
+    material-equality proof for the private exponent. A refused use
+    rides as preserved=None with its RV.
+    """
+    try:
+        preserved = (
             sign_single(rs.raw, rs.sh, target, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
             == baseline_sig
         )
-    except CkrAssertionError:  # audit-ok: boolean probe; False fails loud via the judge
-        return False
+    except CkrAssertionError as exc:
+        return GuessUseOutcome(
+            preserved=None,
+            use_rv=exc.rv,
+            operation="C_Sign",
+            mechanism="CKM_SHA256_RSA_PKCS",
+        )
+    return GuessUseOutcome(
+        preserved=preserved,
+        use_rv=None,
+        operation="C_Sign",
+        mechanism="CKM_SHA256_RSA_PKCS",
+    )
 
 
 def _read_rsa_components_or_xfail(rs: Any, key: int, *, label: str) -> dict[str, bytes]:
@@ -1025,8 +1048,35 @@ def _sealed_value_unreadable_or_skip(rs: Any, key: int, *, label: str) -> None:
         inherit_mechanism=False,
         sensitive_is_conformant=True,
     )
-    if sealed is MISSING_ATTRIBUTE or not isinstance(sealed, bytes):
-        return
+    if sealed is MISSING_ATTRIBUTE:
+        # B3: only an OBSERVED CKR_ATTRIBUTE_SENSITIVE refusal proves the
+        # seal; any other absence (unsupported type, plain gap, silent
+        # sentinel) leaves it unproved, never assumed sealed.
+        refusal = read.refusals.get(int(CKA_VALUE))
+        if refusal is not None and int(refusal.ckr) == int(CKR_ATTRIBUTE_SENSITIVE):
+            return
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: seal premise",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: seal premise absent without an observed "
+                "CKR_ATTRIBUTE_SENSITIVE refusal; seal unproved, guess-confirm vacuous"
+            ),
+        )
+    if not isinstance(sealed, bytes):
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: seal premise",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: seal premise readback is unusable; seal unproved, guess-confirm vacuous"
+            ),
+        )
     pytest.skip(
         f"{label}: module discloses the sealed value; "
         "guess-confirm is vacuous (see sensitivity tests)"
@@ -1072,8 +1122,34 @@ def _sealed_exponent_unreadable_or_skip(rs: Any, key: int, *, label: str) -> Non
         inherit_mechanism=False,
         sensitive_is_conformant=True,
     )
-    if sealed is MISSING_ATTRIBUTE or not isinstance(sealed, bytes):
-        return
+    if sealed is MISSING_ATTRIBUTE:
+        # B3: only an OBSERVED CKR_ATTRIBUTE_SENSITIVE refusal proves the
+        # seal; any other absence leaves it unproved, never assumed sealed.
+        refusal = read.refusals.get(int(CKA_PRIVATE_EXPONENT))
+        if refusal is not None and int(refusal.ckr) == int(CKR_ATTRIBUTE_SENSITIVE):
+            return
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: seal premise",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: seal premise absent without an observed "
+                "CKR_ATTRIBUTE_SENSITIVE refusal; seal unproved, guess-confirm vacuous"
+            ),
+        )
+    if not isinstance(sealed, bytes):
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: seal premise",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: seal premise readback is unusable; seal unproved, guess-confirm vacuous"
+            ),
+        )
     pytest.skip(
         f"{label}: module discloses the sealed private exponent; "
         "guess-confirm is vacuous (see sensitivity tests)"
@@ -1086,28 +1162,29 @@ def _run_guess_legs(
     attr: int,
     guesses: tuple[bytes, bytes],
     baseline: bytes,
-    preserves: Callable[[Any, int, bytes], bool],
+    preserves: Callable[[Any, int, bytes], GuessUseOutcome],
     *,
     label: str,
 ) -> tuple[
     CkrAssertionError | None,
     CkrAssertionError | None,
-    bool,
-    bool,
+    GuessUseOutcome | None,
+    GuessUseOutcome | None,
     tuple[bool | None, bool | None],
     tuple[int | None, int | None],
 ]:
     """Run the correct/wrong guess legs for #55.1.
 
-    Returns ``(correct_exc, wrong_exc, correct_ok, wrong_ok, created,
+    Returns ``(correct_exc, wrong_exc, correct_use, wrong_use, created,
     inventory_rvs)`` where an ``exc`` of None means the leg accepted
-    (with ``ok`` reporting the material check); ``created`` carries
-    per-leg creation evidence (True proved creation, False proved none,
-    None a refused inventory) and ``inventory_rvs`` the inventory
-    refusal RV per leg (None when the inventory succeeded).
+    (with ``use`` carrying the material-use evidence, None for refused
+    legs); ``created`` carries per-leg creation evidence (True proved
+    creation, False proved none, None a refused inventory) and
+    ``inventory_rvs`` the inventory refusal RV per leg (None when the
+    inventory succeeded).
     """
     excs: list[CkrAssertionError | None] = []
-    oks: list[bool] = []
+    uses: list[GuessUseOutcome | None] = []
     created: list[bool | None] = []
     inventory_rvs: list[int | None] = []
     for guess in guesses:
@@ -1116,7 +1193,7 @@ def _run_guess_legs(
             copy = copy_object(rs.raw, rs.sh, original, {attr: guess})
         except CkrAssertionError as exc:
             excs.append(exc)
-            oks.append(True)
+            uses.append(None)
             if before is None:
                 created.append(None)
                 inventory_rvs.append(before_rv)
@@ -1148,27 +1225,33 @@ def _run_guess_legs(
                 detail={"source": original, "copy": copy},
             )
         try:
-            oks.append(preserves(rs, copy, baseline))
+            uses.append(preserves(rs, copy, baseline))
         finally:
             destroy_quietly(rs.raw, rs.sh, copy)
         created.append(False)
         inventory_rvs.append(None)
     correct_exc, wrong_exc = excs
-    correct_ok, wrong_ok = oks
+    correct_use, wrong_use = uses
     created_pair = (created[0], created[1])
     inventory_pair = (inventory_rvs[0], inventory_rvs[1])
-    return correct_exc, wrong_exc, correct_ok, wrong_ok, created_pair, inventory_pair
+    return correct_exc, wrong_exc, correct_use, wrong_use, created_pair, inventory_pair
 
 
 def _copy_unchanged_control_or_skip(
-    rs: Any, original: int, baseline_ct: bytes, *, label: str
+    rs: Any,
+    original: int,
+    baseline: bytes,
+    *,
+    label: str,
+    preserves: Callable[[Any, int, bytes], GuessUseOutcome] | None = None,
 ) -> None:
-    """Prove a no-op copy of the sealed source works; skip the override otherwise.
+    """Prove a no-op copy of the sealed source works; skip the legs otherwise.
 
-    A module that refuses every copy would let the override legs pass
-    vacuously, so an empty-template duplicate (which must succeed) plus a
-    use check gates them.
+    A module that refuses every copy would let the guess/override legs
+    pass vacuously, so an empty-template duplicate (which must succeed)
+    plus a use check gates them.
     """
+    check = preserves if preserves is not None else _copy_preserves_aes_material
     try:
         control = copy_object(rs.raw, rs.sh, original, {})
     except CkrAssertionError as exc:
@@ -1179,13 +1262,18 @@ def _copy_unchanged_control_or_skip(
             kind="policy",
         )
         pytest.skip(
-            f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); "
-            "override verdict would be vacuous"
+            f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); verdict would be vacuous"
         )
     try:
-        if not _copy_preserves_aes_material(rs, control, baseline_ct):
+        outcome = check(rs, control, baseline)
+        if outcome.preserved is not True:
+            detail = (
+                f" (use refused with {ckr_name(outcome.use_rv)})"
+                if outcome.use_rv is not None
+                else ""
+            )
             pytest.skip(
-                f"{label}: empty-template duplicate is unusable; override verdict would be vacuous"
+                f"{label}: empty-template duplicate is unusable{detail}; verdict would be vacuous"
             )
     finally:
         destroy_quietly(rs.raw, rs.sh, control)
@@ -1280,7 +1368,8 @@ class TestCopyForbiddenMutation:
         try:
             _sealed_value_unreadable_or_skip(rs, original, label=label)
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
-            correct_exc, wrong_exc, correct_ok, wrong_ok, created, inventory_rvs = _run_guess_legs(
+            _copy_unchanged_control_or_skip(rs, original, baseline_ct, label=label)
+            out = _run_guess_legs(
                 rs,
                 original,
                 CKA_VALUE,
@@ -1289,11 +1378,12 @@ class TestCopyForbiddenMutation:
                 _copy_preserves_aes_material,
                 label=label,
             )
+            correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = out
             judge_guess_confirm(
                 correct_exc=correct_exc,
                 wrong_exc=wrong_exc,
-                correct_preserved=correct_ok,
-                wrong_preserved=wrong_ok,
+                correct_use=correct_use,
+                wrong_use=wrong_use,
                 created_on_refusal=created,
                 inventory_rvs=inventory_rvs,
                 expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
@@ -1324,10 +1414,13 @@ class TestCopyForbiddenMutation:
         try:
             _sealed_exponent_unreadable_or_skip(rs, sealed, label=label)
             baseline_sig = _rsa_sign_baseline_or_xfail(rs, sealed, label=label)
+            _copy_unchanged_control_or_skip(
+                rs, sealed, baseline_sig, label=label, preserves=_copy_preserves_rsa_material
+            )
             correct = components["d"]
             # XOR flips the low bit, so wrong != correct by construction.
             wrong = bytes([correct[0] ^ 0x01]) + correct[1:]
-            correct_exc, wrong_exc, correct_ok, wrong_ok, created, inventory_rvs = _run_guess_legs(
+            out = _run_guess_legs(
                 rs,
                 sealed,
                 CKA_PRIVATE_EXPONENT,
@@ -1336,11 +1429,12 @@ class TestCopyForbiddenMutation:
                 _copy_preserves_rsa_material,
                 label=label,
             )
+            correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = out
             judge_guess_confirm(
                 correct_exc=correct_exc,
                 wrong_exc=wrong_exc,
-                correct_preserved=correct_ok,
-                wrong_preserved=wrong_ok,
+                correct_use=correct_use,
+                wrong_use=wrong_use,
                 created_on_refusal=created,
                 inventory_rvs=inventory_rvs,
                 expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
@@ -1424,6 +1518,7 @@ class TestCopyForbiddenMutation:
         label = "C_CopyObject sealed CKA_KEY_TYPE override (QC3a identity)"
         original = _import_copy_mutability_source(rs, sealed=True)
         try:
+            _sealed_value_unreadable_or_skip(rs, original, label=label)
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
             _copy_unchanged_control_or_skip(rs, original, baseline_ct, label=label)
             try:
@@ -1458,6 +1553,7 @@ class TestCopyForbiddenMutation:
         label = "C_CopyObject sealed CKA_CLASS override (QC3a identity)"
         original = _import_copy_mutability_source(rs, sealed=True)
         try:
+            _sealed_value_unreadable_or_skip(rs, original, label=label)
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
             _copy_unchanged_control_or_skip(rs, original, baseline_ct, label=label)
             try:

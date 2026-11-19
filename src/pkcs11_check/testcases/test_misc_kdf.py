@@ -2926,15 +2926,22 @@ _RECOVERY_XOR_FULL_DATA = b"\xa5" * 32
 
 
 def _judge_byte_recovery(
-    *, derive_rv: int, recovered: bool | None, control_ok: bool, label: str
+    *,
+    derive_rv: int,
+    recovered: bool | None,
+    control_ok: bool,
+    label: str,
+    digest_rv: int | None = None,
 ) -> None:
     """Judge one 1-byte recovery leg (#54.3).
 
-    Refusal (any defined code; the control proves the shape works)
-    is the ideal posture. A recovered byte fails (a never-extractable
-    base yielded material — self-evident, no oracle needed); an
+    A standard refusal (the control proves the shape works) is the
+    ideal posture and passes; a vendor refusal xfails as a visible
+    alternate. A recovered byte fails (a never-extractable base
+    yielded material — self-evident, no oracle needed); an
     unproven/blocked chain xfails when the control calibrated the
-    oracle, else skips. Malformed RVs fail.
+    oracle, else skips, with the digest stage and RV retained.
+    Malformed RVs fail.
     """
     if not _is_defined_rv(derive_rv):
         fail_as(
@@ -2948,6 +2955,19 @@ def _judge_byte_recovery(
             summary=f"{label}: derive returned undefined CK_RV {ckr_name(derive_rv)}",
         )
     if derive_rv != int(CKR_OK):
+        if is_vendor_defined_ckr(derive_rv):
+            xfail_as(
+                "nonspec_reject",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=derive_rv,
+                summary=(
+                    f"{label}: sealed derive refused with vendor-defined "
+                    f"{ckr_name(derive_rv)} (alternate refusal; standard outcome unproved)"
+                ),
+            )
         return
     if recovered is True:
         fail_as(
@@ -2962,13 +2982,18 @@ def _judge_byte_recovery(
     if not control_ok:
         pytest.skip(f"{label}: control unproven; recovery verdict untestable")
     if recovered is None:
+        stage = "unsupported" if digest_rv is None else ckr_name(digest_rv)
         xfail_as(
             "honest_deviation",
             label=label,
             operation="C_DigestKey",
             mechanism=None,
             inherit_mechanism=False,
-            summary=f"{label}: derivation permitted but recovery blocked; residual accepted",
+            summary=(
+                f"{label}: derivation permitted but recovery blocked "
+                f"(digest {stage}); residual accepted"
+            ),
+            detail={"digest_stage": stage},
         )
     xfail_as(
         "honest_deviation",
@@ -3040,6 +3065,7 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     except CkrAssertionError as exc:
         pytest.skip(f"{label}: control import refused ({ckr_name(exc.rv)}); fixture unbuildable")
     control_ok = False
+    cchild = 0
     try:
         crv, cchild = derive(cbase)
         if crv != int(CKR_OK):
@@ -3057,6 +3083,8 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         )
         control_ok = True
     finally:
+        if cchild:
+            destroy_quietly(rs.raw, rs.sh, cchild)
         destroy_quietly(rs.raw, rs.sh, cbase)
     try:
         sbase = import_secret_key_negotiated(
@@ -3069,12 +3097,16 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
                 CKA_EXTRACTABLE: False,
                 CKA_DERIVE: True,
             },
+            preserve_policy_attrs=True,
         )
     except CkrAssertionError as exc:
         pytest.skip(f"{label}: sealed import refused ({ckr_name(exc.rv)}); fixture unbuildable")
+    _assert_recovery_sealed_or_skip(rs, sbase, label=label)
+    schild = 0
     try:
         srv, schild = derive(sbase)
         recovered: bool | None = False
+        digest_rv: int | None = None
         if srv == int(CKR_OK):
             try:
                 sfound = _recover_byte_via_digest(rs, schild)
@@ -3082,13 +3114,65 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
                 recovered = None
             except CkrAssertionError as exc:
                 if not _is_defined_rv(exc.rv):
-                    raise
+                    fail_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_DigestKey",
+                        mechanism="CKM_SHA256",
+                        inherit_mechanism=False,
+                        actual=exc.rv,
+                        summary=(f"{label}: digest returned undefined CK_RV {ckr_name(exc.rv)}"),
+                    )
+                digest_rv = exc.rv
                 recovered = None
             else:
-                recovered = sfound is not None
-        _judge_byte_recovery(derive_rv=srv, recovered=recovered, control_ok=control_ok, label=label)
+                # Only the independently expected byte counts as a
+                # recovery; any other derived byte is not the sealed
+                # base coming out.
+                recovered = sfound == expected
+        _judge_byte_recovery(
+            derive_rv=srv,
+            recovered=recovered,
+            control_ok=control_ok,
+            label=label,
+            digest_rv=digest_rv,
+        )
     finally:
+        if schild:
+            destroy_quietly(rs.raw, rs.sh, schild)
         destroy_quietly(rs.raw, rs.sh, sbase)
+
+
+def _assert_recovery_sealed_or_skip(rs: Any, handle: int, *, label: str) -> None:
+    """Prove the sealed recovery base kept its seal flags; skip when unprovable.
+
+    Negotiation must not silently drop SENSITIVE/!EXTRACTABLE: a sealed
+    leg against a readable base would prove nothing about sealed use.
+    """
+    try:
+        read = read_attributes(rs.raw, rs.sh, handle, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+    except CkrAssertionError as exc:
+        pytest.skip(f"{label}: seal flags unreadable ({ckr_name(exc.rv)}); seal unproved")
+    sensitive = attr_or_record(
+        read,
+        CKA_SENSITIVE,
+        label=f"{label}: seal flags",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    extractable = attr_or_record(
+        read,
+        CKA_EXTRACTABLE,
+        label=f"{label}: seal flags",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    if sensitive is True and extractable is False:
+        return
+    pytest.skip(f"{label}: sealed base not sealed as requested; seal unproved")
 
 
 class TestByteRecoveryOracle:
