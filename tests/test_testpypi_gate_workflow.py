@@ -243,14 +243,20 @@ def test_gate_waits_for_version_on_each_runner_before_install() -> None:
     assert setup_idx < await_idx < install_idx
 
     step = steps[await_idx]
+    assert "if" not in step, "the wait must run on every leg, unconditionally"
     assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}"
     run_body = _run_of(steps, "Await version on this runner's index")
-    # Same markers pip will need, on the same index pip will read.
+    # Same markers pip will need, on the same index pip will read; both
+    # files required (either/or would pass on a half-published release).
     assert "https://test.pypi.org/simple/pkcs11-check/" in run_body
-    assert ".tar.gz" in run_body and "-{version}-" in run_body
-    # Bounded wait (~5 minutes), loud failure, bounded network I/O.
+    assert "-{version}-" in run_body and "-{version}.tar.gz" in run_body
+    assert "wheel_marker in page and sdist_marker" in run_body
+    # Bounded wait (~5 minutes), enforced (not just declared), loud
+    # failure, polite polling, bounded network I/O.
     assert "WAIT_DEADLINE = 300" in run_body
-    assert "WAIT_INTERVAL" in run_body
+    assert "+ WAIT_DEADLINE" in run_body
+    assert "time.monotonic() >= deadline" in run_body
+    assert "time.sleep(WAIT_INTERVAL)" in run_body
     assert "raise SystemExit" in run_body
     assert "timeout=" in run_body
     # Still the one pinned version: no per-leg resolution or JSON latest.
