@@ -7,6 +7,7 @@ outcome (mixed accept/refuse, differing refusal codes, mutated material, or
 an object created on a refused leg) fails loud.
 """
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,9 +15,11 @@ import pytest
 import pkcs11_check.testcases._copy_mutability as cm
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CK_UNAVAILABLE_INFORMATION,
     CKA_VALUE,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_DEVICE_ERROR,
 )
 
@@ -42,8 +45,24 @@ def captures(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[tuple[str, dict[
         seen["xfail"].append((reason, kw))
         raise _SimulatedVerdictError(f"xfail_as {reason}")
 
+    def _record_validity(reason: str, **kw: Any) -> Any:
+        return SimpleNamespace(
+            reason=reason,
+            kw=kw,
+            outcome="fail" if reason == "self_contradiction" else "xfail",
+        )
+
+    def _raise_for_record(rec: Any) -> Any:
+        if rec.outcome == "fail":
+            seen["fail"].append((rec.reason, rec.kw))
+            raise _SimulatedVerdictError(f"fail_as {rec.reason}")
+        seen["xfail"].append((rec.reason, rec.kw))
+        raise _SimulatedVerdictError(f"xfail_as {rec.reason}")
+
     monkeypatch.setattr(cm, "fail_as", _fail)
     monkeypatch.setattr(cm, "xfail_as", _xfail)
+    monkeypatch.setattr(cm, "record_as", _record_validity)
+    monkeypatch.setattr(cm, "raise_for_record", _raise_for_record)
     return seen
 
 
@@ -51,12 +70,18 @@ def _refused(rv: int) -> CkrAssertionError:
     return CkrAssertionError(f"copy refused with 0x{rv:08x}", rv)
 
 
+def _use(preserved: bool | None, rv: int | None = None) -> cm.GuessUseOutcome:
+    return cm.GuessUseOutcome(
+        preserved=preserved, use_rv=rv, operation="C_Encrypt", mechanism="CKM_AES_ECB"
+    )
+
+
 def test_same_refusal_passes(captures: dict[str, list[tuple[str, dict[str, Any]]]]) -> None:
     cm.judge_guess_confirm(
         correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
         wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
-        correct_preserved=True,
-        wrong_preserved=True,
+        correct_use=_use(True),
+        wrong_use=_use(True),
         created_on_refusal=(False, False),
         expected_rvs=EXPECTED,
         label=LABEL,
@@ -73,8 +98,8 @@ def test_different_refusal_codes_fail(
         cm.judge_guess_confirm(
             correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -93,8 +118,8 @@ def test_vendor_divergence_xfails_before_oracle(
         cm.judge_guess_confirm(
             correct_exc=_refused(0x80000001),
             wrong_exc=_refused(0x80000002),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -112,8 +137,8 @@ def test_undefined_divergence_fails_metadata(
         cm.judge_guess_confirm(
             correct_exc=_refused(0xDEAD),
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -132,8 +157,8 @@ def test_mixed_accept_and_refuse_fails(
         cm.judge_guess_confirm(
             correct_exc=None,
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -151,8 +176,8 @@ def test_both_accepted_preserved_xfails(
         cm.judge_guess_confirm(
             correct_exc=None,
             wrong_exc=None,
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -172,8 +197,8 @@ def test_mutated_material_fails(
         cm.judge_guess_confirm(
             correct_exc=None,
             wrong_exc=None,
-            correct_preserved=True,
-            wrong_preserved=False,
+            correct_use=_use(True),
+            wrong_use=_use(False),
             created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -190,8 +215,8 @@ def test_object_created_on_refusal_fails(
         cm.judge_guess_confirm(
             correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(True, True),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -217,20 +242,20 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(km, "copy_object", _capture)
     monkeypatch.setattr(km, "_session_object_set", lambda _rs, **_kw: ({9}, None))
     rs = SimpleNamespace(raw=object(), sh=1)
-    correct_exc, wrong_exc, correct_ok, wrong_ok, created, inventory_rvs = km._run_guess_legs(
+    correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = km._run_guess_legs(
         rs,
         100,
         CKA_VALUE,
         (b"correct-guess", b"wrong-guess"),
         b"baseline",
-        lambda *a: True,
+        lambda *a: _use(True),
         label="t",
     )
     assert seen == [{CKA_VALUE: b"correct-guess"}, {CKA_VALUE: b"wrong-guess"}]
     assert correct_exc is not None and wrong_exc is not None
-    assert (correct_ok, wrong_ok, created, inventory_rvs) == (
-        True,
-        True,
+    assert (correct_use, wrong_use, created, inventory_rvs) == (
+        None,
+        None,
         (False, False),
         (None, None),
     )
@@ -244,8 +269,8 @@ def test_created_single_leg_names_leg_and_rv(
         cm.judge_guess_confirm(
             correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(True, False),
             expected_rvs=EXPECTED,
             label=LABEL,
@@ -268,8 +293,8 @@ def test_refused_inventory_voids_refusal_to_unproved(
         cm.judge_guess_confirm(
             correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(None, False),
             inventory_rvs=(int(CKR_DEVICE_ERROR), None),
             expected_rvs=EXPECTED,
@@ -292,8 +317,8 @@ def test_unproved_inventory_on_accepted_pair_proceeds(
         cm.judge_guess_confirm(
             correct_exc=None,
             wrong_exc=None,
-            correct_preserved=True,
-            wrong_preserved=True,
+            correct_use=_use(True),
+            wrong_use=_use(True),
             created_on_refusal=(None, None),
             inventory_rvs=(int(CKR_DEVICE_ERROR), int(CKR_DEVICE_ERROR)),
             expected_rvs=EXPECTED,
@@ -304,3 +329,151 @@ def test_unproved_inventory_on_accepted_pair_proceeds(
     assert captures["fail"] == []
     (reason, _kw), *_ = captures["xfail"]
     assert reason == "honest_deviation"
+
+
+def test_both_accepted_use_refused_voids_not_mutated(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """B3: a refused use voids the comparison with its RV, never a mutation FAIL."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_use=_use(None, int(CKR_DEVICE_ERROR)),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "not_operational"
+    assert kw["operation"] == "C_Encrypt"
+    assert kw["actual"] == int(CKR_DEVICE_ERROR)
+    assert "void" in kw["summary"]
+    assert captures["fail"] == []
+
+
+@pytest.mark.parametrize("undefined_first", [True, False])
+def test_use_validity_strongest_wins_regardless_of_order(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    undefined_first: bool,
+) -> None:
+    """B3: both legs' use RVs are collected; the undefined FAIL wins either way."""
+    first, second = (0xDEAD, 0x80000001) if undefined_first else (0x80000001, 0xDEAD)
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_use=_use(None, first),
+            wrong_use=_use(None, second),
+            created_on_refusal=(False, False),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    assert [(reason, kw["kind"]) for reason, kw in captures["fail"]] == [
+        ("self_contradiction", "metadata")
+    ]
+
+
+class _SealRaw:
+    """C_GetAttributeValue stub with scripted per-call RVs and lengths."""
+
+    def __init__(self, rv1: int, rv2: int, *, length: int | None, value: bytes = b"") -> None:
+        self._rvs = [rv1, rv2]
+        self._length = length
+        self._value = value
+        self._calls = 0
+
+    def C_GetAttributeValue(self, _sh: int, _handle: int, tmpl: Any, _count: int) -> int:  # noqa: N802
+        rv = self._rvs[min(self._calls, 1)]
+        self._calls += 1
+        if self._length is not None:
+            import ctypes as _ct
+
+            tmpl[0].ulValueLen = self._length
+            if self._calls == 2 and self._value:
+                _ct.memmove(tmpl[0].pValue, self._value, len(self._value))
+        return rv
+
+
+def _seal_rs(raw: _SealRaw) -> Any:
+    return SimpleNamespace(raw=raw, sh=7)
+
+
+def test_seal_observed_sensitive_proves_seal() -> None:
+    """B3: an observed SENSITIVE refusal (per-attr) proves the seal."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    raw = _SealRaw(
+        int(CKR_ATTRIBUTE_SENSITIVE),
+        int(CKR_ATTRIBUTE_SENSITIVE),
+        length=int(CK_UNAVAILABLE_INFORMATION),
+    )
+    km._sealed_value_unreadable_or_skip(_seal_rs(raw), 100, label="t")
+
+
+def _patch_km_verdicts(
+    monkeypatch: pytest.MonkeyPatch, captures: dict[str, list[tuple[str, dict[str, Any]]]]
+) -> None:
+    """Route test_keymgmt's own verdict imports into the shared captures."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    def _fail(reason: str, **kw: Any) -> Any:
+        captures["fail"].append((reason, kw))
+        raise _SimulatedVerdictError(f"fail_as {reason}")
+
+    def _xfail(reason: str, **kw: Any) -> Any:
+        captures["xfail"].append((reason, kw))
+        raise _SimulatedVerdictError(f"xfail_as {reason}")
+
+    monkeypatch.setattr(km, "fail_as", _fail)
+    monkeypatch.setattr(km, "xfail_as", _xfail)
+
+
+def test_seal_type_invalid_voids_unproved(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3: an unrecognised attribute type is not a seal proof."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    _patch_km_verdicts(monkeypatch, captures)
+    raw = _SealRaw(
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        length=int(CK_UNAVAILABLE_INFORMATION),
+    )
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        km._sealed_value_unreadable_or_skip(_seal_rs(raw), 100, label="t")
+    assert [reason for reason, _ in captures["xfail"]] == ["not_operational"]
+
+
+def test_seal_silent_sentinel_voids_unproved(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3: CKR_OK with an unavailable length proves no seal (F20 shape)."""
+    import pkcs11_check.testcases.test_keymgmt as km
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    _patch_km_verdicts(monkeypatch, captures)
+    raw = _SealRaw(int(CKR_OK), int(CKR_OK), length=int(CK_UNAVAILABLE_INFORMATION))
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        km._sealed_value_unreadable_or_skip(_seal_rs(raw), 100, label="t")
+    assert [reason for reason, _ in captures["xfail"]] == ["not_operational"]
+
+
+def test_seal_disclosed_value_skips() -> None:
+    """A readable sealed value skips (sensitivity tests own it)."""
+    from _pytest.outcomes import Skipped
+
+    import pkcs11_check.testcases.test_keymgmt as km
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    raw = _SealRaw(int(CKR_OK), int(CKR_OK), length=16, value=b"v" * 16)
+    with pytest.raises(Skipped):
+        km._sealed_value_unreadable_or_skip(_seal_rs(raw), 100, label="t")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
-from collections.abc import Callable
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,9 +17,13 @@ from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CK_OBJECT_HANDLE,
     CK_ULONG,
+    CKA_EXTRACTABLE,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKM_EXTRACT_KEY_FROM_KEY,
     CKM_XOR_BASE_AND_DATA,
+    CKR_DEVICE_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
@@ -96,6 +100,31 @@ def test_recovery_undefined_rv_fails() -> None:
         kdf._judge_byte_recovery(derive_rv=0xDEAD, recovered=False, control_ok=True, label="sealed")
 
 
+def test_recovery_vendor_derive_xfails_alternate() -> None:
+    """B2: a vendor derive refusal is a visible alternate, never a silent pass."""
+    with pytest.raises(XFailed):
+        kdf._judge_byte_recovery(
+            derive_rv=0x80000001, recovered=False, control_ok=True, label="sealed"
+        )
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert record.reason == "nonspec_reject", record.summary
+
+
+def test_recovery_blocked_carries_digest_stage() -> None:
+    """B2: the blocked residual retains the digest refusal RV."""
+    with pytest.raises(XFailed):
+        kdf._judge_byte_recovery(
+            derive_rv=int(CKR_OK),
+            recovered=None,
+            control_ok=True,
+            label="sealed",
+            digest_rv=int(CKR_DEVICE_ERROR),
+        )
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert "CKR_DEVICE_ERROR" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("digest_stage") == "CKR_DEVICE_ERROR", record.detail
+
+
 def _tval(tmpl: Any, count: int, attr: int) -> bytes:
     for i in range(int(count)):
         if int(tmpl[i].type) == int(attr):
@@ -107,12 +136,12 @@ def _tval(tmpl: Any, count: int, attr: int) -> bytes:
 
 
 class _FakeKdfRaw:
-    """Byte-exact KDF fake: imports, scripted derives, SHA-256 digests."""
+    """Byte-exact KDF fake: imports, mechanism-faithful derives, SHA-256 digests."""
 
-    def __init__(self, derive_fn: Callable[[bytes], bytes]) -> None:
-        self._derive_fn = derive_fn
+    def __init__(self) -> None:
         self.objects: dict[int, bytes] = {}
         self.sealed: dict[int, bool] = {}
+        self.extractable: dict[int, bool] = {}
         self.refuse_sealed = False
         self._next = 0
         self._pending: bytes | None = None
@@ -122,23 +151,53 @@ class _FakeKdfRaw:
         self._next += 1
         self.objects[self._next] = _tval(tmpl, count, int(CKA_VALUE))
         self.sealed[self._next] = _tval(tmpl, count, int(CKA_SENSITIVE)) == b"\x01"
+        self.extractable[self._next] = _tval(tmpl, count, int(CKA_EXTRACTABLE)) == b"\x01"
         ctypes.cast(handle_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = self._next
         return int(CKR_OK)
 
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        for i in range(int(count)):
+            attr = int(tmpl[i].type)
+            if attr == int(CKA_SENSITIVE):
+                value = b"\x01" if self.sealed.get(int(handle), False) else b"\x00"
+            elif attr == int(CKA_EXTRACTABLE):
+                value = b"\x01" if self.extractable.get(int(handle), False) else b"\x00"
+            else:
+                raise AssertionError(f"fake serves only seal flags, got attr {attr:#x}")
+            if tmpl[i].pValue is None:
+                tmpl[i].ulValueLen = len(value)
+            else:
+                ctypes.memmove(tmpl[i].pValue, value, len(value))
+                tmpl[i].ulValueLen = len(value)
+        return int(CKR_OK)
+
     def C_DeriveKey(  # noqa: N802
-        self, _sh: int, _mech: Any, base: int, _tmpl: Any, _count: int, handle_ptr: Any
+        self, _sh: int, _mech: Any, base: int, tmpl: Any, count: int, handle_ptr: Any
     ) -> int:
         mech = ctypes.cast(_mech, ctypes.POINTER(CK_MECHANISM)).contents
-        if int(mech.mechanism) == int(CKM_XOR_BASE_AND_DATA):
+        mech_id = int(mech.mechanism)
+        base_bytes = self.objects[int(base)]
+        if mech_id == int(CKM_XOR_BASE_AND_DATA):
             params = ctypes.cast(
                 mech.pParameter, ctypes.POINTER(CK_KEY_DERIVATION_STRING_DATA)
             ).contents
-            self.derive_data.append(bytes(ctypes.string_at(params.pData, int(params.ulLen))))
+            data = bytes(ctypes.string_at(params.pData, int(params.ulLen)))
+            self.derive_data.append(data)
+            child = bytes([base_bytes[0] ^ data[0]])
+        elif mech_id == int(CKM_EXTRACT_KEY_FROM_KEY):
+            child = base_bytes[:1]
+        else:
+            raise AssertionError(f"fake cannot derive mechanism {mech_id:#x}")
+        # The recovery oracle is a 1-byte child by construction; any other
+        # requested length is a source bug, failed loud here.
+        value_len = int.from_bytes(_tval(tmpl, count, int(CKA_VALUE_LEN)), sys.byteorder)
+        assert value_len == 1, value_len
         if self.refuse_sealed and self.sealed.get(int(base), False):
             return int(CKR_TEMPLATE_INCONSISTENT)
         self._next += 1
-        self.objects[self._next] = self._derive_fn(self.objects[int(base)])
+        self.objects[self._next] = child
         self.sealed[self._next] = self.sealed.get(int(base), False)
+        self.extractable[self._next] = self.extractable.get(int(base), False)
         ctypes.cast(handle_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = self._next
         return int(CKR_OK)
 
@@ -165,14 +224,14 @@ class _FakeKdfRaw:
         return int(CKR_OK)
 
 
-def _kdf_rs(derive_fn: Callable[[bytes], bytes], *, refuse_sealed: bool = False) -> Any:
-    fake = _FakeKdfRaw(derive_fn)
+def _kdf_rs(*, refuse_sealed: bool = False) -> Any:
+    fake = _FakeKdfRaw()
     fake.refuse_sealed = refuse_sealed
     return SimpleNamespace(raw=fake, sh=7)
 
 
 def test_recovery_end_to_end_extract_finds_recovery() -> None:
-    rs = _kdf_rs(lambda base: base[:1])
+    rs = _kdf_rs()
     with pytest.raises(Failed):
         kdf._run_byte_recovery_case(rs, shape="extract", label="t")
     assert any(
@@ -181,18 +240,19 @@ def test_recovery_end_to_end_extract_finds_recovery() -> None:
 
 
 def test_recovery_end_to_end_xor_full_finds_recovery() -> None:
-    data = kdf._RECOVERY_XOR_FULL_DATA
-    rs = _kdf_rs(lambda base: bytes([base[0] ^ data[0]]))
+    rs = _kdf_rs()
     with pytest.raises(Failed):
         kdf._run_byte_recovery_case(rs, shape="xor_full", label="t")
     assert any(
         "recovered through 1-byte child" in rec.summary for rec in classification.get_records()
     )
+    # Both legs (control + sealed) carry the full 32-byte pad datum.
+    assert rs.raw.derive_data == [kdf._RECOVERY_XOR_FULL_DATA] * 2
 
 
 def test_recovery_end_to_end_xor_zeros_finds_recovery() -> None:
     """R3.2: the xor_zeros arm passes 32 zero data bytes; the 1-byte child recovers."""
-    rs = _kdf_rs(lambda base: bytes([base[0] ^ 0x00]))
+    rs = _kdf_rs()
     with pytest.raises(Failed):
         kdf._run_byte_recovery_case(rs, shape="xor_zeros", label="t")
     assert any(
@@ -203,6 +263,6 @@ def test_recovery_end_to_end_xor_zeros_finds_recovery() -> None:
 
 
 def test_recovery_end_to_end_refused_passes() -> None:
-    rs = _kdf_rs(lambda base: base[:1], refuse_sealed=True)
+    rs = _kdf_rs(refuse_sealed=True)
     kdf._run_byte_recovery_case(rs, shape="extract", label="t")
     assert classification.get_records() == []
