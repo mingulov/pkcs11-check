@@ -75,6 +75,7 @@ from pkcs11_check.raw.types_std import (
     CKK_DES3,
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
+    CKM_BLAKE2B_512_KEY_DERIVE,
     CKM_CONCATENATE_BASE_AND_DATA,
     CKM_CONCATENATE_BASE_AND_KEY,
     CKM_CONCATENATE_DATA_AND_BASE,
@@ -83,7 +84,18 @@ from pkcs11_check.raw.types_std import (
     CKM_EXTRACT_KEY_FROM_KEY,
     CKM_HKDF_DERIVE,
     CKM_SHA1_KEY_DERIVATION,
+    CKM_SHA3_256_KEY_DERIVATION,
+    CKM_SHA3_384_KEY_DERIVATION,
+    CKM_SHA3_512_KEY_DERIVATION,
+    CKM_SHA224_KEY_DERIVATION,
     CKM_SHA256,
+    CKM_SHA256_KEY_DERIVATION,
+    CKM_SHA384_KEY_DERIVATION,
+    CKM_SHA512_224_KEY_DERIVATION,
+    CKM_SHA512_256_KEY_DERIVATION,
+    CKM_SHA512_KEY_DERIVATION,
+    CKM_SHAKE_128_KEY_DERIVATION,
+    CKM_SHAKE_256_KEY_DERIVATION,
     CKM_XOR_BASE_AND_DATA,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
@@ -3146,9 +3158,58 @@ _DES_PARITY_TYPES: dict[str, tuple[int, int]] = {
     "DES3": (int(CKK_DES3), 24),
     "CDMF": (int(CKK_CDMF), 8),
 }
-_DES_PARITY_SHA1_TYPES: tuple[str, ...] = ("DES",)
+#: SHA-1 parity types: DES2/CDMF ruled IN with admission gating (a clean
+#: refusal xfails visibly); DES3 is excluded (the 20-byte digest cannot
+#: fill 24 bytes, and DES3-on-digest is excluded pending ruling per #61).
+_DES_PARITY_SHA1_TYPES: tuple[str, ...] = ("DES", "DES2", "CDMF")
 _SHA1_DERIVATION_NAME = "CKM_SHA1_KEY_DERIVATION"
+#: Fixed SHA-1 input; every type slice carries an even-parity byte (pinned).
+_SHA1_PARITY_BASE = bytes((0x20 + i) % 256 for i in range(20))
 _KAT_BLOCK = bytes.fromhex("0123456789abcdef")
+
+#: Digest parity mechs: name -> (ckm, oracle_kind, digest_len). oracle_kind
+#: "hash:<hashlib>" slices the digest; "blake2b512" and "xof:<hashlib>"
+#: compute directly. DES3 is excluded on every digest mech (pending ruling).
+_DIGEST_PARITY_MECHS: dict[str, tuple[int, str, int | None]] = {
+    "CKM_SHA224_KEY_DERIVATION": (int(CKM_SHA224_KEY_DERIVATION), "hash:sha224", 28),
+    "CKM_SHA256_KEY_DERIVATION": (int(CKM_SHA256_KEY_DERIVATION), "hash:sha256", 32),
+    "CKM_SHA384_KEY_DERIVATION": (int(CKM_SHA384_KEY_DERIVATION), "hash:sha384", 48),
+    "CKM_SHA512_KEY_DERIVATION": (int(CKM_SHA512_KEY_DERIVATION), "hash:sha512", 64),
+    "CKM_SHA512_224_KEY_DERIVATION": (
+        int(CKM_SHA512_224_KEY_DERIVATION),
+        "hash:sha512_224",
+        28,
+    ),
+    "CKM_SHA512_256_KEY_DERIVATION": (
+        int(CKM_SHA512_256_KEY_DERIVATION),
+        "hash:sha512_256",
+        32,
+    ),
+    "CKM_SHA3_256_KEY_DERIVATION": (int(CKM_SHA3_256_KEY_DERIVATION), "hash:sha3_256", 32),
+    "CKM_SHA3_384_KEY_DERIVATION": (int(CKM_SHA3_384_KEY_DERIVATION), "hash:sha3_384", 48),
+    "CKM_SHA3_512_KEY_DERIVATION": (int(CKM_SHA3_512_KEY_DERIVATION), "hash:sha3_512", 64),
+    "CKM_BLAKE2B_512_KEY_DERIVE": (int(CKM_BLAKE2B_512_KEY_DERIVE), "blake2b512", 64),
+    "CKM_SHAKE_128_KEY_DERIVATION": (
+        int(CKM_SHAKE_128_KEY_DERIVATION),
+        "xof:shake_128",
+        None,
+    ),
+    "CKM_SHAKE_256_KEY_DERIVATION": (
+        int(CKM_SHAKE_256_KEY_DERIVATION),
+        "xof:shake_256",
+        None,
+    ),
+}
+_DIGEST_PARITY_TYPES: tuple[str, ...] = ("DES", "DES2", "CDMF")
+#: Digest mechs with no pinned parameter encoding + reference (recorded, never judged).
+_DIGEST_PARITY_UNRESOLVED: dict[str, str] = {
+    "CKM_SHA512_T_KEY_DERIVATION": (
+        "no pinned t + parameter encoding + independent reference vector; "
+        "row recorded, not judged (#61)"
+    ),
+}
+#: Fixed digest input; every (mech, out_len) slice carries an even-parity byte (pinned).
+_DIGEST_PARITY_BASE = bytes((0x20 + i) % 256 for i in range(32))
 
 
 def _odd_parity_adjust(raw: bytes) -> bytes:
@@ -3179,6 +3240,27 @@ def _des_parity_materials(mech_name: str, out_len: int) -> tuple[bytes, bytes, b
     if mech_name == "CKM_CONCATENATE_DATA_AND_BASE":
         return base, aux, aux + base
     raise ValueError(f"not a DES-parity byte mechanism: {mech_name!r}")
+
+
+def _digest_parity_materials(mech_name: str, out_len: int) -> tuple[bytes, bytes]:
+    """Return (base_input, raw_expected) for a digest parity row.
+
+    Hash mechs slice the fixed-base digest; BLAKE2b hashes unkeyed;
+    SHAKE reads out_len bytes directly (XOF, no slicing).
+    """
+    _mech_id, kind, digest_len = _DIGEST_PARITY_MECHS[mech_name]
+    base = _DIGEST_PARITY_BASE
+    if kind.startswith("hash:"):
+        digest = hashlib.new(kind[5:], base, usedforsecurity=False).digest()
+        assert digest_len is not None and len(digest) == digest_len, (mech_name, len(digest))
+        return base, digest[:out_len]
+    if kind == "blake2b512":
+        digest = hashlib.blake2b(base, digest_size=64, usedforsecurity=False).digest()
+        return base, digest[:out_len]
+    if kind.startswith("xof:"):
+        shake = hashlib.shake_128 if kind == "xof:shake_128" else hashlib.shake_256
+        return base, shake(base, usedforsecurity=False).digest(out_len)
+    raise ValueError(f"not a digest-parity oracle kind: {kind!r}")
 
 
 def _require_even_parity_premise(raw: bytes, *, label: str) -> None:
@@ -3508,12 +3590,12 @@ class TestDerivedDesParity:
                 destroy_quietly(rs.raw, rs.sh, handle)
 
     def test_sha1_derive_des_parity(self, p11_raw_session: Any) -> None:
-        """SHA-1 derive to DES only: DES3 is excluded, never asserted."""
+        """SHA-1 derive to DES/DES2/CDMF: DES3 is excluded, never asserted."""
         rs = p11_raw_session
         if not rs.has_mechanism("SHA1_KEY_DERIVATION"):
             pytest.skip("CKM_SHA1_KEY_DERIVATION not supported")
         label = "qc8c-CKM_SHA1_KEY_DERIVATION"
-        base_bytes = _parity_pattern(20, 0x20)
+        base_bytes = _SHA1_PARITY_BASE
         digest = hashlib.sha1(base_bytes, usedforsecurity=False).digest()
         sources: list[int] = []
         children: list[int] = []
@@ -3556,6 +3638,93 @@ class TestDerivedDesParity:
                 _assert_generic_child_value(
                     rs, twin, mech_name=_SHA1_DERIVATION_NAME, raw_expected=raw_expected
                 )
+        finally:
+            for handle in children:
+                destroy_quietly(rs.raw, rs.sh, handle)
+            for handle in sources:
+                destroy_quietly(rs.raw, rs.sh, handle)
+
+    @pytest.mark.parametrize("type_name", _DIGEST_PARITY_TYPES)
+    @pytest.mark.parametrize("mech_name", list(_DIGEST_PARITY_MECHS))
+    def test_digest_derive_des_parity(
+        self, p11_raw_session: Any, mech_name: str, type_name: str
+    ) -> None:
+        """Digest derive to DES-family: odd parity, adjusted bytes, ECB KAT.
+
+        DES2/CDMF are admission-gated rows: a clean refusal xfails
+        visibly. DES3 is excluded (pending ruling), never asserted, as is
+        SHA-512/t (recorded-unresolved registry). The generic twin runs
+        first: on settled-semantics mechs a twin deviation fails, on
+        BLAKE2b (keyed-vs-unkeyed unconfirmed) it voids the row.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism(mech_name.removeprefix("CKM_")):
+            pytest.skip(f"{mech_name} not supported")
+        mech_id, kind, _digest_len = _DIGEST_PARITY_MECHS[mech_name]
+        key_type, out_len = _DES_PARITY_TYPES[type_name]
+        label = f"qc8c-{mech_name}->{type_name}"
+        base_bytes, raw_expected = _digest_parity_materials(mech_name, out_len)
+        assert len(raw_expected) == out_len
+        _require_even_parity_premise(raw_expected, label=label)
+        sources: list[int] = []
+        children: list[int] = []
+        try:
+            sources.append(_import_parity_source(rs, base_bytes, label=label, mech_name=mech_name))
+            twin = _derive_parity_child(
+                rs,
+                mech_name=mech_name,
+                mech_id=mech_id,
+                base=sources[0],
+                mech_param=mech_simple(mech_id),
+                child_attrs=_generic_child_attrs(out_len),
+                label=f"{label}->generic: twin derive",
+            )
+            children.append(twin)
+            if kind == "blake2b512":
+                twin_value = _read_derived_value(
+                    rs, twin, label=f"{label}->generic:CKA_VALUE readback"
+                )
+                _assert_misc_bytes_length(
+                    twin_value,
+                    expected_len=len(raw_expected),
+                    label=f"{label}->generic:derived value length",
+                    mechanism=mech_name,
+                )
+                if twin_value != raw_expected:
+                    xfail_as(
+                        "not_operational",
+                        label=f"{label}->generic:twin oracle",
+                        operation="C_DeriveKey",
+                        mechanism=mech_name,
+                        inherit_mechanism=False,
+                        summary=(
+                            f"{label}: generic twin deviates from the unkeyed "
+                            "BLAKE2b oracle; derive semantics unconfirmed, "
+                            "parity unjudged"
+                        ),
+                    )
+            else:
+                _assert_generic_child_value(
+                    rs, twin, mech_name=mech_name, raw_expected=raw_expected
+                )
+            child = _derive_parity_child(
+                rs,
+                mech_name=mech_name,
+                mech_id=mech_id,
+                base=sources[0],
+                mech_param=mech_simple(mech_id),
+                child_attrs=_des_child_attrs(key_type, out_len),
+                label=f"{label}: DES-family derive",
+            )
+            children.append(child)
+            _assert_des_child_value(
+                rs,
+                child,
+                mech_name=mech_name,
+                type_name=type_name,
+                out_len=out_len,
+                raw_expected=raw_expected,
+            )
         finally:
             for handle in children:
                 destroy_quietly(rs.raw, rs.sh, handle)
