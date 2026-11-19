@@ -111,18 +111,37 @@ def test_recovery_vendor_derive_xfails_alternate() -> None:
 
 
 def test_recovery_blocked_carries_digest_stage() -> None:
-    """B2: the blocked residual retains the digest refusal RV."""
+    """B2: the blocked residual retains the digest operation and RV."""
     with pytest.raises(XFailed):
         kdf._judge_byte_recovery(
             derive_rv=int(CKR_OK),
             recovered=None,
             control_ok=True,
             label="sealed",
+            digest_op="C_DigestFinal",
             digest_rv=int(CKR_DEVICE_ERROR),
         )
     (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert "CKR_DEVICE_ERROR" in (record.summary or ""), record.summary
-    assert (record.detail or {}).get("digest_stage") == "CKR_DEVICE_ERROR", record.detail
+    assert "C_DigestFinal CKR_DEVICE_ERROR" in (record.summary or ""), record.summary
+    assert record.operation == "C_DigestFinal", record.operation
+    assert record.actual_ckr == "CKR_DEVICE_ERROR", record.summary
+    assert (record.detail or {}).get("digest_operation") == "C_DigestFinal", record.detail
+    assert (record.detail or {}).get("digest_rv") == "CKR_DEVICE_ERROR", record.detail
+
+
+def test_recovery_opaque_refusal_xfails_unproved() -> None:
+    """R2A4: an opaque derive refusal voids visibly instead of passing silently."""
+    with pytest.raises(XFailed):
+        kdf._judge_byte_recovery(
+            derive_rv=int(CKR_DEVICE_ERROR),
+            recovered=False,
+            control_ok=True,
+            label="sealed",
+        )
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert record.reason == "not_operational", record.summary
+    assert record.actual_ckr == "CKR_DEVICE_ERROR", record.summary
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
 
 
 def _tval(tmpl: Any, count: int, attr: int) -> bytes:
@@ -143,6 +162,11 @@ class _FakeKdfRaw:
         self.sealed: dict[int, bool] = {}
         self.extractable: dict[int, bool] = {}
         self.refuse_sealed = False
+        self.refusal_out_handle: int | None = None
+        self.digest_init_rv: int | None = None
+        self.digest_key_rv: int | None = None
+        self.digest_final_rv: int | None = None
+        self.destroyed: list[int] = []
         self._next = 0
         self._pending: bytes | None = None
         self.derive_data: list[bytes] = []
@@ -193,6 +217,10 @@ class _FakeKdfRaw:
         value_len = int.from_bytes(_tval(tmpl, count, int(CKA_VALUE_LEN)), sys.byteorder)
         assert value_len == 1, value_len
         if self.refuse_sealed and self.sealed.get(int(base), False):
+            if self.refusal_out_handle is not None:
+                ctypes.cast(
+                    handle_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)
+                ).contents.value = self.refusal_out_handle
             return int(CKR_TEMPLATE_INCONSISTENT)
         self._next += 1
         self.objects[self._next] = child
@@ -202,14 +230,20 @@ class _FakeKdfRaw:
         return int(CKR_OK)
 
     def C_DigestInit(self, _sh: int, _mech: Any) -> int:  # noqa: N802
+        if self.digest_init_rv is not None:
+            return self.digest_init_rv
         self._pending = None
         return int(CKR_OK)
 
     def C_DigestKey(self, _sh: int, key: int) -> int:  # noqa: N802
+        if self.digest_key_rv is not None:
+            return self.digest_key_rv
         self._pending = self.objects[int(key)]
         return int(CKR_OK)
 
     def C_DigestFinal(self, _sh: int, buf: Any, len_ptr: Any) -> int:  # noqa: N802
+        if self.digest_final_rv is not None:
+            return self.digest_final_rv
         digest = hashlib.sha256(self._pending or b"").digest()
         out_len = ctypes.cast(len_ptr, ctypes.POINTER(CK_ULONG)).contents
         if buf is None:
@@ -220,6 +254,7 @@ class _FakeKdfRaw:
         return int(CKR_OK)
 
     def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
+        self.destroyed.append(int(handle))
         self.objects.pop(int(handle), None)
         return int(CKR_OK)
 
@@ -266,3 +301,30 @@ def test_recovery_end_to_end_refused_passes() -> None:
     rs = _kdf_rs(refuse_sealed=True)
     kdf._run_byte_recovery_case(rs, shape="extract", label="t")
     assert classification.get_records() == []
+
+
+def test_recovery_refused_out_handle_not_destroyed() -> None:
+    """R2A1: a refused derive must not donate its output handle to cleanup."""
+    rs = _kdf_rs(refuse_sealed=True)
+    rs.raw.refusal_out_handle = 3  # the sealed base itself
+    kdf._run_byte_recovery_case(rs, shape="extract", label="t")
+    assert rs.raw.destroyed == [2, 1, 3], rs.raw.destroyed
+
+
+@pytest.mark.parametrize(
+    ("knob", "operation"),
+    [
+        ("digest_init_rv", "C_DigestInit"),
+        ("digest_key_rv", "C_DigestKey"),
+        ("digest_final_rv", "C_DigestFinal"),
+    ],
+)
+def test_digest_staged_attributes_refusing_stage(knob: str, operation: str) -> None:
+    """R2A4: a refused digest stage reports its own operation and RV."""
+    rs = _kdf_rs()
+    rs.raw.objects[99] = b"seed"
+    setattr(rs.raw, knob, int(CKR_DEVICE_ERROR))
+    with pytest.raises(kdf._DigestStageRefusedError) as excinfo:
+        kdf._digest_child_staged(rs, 99)
+    assert excinfo.value.operation == operation
+    assert excinfo.value.rv == int(CKR_DEVICE_ERROR)

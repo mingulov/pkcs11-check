@@ -39,7 +39,6 @@ from pkcs11_check.raw.pack import (
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
-    digest_single_with_key,
     find_objects,
     gen_aes_key,
     pack_attrs,
@@ -103,11 +102,16 @@ from pkcs11_check.raw.types_std import (
     CKM_XOR_BASE_AND_DATA,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_KEY_UNEXTRACTABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
@@ -2935,16 +2939,19 @@ def _judge_byte_recovery(
     recovered: bool | None,
     control_ok: bool,
     label: str,
+    digest_op: str | None = None,
     digest_rv: int | None = None,
 ) -> None:
     """Judge one 1-byte recovery leg (#54.3).
 
-    A standard refusal (the control proves the shape works) is the
-    ideal posture and passes; a vendor refusal xfails as a visible
-    alternate. A recovered byte fails (a never-extractable base
-    yielded material — self-evident, no oracle needed); an
+    A clean shape/operation refusal (the control proves the shape
+    works) is the ideal posture and passes; a vendor refusal xfails
+    as a visible alternate and any other standard refusal xfails as
+    unproved (an opaque or state-dependent refusal answers nothing
+    about recovery). A recovered byte fails (a never-extractable
+    base yielded material — self-evident, no oracle needed); an
     unproven/blocked chain xfails when the control calibrated the
-    oracle, else skips, with the digest stage and RV retained.
+    oracle, else skips, with the digest operation and RV retained.
     Malformed RVs fail.
     """
     if not _is_defined_rv(derive_rv):
@@ -2972,7 +2979,20 @@ def _judge_byte_recovery(
                     f"{ckr_name(derive_rv)} (alternate refusal; standard outcome unproved)"
                 ),
             )
-        return
+        if derive_rv in _RECOVERY_CLEAN_REFUSALS:
+            return
+        xfail_as(
+            "not_operational",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=derive_rv,
+            summary=(
+                f"{label}: sealed derive refused with {ckr_name(derive_rv)}; recovery unproved"
+            ),
+            detail={"disposition": "unproved-effect"},
+        )
     if recovered is True:
         fail_as(
             "self_contradiction",
@@ -2986,18 +3006,23 @@ def _judge_byte_recovery(
     if not control_ok:
         pytest.skip(f"{label}: control unproven; recovery verdict untestable")
     if recovered is None:
-        stage = "unsupported" if digest_rv is None else ckr_name(digest_rv)
+        stage = digest_op if digest_op is not None else "C_DigestKey unsupported"
+        stage_rv = f" {ckr_name(digest_rv)}" if digest_rv is not None else ""
         xfail_as(
             "honest_deviation",
             label=label,
-            operation="C_DigestKey",
+            operation=digest_op or "C_DigestKey",
             mechanism=None,
             inherit_mechanism=False,
+            actual=digest_rv,
             summary=(
                 f"{label}: derivation permitted but recovery blocked "
-                f"(digest {stage}); residual accepted"
+                f"({stage}{stage_rv}); residual accepted"
             ),
-            detail={"digest_stage": stage},
+            detail={
+                "digest_operation": stage,
+                "digest_rv": ckr_name(digest_rv) if digest_rv is not None else None,
+            },
         )
     xfail_as(
         "honest_deviation",
@@ -3009,17 +3034,69 @@ def _judge_byte_recovery(
     )
 
 
+class _DigestStageRefusedError(Exception):
+    """One digest stage refused; carries the failing operation and RV."""
+
+    def __init__(self, operation: str, rv: int) -> None:
+        super().__init__(f"{operation} refused with {ckr_name(rv)}")
+        self.operation = operation
+        self.rv = rv
+
+
+def _digest_child_staged(rs: Any, child: int) -> bytes:
+    """Digest a child key, attributing a refusal to its Init/Key/Final stage.
+
+    Raises NotImplementedError when C_DigestKey is unsupported and
+    _DigestStageRefusedError (operation + RV) for any refused stage.
+    """
+    init_rv = int(rs.raw.C_DigestInit(rs.sh, mech_simple(CKM_SHA256).byref()))
+    if init_rv != int(CKR_OK):
+        raise _DigestStageRefusedError("C_DigestInit", init_rv)
+    key_rv = int(rs.raw.C_DigestKey(rs.sh, child))
+    if key_rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        raise NotImplementedError("C_DigestKey not supported by this module")
+    if key_rv != int(CKR_OK):
+        raise _DigestStageRefusedError("C_DigestKey", key_rv)
+    out_len = CK_ULONG(0)
+    final_rv = int(rs.raw.C_DigestFinal(rs.sh, None, byref(out_len)))
+    if final_rv != int(CKR_OK):
+        raise _DigestStageRefusedError("C_DigestFinal", final_rv)
+    buf = (ctypes.c_ubyte * int(out_len.value))()
+    final_rv = int(rs.raw.C_DigestFinal(rs.sh, buf, byref(out_len)))
+    if final_rv != int(CKR_OK):
+        raise _DigestStageRefusedError("C_DigestFinal", final_rv)
+    return bytes(buf[: int(out_len.value)])
+
+
 def _recover_byte_via_digest(rs: Any, child: int) -> bytes | None:
     """Brute-force a 1-byte child via DigestKey; None when no match.
 
     Raises NotImplementedError when DigestKey is unsupported and
-    propagates CkrAssertionError for refused/errored digest ops.
+    _DigestStageRefusedError (operation + RV) for refused digest stages.
     """
-    observed = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, child)
+    observed = _digest_child_staged(rs, child)
     for candidate in range(256):
         if hashlib.sha256(bytes([candidate])).digest() == observed:
             return bytes([candidate])
     return None
+
+
+#: Definitive sealed-derive refusals: the shape/operation is rejected,
+#: so no recovery through it is possible (ideal posture, passes).
+_RECOVERY_CLEAN_REFUSALS: frozenset[int] = frozenset(
+    {
+        int(CKR_TEMPLATE_INCONSISTENT),
+        int(CKR_TEMPLATE_INCOMPLETE),
+        int(CKR_MECHANISM_INVALID),
+        int(CKR_FUNCTION_NOT_SUPPORTED),
+        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        int(CKR_KEY_TYPE_INCONSISTENT),
+        int(CKR_KEY_SIZE_RANGE),
+        int(CKR_ATTRIBUTE_READ_ONLY),
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        int(CKR_ATTRIBUTE_VALUE_INVALID),
+    }
+)
 
 
 def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
@@ -3067,17 +3144,25 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
             },
         )
     except CkrAssertionError as exc:
+        _fail_undefined_setup_rv(exc.rv, label=label, operation="C_CreateObject")
         pytest.skip(f"{label}: control import refused ({ckr_name(exc.rv)}); fixture unbuildable")
     control_ok = False
-    cchild = 0
+    crv, cchild = -1, 0
     try:
         crv, cchild = derive(cbase)
         if crv != int(CKR_OK):
+            _fail_undefined_setup_rv(crv, label=label, operation="C_DeriveKey")
             pytest.skip(f"{label}: control derive refused ({ckr_name(crv)}); fixture unbuildable")
         try:
             cfound = _recover_byte_via_digest(rs, cchild)
         except NotImplementedError:
             pytest.skip(f"{label}: C_DigestKey unsupported; oracle untestable")
+        except _DigestStageRefusedError as exc:
+            _fail_undefined_setup_rv(exc.rv, label=label, operation=exc.operation)
+            pytest.skip(
+                f"{label}: control digest refused ({exc.operation} "
+                f"{ckr_name(exc.rv)}); oracle untestable"
+            )
         assert_correct(
             actual=cfound,
             expected=expected,
@@ -3087,7 +3172,9 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         )
         control_ok = True
     finally:
-        if cchild:
+        # R2A1: only a successful derive adopts its output handle; a
+        # refused derive must never donate a handle to cleanup.
+        if crv == int(CKR_OK) and cchild:
             destroy_quietly(rs.raw, rs.sh, cchild)
         destroy_quietly(rs.raw, rs.sh, cbase)
     try:
@@ -3104,31 +3191,23 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
             preserve_policy_attrs=True,
         )
     except CkrAssertionError as exc:
+        _fail_undefined_setup_rv(exc.rv, label=label, operation="C_CreateObject")
         pytest.skip(f"{label}: sealed import refused ({ckr_name(exc.rv)}); fixture unbuildable")
-    _assert_recovery_sealed_or_skip(rs, sbase, label=label)
-    schild = 0
+    srv, schild = -1, 0
     try:
+        _assert_recovery_sealed_or_skip(rs, sbase, label=label)
         srv, schild = derive(sbase)
         recovered: bool | None = False
+        digest_op: str | None = None
         digest_rv: int | None = None
         if srv == int(CKR_OK):
             try:
                 sfound = _recover_byte_via_digest(rs, schild)
             except NotImplementedError:
                 recovered = None
-            except CkrAssertionError as exc:
-                if not _is_defined_rv(exc.rv):
-                    fail_as(
-                        "self_contradiction",
-                        kind="metadata",
-                        label=label,
-                        operation="C_DigestKey",
-                        mechanism="CKM_SHA256",
-                        inherit_mechanism=False,
-                        actual=exc.rv,
-                        summary=(f"{label}: digest returned undefined CK_RV {ckr_name(exc.rv)}"),
-                    )
-                digest_rv = exc.rv
+            except _DigestStageRefusedError as exc:
+                _fail_undefined_setup_rv(exc.rv, label=label, operation=exc.operation)
+                digest_op, digest_rv = exc.operation, exc.rv
                 recovered = None
             else:
                 # Only the independently expected byte counts as a
@@ -3140,12 +3219,29 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
             recovered=recovered,
             control_ok=control_ok,
             label=label,
+            digest_op=digest_op,
             digest_rv=digest_rv,
         )
     finally:
-        if schild:
+        if srv == int(CKR_OK) and schild:
             destroy_quietly(rs.raw, rs.sh, schild)
         destroy_quietly(rs.raw, rs.sh, sbase)
+
+
+def _fail_undefined_setup_rv(rv: int, *, label: str, operation: str) -> None:
+    """Fail loud on an undefined setup RV; defined refusals return for skip."""
+    if _is_defined_rv(rv):
+        return
+    fail_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        mechanism=None,
+        inherit_mechanism=False,
+        actual=rv,
+        summary=f"{label}: setup returned undefined CK_RV {ckr_name(rv)}",
+    )
 
 
 def _assert_recovery_sealed_or_skip(rs: Any, handle: int, *, label: str) -> None:
@@ -3157,6 +3253,7 @@ def _assert_recovery_sealed_or_skip(rs: Any, handle: int, *, label: str) -> None
     try:
         read = read_attributes(rs.raw, rs.sh, handle, [CKA_SENSITIVE, CKA_EXTRACTABLE])
     except CkrAssertionError as exc:
+        _fail_undefined_setup_rv(exc.rv, label=label, operation="C_GetAttributeValue")
         pytest.skip(f"{label}: seal flags unreadable ({ckr_name(exc.rv)}); seal unproved")
     sensitive = attr_or_record(
         read,
