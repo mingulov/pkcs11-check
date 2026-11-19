@@ -1073,6 +1073,61 @@ def _run_qc11a_persistence_node(
         _judge_restart_persistence(first, second, role=role)
 
 
+def _run_qc11a_same_process_node(
+    cap: throwaway.ThrowawayCapability,
+    p11_config: Any,
+    *,
+    role: str,
+    _session_factory: throwaway.SessionFactory = throwaway.admin_session,
+    _launch: throwaway.LaunchProbe = throwaway.launch_admin_probe,
+) -> None:
+    label = f"QC11a {role} same-process restart"
+    with _session_factory(cap, prefix="pkcs11_check_qc11a_") as minted:
+        rc, out, err = _launch(
+            minted,
+            "qc11a_same_process",
+            {"role": role, "attempts": _QC11A_PERSISTENCE_ATTEMPTS},
+            p11_config=p11_config,
+        )
+        trace = token_admin.parse_child_output(rc, out, err, label=label)
+        if "PHASE2" in out and "NO_SLOTS" in out:
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_GetSlotList",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: provisioned token absent after restart",
+            )
+        token_admin.gate_child_trace(trace, label=label)
+        assert "PHASE2" in out, f"{label}: probe contract broken (no PHASE2 marker)"
+        first_raw, _, second_raw = out.partition("PHASE2")
+        first = token_admin.parse_admin_trace(first_raw)
+        reinit = {step.name: step.rv for step in first.steps if step.name.startswith("reinit:")}
+        assert set(reinit) == {"reinit:finalize", "reinit:initialize"}, (
+            f"{label}: probe contract broken (reinit steps {sorted(reinit)})"
+        )
+        if reinit["reinit:finalize"] != int(CKR_OK) or reinit["reinit:initialize"] != int(CKR_OK):
+            _prescan_lockout_fails(first, role=role)
+            pytest.skip(f"{label}: in-process reinit failed; same-process leg untestable")
+        second = token_admin.parse_admin_trace(second_raw)
+        # R19-02 collect-then-judge, mirrored from the two-phase node.
+        if token_admin.trace_skip_reason(second) is not None:
+            _prescan_lockout_fails(first, role=role)
+            token_admin.fail_on_undefined_snapshots(
+                second,
+                label=f"QC11a {role} restart persistence",
+                detail={
+                    "role": role,
+                    "first_attempts": _qc11a_attempt_entries(first, role),
+                    "second_attempts": _qc11a_attempt_entries(second, role),
+                },
+            )
+        second_gated = token_admin.gate_child_trace(second, label=f"QC11a {role} persist/2")
+        _judge_restart_persistence(first, second_gated, role=role)
+
+
 class TestUserLockoutCountdown:
     """USER retry countdown and lockout on a sacrificial token (QC11a)."""
 
@@ -1131,3 +1186,11 @@ class TestCounterRestartPersistence:
     def test_so_counter_restart_persistence(self, p11_config: Any) -> None:
         cap = throwaway.require_throwaway_capability()
         _run_qc11a_persistence_node(cap, p11_config, role="so")
+
+    def test_user_counter_same_process_restart(self, p11_config: Any) -> None:
+        cap = throwaway.require_throwaway_capability()
+        _run_qc11a_same_process_node(cap, p11_config, role="user")
+
+    def test_so_counter_same_process_restart(self, p11_config: Any) -> None:
+        cap = throwaway.require_throwaway_capability()
+        _run_qc11a_same_process_node(cap, p11_config, role="so")

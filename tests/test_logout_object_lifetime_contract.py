@@ -31,7 +31,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from _pytest.outcomes import Failed, XFailed
+from _pytest.outcomes import Failed, Skipped, XFailed
 
 import pkcs11_check.compliance as compliance
 from pkcs11_check import classification as C  # noqa: N812 - matches project convention
@@ -62,6 +62,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases import test_session_state_machine as tssm
+from pkcs11_check.testcases._probes.token_admin import AdminStep, AdminTrace
 from pkcs11_check.testcases.security import test_cve_regression
 
 _BOOL_ATTRS = frozenset(
@@ -1250,3 +1251,82 @@ def test_token_label_unique_across_runs_p1() -> None:
         label = decoded[int(CKA_LABEL)]
         labels.append(label if isinstance(label, bytes) else str(label).encode())
     assert labels[0] != labels[1], labels
+
+
+def _cross_token_trace(
+    *,
+    logout_rv: int = int(CKR_OK),
+    inv: tuple[int, ...] = (0, 1),
+    control_use_rv: int = int(CKR_OK),
+    stale_use_rv: int = int(CKR_OBJECT_HANDLE_INVALID),
+    target_find_rv: int = int(CKR_OK),
+    control_find_rv: int = int(CKR_OK),
+) -> AdminTrace:
+    steps = (
+        AdminStep("target_logout", logout_rv),
+        AdminStep("target_find", target_find_rv),
+        AdminStep("control_find", control_find_rv),
+        AdminStep("control_use", control_use_rv),
+        AdminStep("target_stale_use", stale_use_rv),
+    )
+    return AdminTrace(
+        steps=steps,
+        flags=(),
+        pin_bounds=None,
+        inv_objects=inv,
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+
+
+def test_cross_token_clean_passes() -> None:
+    tssm._judge_cross_token_trace(_cross_token_trace())
+    assert C.get_records() == []
+
+
+def test_cross_token_logout_failed_skips() -> None:
+    with pytest.raises(Skipped):
+        tssm._judge_cross_token_trace(_cross_token_trace(logout_rv=int(CKR_DEVICE_ERROR)))
+
+
+def test_cross_token_target_survived_fails() -> None:
+    with pytest.raises(Failed):
+        tssm._judge_cross_token_trace(_cross_token_trace(inv=(1, 1)))
+
+
+def test_cross_token_control_lost_fails() -> None:
+    with pytest.raises(Failed):
+        tssm._judge_cross_token_trace(_cross_token_trace(inv=(0, 0)))
+
+
+def test_cross_token_control_unusable_fails() -> None:
+    with pytest.raises(Failed):
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(control_use_rv=int(CKR_KEY_HANDLE_INVALID))
+        )
+
+
+def test_cross_token_stale_usable_fails() -> None:
+    with pytest.raises(Failed):
+        tssm._judge_cross_token_trace(_cross_token_trace(stale_use_rv=int(CKR_OK)))
+
+
+def test_cross_token_stale_other_clean_xfails() -> None:
+    with pytest.raises(XFailed):
+        tssm._judge_cross_token_trace(_cross_token_trace(stale_use_rv=int(CKR_FUNCTION_FAILED)))
+
+
+def test_cross_token_short_inv_breaks_contract() -> None:
+    with pytest.raises(AssertionError):
+        tssm._judge_cross_token_trace(_cross_token_trace(inv=(0,)))
+
+
+def test_cross_token_target_find_failed_skips() -> None:
+    with pytest.raises(Skipped):
+        tssm._judge_cross_token_trace(_cross_token_trace(target_find_rv=int(CKR_DEVICE_ERROR)))
+
+
+def test_cross_token_control_find_failed_skips() -> None:
+    with pytest.raises(Skipped):
+        tssm._judge_cross_token_trace(_cross_token_trace(control_find_rv=int(CKR_DEVICE_ERROR)))

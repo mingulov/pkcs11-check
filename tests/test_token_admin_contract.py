@@ -5163,3 +5163,229 @@ def test_r21_01_no_double_judge_clean_gating_provision_uses_record_path() -> Non
     records = classification.get_records()
     assert [rec.outcome for rec in records] == ["fail", "fail"]
     assert {rec.reason for rec in records} == {"self_contradiction", "accepted_invalid"}
+
+
+def test_capacity_returned_reopen_ok_counts_restored_passes() -> None:
+    tse._judge_capacity_returned(
+        baseline_total=3,
+        total_after_close_all=3,
+        reopen_rv=_OK,
+    )
+    assert classification.get_records() == []
+
+
+def test_capacity_returned_reopen_refused_fails() -> None:
+    _assert_fails(
+        tse._judge_capacity_returned,
+        baseline_total=3,
+        total_after_close_all=3,
+        reopen_rv=_SESSION_COUNT,
+    )
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.detail["reopen_rv"] == _SESSION_COUNT
+
+
+def test_capacity_returned_leaked_sessions_fail() -> None:
+    _assert_fails(
+        tse._judge_capacity_returned,
+        baseline_total=3,
+        total_after_close_all=5,
+        reopen_rv=_OK,
+    )
+    _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_capacity_returned_unknown_counts_skip_count_leg() -> None:
+    tse._judge_capacity_returned(
+        baseline_total=None,
+        total_after_close_all=None,
+        reopen_rv=_OK,
+    )
+    assert classification.get_records() == []
+
+
+def _same_process_out(first: token_admin.AdminTrace, second: str) -> str:
+    with_reinit = first._replace(
+        steps=first.steps
+        + (
+            token_admin.AdminStep("reinit:finalize", _OK),
+            token_admin.AdminStep("reinit:initialize", _OK),
+        )
+    )
+    return _render_trace(with_reinit) + "PHASE2\n" + second
+
+
+def test_same_process_clean_passes() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    second = _phase2_trace("user", _OK, initial_rank=1)
+    launch = _FakeLaunch([_ScriptedChild(_same_process_out(first, _render_trace(second)))])
+    pin_case._run_qc11a_same_process_node(
+        _capability(),
+        _StrictConfig(),
+        role="user",
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert classification.get_records() == []
+
+
+def test_same_process_vanish_after_restart_fails() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    out = _render_trace(first) + "PHASE2\nNO_SLOTS\nOK\n"
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    with pytest.raises(Failed):
+        pin_case._run_qc11a_same_process_node(
+            _capability(),
+            _StrictConfig(),
+            role="user",
+            _session_factory=_session_factory(),
+            _launch=launch,
+        )
+
+
+def test_same_process_reinit_failure_skips() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    with_reinit = first._replace(
+        steps=first.steps
+        + (
+            token_admin.AdminStep("reinit:finalize", _OK),
+            token_admin.AdminStep("reinit:initialize", _GENERAL_ERROR),
+        )
+    )
+    out = _render_trace(with_reinit) + "PHASE2\nOK\n"
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    with pytest.raises(Skipped):
+        pin_case._run_qc11a_same_process_node(
+            _capability(),
+            _StrictConfig(),
+            role="user",
+            _session_factory=_session_factory(),
+            _launch=launch,
+        )
+
+
+def test_same_process_lockout_lost_fails() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=3)
+    second = _phase2_trace("user", _OK, initial_rank=3)
+    launch = _FakeLaunch([_ScriptedChild(_same_process_out(first, _render_trace(second)))])
+    with pytest.raises(Failed):
+        pin_case._run_qc11a_same_process_node(
+            _capability(),
+            _StrictConfig(),
+            role="user",
+            _session_factory=_session_factory(),
+            _launch=launch,
+        )
+
+
+def _concurrent_trace(
+    setpin_rvs: dict[int, int],
+    final_rvs: dict[str, int],
+) -> token_admin.AdminTrace:
+    steps = [
+        token_admin.AdminStep("setup:init_token", _OK),
+        token_admin.AdminStep("setup:open", _OK),
+        token_admin.AdminStep("setup:so_login", _OK),
+        token_admin.AdminStep("setup:init_pin", _OK),
+    ]
+    for _i in range(4):
+        steps.append(token_admin.AdminStep(f"thread:{_i}:login", _OK))
+    for i, rv in sorted(setpin_rvs.items()):
+        steps.append(token_admin.AdminStep(f"thread:{i}:setpin", rv))
+    for i in range(4):
+        steps.append(token_admin.AdminStep(f"thread:{i}:logout", _OK))
+    for tag, rv in sorted(final_rvs.items()):
+        steps.append(token_admin.AdminStep(f"final:login:{tag}", rv))
+    return token_admin.AdminTrace(
+        steps=tuple(steps),
+        flags=(),
+        pin_bounds=(4, 32),
+        inv_objects=(),
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+
+
+def test_concurrent_clean_linearization_passes() -> None:
+    trace = _concurrent_trace(
+        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _OK,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    sopin_case._judge_concurrent_pin_trace(trace)
+    assert classification.get_records() == []
+
+
+def test_concurrent_two_pin_work_fails() -> None:
+    trace = _concurrent_trace(
+        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
+        {"P0": _OK, "P1": _PIN_INCORRECT, "P2": _OK, "P3": _PIN_INCORRECT, "P4": _PIN_INCORRECT},
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+
+
+def test_concurrent_zero_pin_work_fails() -> None:
+    trace = _concurrent_trace(
+        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+
+
+def test_concurrent_failed_pin_works_fails() -> None:
+    trace = _concurrent_trace(
+        {0: _GENERAL_ERROR, 1: _OK, 2: _OK, 3: _OK},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _OK,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+
+
+def test_concurrent_undefined_thread_rv_fails() -> None:
+    trace = _concurrent_trace(
+        {0: _OK, 1: _OK, 2: _OK, 3: 0xDEAD},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _OK,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed):
+        sopin_case._judge_concurrent_pin_trace(trace)
+
+
+def test_concurrent_no_success_skips() -> None:
+    trace = _concurrent_trace(
+        {0: _GENERAL_ERROR, 1: _GENERAL_ERROR, 2: _GENERAL_ERROR, 3: _GENERAL_ERROR},
+        {
+            "P0": _OK,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Skipped):
+        sopin_case._judge_concurrent_pin_trace(trace)

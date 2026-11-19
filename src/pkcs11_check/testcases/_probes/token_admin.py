@@ -37,7 +37,9 @@ Dispatch on ``extra["probe"]``: ``qc11a_burn``, ``qc11a_read``,
 
 from __future__ import annotations
 
+import concurrent.futures
 import ctypes
+import threading
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -47,6 +49,7 @@ from pkcs11_check import classification
 from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
+    CK_C_INITIALIZE_ARGS,
     CK_NOTIFY,
     CK_OBJECT_HANDLE,
     CK_TOKEN_INFO,
@@ -55,17 +58,22 @@ from pkcs11_check.raw.types_std import (
     CKA_PRIVATE,
     CKA_TOKEN,
     CKA_VALUE,
+    CKF_OS_LOCKING_OK,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKF_SO_PIN_COUNT_LOW,
     CKF_SO_PIN_FINAL_TRY,
     CKF_SO_PIN_LOCKED,
+    CKF_TOKEN_INITIALIZED,
     CKF_USER_PIN_COUNT_LOW,
     CKF_USER_PIN_FINAL_TRY,
     CKF_USER_PIN_LOCKED,
     CKO_DATA,
+    CKR_CANT_LOCK,
     CKR_OK,
     CKR_PIN_LOCKED,
+    CKR_TOKEN_NOT_PRESENT,
+    CKR_USER_ALREADY_LOGGED_IN,
     CKU_SO,
     CKU_USER,
 )
@@ -479,45 +487,42 @@ def _count_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
     return int(CKR_OK), total
 
 
-def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    role = str(extra["role"])
-    attempts = int(extra["attempts"])
-    then_correct = bool(extra["then_correct"])
-    then_other = bool(extra["then_other_role_correct"])
-    post_wrongs = int(extra["post_success_wrongs"])
-    stop_at = str(extra.get("stop_at", "locked"))
-    if role not in ("user", "so"):
-        raise ValueError(f"unknown role {role!r}")
-    if stop_at not in ("locked", "final"):
-        raise ValueError(f"unknown stop_at {stop_at!r}")
+def _setup_burn_session(ctx: ProbeContext, role: str, then_other: bool) -> tuple[int, int] | None:
+    """Provision a pristine token + open provisioned session; None when untestable.
+
+    Shared by the two-phase burn and the same-process burn/read op:
+    discovery, self-provision InitToken, pristine gate, open, and user
+    PIN provisioning print identical steps; every early return prints
+    its own terminal marker (OK, NO_SLOTS, or ASSUMPTION_FAILED).
+    """
     slot = _discover_slot(ctx)
     if slot is None:
         print("NO_SLOTS")
-        return
+        return None
     itrv = _init_token(ctx, slot, TEST_SO_PIN)
     _step("init_token", itrv)
     if itrv != int(CKR_OK):
         print(f"ASSUMPTION_FAILED:self_provision:{itrv:#x}")
         print("OK")
-        return
+        return None
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         print("PINBOUNDS:unknown")
         print(f"ASSUMPTION_FAILED:tokeninfo:{info_rv:#x}")
         print("OK")
-        return
+        return None
     print(f"PINBOUNDS:{min_pin}:{max_pin}")
     print(f"FLAGS:initial:0x{flags:08x}")
     low, final, locked = _ROLE_COUNTER_FLAGS[role]
     if flags & (low | final | locked):
         print("ASSUMPTION_FAILED:not_pristine")
         print("OK")
-        return
+        return None
     open_rv, sh = _open_rw(ctx, slot)
     _step("setup:open", open_rv)
     if open_rv != int(CKR_OK):
         print("OK")
-        return
+        return None
     if role == "user" or then_other:
         # InitToken establishes only the SO PIN; provision the user PIN
         # whenever this child exercises USER (as the burn target or as the
@@ -528,19 +533,26 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         if sorv != int(CKR_OK):
             print(f"ASSUMPTION_FAILED:setup_login:{sorv:#x}")
             print("OK")
-            return
+            return None
         iprv = int(ctx.raw.C_InitPIN(sh, _buf(TEST_USER_PIN), len(TEST_USER_PIN)))
         _step("setup:init_pin", iprv)
         if iprv != int(CKR_OK):
             print(f"ASSUMPTION_FAILED:setup_init_pin:{iprv:#x}")
             print("OK")
-            return
+            return None
         try:
             ctx.raw.C_Logout(sh)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
             print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
+    return slot, sh
+
+
+def _burn_attempts(
+    ctx: ProbeContext, slot: int, sh: int, role: str, attempts: int, stop_at: str
+) -> None:
+    """Wrong-PIN burn loop shared by the two-phase and same-process ops."""
+    low, final, _locked = _ROLE_COUNTER_FLAGS[role]
     wrong = WRONG_SO_PIN if role == "so" else WRONG_USER_PIN
-    right = TEST_SO_PIN if role == "so" else TEST_USER_PIN
     for i in range(1, attempts + 1):
         lrv = _login(ctx, sh, role, wrong)
         _step(f"login:{role}:wrong:{i}", lrv)
@@ -552,6 +564,26 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             break
         if stop_at == "final" and _info_rv == int(CKR_OK) and (flags_now & final):
             break
+
+
+def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
+    role = str(extra["role"])
+    attempts = int(extra["attempts"])
+    then_correct = bool(extra["then_correct"])
+    then_other = bool(extra["then_other_role_correct"])
+    post_wrongs = int(extra["post_success_wrongs"])
+    stop_at = str(extra.get("stop_at", "locked"))
+    if role not in ("user", "so"):
+        raise ValueError(f"unknown role {role!r}")
+    if stop_at not in ("locked", "final"):
+        raise ValueError(f"unknown stop_at {stop_at!r}")
+    setup = _setup_burn_session(ctx, role, then_other)
+    if setup is None:
+        return
+    slot, sh = setup
+    right = TEST_SO_PIN if role == "so" else TEST_USER_PIN
+    wrong = WRONG_SO_PIN if role == "so" else WRONG_USER_PIN
+    _burn_attempts(ctx, slot, sh, role, attempts, stop_at)
     if then_correct:
         crv = _login(ctx, sh, role, right)
         _step(f"login:{role}:correct", crv)
@@ -594,6 +626,19 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if slot is None:
         print("NO_SLOTS")
         return
+    _read_phase(ctx, slot, role)
+    print("OK")
+
+
+def _read_phase(ctx: ProbeContext, slot: int, role: str) -> None:
+    """Snapshot flags, then check the correct PIN (shared read leg).
+
+    Runs on a burned token: no pristine gate, no provisioning (an
+    InitToken here would wipe the burned counters under test). Failed
+    snapshots keep their raw RV as a step so undefined token-info RVs
+    stay judgable. Used by the two-phase read op and the same-process
+    op after its in-process Finalize/Initialize cycle.
+    """
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         _step("snapshot:initial", info_rv)
@@ -605,7 +650,6 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     open_rv, sh = _open_rw(ctx, slot)
     _step("setup:open", open_rv)
     if open_rv != int(CKR_OK):
-        print("OK")
         return
     right = TEST_SO_PIN if role == "so" else TEST_USER_PIN
     crv = _login(ctx, sh, role, right)
@@ -619,7 +663,6 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         _step("snapshot:final", _info_rv)
     _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
     _quiet_close(ctx, sh)
-    print("OK")
 
 
 # Longest PIN the length sweep will ever build: absurd declared bounds (up to
@@ -716,9 +759,11 @@ def _qc11b_pin_lengths(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     print("OK")
 
 
-def _init_token(ctx: ProbeContext, slot: int, so_pin: bytes) -> int:
-    label = b"qc11-admin-test".ljust(32)
-    return int(ctx.raw.C_InitToken(slot, _buf(so_pin), len(so_pin), _buf(label)))
+def _init_token(
+    ctx: ProbeContext, slot: int, so_pin: bytes, label: bytes = b"qc11-admin-test"
+) -> int:
+    padded = label.ljust(32)
+    return int(ctx.raw.C_InitToken(slot, _buf(so_pin), len(so_pin), _buf(padded)))
 
 
 def _snapshot(ctx: ProbeContext, slot: int, tag: str) -> None:
@@ -919,13 +964,312 @@ def _qc11c_reset(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     print("OK")
 
 
+_QC9B_TARGET_TOKEN_LABEL = b"qc9b-target"
+_QC9B_CONTROL_TOKEN_LABEL = b"qc9b-control"
+_QC9B_TARGET_WITNESS_LABEL = b"qc9b-target-witness"
+_QC9B_CONTROL_WITNESS_LABEL = b"qc9b-control-witness"
+_QC9B_WITNESS_VALUE = b"qc9b-witness"
+
+
+def _uninitialized_slots(ctx: ProbeContext) -> list[int]:
+    """Slots whose token is absent or not initialized (InitToken candidates)."""
+    count = ctypes.c_ulong(0)
+    if int(ctx.raw.C_GetSlotList(0, None, ctypes.byref(count))) != int(CKR_OK):
+        return []
+    slots = (ctypes.c_ulong * count.value)()
+    if int(ctx.raw.C_GetSlotList(0, slots, ctypes.byref(count))) != int(CKR_OK):
+        return []
+    out: list[int] = []
+    for index in range(count.value):
+        slot = int(slots[index])
+        info = CK_TOKEN_INFO()
+        rv = int(ctx.raw.C_GetTokenInfo(slot, ctypes.byref(info)))
+        if rv == int(CKR_TOKEN_NOT_PRESENT):
+            out.append(slot)
+        elif rv == int(CKR_OK) and not (int(info.flags) & int(CKF_TOKEN_INITIALIZED)):
+            out.append(slot)
+    return out
+
+
+def _create_private_session_witness(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
+    """Create a private session data object; return (rv, handle)."""
+    cls_val = ctypes.c_ulong(CKO_DATA)
+    tok_false = ctypes.c_ubyte(0)
+    priv_true = ctypes.c_ubyte(1)
+    label_buf = _buf(label)
+    value_buf = _buf(_QC9B_WITNESS_VALUE)
+    tmpl = (CK_ATTRIBUTE * 5)()
+    tmpl[0].type = CKA_CLASS
+    tmpl[0].pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
+    tmpl[0].ulValueLen = ctypes.sizeof(cls_val)
+    tmpl[1].type = CKA_TOKEN
+    tmpl[1].pValue = ctypes.cast(ctypes.pointer(tok_false), ctypes.c_void_p)
+    tmpl[1].ulValueLen = 1
+    tmpl[2].type = CKA_PRIVATE
+    tmpl[2].pValue = ctypes.cast(ctypes.pointer(priv_true), ctypes.c_void_p)
+    tmpl[2].ulValueLen = 1
+    tmpl[3].type = CKA_LABEL
+    tmpl[3].pValue = ctypes.cast(label_buf, ctypes.c_void_p)
+    tmpl[3].ulValueLen = len(label)
+    tmpl[4].type = CKA_VALUE
+    tmpl[4].pValue = ctypes.cast(value_buf, ctypes.c_void_p)
+    tmpl[4].ulValueLen = len(_QC9B_WITNESS_VALUE)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = int(ctx.raw.C_CreateObject(sh, tmpl, 5, ctypes.byref(handle)))
+    return rv, int(handle.value)
+
+
+def _read_value_rv(ctx: ProbeContext, sh: int, handle: int) -> int:
+    """Read CKA_VALUE off one handle; return the raw RV (never raises)."""
+    buf = (ctypes.c_ubyte * 64)()
+    attr = CK_ATTRIBUTE()
+    attr.type = CKA_VALUE
+    attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
+    attr.ulValueLen = len(buf)
+    return int(ctx.raw.C_GetAttributeValue(sh, handle, ctypes.byref(attr), 1))
+
+
+def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
+    """QC9b (#52.3): logout on one token leaves another token's login usable.
+
+    Self-provisions two tokens (target + control) with the hardcoded TEST
+    PINs, logs into both, creates a private session witness on each,
+    logs out on the target, then observes: target find count, control
+    find count (INV lines in that order), control use WITHOUT relogin,
+    and stale target-handle use. All provisioning legs are ``setup:*``
+    (fixture failures skip via the gate); the five judgment steps are
+    plain-named for the parent judge.
+    """
+    del extra
+    # Greedy init: some providers (SoftHSM) surface a fresh spare slot
+    # after each InitToken, so recount before every init instead of
+    # requiring two inittable slots up front.
+    inited: list[int] = []
+    for role, token_label in (
+        ("target", _QC9B_TARGET_TOKEN_LABEL),
+        ("control", _QC9B_CONTROL_TOKEN_LABEL),
+    ):
+        slots = _uninitialized_slots(ctx)
+        if not slots:
+            print("ASSUMPTION_FAILED:need two inittable slots")
+            print("OK")
+            return
+        irv = _init_token(ctx, slots[0], TEST_SO_PIN, label=token_label)
+        _step(f"setup:{role}_init_token", irv)
+        if irv != int(CKR_OK):
+            print("OK")
+            return
+        inited.append(slots[0])
+    target_slot, control_slot = inited
+    topen, tsh = _open_rw(ctx, target_slot)
+    _step("setup:target_open", topen)
+    copen, csh = _open_rw(ctx, control_slot)
+    _step("setup:control_open", copen)
+    if topen != int(CKR_OK) or copen != int(CKR_OK):
+        print("OK")
+        return
+    tso = _login(ctx, tsh, "so", TEST_SO_PIN)
+    _step("setup:target_so_login", tso)
+    cso = _login(ctx, csh, "so", TEST_SO_PIN)
+    _step("setup:control_so_login", cso)
+    if tso != int(CKR_OK) or cso != int(CKR_OK):
+        print("OK")
+        return
+    tiprv = int(ctx.raw.C_InitPIN(tsh, _buf(TEST_USER_PIN), len(TEST_USER_PIN)))
+    _step("setup:target_init_pin", tiprv)
+    ciprv = int(ctx.raw.C_InitPIN(csh, _buf(TEST_USER_PIN), len(TEST_USER_PIN)))
+    _step("setup:control_init_pin", ciprv)
+    if tiprv != int(CKR_OK) or ciprv != int(CKR_OK):
+        print("OK")
+        return
+    for sh in (tsh, csh):
+        try:
+            ctx.raw.C_Logout(sh)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
+            print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
+    tulogin = _login(ctx, tsh, "user", TEST_USER_PIN)
+    _step("setup:target_login", tulogin)
+    culogin = _login(ctx, csh, "user", TEST_USER_PIN)
+    _step("setup:control_login", culogin)
+    if tulogin != int(CKR_OK) or culogin != int(CKR_OK):
+        print("OK")
+        return
+    twrv, thandle = _create_private_session_witness(ctx, tsh, _QC9B_TARGET_WITNESS_LABEL)
+    _step("setup:target_witness", twrv)
+    cwrv, chandle = _create_private_session_witness(ctx, csh, _QC9B_CONTROL_WITNESS_LABEL)
+    _step("setup:control_witness", cwrv)
+    if twrv != int(CKR_OK) or cwrv != int(CKR_OK):
+        print("OK")
+        return
+    lrv = int(ctx.raw.C_Logout(tsh))
+    _step("target_logout", lrv)
+    tfrv, tcount = _count_labeled(ctx, tsh, _QC9B_TARGET_WITNESS_LABEL)
+    _step("target_find", tfrv)
+    if tfrv == int(CKR_OK):
+        print(f"INV:objects={tcount}")
+    cfrv, ccount = _count_labeled(ctx, csh, _QC9B_CONTROL_WITNESS_LABEL)
+    _step("control_find", cfrv)
+    if cfrv == int(CKR_OK):
+        print(f"INV:objects={ccount}")
+    _step("control_use", _read_value_rv(ctx, csh, chandle))
+    _step("target_stale_use", _read_value_rv(ctx, tsh, thandle))
+    _quiet_close(ctx, tsh)
+    _quiet_close(ctx, csh)
+    print("OK")
+
+
+def _qc11a_same_process(ctx: ProbeContext, extra: dict[str, Any]) -> None:
+    """Burn, Finalize/Initialize in-process, then read (#52.6 same-process leg).
+
+    Same burn setup/loop and same read leg as the two-phase ops (shared
+    helpers, identical step vocabulary), with an in-process
+    C_Finalize/C_Initialize cycle between them. Prints a PHASE2 marker
+    before the read leg so the parent can split the output and judge
+    both halves with the two-phase verdicts. Reinit failures end the
+    run after the marker (the parent skips: restart untestable); a
+    vanished token after restart prints NO_SLOTS (the parent fails:
+    provisioned token absent).
+    """
+    role = str(extra["role"])
+    attempts = int(extra["attempts"])
+    stop_at = str(extra.get("stop_at", "locked"))
+    if role not in ("user", "so"):
+        raise ValueError(f"unknown role {role!r}")
+    if stop_at not in ("locked", "final"):
+        raise ValueError(f"unknown stop_at {stop_at!r}")
+    setup = _setup_burn_session(ctx, role, False)
+    if setup is None:
+        return
+    slot, sh = setup
+    _burn_attempts(ctx, slot, sh, role, attempts, stop_at)
+    _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    if _info_rv != int(CKR_OK):
+        _step("snapshot:final", _info_rv)
+    _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
+    _quiet_close(ctx, sh)
+    frv = int(ctx.raw.C_Finalize(None))
+    _step("reinit:finalize", frv)
+    irv = int(ctx.raw.C_Initialize(None))
+    _step("reinit:initialize", irv)
+    print("PHASE2")
+    if frv != int(CKR_OK) or irv != int(CKR_OK):
+        print("OK")
+        return
+    slot2 = _discover_slot(ctx)
+    if slot2 is None:
+        print("NO_SLOTS")
+        print("OK")
+        return
+    _read_phase(ctx, slot2, role)
+    print("OK")
+
+
+_QC11C_RACE_THREADS = 4
+_QC11C_RACE_PINS = (b"11111111", b"22222222", b"33333333", b"44444444")
+
+
+def _qc11c_concurrent_pin(ctx: ProbeContext, extra: dict[str, Any]) -> None:
+    """Race user-PIN changes across threads; final state must linearize (#52.8).
+
+    Re-initializes with OS locking (threads under the entry NULL init
+    would be application misuse), then four threads race SetPIN with
+    distinct new PINs from a barrier. Each thread prints login/setpin
+    steps; the sequential tail tries every candidate PIN (tags P0..P4)
+    and the parent requires exactly one to work. Workers return lines
+    for ordered printing (no interleaved stdout); unexpected worker
+    exceptions propagate loud (harness bugs must fail, never mask).
+    A provider crash or hang surfaces through the child disposition.
+    """
+    del extra
+    setup = _setup_burn_session(ctx, "user", False)
+    if setup is None:
+        return
+    slot, sh = setup
+    _quiet_close(ctx, sh)
+    frv = int(ctx.raw.C_Finalize(None))
+    _step("setup:refinalize", frv)
+    if frv != int(CKR_OK):
+        print("OK")
+        return
+    args = CK_C_INITIALIZE_ARGS()
+    args.flags = int(CKF_OS_LOCKING_OK)
+    irv = int(ctx.raw.C_Initialize(ctypes.byref(args)))
+    _step("setup:relock_init", irv)
+    if irv == int(CKR_CANT_LOCK):
+        print("ASSUMPTION_FAILED:cannot_lock")
+        print("OK")
+        return
+    if irv != int(CKR_OK):
+        print("OK")
+        return
+    barrier = threading.Barrier(_QC11C_RACE_THREADS)
+
+    def race(index: int) -> list[tuple[str, int]]:
+        lines: list[tuple[str, int]] = []
+        orv, wsh = _open_rw(ctx, slot)
+        lines.append((f"thread:{index}:open", orv))
+        if orv == int(CKR_OK):
+            try:
+                lrv = _login(ctx, wsh, "user", TEST_USER_PIN)
+                lines.append((f"thread:{index}:login", lrv))
+                barrier.wait()
+                if lrv == int(CKR_OK) or lrv == int(CKR_USER_ALREADY_LOGGED_IN):
+                    new_pin = _QC11C_RACE_PINS[index]
+                    srv = int(
+                        ctx.raw.C_SetPIN(
+                            wsh,
+                            _buf(TEST_USER_PIN),
+                            len(TEST_USER_PIN),
+                            _buf(new_pin),
+                            len(new_pin),
+                        )
+                    )
+                    lines.append((f"thread:{index}:setpin", srv))
+            finally:
+                try:
+                    ctx.raw.C_Logout(wsh)
+                except Exception:  # noqa: BLE001 - best-effort per-thread cleanup
+                    pass
+                try:
+                    ctx.raw.C_CloseSession(wsh)
+                except Exception:  # noqa: BLE001 - best-effort per-thread cleanup
+                    pass
+        else:
+            barrier.wait()
+        return lines
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=_QC11C_RACE_THREADS, thread_name_prefix="qc11c-race"
+    ) as pool:
+        results = list(pool.map(race, range(_QC11C_RACE_THREADS)))
+    for lines in results:
+        for name, rv in lines:
+            _step(name, rv)
+    candidates = [("P0", TEST_USER_PIN)] + [
+        (f"P{i + 1}", pin) for i, pin in enumerate(_QC11C_RACE_PINS)
+    ]
+    for tag, pin in candidates:
+        orv, fsh = _open_rw(ctx, slot)
+        if orv != int(CKR_OK):
+            _step("setup:final_open", orv)
+            print("OK")
+            return
+        lrv = _login(ctx, fsh, "user", pin)
+        _step(f"final:login:{tag}", lrv)
+        _quiet_close(ctx, fsh)
+    print("OK")
+
+
 _PROBES: dict[str, Callable[[ProbeContext, dict[str, Any]], None]] = {
     "qc11a_burn": _qc11a_burn,
     "qc11a_read": _qc11a_read,
+    "qc11a_same_process": _qc11a_same_process,
+    "qc11c_concurrent_pin": _qc11c_concurrent_pin,
     "qc11b_pin_lengths": _qc11b_pin_lengths,
     "qc11c_journey": _qc11c_journey,
     "qc11c_verify": _qc11c_verify,
     "qc11c_reset": _qc11c_reset,
+    "qc9b_cross_token": _qc9b_cross_token,
 }
 
 

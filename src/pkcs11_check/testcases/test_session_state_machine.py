@@ -74,11 +74,13 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
+from pkcs11_check.testcases import _throwaway_token as throwaway
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
     refusal_rv_for,
 )
+from pkcs11_check.testcases._probes import token_admin
 from pkcs11_check.testcases._so_login import (
     guard_so_lockout,
     resolve_so_pin,
@@ -951,6 +953,111 @@ def _abandon_held_open_operations(
 # ---------------------------------------------------------------------------
 
 
+def _judge_cross_token_trace(trace: Any) -> None:
+    """Judge the qc9b_cross_token child trace (#52.3 cross-token leg).
+
+    The probe inits two tokens on the throwaway conf, logs into both,
+    creates a private session witness on each, logs out on the target,
+    then reports: INV lines in order (target find, control find),
+    ``control_use`` (attribute read on the control witness WITHOUT
+    relogin) and ``target_stale_use`` (attribute read on the target
+    witness handle). The gate (NO_SLOTS / ASSUMPTION_FAILED /
+    setup-failure skips) is applied by the caller.
+    """
+    label = "QC9b cross-token logout"
+    by_name = {step.name: step.rv for step in trace.steps}
+    for required in (
+        "target_logout",
+        "target_find",
+        "control_find",
+        "control_use",
+        "target_stale_use",
+    ):
+        assert required in by_name, f"{label}: probe contract broken (no {required} step)"
+    if by_name["target_logout"] != int(CKR_OK):
+        pytest.skip(
+            f"{label}: target logout failed "
+            f"({ckr_name(by_name['target_logout'])}); cross-token leg untestable "
+            "(see same-slot QC9b logout tests)"
+        )
+    for leg in ("target_find", "control_find"):
+        if by_name[leg] != int(CKR_OK):
+            pytest.skip(
+                f"{label}: post-logout {leg} unobservable "
+                f"({ckr_name(by_name[leg])}); cross-token leg untestable"
+            )
+    inv = list(trace.inv_objects)
+    assert len(inv) == 2, f"{label}: probe contract broken (need 2 INV lines, got {len(inv)})"
+    target_found, control_found = inv
+    if target_found != 0:
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_Logout",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: target private witness still found after logout (count {target_found})"
+            ),
+            detail={"target_found": target_found, "control_found": control_found},
+        )
+    if control_found != 1:
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_Logout",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(f"{label}: control witness lost without relogin (count {control_found})"),
+            detail={"target_found": target_found, "control_found": control_found},
+        )
+    if by_name["control_use"] != int(CKR_OK):
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=by_name["control_use"],
+            summary=(
+                f"{label}: control witness unusable without relogin "
+                f"({ckr_name(by_name['control_use'])})"
+            ),
+            detail={"target_found": target_found, "control_found": control_found},
+        )
+    stale_rv = by_name["target_stale_use"]
+    if stale_rv == int(CKR_OK):
+        reject_or_classify(
+            None,
+            (CKR_OBJECT_HANDLE_INVALID,),
+            label=f"{label} stale target handle",
+            kind="lifecycle",
+        )
+    else:
+        reject_or_classify(
+            CkrAssertionError(f"stale target handle {ckr_name(stale_rv)}", stale_rv),
+            (CKR_OBJECT_HANDLE_INVALID,),
+            label=f"{label} stale target handle",
+            kind="lifecycle",
+        )
+
+
+def _run_qc9b_cross_token_node(
+    cap: throwaway.ThrowawayCapability,
+    p11_config: Any,
+    *,
+    _session_factory: throwaway.SessionFactory = throwaway.admin_session,
+    _launch: throwaway.LaunchProbe = throwaway.launch_admin_probe,
+) -> None:
+    with _session_factory(cap, prefix="pkcs11_check_qc9b_") as minted:
+        rc, out, err = _launch(minted, "qc9b_cross_token", {}, p11_config=p11_config)
+        trace = token_admin.check_child_output(rc, out, err, label="QC9b cross-token logout")
+        _judge_cross_token_trace(trace)
+
+
 class TestLogoutEffects:
     """Verify that logout makes private objects inaccessible."""
 
@@ -1295,6 +1402,17 @@ class TestLogoutEffects:
             assert len(rand) == 4  # 32 bits = 4 bytes
         finally:
             close_session_quietly(rs.raw, test_sh)
+
+    def test_logout_cross_token_control_usable(self, p11_config: Any) -> None:
+        """QC9b (#52.3): logout on one token leaves another token usable.
+
+        Two self-provisioned tokens on a sacrificial conf: after
+        logging out on the target, the target private witness must
+        be gone and its handle dead, while the control token stays
+        logged in with a usable witness and no fresh login.
+        """
+        cap = throwaway.require_throwaway_capability()
+        _run_qc9b_cross_token_node(cap, p11_config)
 
 
 # ---------------------------------------------------------------------------
