@@ -45,6 +45,7 @@ from pkcs11_check.raw.rv import (
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
+    CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
     CK_UNAVAILABLE_INFORMATION_32,
     CKA_ALWAYS_SENSITIVE,
@@ -65,6 +66,7 @@ from pkcs11_check.raw.types_std import (
     CKA_PRIME,
     CKA_PRIME_1,
     CKA_PRIME_2,
+    CKA_PRIVATE,
     CKA_PRIVATE_EXPONENT,
     CKA_PUBLIC_EXPONENT,
     CKA_SEED,
@@ -91,6 +93,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKM_X9_42_DH_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
+    CKO_SECRET_KEY,
     CKP_ML_DSA_44,
     CKP_ML_KEM_512,
     CKP_SLH_DSA_SHA2_128S,
@@ -4205,3 +4208,188 @@ class TestProtectedComponentMatrix:
         finally:
             for handle in key.cleanup:
                 destroy_quietly(rs.raw, rs.sh, handle)
+
+
+# QC1b find-by-sealed-component probes (#54.2)
+#
+# The read matrix above judges attribute READS; these probes judge SEARCH:
+# a template naming a sealed component with its known value must not match
+# (or must refuse cleanly). Separate small section (not matrix rows) because
+# find needs known-value imports + find templates + find-specific verdicts,
+# while the matrix optimizes read-differential planting.
+# ---------------------------------------------------------------------------
+
+_SEALED_FIND_CLEAN_REFUSALS = frozenset(
+    {int(CKR_ATTRIBUTE_TYPE_INVALID), int(CKR_ATTRIBUTE_VALUE_INVALID)}
+)
+
+_SEALED_FIND_VALUE = _matrix_pattern(32)
+_SEALED_FIND_VALUE_ALT = _matrix_pattern(40)[8:]
+_SEALED_FIND_LABEL = b"qc1b-sealed-find"
+_SEALED_FIND_CONTROL_LABEL = b"qc1b-sealed-control"
+
+
+def _judge_sealed_find(*, rv: int, count: int, label: str) -> None:
+    """Judge a find naming a sealed component with its known value.
+
+    v3.2 §5.7.7 implies byte-exact match with no sensitivity
+    carve-out, so a sealed match is recorded oracle surface
+    (xfail), never a conformance defect (fail).
+    """
+    if rv == int(CKR_OK) and count > 0:
+        record = classification.record_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            detail={"matches": count},
+            summary=(
+                f"{label}: sealed component matched search ({count} hits); "
+                "spec-silent guess-confirm oracle surface"
+            ),
+        )
+        classification.raise_for_record(record)
+    if rv == int(CKR_OK):
+        return
+    if rv in _SEALED_FIND_CLEAN_REFUSALS:
+        return
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        pytest.skip(f"{label}: find outcome {ckr_name(rv)} carries no sealed-match evidence")
+    record = classification.record_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation="C_FindObjects",
+        actual=rv,
+        summary=f"{label}: find returned undefined CK_RV {ckr_name(rv)}",
+    )
+    classification.raise_for_record(record)
+
+
+def _judge_find_control(*, rv: int, count: int, label: str) -> None:
+    """Judge the unsealed calibration find (must match exactly once)."""
+    if rv == int(CKR_OK) and count == 1:
+        return
+    if rv == int(CKR_OK) and count == 0:
+        pytest.skip(f"{label}: control find matched nothing; find mechanics live elsewhere")
+    if rv == int(CKR_OK):
+        record = classification.record_as(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            detail={"matches": count},
+            summary=f"{label}: control find returned {count} objects, want exactly 1",
+        )
+        classification.raise_for_record(record)
+    pytest.skip(
+        f"{label}: control find unobservable ({ckr_name(rv)}); find mechanics live elsewhere"
+    )
+
+
+def _find_count_rv(raw: Any, sh: int, tmpl: Any) -> tuple[int, int]:
+    """Run Init/Find/Final; return (rv, count) with count valid only on OK."""
+    init_rv = int(raw.C_FindObjectsInit(sh, tmpl.ptr, tmpl.count))
+    if init_rv != int(CKR_OK):
+        return init_rv, -1
+    handles = (CK_OBJECT_HANDLE * 8)()
+    found = CK_ULONG(0)
+    try:
+        find_rv = int(raw.C_FindObjects(sh, handles, 8, byref(found)))
+    finally:
+        raw.C_FindObjectsFinal(sh)
+    if find_rv != int(CKR_OK):
+        return find_rv, -1
+    return find_rv, int(found.value)
+
+
+def _import_known_aes(
+    rs: Any, value: bytes, *, sensitive: bool, extractable: bool, label: bytes
+) -> int:
+    """Import a session AES key with known material; return its handle."""
+    tmpl = template(
+        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+        attr_ulong(CKA_KEY_TYPE, CKK_AES),
+        attr_bool(CKA_TOKEN, False),
+        attr_bool(CKA_PRIVATE, True),
+        attr_bool(CKA_SENSITIVE, sensitive),
+        attr_bool(CKA_EXTRACTABLE, extractable),
+        attr_bytes(CKA_LABEL, label),
+        attr_bytes(CKA_VALUE, value),
+    )
+    handle = CK_OBJECT_HANDLE(0)
+    expect_rv(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)), CKR_OK)
+    return int(handle.value)
+
+
+class TestSealedFindObjects:
+    """Find must not match sealed components by known value (#54.2)."""
+
+    def test_aes_sealed_value_find(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        try:
+            sealed = _import_known_aes(
+                rs,
+                _SEALED_FIND_VALUE,
+                sensitive=True,
+                extractable=False,
+                label=_SEALED_FIND_LABEL,
+            )
+            control = _import_known_aes(
+                rs,
+                _SEALED_FIND_VALUE_ALT,
+                sensitive=False,
+                extractable=True,
+                label=_SEALED_FIND_CONTROL_LABEL,
+            )
+        except CkrAssertionError as exc:
+            pytest.skip(
+                f"QC1b: fixture import refused ({ckr_name(exc.rv)}); matrix owns import verdicts"
+            )
+        try:
+            sealed_tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_bool(CKA_TOKEN, False),
+                attr_bytes(CKA_VALUE, _SEALED_FIND_VALUE),
+            )
+            rv, count = _find_count_rv(rs.raw, rs.sh, sealed_tmpl)
+            _judge_sealed_find(rv=rv, count=count, label="QC1b sealed AES find")
+            control_tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_bool(CKA_TOKEN, False),
+                attr_bytes(CKA_VALUE, _SEALED_FIND_VALUE_ALT),
+            )
+            crv, ccount = _find_count_rv(rs.raw, rs.sh, control_tmpl)
+            _judge_find_control(rv=crv, count=ccount, label="QC1b control find")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, sealed)
+            destroy_quietly(rs.raw, rs.sh, control)
+
+    def test_mldsa_seed_find(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("QC1b: ML-DSA unsupported; seed-find leg untestable")
+        seed = _matrix_pattern(32)
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
+            attr_ulong(CKA_KEY_TYPE, CKK_ML_DSA),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_PRIVATE, True),
+            attr_bool(CKA_SENSITIVE, True),
+            attr_bytes(CKA_LABEL, b"qc1b-mldsa-seed"),
+            attr_bytes(CKA_VALUE, seed),
+        )
+        handle = CK_OBJECT_HANDLE(0)
+        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
+        if rv != int(CKR_OK):
+            pytest.skip(f"QC1b: ML-DSA seed import refused ({ckr_name(rv)}); capability absent")
+        try:
+            seed_tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
+                attr_bool(CKA_TOKEN, False),
+                attr_bytes(CKA_SEED, seed),
+            )
+            srv, scount = _find_count_rv(rs.raw, rs.sh, seed_tmpl)
+            _judge_sealed_find(rv=srv, count=scount, label="QC1b sealed seed find")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, int(handle.value))
