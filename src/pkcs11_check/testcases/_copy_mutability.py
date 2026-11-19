@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_UNEXTRACTABLE,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
@@ -191,15 +192,20 @@ SET_FORBIDDEN_REFUSE_RVS: tuple[Any, ...] = (
 
 #: Policy-shaped refusals proving CKA_ALLOWED_MECHANISMS exclusion (I6/F2).
 #:
-#: CKR_KEY_FUNCTION_NOT_PERMITTED is the SOLE CBC proof shape ("use a key
-#: for a cryptographic purpose that the key's attributes are not set to
-#: allow"). CKR_ACTION_PROHIBITED is excluded by spec (§5.1.6: "can only
-#: be returned by C_CopyObject, C_SetAttributeValue and C_DestroyObject"):
-#: a CBC refusal with it routes to alternate/unproved with the RV
-#: preserved, never "restriction effective". COPY/SET refusal sets keep it
-#: (legal there). A transient/device-shaped refusal never proves a policy
-#: effect. Re-review round 2 adjudicates this set.
-POLICY_SHAPED_REFUSE_RVS: frozenset[int] = frozenset({int(CKR_KEY_FUNCTION_NOT_PERMITTED)})
+#: CKR_KEY_FUNCTION_NOT_PERMITTED ("use a key for a cryptographic purpose
+#: that the key's attributes are not set to allow") is the attribute-shaped
+#: proof; CKR_MECHANISM_INVALID joins it because all five key-management
+#: return lists name it while omitting FUNCTION_NOT_PERMITTED, and §5.1
+#: expressly allows return-list gaps (either code credited, raw preserved;
+#: 0.3.1 #56 adjudication). CKR_ACTION_PROHIBITED is excluded by spec
+#: (§5.1.6: "can only be returned by C_CopyObject, C_SetAttributeValue and
+#: C_DestroyObject"): a refusal with it routes to alternate/unproved with
+#: the RV preserved, never "restriction effective". COPY/SET refusal sets
+#: keep it (legal there). A transient/device-shaped refusal never proves a
+#: policy effect. Re-review round 2 adjudicates this set.
+POLICY_SHAPED_REFUSE_RVS: frozenset[int] = frozenset(
+    {int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_MECHANISM_INVALID)}
+)
 
 #: Authentication-shaped refusal: the ONLY RV proving re-authentication is
 #: demanded (PKCS#11 v3.2 §4.10: omitting re-auth "will result in
