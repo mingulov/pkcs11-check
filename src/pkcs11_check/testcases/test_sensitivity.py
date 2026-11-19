@@ -4305,6 +4305,7 @@ def _screen_sealed_find(*, outcome: _FindOutcome, handle: int, label: str) -> No
             kind="metadata",
             label=label,
             operation="C_FindObjects",
+            inherit_mechanism=False,
             detail={"matches": len(outcome.handles), "member": True},
             summary=(
                 f"{label}: sealed component matched search "
@@ -4319,6 +4320,7 @@ def _screen_sealed_find(*, outcome: _FindOutcome, handle: int, label: str) -> No
             kind="metadata",
             label=label,
             operation="C_FindObjects",
+            inherit_mechanism=False,
             actual=rv,
             summary=f"{label}: find returned undefined CK_RV {ckr_name(rv)}",
         )
@@ -4336,6 +4338,7 @@ def _judge_find_control(*, outcome: _FindOutcome, handle: int, label: str) -> No
             kind="metadata",
             label=label,
             operation="C_FindObjects",
+            inherit_mechanism=False,
             actual=rv,
             summary=f"{label}: find returned undefined CK_RV {ckr_name(rv)}",
         )
@@ -4396,6 +4399,7 @@ def _assert_sealed_flags_or_skip(rs: Any, handle: int, *, label: str) -> None:
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=exc.rv,
                 summary=f"{label}: seal-flag readback returned undefined CK_RV {ckr_name(exc.rv)}",
             )
@@ -4417,9 +4421,14 @@ def _assert_sealed_flags_or_skip(rs: Any, handle: int, *, label: str) -> None:
         kind="policy",
         inherit_mechanism=False,
     )
-    if sensitive is True and extractable is False:
-        return
-    pytest.skip(f"{label}: fixture not sealed as requested; seal unproved")
+    if (
+        sensitive is MISSING_ATTRIBUTE
+        or extractable is MISSING_ATTRIBUTE
+        or sensitive is not True
+        or extractable is not False
+    ):
+        pytest.skip(f"{label}: fixture not sealed as requested; seal unproved")
+    return
 
 
 def _import_known_aes(
