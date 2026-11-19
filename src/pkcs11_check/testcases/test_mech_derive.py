@@ -1482,6 +1482,30 @@ class TestMechDerive:
                 return
 
 
+def _fail_on_derive_alias(derived: int, source: int, *, label: str) -> None:
+    """Fail when a derive returns its source handle (C2).
+
+    An aliased derive would vacuo-pass every membership check and
+    double-destroy on cleanup; the success handle must be newly live.
+    """
+    if derived != source:
+        return
+    C.fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation="C_DeriveKey",
+        mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        summary=(
+            f"{label}: derive returned the source handle ({derived}); "
+            "search membership would vacuo-pass"
+        ),
+        detail={"derived": derived, "source": source},
+    )
+
+
 def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str) -> NoReturn:
     """Route a derived-EC staging refusal: clean RV xfail, undefined fail."""
     classify_rv_validity_or_none(exc.rv, label=label, operation=operation, kind="metadata")
@@ -1619,6 +1643,7 @@ class TestDerivedECPublicSearch:
             except CkrAssertionError as exc:
                 _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
             assert derived_pub != 0, f"{label}: derive returned handle 0"
+            _fail_on_derive_alias(derived_pub, pub_a, label=label)
 
             derived_point = read_conventional_ec_point_or_xfail(
                 rs,
@@ -1730,6 +1755,7 @@ class TestDerivedECPublicSearch:
             except CkrAssertionError as exc:
                 _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
             assert derived_pub != 0, f"{label}: derive returned handle 0"
+            _fail_on_derive_alias(derived_pub, pub_a, label=label)
 
             derived_point = read_conventional_ec_point_or_xfail(
                 rs,

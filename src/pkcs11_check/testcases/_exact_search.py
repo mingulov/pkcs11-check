@@ -366,6 +366,20 @@ def separate_search_records(
             )
         ]
     else:
+        records.append(
+            expected_not_among_record(
+                exact_d,
+                original_handle,
+                label=f"{label}:{attr_name}:cross:original-not-in-derived",
+            )
+        )
+        records.append(
+            expected_not_among_record(
+                exact_o,
+                derived_handle,
+                label=f"{label}:{attr_name}:cross:derived-not-in-original",
+            )
+        )
         changed_legs = []
         for role, key_bytes in (("derived", derived_bytes), ("original", original_bytes)):
             flipped = flip_last_byte(key_bytes)

@@ -20,6 +20,7 @@ admitted, runs the RSA-sign path with independent local verification.
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import inspect
 import sys
 import uuid
@@ -185,6 +186,7 @@ from pkcs11_check.testcases._local_verify import (
     ecdsa_local,
     rsa_pkcs15_local,
 )
+from pkcs11_check.testcases._x931 import x931_sign_input
 from pkcs11_check.testcases.conftest import skip_unless_create_object_supported
 
 
@@ -5900,6 +5902,23 @@ def _wrong_algo_mech_param(entry: RsaSignMech) -> Any:
     return mech_simple(entry.mech)
 
 
+def _wrong_algo_message(entry: RsaSignMech) -> bytes:
+    """Valid sign input per mechanism (C1).
+
+    Raw mechanisms sign encoded input directly: raw PSS takes the
+    SHA-256 digest its parameters name (a 20-byte probe would invite
+    input-length refusals misread as held defenses), and raw X9_31
+    takes digest || trailer-ID (a bare digest is invalid input per
+    the repo's X9.31 rule). Combined mechanisms and X_509 take the
+    plain probe message.
+    """
+    if entry.pss:
+        return hashlib.sha256(QC4_SIGN_DATA, usedforsecurity=False).digest()
+    if entry.mech == int(CKM_RSA_X9_31):
+        return x931_sign_input(QC4_SIGN_DATA, "sha1")
+    return QC4_SIGN_DATA
+
+
 def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
     label = f"RSA wrong-algorithm sign {mech_name} on EC-material object"
     if not rs.has_mechanism(mech_name):
@@ -5953,7 +5972,7 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 spec_ref=spec_ref,
                 summary=(f"{label}: init refused with {ckr_name(rv_init)}; defense held at init"),
             )
-        msg = QC4_SIGN_DATA
+        msg = _wrong_algo_message(entry)
         msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
         sig_buf = (ctypes.c_ubyte * 512)()
         sig_len = CK_ULONG(512)
@@ -5986,6 +6005,23 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                     "passed; defense held at use"
                 ),
                 detail=detail_base,
+            )
+        if int(sig_len.value) > 512:
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                expected="sign length <= 512",
+                actual=f"sign length {int(sig_len.value)}",
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: C_Sign claimed CKR_OK with length "
+                    f"{int(sig_len.value)} on a 512-byte buffer"
+                ),
+                detail={"sig_len": int(sig_len.value), "capacity": 512},
             )
         signature = bytes(sig_buf[: sig_len.value])
         if entry.oracle_hash is None:
