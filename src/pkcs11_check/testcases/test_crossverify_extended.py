@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from pkcs11_check.classification import fail_as
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm, mech_oaep, mech_pss
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -24,6 +24,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
@@ -40,7 +41,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA_1,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import (
     read_rsa_private_key_or_xfail,
@@ -266,6 +270,47 @@ class TestRSAPSSCrossVerify:
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
+def _gen_readable_rsa_or_xfail(rs: Any, bits: int, *, label: str) -> tuple[int, int]:
+    """Generate an RSA pair with a readable private half, or void honestly.
+
+    The cross-verify leg decrypts with cryptography, so it needs the
+    private components in the clear (SENSITIVE False + EXTRACTABLE True).
+    A module that cannot make non-sensitive private keys refuses with
+    TEMPLATE_INCONSISTENT (or READ_ONLY); that refusal is legitimate
+    (token-specific defaults, §4.1.1) and voids the leg with its cause
+    named. Any other outcome propagates unchanged.
+    """
+    try:
+        return gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits,
+            private_attrs={
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+            },
+        )
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv, label=label, operation="C_GenerateKeyPair", kind="policy"
+        )
+        if exc.rv in (int(CKR_TEMPLATE_INCONSISTENT), int(CKR_ATTRIBUTE_READ_ONLY)):
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=label,
+                operation="C_GenerateKeyPair",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: readable private-key template refused with "
+                    f"{ckr_name(exc.rv)} (module does not make non-sensitive "
+                    "private keys)"
+                ),
+            )
+        raise
+
+
 class TestRSAOAEPCrossVerify:
     """Cross-verify RSA-OAEP against cryptography library."""
 
@@ -275,15 +320,7 @@ class TestRSAOAEPCrossVerify:
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("RSA-OAEP not supported")
 
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            private_attrs={
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-            },
-        )
+        pub, priv = _gen_readable_rsa_or_xfail(rs, 2048, label="RSA-OAEP cross-verify keygen")
         try:
             plaintext = b"OAEP cross-verify"
             oaep = mech_oaep(

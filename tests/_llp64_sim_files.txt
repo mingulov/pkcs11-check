@@ -11,6 +11,7 @@ tests/test_dh_peer_encoding_contract.py
 tests/test_dss_signature_shape_contract.py
 tests/test_hash_pqc_input_contract.py
 tests/test_honest_region_contract.py
+tests/test_keygen_template_contract.py
 tests/test_logout_object_lifetime_contract.py
 tests/test_object_identity_contract.py
 tests/test_object_policy_effect_contract.py
