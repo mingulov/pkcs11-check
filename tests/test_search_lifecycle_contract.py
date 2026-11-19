@@ -1940,19 +1940,29 @@ def test_reuse_fresh_final_failure_preserves_resurrection_fail_p5(
 
 
 class _ScriptedFindRaw:
-    """Find surface scripted by Init order: one handle page per search leg."""
+    """Find surface scripted by searched value: pages keyed by template bytes.
+
+    Each Init decodes the searched attribute value and serves the next
+    scripted page for THOSE bytes; a search for unscripted bytes fails
+    loud, so a template mixup in the source cannot go green.
+    """
 
     # noqa comments below: raw PKCS#11 entry-point names are mandated.
 
-    def __init__(self, pages: list[tuple[int, ...]]) -> None:
-        self._pages = list(pages)
+    def __init__(self, pages: dict[bytes, list[tuple[int, ...]]]) -> None:
+        self._pages = {key: list(value) for key, value in pages.items()}
         self.inits = 0
+        self.searched: list[bytes] = []
         self._page: tuple[int, ...] = ()
         self._served = True
 
-    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
+    def C_FindObjectsInit(self, _sh: int, tmpl: Any, count: int) -> int:  # noqa: N802
         self.inits += 1
-        self._page = self._pages.pop(0)
+        sought = _searched_value_bytes(tmpl, int(count))
+        self.searched.append(sought)
+        assert sought in self._pages, f"search for unscripted value {sought!r}"
+        assert self._pages[sought], f"no page left for {sought!r}"
+        self._page = self._pages[sought].pop(0)
         self._served = False
         return _OK
 
@@ -1973,6 +1983,17 @@ class _ScriptedFindRaw:
         return _OK
 
 
+def _searched_value_bytes(tmpl: Any, count: int) -> bytes:
+    """Decode the non-class/key-type attribute bytes from a search template."""
+    for i in range(count):
+        if int(tmpl[i].type) not in (int(CKA_CLASS), int(CKA_KEY_TYPE)):
+            length = int(tmpl[i].ulValueLen)
+            if tmpl[i].pValue is None or length == 0:
+                return b""
+            return bytes(ctypes.string_at(tmpl[i].pValue, length))
+    raise AssertionError("search template carries no value attribute")
+
+
 _SEP_DERIVED = 101
 _SEP_ORIGINAL = 102
 _SEP_BYTES = b"shared-provider-bytes"
@@ -1980,7 +2001,7 @@ _SEP_BYTES_D = b"derived-provider-bytes"
 _SEP_BYTES_O = b"original-provider-bytes"
 
 
-def _sep_records(pages: list[tuple[int, ...]], **kw: Any) -> list[Any]:
+def _sep_records(pages: dict[bytes, list[tuple[int, ...]]], **kw: Any) -> list[Any]:
     from pkcs11_check.testcases._exact_search import separate_search_records
 
     raw = _ScriptedFindRaw(pages)
@@ -1988,10 +2009,19 @@ def _sep_records(pages: list[tuple[int, ...]], **kw: Any) -> list[Any]:
     return separate_search_records(rs, attr=int(CKA_EC_PARAMS), attr_name="params", **kw)
 
 
+def _flipped(value: bytes) -> bytes:
+    from pkcs11_check.testcases._exact_search import flip_last_byte
+
+    return flip_last_byte(value)
+
+
 def test_separate_search_agreeing_bytes_both_present_passes() -> None:
     """Shared bytes returning both handles produce no records."""
     records = _sep_records(
-        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL), ()],
+        {
+            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
+            _flipped(_SEP_BYTES): [()],
+        },
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2002,7 +2032,10 @@ def test_separate_search_agreeing_bytes_both_present_passes() -> None:
 def test_separate_search_agreeing_bytes_derived_missing_fails() -> None:
     """Shared bytes hiding the derived key fail (the #58.2 defect)."""
     records = _sep_records(
-        [(_SEP_ORIGINAL,), (_SEP_DERIVED, _SEP_ORIGINAL), ()],
+        {
+            _SEP_BYTES: [(_SEP_ORIGINAL,), (_SEP_DERIVED, _SEP_ORIGINAL)],
+            _flipped(_SEP_BYTES): [()],
+        },
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2016,7 +2049,10 @@ def test_separate_search_agreeing_bytes_derived_missing_fails() -> None:
 def test_separate_search_agreeing_bytes_cross_missing_fails() -> None:
     """The cross leg fails when the sibling search hides a shared-bytes key."""
     records = _sep_records(
-        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_ORIGINAL,), ()],
+        {
+            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_ORIGINAL,)],
+            _flipped(_SEP_BYTES): [()],
+        },
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2030,7 +2066,10 @@ def test_separate_search_agreeing_bytes_cross_missing_fails() -> None:
 def test_separate_search_changed_match_fails() -> None:
     """A changed-value search returning a staged key fails."""
     records = _sep_records(
-        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED,)],
+        {
+            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
+            _flipped(_SEP_BYTES): [(_SEP_DERIVED,)],
+        },
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2042,20 +2081,30 @@ def test_separate_search_changed_match_fails() -> None:
 
 
 def test_separate_search_diverging_bytes_self_present_passes() -> None:
-    """Diverging bytes need only per-key membership (no cross assertion)."""
+    """Diverging bytes with reciprocal exclusion produce no records."""
     records = _sep_records(
-        [(_SEP_DERIVED,), (_SEP_ORIGINAL,), (), ()],
+        {
+            _SEP_BYTES_D: [(_SEP_DERIVED,)],
+            _SEP_BYTES_O: [(_SEP_ORIGINAL,)],
+            _flipped(_SEP_BYTES_D): [()],
+            _flipped(_SEP_BYTES_O): [()],
+        },
         derived=(_SEP_DERIVED, _SEP_BYTES_D),
         original=(_SEP_ORIGINAL, _SEP_BYTES_O),
         label="sep",
     )
-    assert records == [None] * 6
+    assert records == [None] * 8
 
 
 def test_separate_search_diverging_bytes_self_missing_fails() -> None:
     """A key missing from its own-bytes search fails."""
     records = _sep_records(
-        [(), (_SEP_ORIGINAL,), (), ()],
+        {
+            _SEP_BYTES_D: [()],
+            _SEP_BYTES_O: [(_SEP_ORIGINAL,)],
+            _flipped(_SEP_BYTES_D): [()],
+            _flipped(_SEP_BYTES_O): [()],
+        },
         derived=(_SEP_DERIVED, _SEP_BYTES_D),
         original=(_SEP_ORIGINAL, _SEP_BYTES_O),
         label="sep",
@@ -2063,3 +2112,33 @@ def test_separate_search_diverging_bytes_self_missing_fails() -> None:
     fails = [record for record in records if record is not None]
     assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
     assert fails[0].reason == "self_contradiction"
+
+
+def test_separate_search_diverging_bytes_cross_hit_fails() -> None:
+    """C2: an exact search returning both handles on diverging bytes fails."""
+    records = _sep_records(
+        {
+            _SEP_BYTES_D: [(_SEP_DERIVED, _SEP_ORIGINAL)],
+            _SEP_BYTES_O: [(_SEP_ORIGINAL,)],
+            _flipped(_SEP_BYTES_D): [()],
+            _flipped(_SEP_BYTES_O): [()],
+        },
+        derived=(_SEP_DERIVED, _SEP_BYTES_D),
+        original=(_SEP_ORIGINAL, _SEP_BYTES_O),
+        label="sep",
+    )
+    fails = [record for record in records if record is not None]
+    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
+    assert fails[0].reason == "self_contradiction"
+    assert "cross" in (fails[0].summary or "")
+
+
+def test_separate_search_unscripted_template_fails_loud() -> None:
+    """C2: a search for bytes the test never scripted fails the fake, never passes."""
+    with pytest.raises(AssertionError, match="unscripted value"):
+        _sep_records(
+            {_SEP_BYTES_D: [(_SEP_DERIVED,)]},
+            derived=(_SEP_DERIVED, _SEP_BYTES_D),
+            original=(_SEP_ORIGINAL, _SEP_BYTES_O),
+            label="sep",
+        )

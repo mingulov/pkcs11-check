@@ -88,7 +88,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
@@ -388,13 +387,39 @@ def _stage_generated_objects(rs: Any) -> list[tuple[int, str, str]]:
 _QC7C_DERIVE_DATA: tuple[bytes, ...] = (b"qc7c-derive-dat1", b"qc7c-derive-dat2")
 
 
+def _note_staging_refusal(exc: CkrAssertionError, *, leg: str, operation: str) -> None:
+    """Record a staging refusal against its operation (C3).
+
+    An undefined RV fails the metadata contract loud. Any defined
+    refusal (standard or vendor) is noted with its operation and RV:
+    the leg runs short, but already-staged outputs stay live for the
+    shared check instead of being discarded.
+    """
+    if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"QC7c {leg} staging",
+            operation=operation,
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(f"QC7c {leg} staging returned undefined CK_RV {ckr_name(exc.rv)}"),
+        )
+    note(
+        f"QC7c {leg} staging refused ({operation} {ckr_name(exc.rv)}); "
+        "shared assertion runs with the staged outputs",
+        ComplianceLevel.STANDARD,
+        reference=f"QC7c #59 {leg} creator leg",
+    )
+
+
 def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
     """Two C_DeriveKey outputs for the shared uniqueness assertion.
 
-    Returns [] (noted, never fatal) when the derive mechanism is
-    unavailable or a valid derive setup is refused, so the shared
-    creator check stays live on the remaining objects. Undefined and
-    vendor RVs still route through validity-first.
+    A refused setup or derive step ends the leg with whatever is
+    already staged (noted per operation, never fatal), so the shared
+    creator check stays live on the remaining objects. Only an
+    undefined RV fails loud.
     """
     if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
         note(
@@ -417,48 +442,45 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
                 CKA_LABEL: "qc7c-derive-base",
             },
         )
-        for index in (1, 2):
-            derived = derive_key(
-                rs.raw,
-                rs.sh,
-                base,
-                CKM_AES_ECB_ENCRYPT_DATA,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_VALUE_LEN: 16,
-                    CKA_TOKEN: False,
-                    CKA_LABEL: f"qc7c-derived-{index}",
-                },
-                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _QC7C_DERIVE_DATA[index - 1]),
-            )
-            staged.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
     except CkrAssertionError as exc:
-        _destroy_all(rs, [h for h, _, _ in staged])
+        _note_staging_refusal(exc, leg="derive", operation="C_CreateObject")
+        return []
+    try:
+        for index in (1, 2):
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    CKM_AES_ECB_ENCRYPT_DATA,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_TOKEN: False,
+                        CKA_LABEL: f"qc7c-derived-{index}",
+                    },
+                    mech_param=mech_string_data(
+                        CKM_AES_ECB_ENCRYPT_DATA, _QC7C_DERIVE_DATA[index - 1]
+                    ),
+                )
+            except CkrAssertionError as exc:
+                _note_staging_refusal(exc, leg="derive", operation="C_DeriveKey")
+                break
+            staged.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
+    finally:
         if base:
             destroy_quietly(rs.raw, rs.sh, base)
-        classify_rv_validity_or_none(
-            exc.rv, label="QC7c derive staging", operation="C_DeriveKey", kind="metadata"
-        )
-        note(
-            f"QC7c derive staging not operational ({ckr_name(exc.rv)}); "
-            "shared assertion runs without derived objects",
-            ComplianceLevel.STANDARD,
-            reference="QC7c #59 derive creator leg",
-        )
-        return []
-    if base:
-        destroy_quietly(rs.raw, rs.sh, base)
     return staged
 
 
 def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
     """Two C_UnwrapKey outputs for the shared uniqueness assertion.
 
-    Returns [] (noted, never fatal) when wrap/unwrap is unavailable or a
-    valid wrap/unwrap setup is refused, so the shared creator check stays
-    live on the remaining objects. Undefined and vendor RVs still route
-    through validity-first.
+    A refused setup, wrap, or unwrap step ends the leg with whatever
+    is already staged (noted per operation, never fatal), so the
+    shared creator check stays live on the remaining objects. Only
+    an undefined RV fails loud.
     """
     if not rs.has_mechanism("AES_KEY_WRAP"):
         note(
@@ -470,61 +492,65 @@ def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
     staged: list[tuple[int, str, str]] = []
     transient: list[int] = []
     try:
-        kek = import_secret_key(
-            rs.raw,
-            rs.sh,
-            CKK_AES,
-            bytes(range(0x20, 0x30)),
-            attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_TOKEN: False,
-                CKA_LABEL: "qc7c-unwrap-kek",
-            },
-        )
-        transient.append(kek)
-        target = import_secret_key(
-            rs.raw,
-            rs.sh,
-            CKK_AES,
-            bytes(range(0x40, 0x50)),
-            attrs={
-                CKA_EXTRACTABLE: True,
-                CKA_TOKEN: False,
-                CKA_LABEL: "qc7c-unwrap-target",
-            },
-        )
-        transient.append(target)
-        blob = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
-        for index in (1, 2):
-            unwrapped = unwrap_key(
+        try:
+            kek = import_secret_key(
                 rs.raw,
                 rs.sh,
-                kek,
-                blob,
-                CKM_AES_KEY_WRAP,
+                CKK_AES,
+                bytes(range(0x20, 0x30)),
                 attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
                     CKA_TOKEN: False,
-                    CKA_LABEL: f"qc7c-unwrapped-{index}",
+                    CKA_LABEL: "qc7c-unwrap-kek",
                 },
             )
+        except CkrAssertionError as exc:
+            _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
+            return []
+        transient.append(kek)
+        try:
+            target = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                bytes(range(0x40, 0x50)),
+                attrs={
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_LABEL: "qc7c-unwrap-target",
+                },
+            )
+        except CkrAssertionError as exc:
+            _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
+            return []
+        transient.append(target)
+        try:
+            blob = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
+        except CkrAssertionError as exc:
+            _note_staging_refusal(exc, leg="unwrap", operation="C_WrapKey")
+            return []
+        for index in (1, 2):
+            try:
+                unwrapped = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    kek,
+                    blob,
+                    CKM_AES_KEY_WRAP,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                        CKA_LABEL: f"qc7c-unwrapped-{index}",
+                    },
+                )
+            except CkrAssertionError as exc:
+                _note_staging_refusal(exc, leg="unwrap", operation="C_UnwrapKey")
+                break
             staged.append((unwrapped, f"CKA_UNIQUE_ID:unwrapped key {index}", "C_UnwrapKey"))
-    except CkrAssertionError as exc:
-        _destroy_all(rs, [h for h, _, _ in staged])
+    finally:
         _destroy_all(rs, transient)
-        classify_rv_validity_or_none(
-            exc.rv, label="QC7c unwrap staging", operation="C_UnwrapKey", kind="metadata"
-        )
-        note(
-            f"QC7c unwrap staging not operational ({ckr_name(exc.rv)}); "
-            "shared assertion runs without unwrapped objects",
-            ComplianceLevel.STANDARD,
-            reference="QC7c #59 unwrap creator leg",
-        )
-        return []
-    _destroy_all(rs, transient)
     return staged
 
 
