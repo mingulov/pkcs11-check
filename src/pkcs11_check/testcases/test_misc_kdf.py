@@ -3014,7 +3014,9 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         }
         if shape == "extract":
             return _derive_byte_child(rs, _EXTRACT_NAME, [base], child_attrs)
-        data = b"\x00" if shape == "xor_zeros" else _RECOVERY_XOR_FULL_DATA
+        # NOTE: 32 zero bytes (not 1) so length-strict tokens accept the
+        # control derive; the 1-byte expectation (base[:1]) is identical.
+        data = b"\x00" * 32 if shape == "xor_zeros" else _RECOVERY_XOR_FULL_DATA
         return _derive_raw(
             rs,
             int(CKM_XOR_BASE_AND_DATA),

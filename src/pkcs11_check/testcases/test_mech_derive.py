@@ -27,7 +27,7 @@ import os
 import uuid
 from collections.abc import Sized
 from ctypes import byref
-from typing import Any, NamedTuple, NoReturn
+from typing import Any, Literal, NamedTuple, NoReturn
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -1499,14 +1499,18 @@ def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str)
     )
 
 
-def _read_ec_params_bytes(rs: Any, handle: int, *, label: str, role: str) -> bytes:
+def _read_ec_params_bytes(
+    rs: Any, handle: int, *, label: str, role: Literal["derived", "original"]
+) -> bytes:
     """Read validated CKA_EC_PARAMS bytes for a derived-EC search leg."""
     if role == "derived":
         producer_operation = "C_DeriveKey"
         producer_mechanism = "CKM_PUB_KEY_FROM_PRIV_KEY"
-    else:
+    elif role == "original":
         producer_operation = "C_GenerateKeyPair"
         producer_mechanism = "CKM_EC_KEY_PAIR_GEN"
+    else:
+        raise ValueError(f"unknown EC params role {role!r}")
     try:
         params_result = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_PARAMS])
     except CkrAssertionError as exc:

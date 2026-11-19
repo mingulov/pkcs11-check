@@ -13,10 +13,13 @@ from _pytest.outcomes import Failed, Skipped, XFailed
 
 from pkcs11_check import classification
 from pkcs11_check.raw.types_std import (
+    CK_KEY_DERIVATION_STRING_DATA,
+    CK_MECHANISM,
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKM_XOR_BASE_AND_DATA,
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
@@ -113,6 +116,7 @@ class _FakeKdfRaw:
         self.refuse_sealed = False
         self._next = 0
         self._pending: bytes | None = None
+        self.derive_data: list[bytes] = []
 
     def C_CreateObject(self, _sh: int, tmpl: Any, count: int, handle_ptr: Any) -> int:  # noqa: N802
         self._next += 1
@@ -124,6 +128,12 @@ class _FakeKdfRaw:
     def C_DeriveKey(  # noqa: N802
         self, _sh: int, _mech: Any, base: int, _tmpl: Any, _count: int, handle_ptr: Any
     ) -> int:
+        mech = ctypes.cast(_mech, ctypes.POINTER(CK_MECHANISM)).contents
+        if int(mech.mechanism) == int(CKM_XOR_BASE_AND_DATA):
+            params = ctypes.cast(
+                mech.pParameter, ctypes.POINTER(CK_KEY_DERIVATION_STRING_DATA)
+            ).contents
+            self.derive_data.append(bytes(ctypes.string_at(params.pData, int(params.ulLen))))
         if self.refuse_sealed and self.sealed.get(int(base), False):
             return int(CKR_TEMPLATE_INCONSISTENT)
         self._next += 1
@@ -178,6 +188,18 @@ def test_recovery_end_to_end_xor_full_finds_recovery() -> None:
     assert any(
         "recovered through 1-byte child" in rec.summary for rec in classification.get_records()
     )
+
+
+def test_recovery_end_to_end_xor_zeros_finds_recovery() -> None:
+    """R3.2: the xor_zeros arm passes 32 zero data bytes; the 1-byte child recovers."""
+    rs = _kdf_rs(lambda base: bytes([base[0] ^ 0x00]))
+    with pytest.raises(Failed):
+        kdf._run_byte_recovery_case(rs, shape="xor_zeros", label="t")
+    assert any(
+        "recovered through 1-byte child" in rec.summary for rec in classification.get_records()
+    )
+    # Both legs (control + sealed) carry the full 32-byte zero pad, not a 1-byte datum.
+    assert rs.raw.derive_data == [b"\x00" * 32, b"\x00" * 32]
 
 
 def test_recovery_end_to_end_refused_passes() -> None:

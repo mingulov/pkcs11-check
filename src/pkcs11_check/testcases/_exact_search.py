@@ -346,10 +346,14 @@ def separate_search_records(
     ]
     if derived_bytes == original_bytes:
         records.append(
-            expected_among_record(exact_d, original_handle, label=f"{label}:{attr_name}:cross")
+            expected_among_record(
+                exact_d, original_handle, label=f"{label}:{attr_name}:cross:original-in-derived"
+            )
         )
         records.append(
-            expected_among_record(exact_o, derived_handle, label=f"{label}:{attr_name}:cross")
+            expected_among_record(
+                exact_o, derived_handle, label=f"{label}:{attr_name}:cross:derived-in-original"
+            )
         )
         changed_legs = [
             (
@@ -362,17 +366,21 @@ def separate_search_records(
             )
         ]
     else:
-        changed_legs = [
-            (
-                observe_exact_search(
-                    rs,
-                    {**base, attr: flip_last_byte(key_bytes)},
-                    label=f"{label}:{attr_name}:changed:{role}",
-                ),
-                role,
+        changed_legs = []
+        for role, key_bytes in (("derived", derived_bytes), ("original", original_bytes)):
+            flipped = flip_last_byte(key_bytes)
+            if flipped in (derived_bytes, original_bytes):
+                continue  # degenerate: no valid control exists for this key
+            changed_legs.append(
+                (
+                    observe_exact_search(
+                        rs,
+                        {**base, attr: flipped},
+                        label=f"{label}:{attr_name}:changed:{role}",
+                    ),
+                    role,
+                )
             )
-            for role, key_bytes in (("derived", derived_bytes), ("original", original_bytes))
-        ]
     for obs, role in changed_legs:
         records.append(
             expected_not_among_record(
