@@ -1046,6 +1046,7 @@ def test_table_has_required_rows_with_rules_and_citations() -> None:
         "always_authenticate",
         "sensitive",
         "extractable",
+        "private_exponent",
         "label",
     }
     for key, row in rows.items():
@@ -1058,6 +1059,10 @@ def test_table_has_required_rows_with_rules_and_citations() -> None:
     assert rows["label"].copy_rule == "allowed"
     assert rows["label"].set_rule == "allowed"
     assert rows["extractable"].copy_rule == "no_downgrade"
+    assert rows["private_exponent"].copy_rule == "forbidden"
+    assert rows["private_exponent"].set_rule == "forbidden"
+    assert "CKA_PRIVATE_EXPONENT" in rows["private_exponent"].citation
+    assert "4.1.2" in rows["private_exponent"].citation
 
 
 def test_table_pins_allowed_mechanisms_both_directions_under_413() -> None:
@@ -1081,6 +1086,7 @@ def test_table_probes_all_cite_a_row() -> None:
         "always_authenticate",
         "sensitive_downgrade",
         "extractable_escalate",
+        "private_exponent",
         "label_control",
     }
     for probe in mod.TABLE_PROBES:
@@ -1092,6 +1098,19 @@ def test_table_probes_all_cite_a_row() -> None:
     )
     with pytest.raises(KeyError):
         mod.row_by_key("no_such_row")
+
+
+def test_exponent_probe_template_injects_full_length_exponent() -> None:
+    """The exponent probe template carries a full-length injected exponent."""
+    from pkcs11_check.raw.types_std import CKA_PRIVATE_EXPONENT
+    from pkcs11_check.testcases.security import test_api_security as api_mod
+
+    template = api_mod._table_template("private_exponent")
+    injected = template[CKA_PRIVATE_EXPONENT]
+    assert isinstance(injected, bytes)
+    assert len(injected) == api_mod._QC3B_RSA_BITS // 8
+    with pytest.raises(KeyError):
+        api_mod._table_template("no_such_probe")
 
 
 _COPY_REFUSE_RVS = [

@@ -41,6 +41,7 @@ import concurrent.futures
 import ctypes
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any, NamedTuple
 
 import pytest
@@ -1226,14 +1227,10 @@ def _qc11c_concurrent_pin(ctx: ProbeContext, extra: dict[str, Any]) -> None:
                     )
                     lines.append((f"thread:{index}:setpin", srv))
             finally:
-                try:
+                with suppress(Exception):  # best-effort per-thread cleanup  # noqa: BLE001
                     ctx.raw.C_Logout(wsh)
-                except Exception:  # noqa: BLE001 - best-effort per-thread cleanup
-                    pass
-                try:
+                with suppress(Exception):  # best-effort per-thread cleanup  # noqa: BLE001
                     ctx.raw.C_CloseSession(wsh)
-                except Exception:  # noqa: BLE001 - best-effort per-thread cleanup
-                    pass
         else:
             barrier.wait()
         return lines
