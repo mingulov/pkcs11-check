@@ -109,3 +109,123 @@ def _stub_external_tools(monkeypatch):
     )
     result.assert_outcomes(skipped=1)
     result.stdout.fnmatch_lines(["*external-tool interop*"])
+
+
+def test_proxy_load_skipped_without_opt_in(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(OPT_IN_ENV, raising=False)
+    # Hermetic child: stub proxy presence + p11_config and trap run_probe
+    # inside the inner pytest, so the test needs no host packages and cannot
+    # load anything on any platform if the gate regresses.
+    pytester.makepyfile(
+        stub_proxy_env="""
+import pytest
+
+
+def _boom(*args, **kwargs):
+    raise AssertionError("run_probe attempted without opt-in")
+
+
+@pytest.fixture
+def p11_config():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(interface="auto")
+
+
+@pytest.fixture(autouse=True)
+def _stub_proxy_env(monkeypatch):
+    from pathlib import Path
+
+    from pkcs11_check.testcases import test_interop_openssl as mod
+
+    monkeypatch.setattr(mod, "_find_lib", lambda candidates: Path("/nonexistent-proxy.so"))
+    monkeypatch.setattr(mod, "run_probe", _boom)
+"""
+    )
+    import pkcs11_check
+
+    assert pkcs11_check.__file__ is not None
+    node = (
+        str(Path(pkcs11_check.__file__).parent / "testcases" / "test_interop_openssl.py")
+        + "::TestP11KitProxy::test_load_module_via_p11kit"
+    )
+    # Plugin disabled: the stock plugin skips every testcase item without
+    # --p11-module, which would mask the gate's own skip.
+    result = pytester.runpytest_subprocess(
+        node,
+        "-v",
+        "-ra",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:pkcs11-check",
+        "-p",
+        "stub_proxy_env",
+    )
+    result.assert_outcomes(skipped=1)
+    result.stdout.fnmatch_lines(["*external-tool interop*"])
+
+
+def test_proxy_load_runs_with_opt_in(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(OPT_IN_ENV, "1")
+    # Hermetic child: the stubbed probe reports OK exactly once, proving the
+    # opt-in path still reaches the probe (the no-crash signal is preserved).
+    pytester.makepyfile(
+        stub_proxy_env_opt_in="""
+import pytest
+
+
+def _stub_run_probe(*args, **kwargs):
+    from types import SimpleNamespace
+
+    _stub_run_probe.calls.append(1)
+    if len(_stub_run_probe.calls) > 1:
+        raise AssertionError("run_probe called twice")
+    return SimpleNamespace(
+        returncode=0, stdout="OK: p11-kit proxy loaded and initialized", stderr=""
+    )
+
+
+_stub_run_probe.calls = []
+
+
+@pytest.fixture
+def p11_config():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(interface="auto")
+
+
+@pytest.fixture(autouse=True)
+def _stub_proxy_env(monkeypatch):
+    from pathlib import Path
+
+    from pkcs11_check.testcases import test_interop_openssl as mod
+
+    monkeypatch.setattr(mod, "_find_lib", lambda candidates: Path("/nonexistent-proxy.so"))
+    monkeypatch.setattr(mod, "run_probe", _stub_run_probe)
+"""
+    )
+    import pkcs11_check
+
+    assert pkcs11_check.__file__ is not None
+    node = (
+        str(Path(pkcs11_check.__file__).parent / "testcases" / "test_interop_openssl.py")
+        + "::TestP11KitProxy::test_load_module_via_p11kit"
+    )
+    result = pytester.runpytest_subprocess(
+        node,
+        "-v",
+        "-ra",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:pkcs11-check",
+        "-p",
+        "stub_proxy_env_opt_in",
+    )
+    result.assert_outcomes(passed=1)
