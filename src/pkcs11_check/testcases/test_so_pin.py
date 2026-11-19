@@ -827,9 +827,120 @@ def _run_qc11c_journey_node(
         _raise_strongest_qc11c(records1 + records2)
 
 
+def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
+    """Judge concurrent SetPIN linearization (#52.8 threaded leg).
+
+    Threads race user-PIN changes; each tags its final PIN P1..P4
+    (P0 is the pre-race PIN). Exactly one candidate may work at the
+    end: the pre-race PIN plus successful writes. Zero workers means
+    corruption, several workers (or a failed write working) means an
+    invalid credential was accepted. Undefined thread RVs fail loud;
+    with no successful write the race is untestable (skip).
+    """
+    label = "QC11c concurrent PIN"
+    thread_rvs = {step.name: step.rv for step in trace.steps if step.name.startswith("thread:")}
+    assert thread_rvs, f"{label}: probe contract broken (no thread steps)"
+    for name, rv in sorted(thread_rvs.items()):
+        if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: {name}",
+                operation="C_SetPIN",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=f"{label}: thread step returned undefined CK_RV {ckr_name(rv)}",
+            )
+    login_idx = {
+        name.split(":")[1]
+        for name in thread_rvs
+        if name.endswith(":login") and name.count(":") == 2
+    }
+    setpin = {
+        name.split(":")[1]: rv
+        for name, rv in thread_rvs.items()
+        if name.endswith(":setpin") and name.count(":") == 2
+    }
+    assert login_idx, f"{label}: probe contract broken (no thread logins)"
+    assert set(setpin) == login_idx, (
+        f"{label}: probe contract broken (setpin/login mismatch "
+        f"{sorted(setpin)} vs {sorted(login_idx)})"
+    )
+    final = {
+        name.rpartition(":")[2]: rv
+        for name, rv in (
+            (step.name, step.rv) for step in trace.steps if step.name.startswith("final:login:")
+        )
+    }
+    expected_final = {"P0"} | {f"P{int(i) + 1}" for i in login_idx}
+    assert set(final) == expected_final, (
+        f"{label}: probe contract broken (final coverage {sorted(final)} "
+        f"vs {sorted(expected_final)})"
+    )
+    successful = {f"P{int(i) + 1}" for i, rv in setpin.items() if rv == int(CKR_OK)}
+    if not successful:
+        pytest.skip(f"{label}: no SetPIN succeeded; races untestable")
+    working = {tag for tag, rv in final.items() if rv == int(CKR_OK)}
+    detail = {
+        "successful": sorted(successful),
+        "working": sorted(working),
+        "final": {tag: ckr_name(rv) for tag, rv in sorted(final.items())},
+    }
+    if len(working) != 1:
+        fail_as(
+            "accepted_invalid" if working else "self_contradiction",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: {len(working)} PINs work after the race "
+                f"({', '.join(sorted(working)) or 'none'}); exactly one must"
+            ),
+            detail=detail,
+        )
+    sole = next(iter(working))
+    if sole not in ({"P0"} | successful):
+        fail_as(
+            "accepted_invalid",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=f"{label}: failed-write PIN {sole} works after the race",
+            detail=detail,
+        )
+
+
+def _run_qc11c_concurrent_node(
+    cap: throwaway.ThrowawayCapability,
+    p11_config: Any,
+    *,
+    _session_factory: throwaway.SessionFactory = throwaway.admin_session,
+    _launch: throwaway.LaunchProbe = throwaway.launch_admin_probe,
+) -> None:
+    with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
+        rc, out, err = _launch(
+            minted, "qc11c_concurrent_pin", {}, p11_config=p11_config, timeout=60
+        )
+        trace = token_admin.check_child_output(rc, out, err, label="QC11c concurrent PIN")
+        _judge_concurrent_pin_trace(trace)
+
+
 class TestSacrificialProvisioningJourney:
     """Full provisioning journey with restart re-verification (QC11c)."""
 
     def test_sacrificial_provisioning_journey(self, p11_config: Any) -> None:
         cap = throwaway.require_throwaway_capability()
         _run_qc11c_journey_node(cap, p11_config)
+
+    def test_concurrent_pin_linearization(self, p11_config: Any) -> None:
+        """QC11c (#52.8): concurrent SetPIN linearizes to exactly one PIN.
+
+        Four threads race user-PIN changes on a sacrificial token
+        (own OS-locking init in the child); exactly one candidate
+        PIN may work afterwards. No crash, hang, or undefined RV.
+        """
+        cap = throwaway.require_throwaway_capability()
+        _run_qc11c_concurrent_node(cap, p11_config)
