@@ -3174,9 +3174,14 @@ def _assert_recovery_sealed_or_skip(rs: Any, handle: int, *, label: str) -> None
         kind="policy",
         inherit_mechanism=False,
     )
-    if sensitive is True and extractable is False:
-        return
-    pytest.skip(f"{label}: sealed base not sealed as requested; seal unproved")
+    if (
+        sensitive is MISSING_ATTRIBUTE
+        or extractable is MISSING_ATTRIBUTE
+        or sensitive is not True
+        or extractable is not False
+    ):
+        pytest.skip(f"{label}: sealed base not sealed as requested; seal unproved")
+    return
 
 
 class TestByteRecoveryOracle:
