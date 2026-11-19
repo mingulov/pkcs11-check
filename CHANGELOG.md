@@ -1,18 +1,5 @@
 # Changelog
 
-## [0.3.1] - 2026-11-19
-
-### Known limitations
-
-- Return-value counters can lose a code when the provider crashes
-  mid-call: the call itself is recorded before the provider runs, but
-  its return code is journaled after, so a crash in between orphans
-  the code (observed as a couple of codes per hundreds of thousands
-  of calls, only in runs with intentional crash tests). Persisting
-  every return before the counters rewrite would roughly double
-  flush I/O for negligible gain, so it stays deferred; tracked as
-  follow-up work.
-
 ## [0.3.0] - 2026-11-17
 
 Coverage and verdict-accuracy release: six new conformance areas,
@@ -111,6 +98,14 @@ validated by a full provider round (see Known limitations).
   counter design.
 - Startup-check counter evidence can fail warn-only under disk I/O
   pathology (loud warning, no loss record).
+- Return-value counters can lose a code when the provider crashes
+  mid-call: the call itself is recorded before the provider runs, but
+  its return code is journaled after, so a crash in between orphans
+  the code (observed as a couple of codes per hundreds of thousands
+  of calls, only in runs with intentional crash tests). Persisting
+  every return before the counters rewrite would roughly double
+  flush I/O for negligible gain, so it stays deferred; tracked as
+  follow-up work.
 - Crash-exactness needs the CLI runner (or an exported counters
   directory): bare-pytest runs count in memory only, so a crash can
   lose unflushed calls, and their rows read isolation unknown.
