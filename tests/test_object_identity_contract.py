@@ -274,6 +274,43 @@ class _IdentityRaw:
         _write_handle(handle_ptr, copied)
         return _OK
 
+    def C_DeriveKey(  # noqa: N802
+        self, _sh: int, _mech: Any, base: int, tmpl: Any, count: int, handle_ptr: Any
+    ) -> int:
+        assert int(base) in self.objects, f"derive from unknown handle {base}"
+        attrs = _decode_template(tmpl, int(count))
+        _write_handle(handle_ptr, self._alloc(attrs))
+        return _OK
+
+    def C_WrapKey(  # noqa: N802
+        self, _sh: int, _mech: Any, wrapping: int, target: int, out: Any, out_len: Any
+    ) -> int:
+        assert int(wrapping) in self.objects and int(target) in self.objects
+        blob = b"W" * 24
+        out_len_ref = ctypes.cast(out_len, ctypes.POINTER(CK_ULONG)).contents
+        if out is None:
+            out_len_ref.value = len(blob)
+            return int(CKR_BUFFER_TOO_SMALL)
+        ctypes.memmove(out, blob, len(blob))
+        out_len_ref.value = len(blob)
+        return _OK
+
+    def C_UnwrapKey(  # noqa: N802
+        self,
+        _sh: int,
+        _mech: Any,
+        unwrapping: int,
+        _blob: Any,
+        _blob_len: int,
+        tmpl: Any,
+        count: int,
+        handle_ptr: Any,
+    ) -> int:
+        assert int(unwrapping) in self.objects, f"unwrap with unknown handle {unwrapping}"
+        attrs = _decode_template(tmpl, int(count))
+        _write_handle(handle_ptr, self._alloc(attrs))
+        return _OK
+
     def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
         self.destroyed.append(int(handle))
         self.objects.pop(int(handle), None)
@@ -346,12 +383,17 @@ def _clear_classifications() -> Iterator[None]:
     C.clear()
 
 
-def _rs(fake: _IdentityRaw) -> SimpleNamespace:
+def _rs(fake: _IdentityRaw, *, mechs: set[str] | None = None) -> SimpleNamespace:
+    def _has_mechanism(*args: object) -> bool:
+        if mechs is None:
+            return True
+        return bool(args) and args[0] in mechs
+
     return SimpleNamespace(
         raw=fake,
         sh=7,
         slot_id=0,
-        has_mechanism=lambda *_a: True,
+        has_mechanism=_has_mechanism,
         has_mechanism_flag=lambda *_a: True,
     )
 
@@ -394,6 +436,15 @@ def test_copy_gets_own_unique_id_pass() -> None:
 def test_cross_creator_distinct_pass() -> None:
     fake = _IdentityRaw()
     identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    _assert_cleanup(fake)
+
+
+def test_cross_creator_stays_live_without_derive_unwrap() -> None:
+    """The shared check runs on when derive/unwrap mechs are unavailable."""
+    fake = _IdentityRaw()
+    identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(
+        _rs(fake, mechs=set())
+    )
     _assert_cleanup(fake)
 
 

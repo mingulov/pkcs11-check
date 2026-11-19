@@ -24,12 +24,14 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification as C  # noqa: N812
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.metadata_std import ATTR_NAMES
-from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
+from pkcs11_check.raw.pack import attr_bytes, attr_ulong, mech_string_data, template
 from pkcs11_check.raw.recipes import (
     copy_object,
     create_object,
     decapsulate_key,
+    derive_key,
     destroy_quietly,
     encapsulate_key,
     find_objects_exhaustive,
@@ -38,6 +40,8 @@ from pkcs11_check.raw.recipes import (
     pack_attrs,
     partition_proved_new,
     read_attributes,
+    unwrap_key,
+    wrap_key,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
@@ -45,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
     CKA_DECAPSULATE,
+    CKA_DERIVE,
     CKA_ENCAPSULATE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -55,11 +60,15 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_UNIQUE_ID,
+    CKA_UNWRAP,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKA_WRAP,
     CKK_AES,
     CKK_RSA,
+    CKM_AES_ECB_ENCRYPT_DATA,
+    CKM_AES_KEY_WRAP,
     CKM_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKO_DATA,
@@ -79,6 +88,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
@@ -374,6 +384,148 @@ def _stage_generated_objects(rs: Any) -> list[tuple[int, str, str]]:
     return staged
 
 
+def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
+    """Two C_DeriveKey outputs for the shared uniqueness assertion.
+
+    Returns [] (noted, never fatal) when the derive mechanism is
+    unavailable or a valid derive setup is refused, so the shared
+    creator check stays live on the remaining objects. Undefined and
+    vendor RVs still route through validity-first.
+    """
+    if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
+        note(
+            "QC7c derive staging skipped: CKM_AES_ECB_ENCRYPT_DATA not advertised",
+            ComplianceLevel.STANDARD,
+            reference="QC7c #59 derive creator leg",
+        )
+        return []
+    staged: list[tuple[int, str, str]] = []
+    base = 0
+    try:
+        base = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(range(16)),
+            attrs={
+                CKA_DERIVE: True,
+                CKA_TOKEN: False,
+                CKA_LABEL: "qc7c-derive-base",
+            },
+        )
+        for index in (1, 2):
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base,
+                CKM_AES_ECB_ENCRYPT_DATA,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_TOKEN: False,
+                    CKA_LABEL: f"qc7c-derived-{index}",
+                },
+                mech_param=mech_string_data(
+                    CKM_AES_ECB_ENCRYPT_DATA, f"qc7c-derive-data{index}".encode()
+                ),
+            )
+            staged.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
+    except CkrAssertionError as exc:
+        _destroy_all(rs, [h for h, _, _ in staged])
+        if base:
+            destroy_quietly(rs.raw, rs.sh, base)
+        classify_rv_validity_or_none(
+            exc.rv, label="QC7c derive staging", operation="C_DeriveKey", kind="metadata"
+        )
+        note(
+            f"QC7c derive staging not operational ({ckr_name(exc.rv)}); "
+            "shared assertion runs without derived objects",
+            ComplianceLevel.STANDARD,
+            reference="QC7c #59 derive creator leg",
+        )
+        return []
+    if base:
+        destroy_quietly(rs.raw, rs.sh, base)
+    return staged
+
+
+def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
+    """Two C_UnwrapKey outputs for the shared uniqueness assertion.
+
+    Returns [] (noted, never fatal) when wrap/unwrap is unavailable or a
+    valid wrap/unwrap setup is refused, so the shared creator check stays
+    live on the remaining objects. Undefined and vendor RVs still route
+    through validity-first.
+    """
+    if not rs.has_mechanism("AES_KEY_WRAP"):
+        note(
+            "QC7c unwrap staging skipped: CKM_AES_KEY_WRAP not advertised",
+            ComplianceLevel.STANDARD,
+            reference="QC7c #59 unwrap creator leg",
+        )
+        return []
+    staged: list[tuple[int, str, str]] = []
+    transient: list[int] = []
+    try:
+        kek = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(range(0x20, 0x30)),
+            attrs={
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_TOKEN: False,
+                CKA_LABEL: "qc7c-unwrap-kek",
+            },
+        )
+        transient.append(kek)
+        target = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(range(0x40, 0x50)),
+            attrs={
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+                CKA_LABEL: "qc7c-unwrap-target",
+            },
+        )
+        transient.append(target)
+        blob = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
+        for index in (1, 2):
+            unwrapped = unwrap_key(
+                rs.raw,
+                rs.sh,
+                kek,
+                blob,
+                CKM_AES_KEY_WRAP,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_TOKEN: False,
+                    CKA_LABEL: f"qc7c-unwrapped-{index}",
+                },
+            )
+            staged.append((unwrapped, f"CKA_UNIQUE_ID:unwrapped key {index}", "C_UnwrapKey"))
+    except CkrAssertionError as exc:
+        _destroy_all(rs, [h for h, _, _ in staged])
+        _destroy_all(rs, transient)
+        classify_rv_validity_or_none(
+            exc.rv, label="QC7c unwrap staging", operation="C_UnwrapKey", kind="metadata"
+        )
+        note(
+            f"QC7c unwrap staging not operational ({ckr_name(exc.rv)}); "
+            "shared assertion runs without unwrapped objects",
+            ComplianceLevel.STANDARD,
+            reference="QC7c #59 unwrap creator leg",
+        )
+        return []
+    _destroy_all(rs, transient)
+    return staged
+
+
 class TestUniqueIdGeneration:
     """QC7c: every creator mints a nonempty, distinct, stable UNIQUE_ID."""
 
@@ -470,7 +622,7 @@ class TestUniqueIdGeneration:
             destroy_quietly(rs.raw, rs.sh, source)
 
     def test_unique_ids_distinct_across_creators(self, p11_raw_session: Any) -> None:
-        """Create+Generate+Pair+Copy objects are globally distinct while live."""
+        """Create+Generate+Pair+Copy+Derive+Unwrap objects are globally distinct while live."""
         rs = p11_raw_session
         _require_unique_id_applicable(rs)
         staged = _stage_created_objects(rs)
@@ -485,6 +637,8 @@ class TestUniqueIdGeneration:
                 )
                 raise
             staged.append((copied, "CKA_UNIQUE_ID:copied object", "C_CopyObject"))
+            staged.extend(_stage_derived_objects(rs))
+            staged.extend(_stage_unwrapped_objects(rs))
             _raise_strongest(_collect_ids(rs, staged))
         finally:
             _destroy_all(rs, [h for h, _, _ in staged])
