@@ -216,9 +216,91 @@ jobs:
           # Makes a re-run after a later-step failure idempotent instead of fatal.
           skip-existing: true
 
+  verify-pypi:
+    name: Verify the published files
+    needs: [verify, build, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: distributions
+          path: dist/
+
+      - name: Await and verify the published files
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import re
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          SIMPLE_URL = "https://pypi.org/simple/pkcs11-check/"
+          READ_TIMEOUT = 30
+          WAIT_INTERVAL = 15
+          WAIT_DEADLINE = 300
+
+          version = os.environ["VERSION"]
+          wheel_name = f"pkcs11_check-{version}-py3-none-any.whl"
+          sdist_name = f"pkcs11_check-{version}.tar.gz"
+
+
+          def simple_page() -> str:
+              with urllib.request.urlopen(SIMPLE_URL, timeout=READ_TIMEOUT) as response:
+                  return response.read().decode("utf-8", "replace")
+
+
+          def file_hrefs(page: str) -> dict[str, str]:
+              found: dict[str, str] = {}
+              # Tolerate attributes between href and the link text: real
+              # PyPI annotates links (data-requires-python), TestPyPI's
+              # older pages do not. A strict `">` match finds nothing.
+              for href, name in re.findall(r'href="([^"]+)"[^>]*>([^<>]+)<', page):
+                  if name in (wheel_name, sdist_name):
+                      found[name] = urllib.parse.urljoin(SIMPLE_URL, href)
+              return found
+
+
+          # The GitHub Release announces this version: only proceed once both
+          # files are visible on the same simple index pip will read.
+          deadline = time.monotonic() + WAIT_DEADLINE
+          while True:
+              try:
+                  hrefs = file_hrefs(simple_page())
+              except Exception as exc:
+                  print(f"simple-index read failed ({exc}); retrying")
+                  hrefs = {}
+              if wheel_name in hrefs and sdist_name in hrefs:
+                  print(f"wheel+sdist for {version} visible on PyPI")
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit(f"pkcs11-check {version} files not visible after {WAIT_DEADLINE}s")
+              print(f"waiting for {version} files on PyPI ...")
+              time.sleep(WAIT_INTERVAL)
+
+          # The published bytes must equal the official local artifacts that
+          # the release attaches: downloading also proves fetchability, not
+          # just index presence.
+          for name, href in hrefs.items():
+              with urllib.request.urlopen(href, timeout=READ_TIMEOUT) as response:
+                  published = response.read()
+              official = Path("dist", name).read_bytes()
+              if hashlib.sha256(published).hexdigest() != hashlib.sha256(official).hexdigest():
+                  raise SystemExit(f"published {name} differs from the official artifact")
+              print(f"{name}: {len(published)} bytes, hash matches")
+          PY
+
   github-release:
     name: Publish the GitHub Release
-    needs: [verify, publish]
+    needs: [verify, publish, verify-pypi]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
