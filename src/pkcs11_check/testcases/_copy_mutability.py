@@ -559,8 +559,8 @@ def judge_guess_confirm(
     *,
     correct_exc: CkrAssertionError | None,
     wrong_exc: CkrAssertionError | None,
-    correct_preserved: bool,
-    wrong_preserved: bool,
+    correct_use: GuessUseOutcome | None,
+    wrong_use: GuessUseOutcome | None,
     created_on_refusal: tuple[bool | None, bool | None],
     inventory_rvs: tuple[int | None, int | None] = (None, None),
     expected_rvs: tuple[Any, ...],
@@ -576,10 +576,12 @@ def judge_guess_confirm(
     a copy oracle and fails, as does a refused leg that still creates an
     object. ``created_on_refusal`` carries per-leg creation evidence:
     True proved creation, False proved none, None a refused inventory
-    (creation unproved, never assumed absent). Accepted legs inherit the
-    sibling accepted-change tiers. The oracle failures cite no spec
-    clause: identical treatment of correct and wrong guesses is a
-    pkcs11-check consistency rule (#55.1), carried by the summary text.
+    (creation unproved, never assumed absent). Use outcomes ride per
+    accepted leg: a refused use voids the material comparison with its
+    RV (never a mutation claim). Accepted legs inherit the sibling
+    accepted-change tiers. The oracle failures cite no spec clause:
+    identical treatment of correct and wrong guesses is a pkcs11-check
+    consistency rule (#55.1), carried by the summary text.
     """
     for leg, exc in (("correct", correct_exc), ("wrong", wrong_exc)):
         if exc is not None:
@@ -659,16 +661,54 @@ def judge_guess_confirm(
         classify_forbidden_change_refusal(wrong_exc, expected_rvs, label=label, operation=operation)
         return
     if correct_exc is None and wrong_exc is None:
+        assert correct_use is not None and wrong_use is not None, "accepted legs need use evidence"
+        retained = []
+        for leg, use in (("correct", correct_use), ("wrong", wrong_use)):
+            if use.use_rv is not None:
+                rec = _record_rv_validity(
+                    use.use_rv,
+                    label=f"{label}: {leg} use",
+                    operation=use.operation,
+                    kind="policy",
+                )
+                if rec is not None:
+                    retained.append(rec)
+        if retained:
+            raise_for_record(_strongest_record(retained))
+        use_legs = (("correct", correct_use), ("wrong", wrong_use))
+        refused_uses = [(leg, use) for leg, use in use_legs if use.preserved is None]
+        if refused_uses:
+            leg, use = refused_uses[0]
+            assert use.use_rv is not None
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=label,
+                operation=use.operation,
+                mechanism=use.mechanism,
+                inherit_mechanism=False,
+                actual=use.use_rv,
+                summary=(
+                    f"{label}: accepted {leg} guess use refused with "
+                    f"{ckr_name(use.use_rv)}; material comparison void"
+                ),
+                detail={
+                    "void_leg": leg,
+                    "use_rv": ckr_name(use.use_rv),
+                    "correct_preserved": correct_use.preserved,
+                    "wrong_preserved": wrong_use.preserved,
+                },
+            )
         classify_ignored_or_mutated(
-            mutated=not (correct_preserved and wrong_preserved),
+            mutated=not (correct_use.preserved and wrong_use.preserved),
             label=label,
             operation=operation,
             spec_ref=spec_ref,
             ignored_summary=("both guesses accepted with sealed material preserved (safe ignore)"),
             mutated_summary="an accepted guess mutated sealed material",
             detail={
-                "correct_preserved": correct_preserved,
-                "wrong_preserved": wrong_preserved,
+                "correct_preserved": correct_use.preserved,
+                "wrong_preserved": wrong_use.preserved,
             },
         )
     oracle_refusing = correct_exc if correct_exc is not None else wrong_exc
@@ -695,6 +735,23 @@ def judge_guess_confirm(
 #: One empty/restated compare leg: ("ok", value-or-None), ("refused", rv),
 #: or ("readback-refused", rv) for an accepted copy whose readback refused.
 CopyCompareOutcome = tuple[str, Any]
+
+
+@dataclass(frozen=True)
+class GuessUseOutcome:
+    """Material-use evidence for one accepted guess-confirm leg (B3).
+
+    ``preserved`` is True when the accepted copy demonstrably kept the
+    source material, False when use proves a change, and None when the
+    use itself was refused (comparison void, never a mutation claim).
+    A refused use carries its RV, operation, and mechanism for the
+    judge's unproved record.
+    """
+
+    preserved: bool | None
+    use_rv: int | None
+    operation: str
+    mechanism: str
 
 
 def judge_copy_compare(

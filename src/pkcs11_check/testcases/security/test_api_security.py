@@ -2856,12 +2856,13 @@ def _verify_private_exponent_accept(
 ) -> None:
     """Verdict for an accepted CKA_PRIVATE_EXPONENT change: readback decides.
 
-    The exponent was readable pre-change (premise). Equal bytes prove
-    ignore; injected bytes present verbatim prove a rewrite (bytes
+    The exponent was readable pre-change (premise). An unchanged integer
+    proves ignore; the injected integer present proves a rewrite (integer
     identity is direct evidence here -- the fixture is deliberately
     unsealed, unlike the value probe which must argue functionally
-    because sealed values are unreadable); other bytes prove an
-    alteration. Refused, absent, or unusable post-change readbacks
+    because sealed values are unreadable); any other integer proves an
+    alteration. Encoding-only differences (leading zeros) never count
+    as a change. Refused, absent, or unusable post-change readbacks
     are unproved-effect xfails, mirroring the value probe: the effect
     is observed but its nature is not proved.
     """
@@ -2877,8 +2878,8 @@ def _verify_private_exponent_accept(
         xfail_as(
             "not_operational",
             kind="policy",
-            label=label,
-            operation=operation,
+            label=f"{label}: post-change readback",
+            operation="C_GetAttributeValue",
             inherit_mechanism=False,
             actual=exc.rv,
             spec_ref=spec_ref,
@@ -2901,8 +2902,8 @@ def _verify_private_exponent_accept(
         xfail_as(
             "not_operational",
             kind="policy",
-            label=label,
-            operation=operation,
+            label=f"{label}: post-change readback",
+            operation="C_GetAttributeValue",
             inherit_mechanism=False,
             spec_ref=spec_ref,
             summary=(
@@ -2911,7 +2912,8 @@ def _verify_private_exponent_accept(
             ),
             detail={"disposition": "unproved-effect", "original_len": len(original_d)},
         )
-    if current == original_d:
+    current_int = int.from_bytes(current, "big")
+    if current_int == int.from_bytes(original_d, "big"):
         xfail_as(
             "honest_deviation",
             kind="policy",
@@ -2923,13 +2925,14 @@ def _verify_private_exponent_accept(
             summary=(f"{label}: accepted exponent change ignored (exponent preserved)"),
             detail={"matches_injected": False},
         )
-    if current == _QC3B_INJECTED_EXPONENT:
+    if current_int == int.from_bytes(_QC3B_INJECTED_EXPONENT, "big"):
         fail_as(
             "self_contradiction",
             kind="policy",
             label=label,
             operation=operation,
             inherit_mechanism=False,
+            actual=int(CKR_OK),
             spec_ref=spec_ref,
             summary=(f"{label}: accepted exponent change rewrote key material"),
             detail={"matches_injected": True, "original_len": len(original_d)},
@@ -2940,10 +2943,102 @@ def _verify_private_exponent_accept(
         label=label,
         operation=operation,
         inherit_mechanism=False,
+        actual=int(CKR_OK),
         spec_ref=spec_ref,
         summary=(f"{label}: accepted exponent change altered key material"),
         detail={"matches_injected": False, "original_len": len(original_d)},
     )
+
+
+def _verify_exponent_unchanged_after_refusal(
+    rs: Any,
+    target: int,
+    original_d: bytes,
+    *,
+    spec_ref: str,
+    label: str,
+    operation: str,
+    refusal_rv: int,
+) -> None:
+    """Post-refusal readback for the readable exponent premise (B4).
+
+    Runs after a sanctioned forbidden-change refusal: a refusal that
+    still rewrote the readable exponent is a refusal-after-mutation
+    contradiction and fails. Unreadable post-refusal state voids the
+    no-change proof (the sanctioned refusal record stands, the effect
+    is unproved).
+    """
+    try:
+        read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: post-refusal readback",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=f"{label}: post-refusal readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal_rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(refusal_rv)} but the "
+                f"exponent is unreadable post-refusal ({ckr_name(exc.rv)}); "
+                "no-change unproved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "refusal_rv": ckr_name(refusal_rv),
+                "readback_rv": ckr_name(exc.rv),
+            },
+        )
+    current = attr_or_record(
+        read,
+        CKA_PRIVATE_EXPONENT,
+        label=f"{label}: post-refusal readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes):
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=f"{label}: post-refusal readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal_rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(refusal_rv)} but the "
+                "exponent is absent post-refusal; no-change unproved"
+            ),
+            detail={"disposition": "unproved-effect", "refusal_rv": ckr_name(refusal_rv)},
+        )
+    if int.from_bytes(current, "big") != int.from_bytes(original_d, "big"):
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=refusal_rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(refusal_rv)} yet the "
+                "readable exponent changed (refusal-after-mutation)"
+            ),
+            detail={
+                "refusal_rv": ckr_name(refusal_rv),
+                "original_len": len(original_d),
+                "current_len": len(current),
+            },
+        )
 
 
 def _verify_table_accept(
@@ -3187,6 +3282,17 @@ def _run_copy_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
                 label=label,
                 operation="C_CopyObject",
             )
+            if probe == "private_exponent":
+                assert original_d is not None, "exponent probe requires a pre-change readback"
+                _verify_exponent_unchanged_after_refusal(
+                    rs,
+                    src,
+                    original_d,
+                    spec_ref=row.citation,
+                    label=label,
+                    operation="C_CopyObject",
+                    refusal_rv=exc.rv,
+                )
             return
         try:
             _verify_table_accept(
@@ -3266,6 +3372,17 @@ def _run_set_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
                 label=label,
                 operation="C_SetAttributeValue",
             )
+            if probe == "private_exponent":
+                assert original_d is not None, "exponent probe requires a pre-change readback"
+                _verify_exponent_unchanged_after_refusal(
+                    rs,
+                    src,
+                    original_d,
+                    spec_ref=row.citation,
+                    label=label,
+                    operation="C_SetAttributeValue",
+                    refusal_rv=exc.rv,
+                )
             return
         _verify_table_accept(
             rs,

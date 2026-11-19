@@ -4229,78 +4229,197 @@ _SEALED_FIND_LABEL = b"qc1b-sealed-find"
 _SEALED_FIND_CONTROL_LABEL = b"qc1b-sealed-control"
 
 
-def _judge_sealed_find(*, rv: int, count: int, label: str) -> None:
-    """Judge a find naming a sealed component with its known value.
+@dataclass(frozen=True)
+class _FindOutcome:
+    """One single-page find with every stage RV preserved (B1).
 
-    v3.2 §5.7.7 implies byte-exact match with no sensitivity
-    carve-out, so a sealed match is recorded oracle surface
-    (xfail), never a conformance defect (fail).
+    ``handles`` is valid only when all three stage RVs are CKR_OK;
+    ``effective_rv`` is the first non-OK stage RV (Init, then Find,
+    then Final): a search that did not finalize cleanly proves
+    nothing about matching.
     """
-    if rv == int(CKR_OK) and count > 0:
+
+    init_rv: int
+    find_rv: int
+    final_rv: int
+    handles: tuple[int, ...]
+
+    @property
+    def effective_rv(self) -> int:
+        for rv in (self.init_rv, self.find_rv, self.final_rv):
+            if rv != int(CKR_OK):
+                return rv
+        return int(CKR_OK)
+
+
+_FIND_PAGE_SIZE = 8
+
+
+def _find_page(raw: Any, sh: int, tmpl: Any) -> _FindOutcome:
+    """Run Init/Find/Final; preserve every stage RV and the page handles."""
+    init_rv = int(raw.C_FindObjectsInit(sh, tmpl.ptr, tmpl.count))
+    if init_rv != int(CKR_OK):
+        return _FindOutcome(init_rv, -1, -1, ())
+    handles = (CK_OBJECT_HANDLE * _FIND_PAGE_SIZE)()
+    found = CK_ULONG(0)
+    try:
+        find_rv = int(raw.C_FindObjects(sh, handles, _FIND_PAGE_SIZE, byref(found)))
+    finally:
+        final_rv = int(raw.C_FindObjectsFinal(sh))
+    if find_rv != int(CKR_OK):
+        return _FindOutcome(init_rv, find_rv, final_rv, ())
+    count = int(found.value)
+    if count > _FIND_PAGE_SIZE:
+        record = classification.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label="sealed find",
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            expected=f"find count <= {_FIND_PAGE_SIZE}",
+            actual=f"find count {count}",
+            summary=(
+                "sealed find: C_FindObjects claimed CKR_OK with count "
+                f"{count} on a {_FIND_PAGE_SIZE}-element buffer"
+            ),
+            detail={"count": count, "capacity": _FIND_PAGE_SIZE},
+        )
+        classification.raise_for_record(record)
+    return _FindOutcome(init_rv, find_rv, final_rv, tuple(int(handles[i]) for i in range(count)))
+
+
+def _screen_sealed_find(*, outcome: _FindOutcome, handle: int, label: str) -> None:
+    """Direct sealed-find evidence needing no control (B1).
+
+    A proved sealed-handle match is recorded oracle surface (v3.2
+    §5.7.7 implies byte-exact match with no sensitivity carve-out),
+    never a conformance defect. An undefined stage RV fails the
+    metadata contract. A full page without the sealed handle leaves
+    membership unproved (it may hide on page 2). Anything else
+    returns for the control-dependent negative verdict.
+    """
+    rv = outcome.effective_rv
+    if rv == int(CKR_OK) and handle in outcome.handles:
         record = classification.record_as(
             "honest_deviation",
             kind="metadata",
             label=label,
             operation="C_FindObjects",
-            detail={"matches": count},
+            detail={"matches": len(outcome.handles), "member": True},
             summary=(
-                f"{label}: sealed component matched search ({count} hits); "
+                f"{label}: sealed component matched search "
+                f"({len(outcome.handles)} hits, sealed handle present); "
                 "spec-silent guess-confirm oracle surface"
             ),
         )
         classification.raise_for_record(record)
-    if rv == int(CKR_OK):
+    if rv != int(CKR_OK) and not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+        record = classification.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            actual=rv,
+            summary=f"{label}: find returned undefined CK_RV {ckr_name(rv)}",
+        )
+        classification.raise_for_record(record)
+    if rv == int(CKR_OK) and len(outcome.handles) == _FIND_PAGE_SIZE:
+        pytest.skip(f"{label}: find page full; sealed membership unproved")
+
+
+def _judge_find_control(*, outcome: _FindOutcome, handle: int, label: str) -> None:
+    """Judge the unsealed calibration find (must match exactly its handle)."""
+    rv = outcome.effective_rv
+    if rv != int(CKR_OK) and not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+        record = classification.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            actual=rv,
+            summary=f"{label}: find returned undefined CK_RV {ckr_name(rv)}",
+        )
+        classification.raise_for_record(record)
+    if rv != int(CKR_OK):
+        pytest.skip(
+            f"{label}: control find unobservable ({ckr_name(rv)}); find mechanics live elsewhere"
+        )
+    if outcome.handles == (handle,):
         return
-    if rv in _SEALED_FIND_CLEAN_REFUSALS:
-        return
-    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
-        pytest.skip(f"{label}: find outcome {ckr_name(rv)} carries no sealed-match evidence")
+    if len(outcome.handles) == 0:
+        pytest.skip(f"{label}: control find matched nothing; find mechanics live elsewhere")
     record = classification.record_as(
-        "self_contradiction",
+        "wrong_result",
         kind="metadata",
         label=label,
         operation="C_FindObjects",
-        actual=rv,
-        summary=f"{label}: find returned undefined CK_RV {ckr_name(rv)}",
+        detail={"matches": len(outcome.handles), "member": handle in outcome.handles},
+        summary=(
+            f"{label}: control find returned {len(outcome.handles)} objects "
+            f"(control present: {handle in outcome.handles}), want exactly 1"
+        ),
     )
     classification.raise_for_record(record)
 
 
-def _judge_find_control(*, rv: int, count: int, label: str) -> None:
-    """Judge the unsealed calibration find (must match exactly once)."""
-    if rv == int(CKR_OK) and count == 1:
-        return
-    if rv == int(CKR_OK) and count == 0:
-        pytest.skip(f"{label}: control find matched nothing; find mechanics live elsewhere")
+def _judge_sealed_negative(*, outcome: _FindOutcome, label: str, control_proved: bool) -> None:
+    """Control-dependent sealed-find verdict (B1).
+
+    Runs after the screen (match/undefined/full-page already decided)
+    and after the control judge. A proved no-match passes only when
+    the control proved find mechanics; without a control the absence
+    proves nothing and skips.
+    """
+    rv = outcome.effective_rv
     if rv == int(CKR_OK):
-        record = classification.record_as(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_FindObjects",
-            detail={"matches": count},
-            summary=f"{label}: control find returned {count} objects, want exactly 1",
-        )
-        classification.raise_for_record(record)
-    pytest.skip(
-        f"{label}: control find unobservable ({ckr_name(rv)}); find mechanics live elsewhere"
-    )
+        if control_proved:
+            return
+        pytest.skip(f"{label}: no unsealed control; sealed no-match unproved")
+    if rv in _SEALED_FIND_CLEAN_REFUSALS:
+        return
+    pytest.skip(f"{label}: find outcome {ckr_name(rv)} carries no sealed-match evidence")
 
 
-def _find_count_rv(raw: Any, sh: int, tmpl: Any) -> tuple[int, int]:
-    """Run Init/Find/Final; return (rv, count) with count valid only on OK."""
-    init_rv = int(raw.C_FindObjectsInit(sh, tmpl.ptr, tmpl.count))
-    if init_rv != int(CKR_OK):
-        return init_rv, -1
-    handles = (CK_OBJECT_HANDLE * 8)()
-    found = CK_ULONG(0)
+def _assert_sealed_flags_or_skip(rs: Any, handle: int, *, label: str) -> None:
+    """Prove the fixture is sealed as requested; skip when unprovable (B1).
+
+    A module that normalizes or ignores the SENSITIVE/EXTRACTABLE
+    request leaves the seal premise unproved: the find verdict would
+    be vacuous. Import fidelity itself belongs to the matrix rows.
+    """
     try:
-        find_rv = int(raw.C_FindObjects(sh, handles, 8, byref(found)))
-    finally:
-        raw.C_FindObjectsFinal(sh)
-    if find_rv != int(CKR_OK):
-        return find_rv, -1
-    return find_rv, int(found.value)
+        read = read_attributes(rs.raw, rs.sh, handle, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+    except CkrAssertionError as exc:
+        if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
+            record = classification.record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                actual=exc.rv,
+                summary=f"{label}: seal-flag readback returned undefined CK_RV {ckr_name(exc.rv)}",
+            )
+            classification.raise_for_record(record)
+        pytest.skip(f"{label}: seal flags unreadable ({ckr_name(exc.rv)}); seal unproved")
+    sensitive = attr_or_record(
+        read,
+        CKA_SENSITIVE,
+        label=f"{label}: seal flags",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    extractable = attr_or_record(
+        read,
+        CKA_EXTRACTABLE,
+        label=f"{label}: seal flags",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    if sensitive is True and extractable is False:
+        return
+    pytest.skip(f"{label}: fixture not sealed as requested; seal unproved")
 
 
 def _import_known_aes(
@@ -4347,20 +4466,26 @@ class TestSealedFindObjects:
                 f"QC1b: fixture import refused ({ckr_name(exc.rv)}); matrix owns import verdicts"
             )
         try:
+            _assert_sealed_flags_or_skip(rs, sealed, label="QC1b sealed AES find")
             sealed_tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_bool(CKA_TOKEN, False),
                 attr_bytes(CKA_VALUE, _SEALED_FIND_VALUE),
             )
-            rv, count = _find_count_rv(rs.raw, rs.sh, sealed_tmpl)
-            _judge_sealed_find(rv=rv, count=count, label="QC1b sealed AES find")
             control_tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_bool(CKA_TOKEN, False),
                 attr_bytes(CKA_VALUE, _SEALED_FIND_VALUE_ALT),
             )
-            crv, ccount = _find_count_rv(rs.raw, rs.sh, control_tmpl)
-            _judge_find_control(rv=crv, count=ccount, label="QC1b control find")
+            # Collect-then-judge (B1): both searches run before either
+            # verdict, so a sealed match never hides a broken control.
+            sealed_out = _find_page(rs.raw, rs.sh, sealed_tmpl)
+            control_out = _find_page(rs.raw, rs.sh, control_tmpl)
+            _screen_sealed_find(outcome=sealed_out, handle=sealed, label="QC1b sealed AES find")
+            _judge_find_control(outcome=control_out, handle=control, label="QC1b control find")
+            _judge_sealed_negative(
+                outcome=sealed_out, label="QC1b sealed AES find", control_proved=True
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, sealed)
             destroy_quietly(rs.raw, rs.sh, control)
@@ -4376,20 +4501,26 @@ class TestSealedFindObjects:
             attr_bool(CKA_TOKEN, False),
             attr_bool(CKA_PRIVATE, True),
             attr_bool(CKA_SENSITIVE, True),
+            attr_bool(CKA_EXTRACTABLE, False),
+            attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_44),
             attr_bytes(CKA_LABEL, b"qc1b-mldsa-seed"),
-            attr_bytes(CKA_VALUE, seed),
+            attr_bytes(CKA_SEED, seed),
         )
         handle = CK_OBJECT_HANDLE(0)
         rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
         if rv != int(CKR_OK):
             pytest.skip(f"QC1b: ML-DSA seed import refused ({ckr_name(rv)}); capability absent")
         try:
+            _assert_sealed_flags_or_skip(rs, int(handle.value), label="QC1b sealed seed find")
             seed_tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
                 attr_bool(CKA_TOKEN, False),
                 attr_bytes(CKA_SEED, seed),
             )
-            srv, scount = _find_count_rv(rs.raw, rs.sh, seed_tmpl)
-            _judge_sealed_find(rv=srv, count=scount, label="QC1b sealed seed find")
+            out = _find_page(rs.raw, rs.sh, seed_tmpl)
+            _screen_sealed_find(
+                outcome=out, handle=int(handle.value), label="QC1b sealed seed find"
+            )
+            _judge_sealed_negative(outcome=out, label="QC1b sealed seed find", control_proved=False)
         finally:
             destroy_quietly(rs.raw, rs.sh, int(handle.value))

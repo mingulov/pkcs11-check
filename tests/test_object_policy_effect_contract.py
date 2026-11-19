@@ -3818,6 +3818,34 @@ def test_qc4b_genkey_success_baseline_handle_fails_without_destroy() -> None:
     assert fake.objects[100].destroyed is False
 
 
+def test_qc4b_genkey_non_aes_width_value_is_unusable() -> None:
+    """B5: a 20-byte read key never reaches the AES oracle; use refused cleanly."""
+    label = _attempt_label("genkey", "rsa", "swap_secret_class_asym_type")
+    fake = _PolicyFake(
+        extra_for_label=label,
+        extra_attrs={int(CKA_VALUE): b"W" * 20},
+    )
+    assert_xfails(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "inspected-unusable", record.detail
+    _assert_cleaned_up(fake)
+
+
+@pytest.mark.parametrize("width", [16, 24, 32])
+def test_aes_width_or_none_admits_aes_widths(width: int) -> None:
+    """B5: AES widths pass through to the oracle."""
+    mod = _policy_module()
+    key = bytes(range(width))
+    assert mod._aes_width_or_none(key, label="L") == key
+
+
+@pytest.mark.parametrize("width", [1, 15, 17, 20, 31, 33, 64])
+def test_aes_width_or_none_voids_other_widths(width: int) -> None:
+    """B5: non-AES widths void the oracle instead of raising locally."""
+    mod = _policy_module()
+    assert mod._aes_width_or_none(bytes(width), label="L") is None
+
+
 @pytest.mark.parametrize(("family", "malformation"), _UNWRAP_CELLS)
 def test_qc4b_unwrap_attempt_requests_sign_usage(family: str, malformation: str) -> None:
     """F8: unwrap attempts exercise Sign, so they request CKA_SIGN (as does control)."""
