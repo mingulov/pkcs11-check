@@ -189,6 +189,11 @@ class TestP11KitProxy:
         proxy_path = _find_lib(_P11KIT_PROXY_PATHS)
         if proxy_path is None:
             pytest.skip("p11-kit not installed")
+        if not _external_tool_interop_enabled():
+            pytest.skip(
+                "external-tool interop disabled "
+                f"(set {_EXTERNAL_TOOL_INTEROP_ENV}=1 to load foreign modules)"
+            )
 
         # Use raw PKCS#11 API via subprocess (the _probes.p11kit_proxy_load module) to
         # avoid crash contamination.

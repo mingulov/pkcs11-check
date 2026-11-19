@@ -324,10 +324,13 @@ Counted nowhere, by design:
   dir, which the `test` CLI drops outright in favor of its own run-owned
   dir and `doctor` never sets).
 - External-tool interop children (`p11-kit` and `openssl` binaries spawned
-  by the interop tests, including grandchild processes): foreign
-  executables with no coverage channel, so their calls never enter any
-  counter. Call totals and `complete` describe instrumented framework
-  activity, including instrumented probe subprocesses. Compare external
+  by the interop tests, including grandchild processes) and native backend
+  dispatch under a loaded foreign module (e.g. `p11-kit-proxy.so` calling
+  into a registered backend): foreign executables and foreign dispatch
+  paths with no coverage channel, so their calls never enter any counter.
+  Call totals and `complete` report no known loss in framework-instrumented
+  evidence, including instrumented probe subprocesses and proxy-facing
+  calls; native backend dispatch sits outside that scope. Compare external
   traces over the same call scope. These tests run only with
   `P11TEST_ENABLE_EXTERNAL_TOOL_INTEROP=1`.
 - Collection/discovery `--collect-only` children (no report-log channel,
