@@ -40,7 +40,6 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_LABEL,
     CKA_PARAMETER_SET,
-    CKA_SENSITIVE,
     CKA_TOKEN,
     CKM_AES_ECB,
     CKM_ML_KEM,
@@ -355,11 +354,13 @@ def _generate_ml_kem_keypair(
         attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
         attr_bool(CKA_TOKEN, False),
     ]
+    # NOTE (#72): no CKA_SENSITIVE request -- KEM tests never read the
+    # private value, so the token chooses sensitivity. Asking FALSE fails
+    # on modules whose private keys are always sensitive.
     priv_packed = [
         attr_bool(CKA_DECAPSULATE, True),
         attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
         attr_bool(CKA_TOKEN, False),
-        attr_bool(CKA_SENSITIVE, False),
         attr_bool(CKA_EXTRACTABLE, False),
     ]
     if pub_list is not None:
