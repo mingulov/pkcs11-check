@@ -100,6 +100,7 @@ from pkcs11_check.testcases._copy_mutability import (
     classify_forbidden_change_refusal,
     classify_ignored_or_mutated,
     classify_rv_validity_or_none,
+    guess_use_detail,
     judge_guess_confirm,
     read_qc3_attributes,
     row_by_key,
@@ -1257,7 +1258,6 @@ def _copy_unchanged_control_or_skip(
     pass vacuously, so an empty-template duplicate (which must succeed)
     plus a use check gates them.
     """
-    check = preserves if preserves is not None else _copy_preserves_aes_material
     try:
         control = copy_object(rs.raw, rs.sh, original, {})
     except CkrAssertionError as exc:
@@ -1271,13 +1271,12 @@ def _copy_unchanged_control_or_skip(
             f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); verdict would be vacuous"
         )
     try:
-        outcome: GuessUseOutcome = check(rs, control, baseline)
-        if outcome.preserved is not True:
-            detail = (
-                f" (use refused with {ckr_name(outcome.use_rv)})"
-                if outcome.use_rv is not None
-                else ""
-            )
+        if preserves is not None:
+            outcome = preserves(rs, control, baseline)
+        else:
+            outcome = _copy_preserves_aes_material(rs, control, baseline)
+        usable, detail = guess_use_detail(outcome)
+        if not usable:
             pytest.skip(
                 f"{label}: empty-template duplicate is unusable{detail}; verdict would be vacuous"
             )

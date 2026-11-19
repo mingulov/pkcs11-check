@@ -758,6 +758,18 @@ class GuessUseOutcome:
     mechanism: str
 
 
+def guess_use_detail(outcome: GuessUseOutcome) -> tuple[bool, str]:
+    """Usability of a control duplicate plus the skip detail when unusable."""
+    if outcome.preserved is True:
+        return True, ""
+    detail = (
+        f" (use refused with {ckr_name(outcome.use_rv)})"
+        if outcome.use_rv is not None
+        else ""
+    )
+    return False, detail
+
+
 def judge_copy_compare(
     *,
     empty: CopyCompareOutcome,

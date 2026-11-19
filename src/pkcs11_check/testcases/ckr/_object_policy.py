@@ -5249,7 +5249,7 @@ def _aes_width_or_none(value: bytes, *, label: str) -> bytes | None:
 
     The oracle models AES-128/192/256; any other width leaves the use
     unverifiable (mirroring the create/unwrap/generate callers' inline
-    guards), never an unclassified local exception.
+    guards), never a raw local exception.
     """
     if len(value) not in (16, 24, 32):
         _note_qc4_observation(
