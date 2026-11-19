@@ -30,7 +30,15 @@ from typing import Any
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.rv import is_standard_ckr, is_vendor_defined_ckr
-from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CK_ULONG, CKR_OK
+from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CK_ULONG,
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKK_EC,
+    CKO_PUBLIC_KEY,
+    CKR_OK,
+)
 
 #: Handles requested per C_FindObjects call (label-scoped searches are tiny).
 PAGE_SIZE = 16
@@ -301,6 +309,82 @@ def raise_for_exact_search_records(
             C.raise_for_record(record)
     if pending:
         C.raise_for_record(pending[0])
+
+
+def separate_search_records(
+    rs: Any,
+    *,
+    attr: int,
+    attr_name: str,
+    derived: tuple[int, bytes],
+    original: tuple[int, bytes],
+    label: str,
+) -> list[C.Classification | None]:
+    """Per-attribute exact+changed observes for a derived/original key pair.
+
+    Each key must be found by its own read-back bytes; when both keys'
+    provider bytes agree, BOTH handles must appear in each search (the
+    generated key is the control). Changed-value controls (flipped last
+    byte) must exclude both keys. All legs run; callers raise the
+    strongest record once.
+    """
+    derived_handle, derived_bytes = derived
+    original_handle, original_bytes = original
+    base = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_EC,
+    }
+    exact_d = observe_exact_search(
+        rs, {**base, attr: derived_bytes}, label=f"{label}:{attr_name}:derived"
+    )
+    exact_o = observe_exact_search(
+        rs, {**base, attr: original_bytes}, label=f"{label}:{attr_name}:original"
+    )
+    records = [
+        expected_among_record(exact_d, derived_handle, label=f"{label}:{attr_name}:derived"),
+        expected_among_record(exact_o, original_handle, label=f"{label}:{attr_name}:original"),
+    ]
+    if derived_bytes == original_bytes:
+        records.append(
+            expected_among_record(exact_d, original_handle, label=f"{label}:{attr_name}:cross")
+        )
+        records.append(
+            expected_among_record(exact_o, derived_handle, label=f"{label}:{attr_name}:cross")
+        )
+        changed_legs = [
+            (
+                observe_exact_search(
+                    rs,
+                    {**base, attr: flip_last_byte(derived_bytes)},
+                    label=f"{label}:{attr_name}:changed",
+                ),
+                "shared",
+            )
+        ]
+    else:
+        changed_legs = [
+            (
+                observe_exact_search(
+                    rs,
+                    {**base, attr: flip_last_byte(key_bytes)},
+                    label=f"{label}:{attr_name}:changed:{role}",
+                ),
+                role,
+            )
+            for role, key_bytes in (("derived", derived_bytes), ("original", original_bytes))
+        ]
+    for obs, role in changed_legs:
+        records.append(
+            expected_not_among_record(
+                obs, derived_handle, label=f"{label}:{attr_name}:changed:{role}"
+            )
+        )
+        records.append(
+            expected_not_among_record(
+                obs, original_handle, label=f"{label}:{attr_name}:changed:{role}"
+            )
+        )
+    return records
 
 
 def check_exact_and_changed_search(

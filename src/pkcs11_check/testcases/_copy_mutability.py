@@ -9,12 +9,19 @@ verdict cites its own row.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import fail_as, xfail_as
-from pkcs11_check.raw.recipes import decrypt_single, encrypt_single, read_attributes
+from pkcs11_check.raw.recipes import (
+    copy_object,
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    read_attributes,
+)
 from pkcs11_check.raw.rv import (
     CkrAssertionError,
     ckr_name,
@@ -563,6 +570,152 @@ def judge_guess_confirm(
             "wrong_refused": wrong_exc is not None,
         },
     )
+
+
+#: One empty/restated compare leg: ("ok", value-or-None) or ("refused", rv).
+CopyCompareOutcome = tuple[str, Any]
+
+
+def judge_copy_compare(
+    *,
+    empty: CopyCompareOutcome,
+    restated: CopyCompareOutcome,
+    source_value: bytes,
+    label: str,
+    operation: str,
+    spec_ref: str,
+) -> None:
+    """Cross-leg verdict for empty-template vs unchanged-restatement copies (#58.3).
+
+    Equal answers pass (both preserved, or the same refusal twice with a
+    record per leg); clean differences xfail as compatibility outcomes;
+    a copy that changes the public value fails; unreadable copy values
+    void the comparison. Refusal RVs route through validity-first, so an
+    undefined code fails the metadata contract and a vendor code xfails
+    as an alternate before any comparison runs.
+    """
+    for leg, outcome in (("empty", empty), ("restated", restated)):
+        if outcome[0] == "refused":
+            classify_rv_validity_or_none(
+                outcome[1], label=f"{label}: {leg}", operation=operation, kind="policy"
+            )
+    if empty[0] == "ok" and restated[0] == "ok":
+        _, empty_value = empty
+        _, restated_value = restated
+        if empty_value is None or restated_value is None:
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                spec_ref=spec_ref,
+                summary=f"{label}: copy value unreadable; empty/restated comparison void",
+                detail={
+                    "empty_readable": empty_value is not None,
+                    "restated_readable": restated_value is not None,
+                },
+            )
+        if empty_value == restated_value == source_value:
+            return
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=f"{label}: copy changed the public value",
+            detail={
+                "empty_matches_source": empty_value == source_value,
+                "restated_matches_source": restated_value == source_value,
+                "source_len": len(source_value),
+            },
+        )
+    if empty[0] == "refused" and restated[0] == "refused":
+        if empty[1] == restated[1]:
+            for leg in ("empty", "restated"):
+                C.classify(
+                    "sanctioned_refusal",
+                    kind="policy",
+                    label=f"{label}: {leg}",
+                    operation=operation,
+                    inherit_mechanism=False,
+                    actual=empty[1],
+                    summary=(
+                        f"{label}: {leg} copy refused with {ckr_name(empty[1])} "
+                        "(identical answer on both legs)"
+                    ),
+                )
+            return
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=restated[1],
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: empty and restated copies refused differently "
+                f"({ckr_name(empty[1])} vs {ckr_name(restated[1])}; compat)"
+            ),
+            detail={"empty_rv": empty[1], "restated_rv": restated[1]},
+        )
+    xfail_as(
+        "honest_deviation",
+        kind="policy",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        spec_ref=spec_ref,
+        summary=f"{label}: empty and restated copies answered differently (compat)",
+        detail={
+            "empty_accepted": empty[0] == "ok",
+            "restated_accepted": restated[0] == "ok",
+        },
+    )
+
+
+def run_copy_compare_leg(
+    rs: Any, source: int, template: Mapping[Any, Any], *, label: str, leg: str
+) -> CopyCompareOutcome:
+    """Run one empty/restated compare leg; refusal RVs ride unjudged.
+
+    Accepted copies are read back (value bytes or None when unreadable)
+    and destroyed; refusals return their raw RV for the judge. Readback
+    refusals route through validity-first so an undefined or vendor RV
+    cannot hide behind an unreadable verdict.
+    """
+    try:
+        copy = copy_object(rs.raw, rs.sh, source, template)
+    except CkrAssertionError as exc:
+        return ("refused", exc.rv)
+    try:
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, copy, [CKA_VALUE])
+        except CkrAssertionError as exc:
+            classify_rv_validity_or_none(
+                exc.rv,
+                label=f"{label}: {leg} readback",
+                operation="C_GetAttributeValue",
+                kind="policy",
+            )
+            return ("ok", None)
+        readback = attr_or_record(
+            attrs,
+            CKA_VALUE,
+            label=f"{label}: {leg} readback",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        if readback is MISSING_ATTRIBUTE or not isinstance(readback, bytes):
+            return ("ok", None)
+        return ("ok", readback)
+    finally:
+        destroy_quietly(rs.raw, rs.sh, copy)
 
 
 def aes_ecb_encrypt(key: bytes, block: bytes) -> bytes:

@@ -115,7 +115,12 @@ from pkcs11_check.testcases._ec_export import (
     read_conventional_ec_point_or_xfail,
     select_ecdh_point_form,
 )
-from pkcs11_check.testcases._exact_search import check_exact_and_changed_search, flip_last_byte
+from pkcs11_check.testcases._exact_search import (
+    check_exact_and_changed_search,
+    flip_last_byte,
+    raise_for_exact_search_records,
+    separate_search_records,
+)
 from pkcs11_check.testcases.conftest import (
     IMPORT_STORAGE_SHAPE_REJECTS,
     import_secret_key_negotiated,
@@ -1494,6 +1499,60 @@ def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str)
     )
 
 
+def _read_ec_params_bytes(rs: Any, handle: int, *, label: str, role: str) -> bytes:
+    """Read validated CKA_EC_PARAMS bytes for a derived-EC search leg."""
+    if role == "derived":
+        producer_operation = "C_DeriveKey"
+        producer_mechanism = "CKM_PUB_KEY_FROM_PRIV_KEY"
+    else:
+        producer_operation = "C_GenerateKeyPair"
+        producer_mechanism = "CKM_EC_KEY_PAIR_GEN"
+    try:
+        params_result = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_PARAMS])
+    except CkrAssertionError as exc:
+        _qc6a_staging_refusal(exc, label=label, operation="C_GetAttributeValue")
+    before = len(C.get_records())
+    params_raw = attr_or_record(
+        params_result,
+        CKA_EC_PARAMS,
+        label=f"{label}: {role} CKA_EC_PARAMS",
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    if params_raw is MISSING_ATTRIBUTE:
+        records = C.get_records()
+        if len(records) > before:
+            C.raise_for_record(records[-1])
+        C.xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=f"{label}: {role} CKA_EC_PARAMS",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=f"{label}: {role} CKA_EC_PARAMS unavailable",
+        )
+    if type(params_raw) is not bytes or not params_raw:
+        record = C.record_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"{label}: {role} CKA_EC_PARAMS",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            detail={
+                "attribute": int(CKA_EC_PARAMS),
+                "expected": "non-empty bytes",
+                "actual_type": type(params_raw).__name__,
+                "actual_len": (len(params_raw) if isinstance(params_raw, bytes) else None),
+                "producer_operation": producer_operation,
+                "producer_mechanism": producer_mechanism,
+            },
+            summary=f"{label}: {role} CKA_EC_PARAMS is malformed",
+        )
+        C.raise_for_record(record)
+    return params_raw
+
+
 class TestDerivedECPublicSearch:
     """Exact params+point search for a PUB_KEY_FROM_PRIV_KEY output (QC6a).
 
@@ -1589,49 +1648,7 @@ class TestDerivedECPublicSearch:
                     },
                 )
 
-            try:
-                params_result = read_attributes(rs.raw, rs.sh, derived_pub, [CKA_EC_PARAMS])
-            except CkrAssertionError as exc:
-                _qc6a_staging_refusal(exc, label=label, operation="C_GetAttributeValue")
-            before = len(C.get_records())
-            params_raw = attr_or_record(
-                params_result,
-                CKA_EC_PARAMS,
-                label=f"{label}: derived CKA_EC_PARAMS",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if params_raw is MISSING_ATTRIBUTE:
-                records = C.get_records()
-                if len(records) > before:
-                    C.raise_for_record(records[-1])
-                C.xfail_as(
-                    "not_operational",
-                    kind="metadata",
-                    label=f"{label}: derived CKA_EC_PARAMS",
-                    operation="C_GetAttributeValue",
-                    inherit_mechanism=False,
-                    summary=f"{label}: derived CKA_EC_PARAMS unavailable",
-                )
-            if type(params_raw) is not bytes or not params_raw:
-                record = C.record_as(
-                    "wrong_result",
-                    kind="metadata",
-                    label=f"{label}: derived CKA_EC_PARAMS",
-                    operation="C_GetAttributeValue",
-                    inherit_mechanism=False,
-                    detail={
-                        "attribute": int(CKA_EC_PARAMS),
-                        "expected": "non-empty bytes",
-                        "actual_type": type(params_raw).__name__,
-                        "actual_len": (len(params_raw) if isinstance(params_raw, bytes) else None),
-                        "producer_operation": "C_DeriveKey",
-                        "producer_mechanism": "CKM_PUB_KEY_FROM_PRIV_KEY",
-                    },
-                    summary=f"{label}: derived CKA_EC_PARAMS is malformed",
-                )
-                C.raise_for_record(record)
+            params_raw = _read_ec_params_bytes(rs, derived_pub, label=label, role="derived")
 
             exact_template = {
                 CKA_LABEL: search_label,
@@ -1651,6 +1668,120 @@ class TestDerivedECPublicSearch:
                 expected_handle=derived_pub,
                 label="Derived EC exact params+point search",
             )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_a)
+            destroy_quietly(rs.raw, rs.sh, priv_a)
+            if derived_pub != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_pub)
+
+    def test_derived_ec_public_search_by_separate_params_and_point(
+        self, p11_module_session: RawSession
+    ) -> None:
+        """Search params and point separately; both keys must match shared bytes.
+
+        Each attribute is searched alone with exact provider bytes and no
+        label filter: a key must be found by its own read-back bytes, and
+        when both keys' provider bytes agree, BOTH handles must appear
+        (the generated key is the control). Changed-value controls (flipped
+        last byte) must exclude both keys. All legs run; the strongest
+        verdict wins.
+        """
+        rs = p11_module_session
+        label = "CKM_PUB_KEY_FROM_PRIV_KEY derived EC separate search"
+        if not _PUB_KEY_FROM_PRIV_KEY_ID:
+            pytest.skip("CKM_PUB_KEY_FROM_PRIV_KEY not in types_std")
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+            pytest.skip("EC_KEY_PAIR_GEN not available")
+        if not rs.has_mechanism("PUB_KEY_FROM_PRIV_KEY"):
+            pytest.skip("CKM_PUB_KEY_FROM_PRIV_KEY not supported")
+
+        search_label = f"pkcs11-check-qc6a-ec-sep-{uuid.uuid4().hex[:8]}"
+        pub_a, priv_a = 0, 0
+        derived_pub: int = 0
+        try:
+            try:
+                pub_a, priv_a = gen_ec_keypair(
+                    rs.raw,
+                    rs.sh,
+                    _P256_OID,
+                    private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+                )
+            except CkrAssertionError as exc:
+                _qc6a_staging_refusal(exc, label=label, operation="C_GenerateKeyPair")
+            derive_attrs: dict[int, Any] = {
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_EC,
+                CKA_TOKEN: False,
+                CKA_LABEL: search_label,
+            }
+            try:
+                derived_pub = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv_a,
+                    CKM(_PUB_KEY_FROM_PRIV_KEY_ID),
+                    attrs=derive_attrs,
+                    mech_param=mech_simple(CKM(_PUB_KEY_FROM_PRIV_KEY_ID)),
+                )
+            except CkrAssertionError as exc:
+                _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
+            assert derived_pub != 0, f"{label}: derive returned handle 0"
+
+            derived_point = read_conventional_ec_point_or_xfail(
+                rs,
+                derived_pub,
+                ec.SECP256R1(),
+                label=f"{label}: derived CKA_EC_POINT",
+            )
+            original_point = read_conventional_ec_point_or_xfail(
+                rs,
+                pub_a,
+                ec.SECP256R1(),
+                label=f"{label}: original CKA_EC_POINT",
+            )
+            if derived_point.public_key.public_numbers() != (
+                original_point.public_key.public_numbers()
+            ):
+                C.fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=label,
+                    operation="C_DeriveKey",
+                    mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+                    inherit_mechanism=False,
+                    summary=(
+                        f"{label}: derived public point does not equal the original public key"
+                    ),
+                    detail={
+                        "curve": "secp256r1",
+                        "derived_point_len": len(derived_point.provider_bytes),
+                        "original_point_len": len(original_point.provider_bytes),
+                    },
+                )
+            derived_params = _read_ec_params_bytes(rs, derived_pub, label=label, role="derived")
+            original_params = _read_ec_params_bytes(rs, pub_a, label=label, role="original")
+
+            records = []
+            for attr_name, attr, derived_bytes, original_bytes in (
+                ("params", CKA_EC_PARAMS, derived_params, original_params),
+                (
+                    "point",
+                    CKA_EC_POINT,
+                    derived_point.provider_bytes,
+                    original_point.provider_bytes,
+                ),
+            ):
+                records.extend(
+                    separate_search_records(
+                        rs,
+                        attr=attr,
+                        attr_name=attr_name,
+                        derived=(derived_pub, derived_bytes),
+                        original=(pub_a, original_bytes),
+                        label=label,
+                    )
+                )
+            raise_for_exact_search_records(records)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
             destroy_quietly(rs.raw, rs.sh, priv_a)
