@@ -384,6 +384,10 @@ def _stage_generated_objects(rs: Any) -> list[tuple[int, str, str]]:
     return staged
 
 
+#: Distinct AES-block-aligned derive inputs (length pinned: raw ECB refuses misaligned data).
+_QC7C_DERIVE_DATA: tuple[bytes, ...] = (b"qc7c-derive-dat1", b"qc7c-derive-dat2")
+
+
 def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
     """Two C_DeriveKey outputs for the shared uniqueness assertion.
 
@@ -426,9 +430,7 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
                     CKA_TOKEN: False,
                     CKA_LABEL: f"qc7c-derived-{index}",
                 },
-                mech_param=mech_string_data(
-                    CKM_AES_ECB_ENCRYPT_DATA, f"qc7c-derive-data{index}".encode()
-                ),
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _QC7C_DERIVE_DATA[index - 1]),
             )
             staged.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
     except CkrAssertionError as exc:

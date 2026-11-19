@@ -7,7 +7,7 @@ the run to fit the observer.
 
 ## Processes, not one PID
 
-The default (`--isolation auto`) runs each test unit in a fresh
+The default (`--isolation auto`) runs each test file in a fresh
 `python -m pytest` subprocess. Short-lived helper subprocesses also
 load the module, for collection and the capability probe. See
 `docs/file-isolation.md` for the runner design.

@@ -161,7 +161,6 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_87,
     CKP_SLH_DSA_SHA2_128S,
     CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
     CKR_OK,
 )
 from pkcs11_check.testcases._attribute_values import (
@@ -1214,9 +1213,17 @@ def _assert_no_labeled_objects(
     """
     try:
         found = find_objects(rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, tag.encode())))
-    except CkrAssertionError:  # audit-ok: best-effort inventory; the RV verdict stands
+    except CkrAssertionError as exc:  # audit-ok: best-effort inventory; the RV verdict stands
+        note(
+            f"{label}: label inventory refused with {ckr_name(exc.rv)}; "
+            "no-object check void, RV verdict stands",
+            ComplianceLevel.STANDARD,
+            reference="QC4a no-object inventory",
+            test_id=label,
+        )
         return
     if found:
+        _cleanup_owned(rs, [int(handle) for handle in found])
         fail_as(
             "self_contradiction",
             kind="policy",
@@ -1464,14 +1471,6 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
         CKA_LABEL: f"qc4a-derive-aux-{leg}-aux",
         CKA_ALLOWED_MECHANISMS: [derive_mech] if not excluded else [int(CKM_AES_ECB)],
     }
-    aux = _import_constrained_generic(
-        rs,
-        QC4_CONCAT_AUX,
-        aux_attrs,
-        label=label,
-        operation="C_CreateObject",
-        spec_ref=row.citation,
-    )
     control_attrs: dict[Any, Any] = {
         CKA_DERIVE: True,
         CKA_TOKEN: False,
@@ -1481,8 +1480,17 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
     }
     if excluded:
         control_attrs[CKA_ALLOWED_MECHANISMS] = [derive_mech]
+    aux = 0
     control = 0
     try:
+        aux = _import_constrained_generic(
+            rs,
+            QC4_CONCAT_AUX,
+            aux_attrs,
+            label=label,
+            operation="C_CreateObject",
+            spec_ref=row.citation,
+        )
         control = _import_constrained_generic(
             rs,
             QC4_CONCAT_AUX,
@@ -1570,6 +1578,13 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
                 mech_param=_concat_param(aux),
             )
         except CkrAssertionError as exc:
+            classify_rv_validity_or_none(
+                exc.rv,
+                label=label,
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+                kind="policy",
+            )
             _assert_no_labeled_objects(
                 rs,
                 derive_template[CKA_LABEL],
@@ -4056,6 +4071,10 @@ def _use_pqc_sign_admitted(
 
 
 _QC4B_SPEC = "PKCS#11 v3.2 §5.7.1/§5.18.4/§5.18.2 mandatory template attributes"
+_QC4B_GENKEY_SPEC = (
+    "PKCS#11 v3.2 C_GenerateKey: the template must be coherent; "
+    "secret class with an asymmetric key type is malformed"
+)
 
 
 def _create_rsa_templates(malformation: str, label: str) -> tuple[dict[Any, Any], tuple[int, int]]:
@@ -5186,6 +5205,7 @@ def _genkey_acceptance_uses(
         )
         value = None
     else:
+        record_count = len(get_records())
         claimed = attr_or_record(
             attrs,
             CKA_VALUE,
@@ -5195,7 +5215,13 @@ def _genkey_acceptance_uses(
             inherit_mechanism=False,
             sensitive_is_conformant=True,
         )
-        if claimed is MISSING_ATTRIBUTE or not isinstance(claimed, bytes) or not claimed:
+        if claimed is MISSING_ATTRIBUTE:
+            # Refusal-with-data is RECORDED by the plain call above: a
+            # proved module self-contradiction fails loud (F9 fail-fast),
+            # never noted-and-passed into the unproved arm below.
+            _raise_for_fresh_fail(record_count)
+            value = None
+        elif not isinstance(claimed, bytes) or not claimed:
             value = None
         else:
             value = claimed
@@ -5274,7 +5300,7 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             label=label,
             operation="C_GenerateKey",
             before=before,
-            spec_ref=_QC4B_SPEC,
+            spec_ref=_QC4B_GENKEY_SPEC,
             error_handles=(int(handle.value),),
             attempt_templates=(attempt_attrs,),
             identities=(
@@ -5289,13 +5315,13 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             handle.value,
             label=label,
             operation="C_GenerateKey",
-            spec_ref=_QC4B_SPEC,
+            spec_ref=_QC4B_GENKEY_SPEC,
         )
         outcomes = _genkey_acceptance_uses(
             rs,
             handle.value,
             label=label,
-            spec_ref=_QC4B_SPEC,
+            spec_ref=_QC4B_GENKEY_SPEC,
         )
         for outcome in outcomes:
             outcome.performer = readback
@@ -5307,7 +5333,7 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             pqc_type=pqc.key_type if pqc else 0,
             label=label,
             operation="C_GenerateKey",
-            spec_ref=_QC4B_SPEC,
+            spec_ref=_QC4B_GENKEY_SPEC,
         )
     finally:
         _cleanup_owned(rs, [handle.value])
@@ -5834,23 +5860,11 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 kind="policy",
                 mechanism=f"CKM_{mech_name}",
             )
-            if rv_sign == int(CKR_GENERAL_ERROR):
-                fail_as(
-                    "self_contradiction",
-                    kind="policy",
-                    label=label,
-                    operation="C_Sign",
-                    mechanism=f"CKM_{mech_name}",
-                    inherit_mechanism=False,
-                    actual=rv_sign,
-                    spec_ref=spec_ref,
-                    summary=(
-                        f"{label}: init passed on a malformed key, then sign "
-                        "failed opaquely with CKR_GENERAL_ERROR (uncontrolled "
-                        "dispatch, not a clean refusal)"
-                    ),
-                    detail=detail_base,
-                )
+            # NOTE: GENERAL_ERROR takes this same held-at-use arm. An opaque
+            # refusal after a missed Init refusal is suspicious but unproved
+            # (no spec hook distinguishes it from other clean refusals), so
+            # per the never-fail-unproved doctrine it xfails with the RV
+            # preserved rather than failing as uncontrolled dispatch.
             xfail_as(
                 "honest_deviation",
                 kind="policy",
