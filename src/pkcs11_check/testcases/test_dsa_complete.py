@@ -100,7 +100,9 @@ from pkcs11_check.testcases._copy_mutability import (
     classify_forbidden_change_refusal,
     classify_ignored_or_mutated,
     classify_rv_validity_or_none,
+    judge_copy_compare,
     read_qc3_attributes,
+    run_copy_compare_leg,
     validate_qc3_shape,
 )
 from pkcs11_check.testcases._ec_export import parse_raw_dss_or_classify
@@ -2064,6 +2066,76 @@ class TestDSAPublicCopyObservations:
                 _check_dsa_public_copy_different(rs, copy, sig=sig, changed=changed, label=label)
             finally:
                 destroy_quietly(rs.raw, rs.sh, copy)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+
+def _read_dsa_public_value_or_void(rs: Any, pub: int, *, label: str) -> bytes:
+    """Read the source public value the compare legs restate and check against."""
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv, label=f"{label}: source readback", operation="C_GetAttributeValue"
+        )
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: source readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=f"{label}: source public value unreadable; compare void",
+        )
+    readback = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label=f"{label}: source readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    if readback is MISSING_ATTRIBUTE or not isinstance(readback, bytes) or not readback:
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: source readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=f"{label}: source public value is not usable key material; compare void",
+        )
+    return readback
+
+
+class TestDSAPublicCopyCompare:
+    """DSA public-value empty/restated compare (QC6b, #58.3)."""
+
+    def test_fixed_dsa_public_copy_empty_vs_restated(self, p11_module_session: Any) -> None:
+        """Empty and restated copies must answer identically and preserve value.
+
+        The restatement carries the ACTUAL read-back bytes (not the fixed
+        fixture constant), so an encoding-divergent module is judged
+        against its own readback. Clean differences xfail as compat
+        outcomes; a value-changing copy fails.
+        """
+        rs = p11_module_session
+        label = "C_CopyObject DSA public empty-vs-restated (QC6b compare)"
+        pub, priv = _stage_fixed_dsa_pair(rs, copyable=True)
+        try:
+            source_value = _read_dsa_public_value_or_void(rs, pub, label=label)
+            empty = run_copy_compare_leg(rs, pub, {}, label=label, leg="empty")
+            restated = run_copy_compare_leg(
+                rs, pub, {CKA_VALUE: source_value}, label=label, leg="restated"
+            )
+            judge_copy_compare(
+                empty=empty,
+                restated=restated,
+                source_value=source_value,
+                label=label,
+                operation="C_CopyObject",
+                spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

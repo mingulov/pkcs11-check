@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification as C  # noqa: N812
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import (
     attr_bool,
     attr_bytes,
@@ -47,6 +47,7 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_BASE,
     CKA_CLASS,
+    CKA_COPYABLE,
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_ENCRYPT,
@@ -86,6 +87,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._copy_mutability import (
+    classify_rv_validity_or_none,
+    judge_copy_compare,
+    run_copy_compare_leg,
+)
 from pkcs11_check.testcases._exact_search import check_exact_and_changed_search, flip_last_byte
 from pkcs11_check.testcases.conftest import (
     assert_correct,
@@ -2296,3 +2302,101 @@ class TestDHPeerEncoding:
         finally:
             if priv:
                 destroy_quietly(rs.raw, rs.sh, priv)
+
+
+_DH_PUBLIC_VALUE_COPY_CITATION = (
+    "PKCS#11 v3.2 §4.1.3 limits C_CopyObject template changes to modifiable "
+    "attributes plus CKA_TOKEN/CKA_PRIVATE/CKA_MODIFIABLE/CKA_DESTROYABLE; "
+    "DH public-key CKA_VALUE carries no modifiable marking, so a copy "
+    "restating it must preserve it"
+)
+
+
+def _stage_fixed_dh_public(rs: Any, *, label: str) -> int:
+    """Import the fixed RFC3526 public key as a copyable QC6b source."""
+    return _dh_setup_or_xfail(
+        lambda: create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_DH,
+                CKA_PRIME: DH_PRIME_2048,
+                CKA_BASE: DH_GEN,
+                CKA_VALUE: _DH_RFC3526_GROUP14_BOB_PUBLIC,
+                CKA_COPYABLE: True,
+                CKA_TOKEN: False,
+                CKA_LABEL: label,
+            },
+        ),
+        f"{label}: fixed DH public import",
+    )
+
+
+def _read_dh_public_value_or_void(rs: Any, pub: int, *, label: str) -> bytes:
+    """Read the source public value the compare legs restate and check against."""
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv, label=f"{label}: source readback", operation="C_GetAttributeValue"
+        )
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: source readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=f"{label}: source public value unreadable; compare void",
+        )
+    readback = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label=f"{label}: source readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    if readback is MISSING_ATTRIBUTE or not isinstance(readback, bytes) or not readback:
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: source readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=f"{label}: source public value is not usable key material; compare void",
+        )
+    return readback
+
+
+class TestDHPublicCopyCompare:
+    """DH public-value empty/restated compare (QC6b, #58.3)."""
+
+    def test_fixed_dh_public_copy_empty_vs_restated(self, p11_module_session: Any) -> None:
+        """Empty and restated copies must answer identically and preserve value.
+
+        The restatement carries the ACTUAL read-back bytes (not the fixed
+        fixture constant), so an encoding-divergent module is judged
+        against its own readback. Clean differences xfail as compat
+        outcomes; a value-changing copy fails.
+        """
+        rs = p11_module_session
+        label = "C_CopyObject DH public empty-vs-restated (QC6b compare)"
+        pub = _stage_fixed_dh_public(rs, label=label)
+        try:
+            source_value = _read_dh_public_value_or_void(rs, pub, label=label)
+            empty = run_copy_compare_leg(rs, pub, {}, label=label, leg="empty")
+            restated = run_copy_compare_leg(
+                rs, pub, {CKA_VALUE: source_value}, label=label, leg="restated"
+            )
+            judge_copy_compare(
+                empty=empty,
+                restated=restated,
+                source_value=source_value,
+                label=label,
+                operation="C_CopyObject",
+                spec_ref=_DH_PUBLIC_VALUE_COPY_CITATION,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
