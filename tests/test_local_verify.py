@@ -2,6 +2,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
 
 from pkcs11_check.testcases._local_verify import (
+    ecdsa_der_local,
     ecdsa_local,
     rsa_pkcs15_local,
     rsa_pss_local,
@@ -137,6 +138,22 @@ def test_ecdsa_local_p256_raw_sig() -> None:
     assert ecdsa_local(k.public_key(), msg, raw, hashes.SHA256(), 32) is True
     bad = (r ^ 1).to_bytes(32, "big") + s.to_bytes(32, "big")
     assert ecdsa_local(k.public_key(), msg, bad, hashes.SHA256(), 32) is False
+
+
+def test_ecdsa_der_local_verifies_genuine_der() -> None:
+    k = ec.generate_private_key(ec.SECP256R1())
+    msg = b"m"
+    der = k.sign(msg, ec.ECDSA(hashes.SHA256()))
+    assert ecdsa_der_local(k.public_key(), msg, der, hashes.SHA256()) is True
+    other = ec.generate_private_key(ec.SECP256R1())
+    assert ecdsa_der_local(other.public_key(), msg, der, hashes.SHA256()) is False
+
+
+def test_ecdsa_der_local_garbage_is_false_not_raise() -> None:
+    k = ec.generate_private_key(ec.SECP256R1())
+    assert ecdsa_der_local(k.public_key(), b"m", b"not-a-signature", hashes.SHA256()) is False
+    assert ecdsa_der_local(k.public_key(), b"m", b"", hashes.SHA256()) is False
+    assert ecdsa_der_local(k.public_key(), b"m", b"\x30\x45\x02", hashes.SHA256()) is False
 
 
 def test_ecdsa_local_p521_raw_sig() -> None:

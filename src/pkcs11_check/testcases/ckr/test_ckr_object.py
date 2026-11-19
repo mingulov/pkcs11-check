@@ -810,6 +810,19 @@ class TestAllowedMechanismsDerive:
         _qc4._run_derive_policy_leg(p11_raw_session, leg, use)
 
 
+class TestAllowedMechanismsDeriveAux:
+    """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the C_DeriveKey auxiliary key.
+
+    Single classic path (no message-use variant): the derived generic
+    secret is oracle-verified, not round-tripped.
+    """
+
+    @pytest.mark.parametrize("leg", ["included", "excluded"])
+    def test_derive_aux_policy_leg(self, p11_raw_session: Any, leg: str) -> None:
+        """Included must complete verified; excluded must refuse and create nothing."""
+        _qc4._run_derive_aux_policy_leg(p11_raw_session, leg)
+
+
 class TestAllowedMechanismsWrap:
     """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the C_WrapKey wrapping key."""
 
@@ -899,3 +912,21 @@ class TestMalformedObjectGenerate:
     ) -> None:
         """Refusal proves zero delta; acceptance is inspected and used."""
         _qc4._run_generate_malformed_cell(p11_raw_session, family, malformation)
+
+
+class TestMalformedObjectGenerateKey:
+    """QC4b (#56.2): malformed class/type C_GenerateKey templates."""
+
+    @pytest.mark.parametrize(
+        ("family", "malformation"),
+        [
+            ("rsa", "swap_secret_class_asym_type"),
+            ("ec", "swap_secret_class_asym_type"),
+            ("pqc", "swap_secret_class_asym_type"),
+        ],
+    )
+    def test_genkey_malformed_template(
+        self, p11_raw_session: Any, family: str, malformation: str
+    ) -> None:
+        """Refusal proves zero delta; acceptance is inspected and used."""
+        _qc4._run_genkey_malformed_cell(p11_raw_session, family, malformation)
