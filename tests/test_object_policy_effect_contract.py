@@ -58,6 +58,7 @@ from pkcs11_check._plugin_report_attach import _apply_recorded_outcome
 from pkcs11_check.compliance import clear_notes, get_notes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CK_UNAVAILABLE_INFORMATION,
     CKA_ALLOWED_MECHANISMS,
     CKA_CLASS,
     CKA_COEFFICIENT,
@@ -2372,27 +2373,54 @@ def test_qc4a_derive_aux_setup_import_refused_voids() -> None:
 
 
 class _FindStub:
-    """Minimal raw stub serving one canned find page."""
+    """Minimal raw stub serving one canned find page plus label readback."""
 
-    def __init__(self, handles: list[int], *, refuse_rv: int | None = None) -> None:
+    def __init__(
+        self,
+        handles: list[int],
+        *,
+        refuse_rv: int | None = None,
+        labels: dict[int, bytes | None] | None = None,
+        label_rv: int | None = None,
+    ) -> None:
         self._handles = handles
         self._refuse_rv = refuse_rv
+        self._labels = labels or {}
+        self._label_rv = label_rv
         self.destroyed: list[int] = []
+        self._served = True
 
     def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
         if self._refuse_rv is not None:
             return self._refuse_rv
+        self._served = False
         return _OK
 
     def C_FindObjects(  # noqa: N802
         self, _sh: int, handles: Any, _max: int, out_count: Any
     ) -> int:
-        for i, handle in enumerate(self._handles):
+        page = [] if self._served else self._handles
+        self._served = True
+        for i, handle in enumerate(page):
             handles[i] = handle
-        _fill_ulong(out_count, len(self._handles))
+        _fill_ulong(out_count, len(page))
         return _OK
 
     def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
+        return _OK
+
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, _count: int) -> int:  # noqa: N802
+        if self._label_rv is not None:
+            return self._label_rv
+        value = self._labels.get(int(handle))
+        if value is None:
+            tmpl[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
+            return _OK
+        if tmpl[0].pValue is None:
+            tmpl[0].ulValueLen = len(value)
+            return _OK
+        ctypes.memmove(tmpl[0].pValue, value, len(value))
+        tmpl[0].ulValueLen = len(value)
         return _OK
 
     def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
@@ -2401,9 +2429,9 @@ class _FindStub:
 
 
 def test_no_labeled_objects_empty_passes() -> None:
-    """An empty label inventory after refusal returns cleanly."""
+    """An empty post-attempt delta after refusal returns cleanly."""
     mod = _policy_module()
-    rs = SimpleNamespace(raw=_FindStub([]), sh=1)
+    rs = SimpleNamespace(raw=_FindStub([1, 2]), sh=1)
     mod._assert_no_labeled_objects(
         rs,
         "qc4a-tag",
@@ -2415,10 +2443,10 @@ def test_no_labeled_objects_empty_passes() -> None:
     )
 
 
-def test_no_labeled_objects_found_fails() -> None:
-    """Objects carrying the refused call's label fail as a contradiction."""
+def test_no_labeled_objects_owned_fails_and_destroys() -> None:
+    """R2A2: a delta-new handle with the attempt label fails and is destroyed."""
     mod = _policy_module()
-    stub = _FindStub([101, 102])
+    stub = _FindStub([1, 101, 102], labels={101: b"qc4a-tag", 102: b"qc4a-tag"})
     rs = SimpleNamespace(raw=stub, sh=1)
     _run_must_fail(
         mod._assert_no_labeled_objects,
@@ -2428,34 +2456,17 @@ def test_no_labeled_objects_found_fails() -> None:
         operation="C_DeriveKey",
         spec_ref="S",
         rv=_FUNCTION_FAILED,
-        before=[1, 2],
+        before=[1],
     )
-    _assert_fail_record("self_contradiction", "policy")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert (record.detail or {}).get("handles") == [101, 102], record.detail
     assert stub.destroyed == [101, 102]
 
 
-def test_no_labeled_objects_preexisting_left_alone() -> None:
-    """A1: label hits predating the attempt are left alone, never destroyed."""
+def test_no_labeled_objects_uncorrelated_fails_without_destroy() -> None:
+    """R2A2: a delta-new handle without the tag fails but is left alone."""
     mod = _policy_module()
-    stub = _FindStub([101, 102])
-    rs = SimpleNamespace(raw=stub, sh=1)
-    mod._assert_no_labeled_objects(
-        rs,
-        "qc4a-tag",
-        label="L",
-        operation="C_DeriveKey",
-        spec_ref="S",
-        rv=_FUNCTION_FAILED,
-        before=[101, 102],
-    )
-    assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
-    assert stub.destroyed == []
-
-
-def test_no_labeled_objects_mixed_destroys_only_new() -> None:
-    """A1: a mixed label inventory destroys only the attempt-correlated hit."""
-    mod = _policy_module()
-    stub = _FindStub([101, 102])
+    stub = _FindStub([1, 101], labels={101: b"foreign-tag"})
     rs = SimpleNamespace(raw=stub, sh=1)
     _run_must_fail(
         mod._assert_no_labeled_objects,
@@ -2465,15 +2476,35 @@ def test_no_labeled_objects_mixed_destroys_only_new() -> None:
         operation="C_DeriveKey",
         spec_ref="S",
         rv=_FUNCTION_FAILED,
-        before=[101],
+        before=[1],
     )
     record = _assert_fail_record("self_contradiction", "policy")
-    assert (record.detail or {}).get("handles") == [102]
-    assert stub.destroyed == [102]
+    assert "without its label" in (record.summary or ""), record.summary
+    assert stub.destroyed == []
+
+
+def test_no_labeled_objects_unreadable_voids_without_destroy() -> None:
+    """R2A2: a delta-new handle with an unreadable label voids the effect."""
+    mod = _policy_module()
+    stub = _FindStub([1, 101], label_rv=_FUNCTION_FAILED)
+    rs = SimpleNamespace(raw=stub, sh=1)
+    assert_xfails(
+        mod._assert_no_labeled_objects,
+        rs,
+        "qc4a-tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="S",
+        rv=_TEMPLATE_INCONSISTENT,
+        before=[1],
+    )
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert stub.destroyed == []
 
 
 def test_no_labeled_objects_refused_inventory_voids() -> None:
-    """A2: a refused label inventory voids the delta proof, never passes it."""
+    """A2: a refused post-attempt inventory voids the delta proof, never passes it."""
     mod = _policy_module()
     rs = SimpleNamespace(raw=_FindStub([], refuse_rv=_FUNCTION_FAILED), sh=1)
     assert_xfails(
@@ -4761,10 +4792,22 @@ def test_qc4b_generate_success_stale_halves_fail_without_destroy() -> None:
     )
     _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
     record = _assert_fail_record("self_contradiction", "policy")
-    assert "non-new halves" in (record.summary or ""), record.summary
+    assert "pre-existing halves" in (record.summary or ""), record.summary
     assert 100 not in fake.destroyed and 101 not in fake.destroyed, fake.destroyed
     assert fake.objects[100].destroyed is False
     assert fake.objects[101].destroyed is False
+
+
+def test_qc4b_generate_success_aliased_halves_fail_without_destroy() -> None:
+    """R2A5: success halves aliasing each other fail; neither is touched."""
+    fake = _PolicyFake(
+        keypair_script=[None, None],
+        keypair_success_handles=(200, 200),
+    )
+    _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "aliased halves" in (record.summary or ""), record.summary
+    assert 200 not in fake.destroyed, fake.destroyed
 
 
 def test_qc4b_generate_malformed_pub_proper_priv_no_cross_type() -> None:
