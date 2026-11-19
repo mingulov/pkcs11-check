@@ -17,6 +17,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
+    CKR_DEVICE_ERROR,
 )
 
 LABEL = "guess-confirm"
@@ -56,7 +57,7 @@ def test_same_refusal_passes(captures: dict[str, list[tuple[str, dict[str, Any]]
         wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
         correct_preserved=True,
         wrong_preserved=True,
-        created_on_refusal=False,
+        created_on_refusal=(False, False),
         expected_rvs=EXPECTED,
         label=LABEL,
         operation=OPERATION,
@@ -74,7 +75,7 @@ def test_different_refusal_codes_fail(
             wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
             correct_preserved=True,
             wrong_preserved=True,
-            created_on_refusal=False,
+            created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -94,7 +95,7 @@ def test_vendor_divergence_xfails_before_oracle(
             wrong_exc=_refused(0x80000002),
             correct_preserved=True,
             wrong_preserved=True,
-            created_on_refusal=False,
+            created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -113,7 +114,7 @@ def test_undefined_divergence_fails_metadata(
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             correct_preserved=True,
             wrong_preserved=True,
-            created_on_refusal=False,
+            created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -133,7 +134,7 @@ def test_mixed_accept_and_refuse_fails(
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             correct_preserved=True,
             wrong_preserved=True,
-            created_on_refusal=False,
+            created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -152,7 +153,7 @@ def test_both_accepted_preserved_xfails(
             wrong_exc=None,
             correct_preserved=True,
             wrong_preserved=True,
-            created_on_refusal=False,
+            created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -173,7 +174,7 @@ def test_mutated_material_fails(
             wrong_exc=None,
             correct_preserved=True,
             wrong_preserved=False,
-            created_on_refusal=False,
+            created_on_refusal=(False, False),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -191,7 +192,7 @@ def test_object_created_on_refusal_fails(
             wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
             correct_preserved=True,
             wrong_preserved=True,
-            created_on_refusal=True,
+            created_on_refusal=(True, True),
             expected_rvs=EXPECTED,
             label=LABEL,
             operation=OPERATION,
@@ -214,11 +215,92 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
         raise CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)
 
     monkeypatch.setattr(km, "copy_object", _capture)
-    monkeypatch.setattr(km, "_count_session_objects", lambda _rs: 5)
+    monkeypatch.setattr(km, "_session_object_set", lambda _rs, **_kw: ({9}, None))
     rs = SimpleNamespace(raw=object(), sh=1)
-    correct_exc, wrong_exc, correct_ok, wrong_ok, created = km._run_guess_legs(
-        rs, 100, CKA_VALUE, (b"correct-guess", b"wrong-guess"), b"baseline", lambda *a: True
+    correct_exc, wrong_exc, correct_ok, wrong_ok, created, inventory_rvs = km._run_guess_legs(
+        rs,
+        100,
+        CKA_VALUE,
+        (b"correct-guess", b"wrong-guess"),
+        b"baseline",
+        lambda *a: True,
+        label="t",
     )
     assert seen == [{CKA_VALUE: b"correct-guess"}, {CKA_VALUE: b"wrong-guess"}]
     assert correct_exc is not None and wrong_exc is not None
-    assert (correct_ok, wrong_ok, created) == (True, True, False)
+    assert (correct_ok, wrong_ok, created, inventory_rvs) == (
+        True,
+        True,
+        (False, False),
+        (None, None),
+    )
+
+
+def test_created_single_leg_names_leg_and_rv(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """A2: the creation terminal names the refusing leg and carries its RV."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
+            correct_preserved=True,
+            wrong_preserved=True,
+            created_on_refusal=(True, False),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction"
+    assert "correct" in kw["summary"]
+    assert "wrong" not in kw["summary"].split("despite")[0]
+    assert kw["actual"] == CKR_ATTRIBUTE_READ_ONLY
+    assert kw["detail"]["created_legs"] == ["correct"]
+
+
+def test_refused_inventory_voids_refusal_to_unproved(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """A2: a refused creation inventory voids the refusal, never passes it."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_preserved=True,
+            wrong_preserved=True,
+            created_on_refusal=(None, False),
+            inventory_rvs=(int(CKR_DEVICE_ERROR), None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "honest_deviation"
+    assert kw["detail"]["disposition"] == "unproved-effect"
+    assert "unproved" in kw["summary"]
+    assert kw["detail"]["inventory_rvs"] == {"correct": "CKR_DEVICE_ERROR"}
+
+
+def test_unproved_inventory_on_accepted_pair_proceeds(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """A2: inventory gaps matter only for refused legs; accepted pairs judge on."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_preserved=True,
+            wrong_preserved=True,
+            created_on_refusal=(None, None),
+            inventory_rvs=(int(CKR_DEVICE_ERROR), int(CKR_DEVICE_ERROR)),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    assert captures["fail"] == []
+    (reason, _kw), *_ = captures["xfail"]
+    assert reason == "honest_deviation"

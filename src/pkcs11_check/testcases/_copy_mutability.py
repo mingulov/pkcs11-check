@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from pkcs11_check import classification as C  # noqa: N812
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, raise_for_record, record_as, xfail_as
 from pkcs11_check.raw.recipes import (
     copy_object,
     decrypt_single,
@@ -200,17 +200,26 @@ SET_FORBIDDEN_REFUSE_RVS: tuple[Any, ...] = (
 #: Policy-shaped refusals proving CKA_ALLOWED_MECHANISMS exclusion (I6/F2).
 #:
 #: CKR_KEY_FUNCTION_NOT_PERMITTED ("use a key for a cryptographic purpose
-#: that the key's attributes are not set to allow") is the attribute-shaped
-#: proof; CKR_MECHANISM_INVALID joins it because all five key-management
-#: return lists name it while omitting FUNCTION_NOT_PERMITTED, and §5.1
-#: expressly allows return-list gaps (either code credited, raw preserved;
-#: 0.3.1 #56 adjudication). CKR_ACTION_PROHIBITED is excluded by spec
-#: (§5.1.6: "can only be returned by C_CopyObject, C_SetAttributeValue and
-#: C_DestroyObject"): a refusal with it routes to alternate/unproved with
-#: the RV preserved, never "restriction effective". COPY/SET refusal sets
-#: keep it (legal there). A transient/device-shaped refusal never proves a
-#: policy effect. Re-review round 2 adjudicates this set.
-POLICY_SHAPED_REFUSE_RVS: frozenset[int] = frozenset(
+#: that the key's attributes are not set to allow") is the SOLE
+#: attribute-shaped proof for cryptographic operations. CKR_ACTION_PROHIBITED
+#: is excluded by spec (§5.1.6: "can only be returned by C_CopyObject,
+#: C_SetAttributeValue and C_DestroyObject"): a refusal with it routes to
+#: alternate/unproved with the RV preserved, never "restriction effective".
+#: COPY/SET refusal sets keep it (legal there). A transient/device-shaped
+#: refusal never proves a policy effect.
+POLICY_SHAPED_REFUSE_RVS: frozenset[int] = frozenset({int(CKR_KEY_FUNCTION_NOT_PERMITTED)})
+
+#: Key-management twin of POLICY_SHAPED_REFUSE_RVS (0.3.1 #56 adjudication).
+#:
+#: CKR_MECHANISM_INVALID joins the attribute-shaped proof ONLY for
+#: key-management operations (Derive/Wrap/Unwrap/Encapsulate/Decapsulate):
+#: all five key-management return lists name it while omitting
+#: FUNCTION_NOT_PERMITTED, and §5.1 expressly allows return-list gaps
+#: (either code credited, raw preserved). Cryptographic operations
+#: (Encrypt/Decrypt/Sign/...) keep the narrow set: a MECHANISM_INVALID
+#: there evidences capability, not policy. Re-review round 2 adjudicates
+#: this split (A4).
+KEYMGMT_POLICY_SHAPED_REFUSE_RVS: frozenset[int] = frozenset(
     {int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_MECHANISM_INVALID)}
 )
 
@@ -271,6 +280,57 @@ def classify_rv_validity_or_none(
             f"{label}: refused with undefined {ckr_name(rv)} (return-value contract violation)"
         ),
     )
+
+
+def _record_rv_validity(
+    rv: int,
+    *,
+    label: str,
+    operation: str,
+    kind: str | None = None,
+) -> Any | None:
+    """Non-raising twin of ``classify_rv_validity_or_none`` (N7).
+
+    Mirrors the shared helper's reason/kind mapping exactly (vendor ->
+    ``nonspec_reject``, undefined -> ``self_contradiction``/metadata,
+    same summaries) but RECORDS without terminating, so the caller can
+    collect every leg's RV first and then terminate with the strongest
+    retained outcome. A standard RV records nothing and returns None.
+    """
+    if is_standard_ckr(rv):
+        return None
+    if is_vendor_defined_ckr(rv):
+        return record_as(
+            "nonspec_reject",
+            kind=kind,
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            summary=(
+                f"{label}: refused with vendor-defined {ckr_name(rv)} "
+                "(alternate refusal; standard outcome unproved)"
+            ),
+        )
+    return record_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        actual=rv,
+        summary=(
+            f"{label}: refused with undefined {ckr_name(rv)} (return-value contract violation)"
+        ),
+    )
+
+
+def _strongest_record(records: list[Any]) -> Any:
+    """The strongest retained outcome: first FAIL, else first xfail (N7)."""
+    for record in records:
+        if record.outcome == "fail":
+            return record
+    return records[0]
 
 
 def read_qc3_attributes(
@@ -501,7 +561,8 @@ def judge_guess_confirm(
     wrong_exc: CkrAssertionError | None,
     correct_preserved: bool,
     wrong_preserved: bool,
-    created_on_refusal: bool,
+    created_on_refusal: tuple[bool | None, bool | None],
+    inventory_rvs: tuple[int | None, int | None] = (None, None),
     expected_rvs: tuple[Any, ...],
     label: str,
     operation: str,
@@ -513,25 +574,72 @@ def judge_guess_confirm(
     behave identically: same refusal code, or both accepted with material
     preserved (a recorded safe-ignore deviation). Any asymmetric outcome is
     a copy oracle and fails, as does a refused leg that still creates an
-    object. Accepted legs inherit the sibling accepted-change tiers. The oracle
-    failures cite no spec clause: identical treatment of correct and wrong
-    guesses is a pkcs11-check consistency rule (#55.1), carried by the
-    summary text.
+    object. ``created_on_refusal`` carries per-leg creation evidence:
+    True proved creation, False proved none, None a refused inventory
+    (creation unproved, never assumed absent). Accepted legs inherit the
+    sibling accepted-change tiers. The oracle failures cite no spec
+    clause: identical treatment of correct and wrong guesses is a
+    pkcs11-check consistency rule (#55.1), carried by the summary text.
     """
     for leg, exc in (("correct", correct_exc), ("wrong", wrong_exc)):
         if exc is not None:
             classify_rv_validity_or_none(
                 exc.rv, label=f"{label}: {leg}", operation=operation, kind="policy"
             )
-    if created_on_refusal:
+    legs = (
+        ("correct", correct_exc, created_on_refusal[0]),
+        ("wrong", wrong_exc, created_on_refusal[1]),
+    )
+    created_legs = [name for name, _exc, flag in legs if flag]
+    if created_legs:
+        refusing_excs = [
+            exc for name, exc, _flag in legs if name in created_legs and exc is not None
+        ]
+        assert refusing_excs, "created_on_refusal True requires a refused leg"
+        refusing = refusing_excs[0]
         fail_as(
             "self_contradiction",
             kind="policy",
             label=label,
             operation=operation,
             inherit_mechanism=False,
-            summary="a refused guess-confirm leg created a session object",
-            detail={"label": label},
+            actual=refusing.rv,
+            summary=(
+                f"refused guess-confirm leg(s) {', '.join(created_legs)} created "
+                f"a session object despite refusing with {ckr_name(refusing.rv)}"
+            ),
+            detail={
+                "label": label,
+                "created_legs": created_legs,
+                "refusal_rv": ckr_name(refusing.rv),
+            },
+        )
+    unproved_legs = [name for name, exc, flag in legs if flag is None and exc is not None]
+    if unproved_legs:
+        unproved_exc = next(exc for name, exc, _flag in legs if name in unproved_legs)
+        assert unproved_exc is not None
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=unproved_exc.rv,
+            summary=(
+                f"refused guess-confirm leg(s) {', '.join(unproved_legs)} with "
+                f"{ckr_name(unproved_exc.rv)} but the creation inventory was refused; "
+                "zero-delta unproved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "unproved_legs": unproved_legs,
+                "refusal_rv": ckr_name(unproved_exc.rv),
+                "inventory_rvs": {
+                    leg: (ckr_name(rv) if rv is not None else None)
+                    for leg, rv in (("correct", inventory_rvs[0]), ("wrong", inventory_rvs[1]))
+                    if leg in unproved_legs
+                },
+            },
         )
     if correct_exc is not None and wrong_exc is not None:
         if correct_exc.rv != wrong_exc.rv:
@@ -563,28 +671,29 @@ def judge_guess_confirm(
                 "wrong_preserved": wrong_preserved,
             },
         )
-    refusing = correct_exc if correct_exc is not None else wrong_exc
-    assert refusing is not None
+    oracle_refusing = correct_exc if correct_exc is not None else wrong_exc
+    assert oracle_refusing is not None
     fail_as(
         "self_contradiction",
         kind="policy",
         label=label,
         operation=operation,
         inherit_mechanism=False,
-        actual=refusing.rv,
+        actual=oracle_refusing.rv,
         summary=(
             "guess legs disagree: one accepted, one refused with "
-            f"{ckr_name(refusing.rv)} (copy oracle)"
+            f"{ckr_name(oracle_refusing.rv)} (copy oracle)"
         ),
         detail={
             "correct_refused": correct_exc is not None,
             "wrong_refused": wrong_exc is not None,
-            "refusal_rv": refusing.rv,
+            "refusal_rv": oracle_refusing.rv,
         },
     )
 
 
-#: One empty/restated compare leg: ("ok", value-or-None) or ("refused", rv).
+#: One empty/restated compare leg: ("ok", value-or-None), ("refused", rv),
+#: or ("readback-refused", rv) for an accepted copy whose readback refused.
 CopyCompareOutcome = tuple[str, Any]
 
 
@@ -596,38 +705,47 @@ def judge_copy_compare(
     label: str,
     operation: str,
     spec_ref: str,
+    expected_rvs: tuple[Any, ...],
 ) -> None:
     """Cross-leg verdict for empty-template vs unchanged-restatement copies (#58.3).
 
-    Equal answers pass (both preserved, or the same refusal twice with a
-    record per leg); clean differences xfail as compatibility outcomes;
-    a copy that changes the public value fails; unreadable copy values
-    void the comparison. Refusal RVs route through validity-first, so an
-    undefined code fails the metadata contract and a vendor code xfails
-    as an alternate before any comparison runs.
+    Equal answers pass (both preserved, or the same expected refusal
+    twice with a record per leg); clean differences xfail as
+    compatibility outcomes; a copy that changes the public value fails
+    on its own evidence even when the sibling refuses or is unreadable;
+    unreadable copy values void the comparison. Refusal RVs are
+    collected from BOTH legs before any termination, so a vendor code
+    on one leg never preempts an undefined code on the other: the
+    strongest retained validity outcome wins.
     """
+    retained: list[Any] = []
     for leg, outcome in (("empty", empty), ("restated", restated)):
         if outcome[0] == "refused":
-            classify_rv_validity_or_none(
+            rec = _record_rv_validity(
                 outcome[1], label=f"{label}: {leg}", operation=operation, kind="policy"
             )
-    if empty[0] == "ok" and restated[0] == "ok":
-        _, empty_value = empty
-        _, restated_value = restated
-        if empty_value is None or restated_value is None:
-            xfail_as(
-                "not_operational",
+        elif outcome[0] == "readback-refused":
+            rec = _record_rv_validity(
+                outcome[1],
+                label=f"{label}: {leg} readback",
+                operation="C_GetAttributeValue",
                 kind="policy",
-                label=label,
-                operation=operation,
-                inherit_mechanism=False,
-                spec_ref=spec_ref,
-                summary=f"{label}: copy value unreadable; empty/restated comparison void",
-                detail={
-                    "empty_readable": empty_value is not None,
-                    "restated_readable": restated_value is not None,
-                },
             )
+        else:
+            rec = None
+        if rec is not None:
+            retained.append(rec)
+    if retained:
+        raise_for_record(_strongest_record(retained))
+
+    def _value(outcome: CopyCompareOutcome) -> bytes | None:
+        return outcome[1] if outcome[0] == "ok" else None
+
+    def _refused_rv(outcome: CopyCompareOutcome) -> int | None:
+        return outcome[1] if outcome[0] == "refused" else None
+
+    empty_value, restated_value = _value(empty), _value(restated)
+    if empty_value is not None and restated_value is not None:
         if empty_value == restated_value == source_value:
             return
         fail_as(
@@ -646,7 +764,7 @@ def judge_copy_compare(
             },
         )
     if empty[0] == "refused" and restated[0] == "refused":
-        if empty[1] == restated[1]:
+        if empty[1] == restated[1] and empty[1] in expected_rvs:
             for leg in ("empty", "restated"):
                 C.classify(
                     "sanctioned_refusal",
@@ -661,6 +779,22 @@ def judge_copy_compare(
                     ),
                 )
             return
+        if empty[1] == restated[1]:
+            xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=empty[1],
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: empty and restated copies refused identically with "
+                    f"{ckr_name(empty[1])}, outside the copy-shaped refusal set; "
+                    "comparison void"
+                ),
+                detail={"refusal_rv": empty[1]},
+            )
         xfail_as(
             "honest_deviation",
             kind="policy",
@@ -675,23 +809,72 @@ def judge_copy_compare(
             ),
             detail={"empty_rv": empty[1], "restated_rv": restated[1]},
         )
-    refused_rv = empty[1] if empty[0] == "refused" else restated[1]
+    (value, value_leg), (other, other_leg) = (
+        ((empty_value, "empty"), (restated, "restated"))
+        if empty_value is not None
+        else ((restated_value, "restated"), (empty, "empty"))
+    )
+    if value is not None:
+        assert isinstance(value, bytes)
+        other_refused = _refused_rv(other)
+        if value != source_value:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {value_leg} copy changed the public value "
+                    f"(sibling {other_leg} "
+                    + (
+                        f"refused with {ckr_name(other_refused)}"
+                        if other_refused is not None
+                        else "unreadable"
+                    )
+                    + ")"
+                ),
+                detail={
+                    "changed_leg": value_leg,
+                    "sibling_leg": other_leg,
+                    "sibling_refused": other_refused,
+                    "source_len": len(source_value),
+                },
+            )
+        if other_refused is not None:
+            xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=other_refused,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: empty and restated copies answered differently "
+                    f"(one refused with {ckr_name(other_refused)}; compat)"
+                ),
+                detail={
+                    "empty_accepted": empty[0] == "ok",
+                    "restated_accepted": restated[0] == "ok",
+                    "refusal_rv": other_refused,
+                },
+            )
     xfail_as(
-        "honest_deviation",
+        "not_operational",
         kind="policy",
         label=label,
         operation=operation,
         inherit_mechanism=False,
-        actual=refused_rv,
         spec_ref=spec_ref,
-        summary=(
-            f"{label}: empty and restated copies answered differently "
-            f"(one refused with {ckr_name(refused_rv)}; compat)"
-        ),
+        summary=f"{label}: copy value unreadable; empty/restated comparison void",
         detail={
-            "empty_accepted": empty[0] == "ok",
-            "restated_accepted": restated[0] == "ok",
-            "refusal_rv": refused_rv,
+            "empty_readable": empty_value is not None,
+            "restated_readable": restated_value is not None,
+            "empty_refused": _refused_rv(empty),
+            "restated_refused": _refused_rv(restated),
         },
     )
 
@@ -703,24 +886,35 @@ def run_copy_compare_leg(
 
     Accepted copies are read back (value bytes or None when unreadable)
     and destroyed; refusals return their raw RV for the judge. Readback
-    refusals route through validity-first so an undefined or vendor RV
-    cannot hide behind an unreadable verdict.
+    refusals ride as ("readback-refused", rv) so the judge collects
+    BOTH legs' RVs before any termination -- the sibling leg always
+    runs, and validity defects compete by strength, not by leg order.
     """
     try:
         copy = copy_object(rs.raw, rs.sh, source, template)
     except CkrAssertionError as exc:
         return ("refused", exc.rv)
+    if not copy or copy == source:
+        # A1: a copy handle aliasing the source (or null) is a proved
+        # provider contradiction; fail WITHOUT destroying, or cleanup
+        # would delete the source mid-test and poison the sibling leg.
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=f"{label}: {leg}",
+            operation="C_CopyObject",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(
+                f"{label}: {leg} copy returned the source handle ({copy}); refusing to destroy it"
+            ),
+            detail={"source": source, "copy": copy},
+        )
     try:
         try:
             attrs = read_attributes(rs.raw, rs.sh, copy, [CKA_VALUE])
         except CkrAssertionError as exc:
-            classify_rv_validity_or_none(
-                exc.rv,
-                label=f"{label}: {leg} readback",
-                operation="C_GetAttributeValue",
-                kind="policy",
-            )
-            return ("ok", None)
+            return ("readback-refused", exc.rv)
         readback = attr_or_record(
             attrs,
             CKA_VALUE,

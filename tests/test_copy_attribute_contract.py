@@ -4874,8 +4874,25 @@ def _compare_captures(
         seen["record"].append((reason, kw))
         return None
 
+    def _record_validity(reason: str, **kw: Any) -> Any:
+        seen["record"].append((reason, kw))
+        return SimpleNamespace(
+            reason=reason,
+            kw=kw,
+            outcome="fail" if reason == "self_contradiction" else "xfail",
+        )
+
+    def _raise_for_record(rec: Any) -> Any:
+        if rec.outcome == "fail":
+            seen["fail"].append((rec.reason, rec.kw))
+            raise _CompareVerdictError(f"fail_as {rec.reason}")
+        seen["xfail"].append((rec.reason, rec.kw))
+        raise _CompareVerdictError(f"xfail_as {rec.reason}")
+
     monkeypatch.setattr(cm, "fail_as", _fail)
     monkeypatch.setattr(cm, "xfail_as", _xfail)
+    monkeypatch.setattr(cm, "record_as", _record_validity)
+    monkeypatch.setattr(cm, "raise_for_record", _raise_for_record)
     monkeypatch.setattr(cm.C, "classify", _record)
     return seen
 
@@ -4894,6 +4911,7 @@ def _judge_compare(**kw: Any) -> None:
         "label": _COMPARE_LABEL,
         "operation": _COMPARE_OPERATION,
         "spec_ref": _COMPARE_SPEC,
+        "expected_rvs": cm.COPY_FORBIDDEN_REFUSE_RVS,
     }
     base.update(kw)
     cm.judge_copy_compare(**base)
@@ -4975,3 +4993,77 @@ def test_compare_vendor_refusal_xfails_alternate(
     with pytest.raises(_CompareVerdictError, match="xfail_as"):
         _judge_compare(empty=("refused", 0x80000001), restated=("refused", _ATTR_READ_ONLY))
     assert [reason for reason, _ in _compare_captures["xfail"]] == ["nonspec_reject"]
+
+
+@pytest.mark.parametrize("refused_first", [True, False])
+def test_compare_changed_value_with_refused_sibling_fails(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    refused_first: bool,
+) -> None:
+    """A3: a changed copy fails on its own evidence whatever the sibling does."""
+    legs: dict[str, Any] = (
+        {"empty": ("refused", _ATTR_READ_ONLY), "restated": ("ok", b"mutated-value!")}
+        if refused_first
+        else {"empty": ("ok", b"mutated-value!"), "restated": ("refused", _ATTR_READ_ONLY)}
+    )
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(**legs)
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("wrong_result", "crypto")
+    ]
+
+
+def test_compare_identical_unexpected_refusal_voids(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """A3: identical refusals outside the copy-shaped set void, never sanction."""
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(empty=("refused", _DEVICE_ERROR), restated=("refused", _DEVICE_ERROR))
+    (reason, kw), *_ = _compare_captures["xfail"]
+    assert reason == "honest_deviation"
+    assert "outside the copy-shaped refusal set" in kw["summary"]
+    assert _compare_captures["record"] == []
+
+
+@pytest.mark.parametrize("undefined_first", [True, False])
+def test_compare_undefined_beats_vendor_regardless_of_order(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    undefined_first: bool,
+) -> None:
+    """A3: both legs' validity is collected; the undefined FAIL wins either way."""
+    legs: dict[str, Any] = (
+        {"empty": ("refused", 0xDEAD), "restated": ("refused", 0x80000001)}
+        if undefined_first
+        else {"empty": ("refused", 0x80000001), "restated": ("refused", 0xDEAD)}
+    )
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(**legs)
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("self_contradiction", "metadata")
+    ]
+    assert sorted(reason for reason, _ in _compare_captures["record"]) == [
+        "nonspec_reject",
+        "self_contradiction",
+    ]
+
+
+def test_compare_readback_refused_voids_with_equal_sibling(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """A3: an accepted-but-unreadable leg voids the comparison, carrying its RV."""
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(
+            empty=("ok", _COMPARE_SOURCE),
+            restated=("readback-refused", _ATTR_READ_ONLY),
+        )
+    assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
+
+
+def test_policy_shaped_sets_split_crypto_vs_keymgmt() -> None:
+    """A4: crypto ops keep the narrow proof set; only keymgmt credits MECHANISM_INVALID."""
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    assert cm.POLICY_SHAPED_REFUSE_RVS == frozenset({_KEY_NOT_PERMITTED})
+    assert cm.KEYMGMT_POLICY_SHAPED_REFUSE_RVS == frozenset(
+        {_KEY_NOT_PERMITTED, _MECHANISM_INVALID}
+    )

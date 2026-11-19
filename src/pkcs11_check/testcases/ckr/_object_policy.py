@@ -169,7 +169,7 @@ from pkcs11_check.testcases._attribute_values import (
     refusal_rv_for,
 )
 from pkcs11_check.testcases._copy_mutability import (
-    POLICY_SHAPED_REFUSE_RVS,
+    KEYMGMT_POLICY_SHAPED_REFUSE_RVS,
     PROBE_PLAINTEXT,
     aes_ecb_encrypt,
     classify_rv_validity_or_none,
@@ -690,7 +690,7 @@ def classify_excluded_refusal_rv(
     Any other standard refusal xfails as an alternate/unproved outcome with
     the RV preserved, never "restriction effective".
     """
-    if rv in POLICY_SHAPED_REFUSE_RVS:
+    if rv in KEYMGMT_POLICY_SHAPED_REFUSE_RVS:
         classify(
             "sanctioned_refusal",
             kind="policy",
@@ -699,7 +699,7 @@ def classify_excluded_refusal_rv(
             mechanism=mechanism,
             inherit_mechanism=False,
             actual=rv,
-            expected=tuple(POLICY_SHAPED_REFUSE_RVS),
+            expected=tuple(KEYMGMT_POLICY_SHAPED_REFUSE_RVS),
             spec_ref=spec_ref,
             summary=(
                 f"{label}: excluded mechanism refused with {ckr_name(rv)} (restriction effective)"
@@ -1203,39 +1203,87 @@ def _concat_param(aux: int) -> Any:
 
 
 def _assert_no_labeled_objects(
-    rs: Any, tag: str, *, label: str, operation: str, spec_ref: str
+    rs: Any, tag: str, *, label: str, operation: str, spec_ref: str, rv: int, before: list[int]
 ) -> None:
     """Prove a refused call created no object carrying its unique label.
 
-    A refusal that still creates the derived object is a contradiction and
-    fails; an inventory the module refuses to serve voids only this check
-    (the RV verdict stands).
+    Only label hits OUTSIDE the pre-attempt baseline are attempt-correlated:
+    a refusal that still creates the derived object is a contradiction and
+    fails (recorded before cleanup, F14). Pre-existing hits are left alone
+    -- destroying them could delete foreign objects when the module
+    ignores the label filter. A refused inventory classifies
+    validity-first and voids the zero-delta proof (mirroring
+    _adjudicate_malformed_refusal); the bare RV verdict never stands on
+    an unproved delta.
     """
     try:
         found = find_objects(rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, tag.encode())))
-    except CkrAssertionError as exc:  # audit-ok: best-effort inventory; the RV verdict stands
+    except CkrAssertionError as exc:
+        retained = _record_rv_validity(rv, label=label, operation=operation, kind="policy")
+        inventory_retained = _record_rv_validity(
+            exc.rv, label=f"{label}: inventory", operation="C_FindObjects", kind="policy"
+        )
+        candidates = [rec for rec in (retained, inventory_retained) if rec is not None]
+        if candidates:
+            strongest = _strongest_record(candidates)
+            detail = strongest.detail if isinstance(strongest.detail, dict) else {}
+            detail.setdefault("refusal_rv", ckr_name(rv))
+            detail["inventory_rv"] = ckr_name(exc.rv)
+            strongest.detail = detail
+            raise_for_record(strongest)
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: refused with {ckr_name(rv)} but the label inventory "
+                f"failed with {ckr_name(exc.rv)}; zero-delta unproved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "refusal_rv": ckr_name(rv),
+                "inventory_rv": ckr_name(exc.rv),
+            },
+        )
+    before_set = set(before)
+    new = [int(handle) for handle in found if int(handle) not in before_set]
+    preexisting = [int(handle) for handle in found if int(handle) in before_set]
+    if preexisting:
         note(
-            f"{label}: label inventory refused with {ckr_name(exc.rv)}; "
-            "no-object check void, RV verdict stands",
+            f"{label}: {len(preexisting)} label hit(s) predate the attempt; "
+            "left alone, excluded from the creation proof",
             ComplianceLevel.STANDARD,
             reference="QC4a no-object inventory",
             test_id=label,
         )
-        return
-    if found:
-        _cleanup_owned(rs, [int(handle) for handle in found])
-        fail_as(
+    if new:
+        # F14: the established contradiction is RECORDED BEFORE cleanup
+        # runs (leak evidence first, then destroy); a destroy failure is
+        # attached to the terminal but never replaces it.
+        record = record_as(
             "self_contradiction",
             kind="policy",
             label=label,
             operation=operation,
             inherit_mechanism=False,
+            actual=rv,
             spec_ref=spec_ref,
             summary=(
-                f"{label}: refused {operation} created {len(found)} object(s) carrying its label"
+                f"{label}: refused {operation} created {len(new)} object(s) carrying its label"
             ),
-            detail={"handles": [int(handle) for handle in found]},
+            detail={"handles": new, "preexisting_excluded": preexisting},
         )
+        errors = _destroy_all(rs, new)
+        try:
+            raise_for_record(record)
+        except BaseException as terminal:
+            for error in errors:
+                terminal.add_note(f"cleanup also raised {type(error).__name__}: {error}")
+            raise
 
 
 def _run_derive_policy_leg(rs: Any, leg: str, use: str) -> None:
@@ -1569,6 +1617,10 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
             _cleanup_owned(rs, [control_derived])
         derive_template[CKA_LABEL] = f"qc4a-derive-aux-{leg}-derived"
         try:
+            aux_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(exc, (), label=f"{label}: inventory", operation="C_FindObjects")
+        try:
             derived = derive_key(
                 rs.raw,
                 rs.sh,
@@ -1591,6 +1643,8 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
                 label=label,
                 operation="C_DeriveKey",
                 spec_ref=row.citation,
+                rv=exc.rv,
+                before=aux_before,
             )
             if not excluded:
                 classify_included_refusal_rv(
@@ -5309,6 +5363,24 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             ),
         )
         return
+    if not handle.value or int(handle.value) in set(before):
+        # A1: a success handle that is null or predates the attempt is a
+        # proved contradiction; fail WITHOUT touching it, or cleanup
+        # would destroy a foreign object.
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_GenerateKey",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=_QC4B_GENKEY_SPEC,
+            summary=(
+                f"{label}: C_GenerateKey succeeded with a non-new handle "
+                f"({int(handle.value)}); refusing to use or destroy it"
+            ),
+            detail={"handle": int(handle.value)},
+        )
     try:
         readback = _inspect_identity(
             rs,
@@ -5390,6 +5462,25 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             ),
         )
         return
+    _halves = (int(pub_handle.value), int(priv_handle.value))
+    if not all(_halves) or any(half in set(before) for half in _halves):
+        # A1: success halves must be nonzero and newly live; a null or
+        # pre-existing half is a proved contradiction, failed WITHOUT
+        # touching either half.
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_GenerateKeyPair",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=_QC4B_SPEC,
+            summary=(
+                f"{label}: C_GenerateKeyPair succeeded with non-new halves "
+                f"{list(_halves)}; refusing to use or destroy them"
+            ),
+            detail={"halves": list(_halves)},
+        )
     try:
         readback = _inspect_identity(
             rs,

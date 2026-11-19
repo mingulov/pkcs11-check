@@ -356,6 +356,9 @@ class _PolicyFake:
         foreign_delta_for_label: bytes | None = None,
         foreign_delta_value: bytes | None = None,
         refusal_out_handle: int | None = None,
+        plant: list[dict[int, Any]] | None = None,
+        genkey_success_handle: int | None = None,
+        keypair_success_handles: tuple[int, int] | None = None,
         extra_for_label: bytes | None = None,
         extra_attrs: dict[int, Any] | None = None,
         keypair_pub_extra: dict[int, Any] | None = None,
@@ -418,6 +421,8 @@ class _PolicyFake:
         self._foreign_delta_value = foreign_delta_value
         self.foreign_delta_handle: int | None = None
         self._refusal_out_handle = refusal_out_handle
+        self._genkey_success_handle = genkey_success_handle
+        self._keypair_success_handles = keypair_success_handles
         self._extra_for_label = extra_for_label
         self._extra_attrs = dict(extra_attrs or {})
         self._keypair_pub_extra = dict(keypair_pub_extra or {})
@@ -494,6 +499,8 @@ class _PolicyFake:
         self._find_offset = 0
         self._find_search: bytes | None = None
         self._find_all = False
+        for planted in plant or []:
+            self._store(dict(planted), role="planted")
 
     # -- key material --------------------------------------------------------
 
@@ -696,6 +703,9 @@ class _PolicyFake:
             if self._refusal_out_handle is not None:
                 _fill_ulong(out, self._refusal_out_handle)
             return scripted
+        if self._genkey_success_handle is not None and len(self.genkey_templates) > 1:
+            _fill_ulong(out, self._genkey_success_handle)
+            return _OK
         value_len = attrs.get(int(CKA_VALUE_LEN), 16)
         assert isinstance(value_len, int), value_len
         handle_preview = self._next_handle
@@ -836,6 +846,10 @@ class _PolicyFake:
             pub_attrs.update(self._keypair_pub_extra)
         if self._keypair_priv_extra:
             priv_attrs.update(self._keypair_priv_extra)
+        if self._keypair_success_handles is not None and len(self.keypair_calls) > 1:
+            _fill_ulong(pub_out, self._keypair_success_handles[0])
+            _fill_ulong(priv_out, self._keypair_success_handles[1])
+            return _OK
         pub_handle = self._store(pub_attrs, role="keypair")
         priv_handle = self._store(priv_attrs, role="keypair")
         if mech_id == rsa_gen:
@@ -2302,6 +2316,21 @@ def test_qc4a_derive_aux_excluded_policy_refusal_passes(rv: int) -> None:
     _assert_cleaned_up(fake)
 
 
+def test_qc4a_derive_aux_refused_preexisting_labeled_left_alive() -> None:
+    """A1: a same-labeled object predating the refused aux derive is left alive."""
+    tag = "qc4a-derive-aux-excluded-derived"
+    fake = _PolicyFake(
+        derive_script=[None, _KEY_NOT_PERMITTED],
+        plant=[{int(CKA_LABEL): tag, int(CKA_CLASS): int(CKO_SECRET_KEY)}],
+    )
+    _qc4a_derive_aux(_rs_aux(fake), "excluded")
+    _assert_terminal_pass()
+    record = _terminal_record()
+    assert record.reason == "sanctioned_refusal", record.summary
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+
+
 @pytest.mark.parametrize("rv", [_FUNCTION_FAILED, _ACTION_PROHIBITED])
 def test_qc4a_derive_aux_excluded_alternate_refusal_xfails(rv: int) -> None:
     """A non-policy clean aux refusal never proves the restriction effective."""
@@ -2340,10 +2369,14 @@ def test_qc4a_derive_aux_setup_import_refused_voids() -> None:
 class _FindStub:
     """Minimal raw stub serving one canned find page."""
 
-    def __init__(self, handles: list[int]) -> None:
+    def __init__(self, handles: list[int], *, refuse_rv: int | None = None) -> None:
         self._handles = handles
+        self._refuse_rv = refuse_rv
+        self.destroyed: list[int] = []
 
     def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
+        if self._refuse_rv is not None:
+            return self._refuse_rv
         return _OK
 
     def C_FindObjects(  # noqa: N802
@@ -2357,18 +2390,31 @@ class _FindStub:
     def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
         return _OK
 
+    def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
+        self.destroyed.append(int(handle))
+        return _OK
+
 
 def test_no_labeled_objects_empty_passes() -> None:
     """An empty label inventory after refusal returns cleanly."""
     mod = _policy_module()
     rs = SimpleNamespace(raw=_FindStub([]), sh=1)
-    mod._assert_no_labeled_objects(rs, "qc4a-tag", label="L", operation="C_DeriveKey", spec_ref="S")
+    mod._assert_no_labeled_objects(
+        rs,
+        "qc4a-tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="S",
+        rv=_FUNCTION_FAILED,
+        before=[1, 2],
+    )
 
 
 def test_no_labeled_objects_found_fails() -> None:
     """Objects carrying the refused call's label fail as a contradiction."""
     mod = _policy_module()
-    rs = SimpleNamespace(raw=_FindStub([101, 102]), sh=1)
+    stub = _FindStub([101, 102])
+    rs = SimpleNamespace(raw=stub, sh=1)
     _run_must_fail(
         mod._assert_no_labeled_objects,
         rs,
@@ -2376,8 +2422,67 @@ def test_no_labeled_objects_found_fails() -> None:
         label="L",
         operation="C_DeriveKey",
         spec_ref="S",
+        rv=_FUNCTION_FAILED,
+        before=[1, 2],
     )
     _assert_fail_record("self_contradiction", "policy")
+    assert stub.destroyed == [101, 102]
+
+
+def test_no_labeled_objects_preexisting_left_alone() -> None:
+    """A1: label hits predating the attempt are left alone, never destroyed."""
+    mod = _policy_module()
+    stub = _FindStub([101, 102])
+    rs = SimpleNamespace(raw=stub, sh=1)
+    mod._assert_no_labeled_objects(
+        rs,
+        "qc4a-tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="S",
+        rv=_FUNCTION_FAILED,
+        before=[101, 102],
+    )
+    assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
+    assert stub.destroyed == []
+
+
+def test_no_labeled_objects_mixed_destroys_only_new() -> None:
+    """A1: a mixed label inventory destroys only the attempt-correlated hit."""
+    mod = _policy_module()
+    stub = _FindStub([101, 102])
+    rs = SimpleNamespace(raw=stub, sh=1)
+    _run_must_fail(
+        mod._assert_no_labeled_objects,
+        rs,
+        "qc4a-tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="S",
+        rv=_FUNCTION_FAILED,
+        before=[101],
+    )
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert (record.detail or {}).get("handles") == [102]
+    assert stub.destroyed == [102]
+
+
+def test_no_labeled_objects_refused_inventory_voids() -> None:
+    """A2: a refused label inventory voids the delta proof, never passes it."""
+    mod = _policy_module()
+    rs = SimpleNamespace(raw=_FindStub([], refuse_rv=_FUNCTION_FAILED), sh=1)
+    assert_xfails(
+        mod._assert_no_labeled_objects,
+        rs,
+        "qc4a-tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="S",
+        rv=_TEMPLATE_INCONSISTENT,
+        before=[1, 2],
+    )
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
 
 
 # -- QC4a wrap --------------------------------------------------------------------
@@ -3699,6 +3804,20 @@ def test_qc4b_genkey_refusal_foreign_delta_xfails_unproved_alive() -> None:
     assert fake.objects[foreign].destroyed is False
 
 
+def test_qc4b_genkey_success_baseline_handle_fails_without_destroy() -> None:
+    """A1: a success handle predating the attempt fails; the handle is left alone."""
+    fake = _PolicyFake(
+        genkey_script=[None, None],
+        plant=[{int(CKA_LABEL): "foreign-plant", int(CKA_CLASS): int(CKO_SECRET_KEY)}],
+        genkey_success_handle=100,
+    )
+    _run_must_fail(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "non-new handle" in (record.summary or ""), record.summary
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+
+
 @pytest.mark.parametrize(("family", "malformation"), _UNWRAP_CELLS)
 def test_qc4b_unwrap_attempt_requests_sign_usage(family: str, malformation: str) -> None:
     """F8: unwrap attempts exercise Sign, so they request CKA_SIGN (as does control)."""
@@ -4595,6 +4714,24 @@ def test_qc4b_generate_classic_coherent_xfails(family: str, malformation: str) -
     record = _assert_xfail_record("honest_deviation")
     assert (record.detail or {}).get("disposition") == "accepted-coherent", record.detail
     _assert_cleaned_up(fake)
+
+
+def test_qc4b_generate_success_stale_halves_fail_without_destroy() -> None:
+    """A1: success halves predating the attempt fail; both halves are left alone."""
+    fake = _PolicyFake(
+        keypair_script=[None, None],
+        plant=[
+            {int(CKA_LABEL): "plant-a", int(CKA_CLASS): int(CKO_PUBLIC_KEY)},
+            {int(CKA_LABEL): "plant-b", int(CKA_CLASS): int(CKO_PRIVATE_KEY)},
+        ],
+        keypair_success_handles=(100, 101),
+    )
+    _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "non-new halves" in (record.summary or ""), record.summary
+    assert 100 not in fake.destroyed and 101 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+    assert fake.objects[101].destroyed is False
 
 
 def test_qc4b_generate_malformed_pub_proper_priv_no_cross_type() -> None:
