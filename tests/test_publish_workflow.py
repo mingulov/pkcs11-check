@@ -93,8 +93,46 @@ def test_release_keeps_stable_version_build_and_manual_dry_run_boundaries() -> N
         step["run"] for job in workflow["jobs"].values() for step in job["steps"] if "run" in step
     )
     assert all_commands.count("uv build") == 1
-    for job_name in ("tag", "publish", "github-release"):
+    for job_name in ("tag", "publish", "verify-pypi", "github-release"):
         assert workflow["jobs"][job_name]["if"] == "${{ !inputs.dry_run }}"
+
+
+def test_release_verifies_pypi_files_before_github_release() -> None:
+    """The GitHub Release must wait for proof the PyPI files are live.
+
+    The release attaches the locally built distributions, but announcing
+    a release whose PyPI files are not yet fetchable breaks `pip install`
+    for anyone following the release. So a job between publish and
+    github-release awaits both files on the PyPI simple index (up to 5
+    minutes), downloads them, and compares hashes against the official
+    local artifacts. Skipping the wait or the comparison must fail.
+    """
+    workflow = _workflow()
+    job = workflow["jobs"]["verify-pypi"]
+
+    assert set(job["needs"]) == {"verify", "build", "publish"}
+    assert job["permissions"] == {"contents": "read"}
+    release = workflow["jobs"]["github-release"]
+    assert "verify-pypi" in release["needs"]
+
+    steps = job["steps"]
+    download = next(step for step in steps if "distributions" in str(step.get("with", "")))
+    assert download["with"] == {"name": "distributions", "path": "dist/"}
+    check = next(step for step in steps if "Await and verify" in str(step.get("name", "")))
+    assert check["env"]["VERSION"] == "${{ needs.verify.outputs.version }}"
+    run_body = str(check["run"])
+    assert "https://pypi.org/simple/pkcs11-check/" in run_body
+    assert "-{version}-" in run_body and "-{version}.tar.gz" in run_body
+    assert "WAIT_DEADLINE = 300" in run_body
+    assert "time.monotonic() >= deadline" in run_body
+    assert "raise SystemExit" in run_body
+    assert "timeout=" in run_body
+    # The published bytes must equal the official local artifacts.
+    assert "sha256" in run_body
+    assert "pkcs11_check-{version}" in run_body
+    # Link-shape tolerance: real PyPI annotates anchors
+    # (data-requires-python), so a strict `">` match finds nothing.
+    assert '[^>]*>' in run_body
 
 
 def test_production_upload_is_oidc_only_and_uses_reviewed_action_pins() -> None:
