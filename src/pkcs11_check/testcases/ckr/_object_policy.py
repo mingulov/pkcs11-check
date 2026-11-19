@@ -5986,11 +5986,13 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 kind="policy",
                 mechanism=f"CKM_{mech_name}",
             )
-            # NOTE: GENERAL_ERROR takes this same held-at-use arm. An opaque
-            # refusal after a missed Init refusal is suspicious but unproved
-            # (no spec hook distinguishes it from other clean refusals), so
-            # per the never-fail-unproved doctrine it xfails with the RV
-            # preserved rather than failing as uncontrolled dispatch.
+            # NOTE: an opaque refusal (e.g. GENERAL_ERROR) after a missed
+            # Init refusal is suspicious but unproved (no spec hook
+            # distinguishes it from other clean refusals), so per the
+            # never-fail-unproved doctrine it xfails with the RV preserved
+            # rather than failing as uncontrolled dispatch. The summary
+            # states the stage and RV with dispatch unproved -- never
+            # "defense held", which an opaque refusal cannot evidence.
             xfail_as(
                 "honest_deviation",
                 kind="policy",
@@ -6002,7 +6004,7 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 spec_ref=spec_ref,
                 summary=(
                     f"{label}: sign refused with {ckr_name(rv_sign)} after init "
-                    "passed; defense held at use"
+                    "passed (stage: use; dispatch unproved)"
                 ),
                 detail=detail_base,
             )

@@ -704,11 +704,15 @@ def judge_guess_confirm(
             label=label,
             operation=operation,
             spec_ref=spec_ref,
-            ignored_summary=("both guesses accepted with sealed material preserved (safe ignore)"),
+            ignored_summary=(
+                f"both guesses accepted with sealed material preserved "
+                f"({correct_use.operation} output match; safe ignore)"
+            ),
             mutated_summary="an accepted guess mutated sealed material",
             detail={
                 "correct_preserved": correct_use.preserved,
                 "wrong_preserved": wrong_use.preserved,
+                "use_operation": correct_use.operation,
             },
         )
     oracle_refusing = correct_exc if correct_exc is not None else wrong_exc
@@ -805,6 +809,31 @@ def judge_copy_compare(
     if empty_value is not None and restated_value is not None:
         if empty_value == restated_value == source_value:
             return
+        if (
+            int.from_bytes(empty_value, "big")
+            == int.from_bytes(restated_value, "big")
+            == int.from_bytes(source_value, "big")
+        ):
+            # D4: byte inequality with integer identity is a
+            # re-encoding (leading zeros), not a value change.
+            xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: copy re-encoded the public value "
+                    "(leading-zero-only difference; numeric value preserved)"
+                ),
+                detail={
+                    "empty_len": len(empty_value),
+                    "restated_len": len(restated_value),
+                    "source_len": len(source_value),
+                },
+            )
         fail_as(
             "wrong_result",
             kind="crypto",
@@ -874,7 +903,7 @@ def judge_copy_compare(
     if value is not None:
         assert isinstance(value, bytes)
         other_refused = _refused_rv(other)
-        if value != source_value:
+        if int.from_bytes(value, "big") != int.from_bytes(source_value, "big"):
             fail_as(
                 "wrong_result",
                 kind="crypto",

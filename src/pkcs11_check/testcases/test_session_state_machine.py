@@ -980,11 +980,30 @@ def _judge_cross_token_trace(trace: Any) -> None:
             f"({ckr_name(by_name['target_logout'])}); cross-token leg untestable "
             "(see same-slot QC9b logout tests)"
         )
+    # D1: the use observations are independent of the searches (direct
+    # attribute reads, not find results), so their verdicts grade BEFORE
+    # any find-refusal skip: a proved stale-handle or control-use effect
+    # is never hidden behind an unobservable search.
+    if by_name["control_use"] != int(CKR_OK):
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=by_name["control_use"],
+            summary=(
+                f"{label}: control witness unusable without relogin "
+                f"({ckr_name(by_name['control_use'])})"
+            ),
+        )
+    _judge_cross_token_stale_use(by_name, label=label)
     for leg in ("target_find", "control_find"):
         if by_name[leg] != int(CKR_OK):
             pytest.skip(
                 f"{label}: post-logout {leg} unobservable "
-                f"({ckr_name(by_name[leg])}); cross-token leg untestable"
+                f"({ckr_name(by_name[leg])}); find-count leg untestable"
             )
     inv = list(trace.inv_objects)
     assert len(inv) == 2, f"{label}: probe contract broken (need 2 INV lines, got {len(inv)})"
@@ -1013,21 +1032,10 @@ def _judge_cross_token_trace(trace: Any) -> None:
             summary=(f"{label}: control witness lost without relogin (count {control_found})"),
             detail={"target_found": target_found, "control_found": control_found},
         )
-    if by_name["control_use"] != int(CKR_OK):
-        fail_as(
-            "self_contradiction",
-            kind="lifecycle",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=None,
-            inherit_mechanism=False,
-            actual=by_name["control_use"],
-            summary=(
-                f"{label}: control witness unusable without relogin "
-                f"({ckr_name(by_name['control_use'])})"
-            ),
-            detail={"target_found": target_found, "control_found": control_found},
-        )
+
+
+def _judge_cross_token_stale_use(by_name: dict[str, int], *, label: str) -> None:
+    """Grade the stale target-handle use (independent of the searches)."""
     stale_rv = by_name["target_stale_use"]
     if stale_rv == int(CKR_OK):
         reject_or_classify(
@@ -1403,6 +1411,7 @@ class TestLogoutEffects:
         finally:
             close_session_quietly(rs.raw, test_sh)
 
+    @pytest.mark.destructive
     def test_logout_cross_token_control_usable(self, p11_config: Any) -> None:
         """QC9b (#52.3): logout on one token leaves another token usable.
 

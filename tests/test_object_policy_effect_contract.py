@@ -5205,7 +5205,7 @@ def test_qc4c_wrong_algo_sign_refused_xfails_held_at_use() -> None:
     assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
     record = _assert_xfail_record("honest_deviation")
     assert record.actual_ckr == ckr_name(_FUNCTION_FAILED), record.summary
-    assert "held at use" in (record.summary or ""), record.summary
+    assert "dispatch unproved" in (record.summary or ""), record.summary
     assert (record.detail or {}).get("init_rv") == "CKR_OK", record.detail
     _assert_cleaned_up(fake)
 
@@ -5216,7 +5216,7 @@ def test_qc4c_wrong_algo_sign_general_error_xfails_held() -> None:
     assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
     record = _assert_xfail_record("honest_deviation")
     assert "CKR_GENERAL_ERROR" in (record.summary or ""), record.summary
-    assert "held at use" in (record.summary or ""), record.summary
+    assert "dispatch unproved" in (record.summary or ""), record.summary
     _assert_cleaned_up(fake)
 
 
