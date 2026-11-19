@@ -143,7 +143,7 @@ def test_release_verifies_pypi_files_before_github_release() -> None:
     assert "pkcs11_check-{version}" in run_body
     # Link-shape tolerance: real PyPI annotates anchors
     # (data-requires-python), so a strict `">` match finds nothing.
-    assert '[^>]*>' in run_body
+    assert "[^>]*>" in run_body
 
 
 def test_production_upload_is_oidc_only_and_uses_reviewed_action_pins() -> None:
