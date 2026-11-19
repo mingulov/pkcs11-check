@@ -2135,6 +2135,7 @@ class TestDSAPublicCopyCompare:
                 label=label,
                 operation="C_CopyObject",
                 spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+                expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

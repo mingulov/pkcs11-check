@@ -12,7 +12,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check import classification as C  # noqa: N812
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh, template_from_dict
@@ -23,7 +23,7 @@ from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     encrypt_single,
-    find_objects,
+    find_objects_exhaustive,
     import_secret_key,
     read_attributes,
     sign_single,
@@ -847,12 +847,24 @@ def _check_copy_identity_override(
 _RSA_GUESS_MESSAGE = b"pkcs11-check guess-confirm probe"
 
 
-def _count_session_objects(rs: Any) -> int | None:
-    """Count session objects; None when the inventory itself fails."""
+def _session_object_set(rs: Any, *, label: str) -> tuple[set[int] | None, int | None]:
+    """Exhaustive session-object inventory; (None, rv) when the module refuses it.
+
+    A refused inventory classifies validity-first (undefined fails, vendor
+    xfails) and otherwise yields None: creation is unproved, never assumed
+    absent. The refusal RV rides along for the judge's unproved record.
+    """
     try:
-        return len(find_objects(rs.raw, rs.sh, template_from_dict({CKA_TOKEN: False})))
-    except CkrAssertionError:  # audit-ok: best-effort inventory; None skips the no-object check
-        return None
+        handles = find_objects_exhaustive(rs.raw, rs.sh, template_from_dict({CKA_TOKEN: False}))
+        return {int(handle) for handle in handles}, None
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: creation inventory",
+            operation="C_FindObjects",
+            kind="policy",
+        )
+        return None, exc.rv
 
 
 def _copy_preserves_aes_material(rs: Any, target: int, baseline_ct: bytes) -> bool:
@@ -1075,36 +1087,77 @@ def _run_guess_legs(
     guesses: tuple[bytes, bytes],
     baseline: bytes,
     preserves: Callable[[Any, int, bytes], bool],
-) -> tuple[CkrAssertionError | None, CkrAssertionError | None, bool, bool, bool]:
+    *,
+    label: str,
+) -> tuple[
+    CkrAssertionError | None,
+    CkrAssertionError | None,
+    bool,
+    bool,
+    tuple[bool | None, bool | None],
+    tuple[int | None, int | None],
+]:
     """Run the correct/wrong guess legs for #55.1.
 
-    Returns ``(correct_exc, wrong_exc, correct_ok, wrong_ok, created)``
-    where an ``exc`` of None means the leg accepted (with ``ok`` reporting
-    the material check), and ``created`` reports a refused leg that still
-    grew the session inventory.
+    Returns ``(correct_exc, wrong_exc, correct_ok, wrong_ok, created,
+    inventory_rvs)`` where an ``exc`` of None means the leg accepted
+    (with ``ok`` reporting the material check); ``created`` carries
+    per-leg creation evidence (True proved creation, False proved none,
+    None a refused inventory) and ``inventory_rvs`` the inventory
+    refusal RV per leg (None when the inventory succeeded).
     """
     excs: list[CkrAssertionError | None] = []
     oks: list[bool] = []
-    created = False
+    created: list[bool | None] = []
+    inventory_rvs: list[int | None] = []
     for guess in guesses:
-        before = _count_session_objects(rs)
+        before, before_rv = _session_object_set(rs, label=label)
         try:
             copy = copy_object(rs.raw, rs.sh, original, {attr: guess})
         except CkrAssertionError as exc:
             excs.append(exc)
             oks.append(True)
-            after = _count_session_objects(rs)
-            if before is not None and after is not None and after > before:
-                created = True
+            if before is None:
+                created.append(None)
+                inventory_rvs.append(before_rv)
+                continue
+            after, after_rv = _session_object_set(rs, label=label)
+            if after is None:
+                created.append(None)
+                inventory_rvs.append(after_rv)
+            else:
+                created.append(bool(set(after) - set(before)))
+                inventory_rvs.append(None)
             continue
         excs.append(None)
+        if not copy or copy == original:
+            # A1: an accepted copy aliasing the source is a proved
+            # contradiction; fail WITHOUT destroying, or cleanup would
+            # delete the sealed source mid-test.
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_CopyObject",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                summary=(
+                    f"{label}: accepted guess copy returned the source handle "
+                    f"({copy}); refusing to destroy it"
+                ),
+                detail={"source": original, "copy": copy},
+            )
         try:
             oks.append(preserves(rs, copy, baseline))
         finally:
             destroy_quietly(rs.raw, rs.sh, copy)
+        created.append(False)
+        inventory_rvs.append(None)
     correct_exc, wrong_exc = excs
     correct_ok, wrong_ok = oks
-    return correct_exc, wrong_exc, correct_ok, wrong_ok, created
+    created_pair = (created[0], created[1])
+    inventory_pair = (inventory_rvs[0], inventory_rvs[1])
+    return correct_exc, wrong_exc, correct_ok, wrong_ok, created_pair, inventory_pair
 
 
 def _copy_unchanged_control_or_skip(
@@ -1227,13 +1280,14 @@ class TestCopyForbiddenMutation:
         try:
             _sealed_value_unreadable_or_skip(rs, original, label=label)
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
-            correct_exc, wrong_exc, correct_ok, wrong_ok, created = _run_guess_legs(
+            correct_exc, wrong_exc, correct_ok, wrong_ok, created, inventory_rvs = _run_guess_legs(
                 rs,
                 original,
                 CKA_VALUE,
                 (PROBE_ORIGINAL_VALUE, PROBE_INJECTED_VALUE),
                 baseline_ct,
                 _copy_preserves_aes_material,
+                label=label,
             )
             judge_guess_confirm(
                 correct_exc=correct_exc,
@@ -1241,6 +1295,7 @@ class TestCopyForbiddenMutation:
                 correct_preserved=correct_ok,
                 wrong_preserved=wrong_ok,
                 created_on_refusal=created,
+                inventory_rvs=inventory_rvs,
                 expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
                 label=label,
                 operation="C_CopyObject",
@@ -1272,13 +1327,14 @@ class TestCopyForbiddenMutation:
             correct = components["d"]
             # XOR flips the low bit, so wrong != correct by construction.
             wrong = bytes([correct[0] ^ 0x01]) + correct[1:]
-            correct_exc, wrong_exc, correct_ok, wrong_ok, created = _run_guess_legs(
+            correct_exc, wrong_exc, correct_ok, wrong_ok, created, inventory_rvs = _run_guess_legs(
                 rs,
                 sealed,
                 CKA_PRIVATE_EXPONENT,
                 (correct, wrong),
                 baseline_sig,
                 _copy_preserves_rsa_material,
+                label=label,
             )
             judge_guess_confirm(
                 correct_exc=correct_exc,
@@ -1286,6 +1342,7 @@ class TestCopyForbiddenMutation:
                 correct_preserved=correct_ok,
                 wrong_preserved=wrong_ok,
                 created_on_refusal=created,
+                inventory_rvs=inventory_rvs,
                 expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
                 label=label,
                 operation="C_CopyObject",
