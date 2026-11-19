@@ -450,6 +450,57 @@ def _judge_session_exhaustion(
     )
 
 
+def _judge_capacity_returned(
+    *,
+    baseline_total: int | None,
+    total_after_close_all: int | None,
+    reopen_rv: int | None,
+) -> None:
+    """Judge capacity restoration after closing saturation sessions (QC11b).
+
+    Called after closing every owned session and attempting one reopen:
+    the reopen must succeed (a handle was just freed) and the ambient
+    total must return to its pre-saturation baseline. Unknown counts
+    skip the count leg (fail-safe, like the exhaustion judge); a
+    missing reopen attempt breaks the caller contract.
+    """
+    label = "QC11b capacity return"
+    if reopen_rv is None:
+        raise ValueError(f"{label}: reopen attempt missing (caller contract broken)")
+    detail: dict[str, Any] = {
+        "baseline_total": baseline_total,
+        "observed_total": total_after_close_all,
+        "reopen_rv": reopen_rv,
+    }
+    if reopen_rv != int(CKR_OK):
+        classification.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_OpenSession",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=reopen_rv,
+            summary=f"{label}: reopen after close refused with {ckr_name(reopen_rv)}",
+            detail=detail,
+        )
+    if baseline_total is not None and total_after_close_all is not None:
+        if total_after_close_all != baseline_total:
+            classification.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_OpenSession",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: ambient total {total_after_close_all} != "
+                    f"pre-saturation baseline {baseline_total} (sessions leaked)"
+                ),
+                detail=detail,
+            )
+
+
 def _judge_pin_lengths(trace: token_admin.AdminTrace, *, op: str) -> None:
     """Judge one PIN-length sweep against the declared ulMin/ulMaxPinLen."""
     try:
@@ -637,6 +688,73 @@ class TestAdvertisedSessionLimits:
                     refused_rv=refused_rv,
                     total_now=total_now,
                     rw_now=rw_now,
+                )
+            except BaseException as exc:
+                pending = exc
+        finally:
+            _close_owned_sessions(rs.raw, owned, deferred, cleanup_errors)
+        _finish_session_attempt(pending, cleanup_errors, deferred)
+
+    def test_session_capacity_returns_after_close(self, p11_raw_session: Any) -> None:
+        """Saturation then close-all must restore capacity (QC11b reopen leg).
+
+        Saturate to a real refusal, close every owned session, reopen
+        once (must succeed — a handle was just freed), close all, and
+        prove the ambient total returned to its pre-saturation
+        baseline. Refusal-code verdicts belong to the exhaustion
+        test; this leg owns restoration only. Providers that admit
+        the full safety cap without refusal cannot saturate, so
+        the leg is untestable there (explicit skip, same doctrine
+        as unreadable policy).
+        """
+        rs = p11_raw_session
+        policy, info_rv = _read_session_policy(rs.raw, rs.slot_id)
+        if policy is None:
+            pytest.skip(
+                f"QC11b: C_GetTokenInfo refused ({ckr_name(info_rv)}); "
+                "advertised session maxima unreadable; limit MUSTs untestable"
+            )
+        baseline_total = policy.ambient_total
+        owned: list[tuple[int, str]] = []
+        deferred: list[classification.Classification] = []
+        cleanup_errors: list[BaseException] = []
+        pending: BaseException | None = None
+        refused_rv: int | None = None
+        reopen_rv: int | None = None
+        try:
+            try:
+                for _ in range(_QC11B_SESSION_SAFETY_CAP):
+                    try:
+                        handle = raw_open_session(
+                            rs.raw, rs.slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION
+                        )
+                    except CkrAssertionError as exc:
+                        refused_rv = exc.rv
+                        break
+                    owned.append((handle, "saturation"))
+                if refused_rv is None:
+                    pytest.skip(
+                        "QC11b: provider admitted the full safety cap "
+                        f"({_QC11B_SESSION_SAFETY_CAP} opens) without refusal; "
+                        "saturation untestable, reopen leg vacuous"
+                    )
+                _close_owned_sessions(rs.raw, owned, deferred, cleanup_errors)
+                owned.clear()
+                try:
+                    reopened = raw_open_session(
+                        rs.raw, rs.slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION
+                    )
+                except CkrAssertionError as exc:
+                    reopen_rv = exc.rv
+                else:
+                    reopen_rv = int(CKR_OK)
+                    close_session_quietly(rs.raw, reopened)
+                reread, _ = _read_session_policy(rs.raw, rs.slot_id)
+                total_after_close_all = reread.ambient_total if reread is not None else None
+                _judge_capacity_returned(
+                    baseline_total=baseline_total,
+                    total_after_close_all=total_after_close_all,
+                    reopen_rv=reopen_rv,
                 )
             except BaseException as exc:
                 pending = exc
