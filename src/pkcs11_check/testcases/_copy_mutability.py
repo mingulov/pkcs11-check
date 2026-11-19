@@ -518,6 +518,11 @@ def judge_guess_confirm(
     guesses is a pkcs11-check consistency rule (#55.1), carried by the
     summary text.
     """
+    for leg, exc in (("correct", correct_exc), ("wrong", wrong_exc)):
+        if exc is not None:
+            classify_rv_validity_or_none(
+                exc.rv, label=f"{label}: {leg}", operation=operation, kind="policy"
+            )
     if created_on_refusal:
         fail_as(
             "self_contradiction",
@@ -558,16 +563,23 @@ def judge_guess_confirm(
                 "wrong_preserved": wrong_preserved,
             },
         )
+    refusing = correct_exc if correct_exc is not None else wrong_exc
+    assert refusing is not None
     fail_as(
         "self_contradiction",
         kind="policy",
         label=label,
         operation=operation,
         inherit_mechanism=False,
-        summary="guess legs disagree: one accepted, one refused (copy oracle)",
+        actual=refusing.rv,
+        summary=(
+            "guess legs disagree: one accepted, one refused with "
+            f"{ckr_name(refusing.rv)} (copy oracle)"
+        ),
         detail={
             "correct_refused": correct_exc is not None,
             "wrong_refused": wrong_exc is not None,
+            "refusal_rv": refusing.rv,
         },
     )
 
@@ -663,17 +675,23 @@ def judge_copy_compare(
             ),
             detail={"empty_rv": empty[1], "restated_rv": restated[1]},
         )
+    refused_rv = empty[1] if empty[0] == "refused" else restated[1]
     xfail_as(
         "honest_deviation",
         kind="policy",
         label=label,
         operation=operation,
         inherit_mechanism=False,
+        actual=refused_rv,
         spec_ref=spec_ref,
-        summary=f"{label}: empty and restated copies answered differently (compat)",
+        summary=(
+            f"{label}: empty and restated copies answered differently "
+            f"(one refused with {ckr_name(refused_rv)}; compat)"
+        ),
         detail={
             "empty_accepted": empty[0] == "ok",
             "restated_accepted": restated[0] == "ok",
+            "refusal_rv": refused_rv,
         },
     )
 

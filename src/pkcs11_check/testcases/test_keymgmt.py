@@ -66,6 +66,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
@@ -989,6 +990,19 @@ def _sealed_value_unreadable_or_skip(rs: Any, key: int, *, label: str) -> None:
             operation="C_GetAttributeValue",
             kind="policy",
         )
+        if exc.rv != int(CKR_ATTRIBUTE_SENSITIVE):
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: seal premise",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: seal premise unreadable for a non-sealing reason "
+                    f"({ckr_name(exc.rv)}); guess-confirm vacuous"
+                ),
+            )
         return
     sealed = attr_or_record(
         read,
@@ -1023,6 +1037,19 @@ def _sealed_exponent_unreadable_or_skip(rs: Any, key: int, *, label: str) -> Non
             operation="C_GetAttributeValue",
             kind="policy",
         )
+        if exc.rv != int(CKR_ATTRIBUTE_SENSITIVE):
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: seal premise",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: seal premise unreadable for a non-sealing reason "
+                    f"({ckr_name(exc.rv)}); guess-confirm vacuous"
+                ),
+            )
         return
     sealed = attr_or_record(
         read,
@@ -1112,9 +1139,14 @@ def _copy_unchanged_control_or_skip(
 
 
 def _rsa_sign_baseline_or_xfail(rs: Any, key: int, *, label: str) -> bytes:
-    """Sign the probe message as the RSA material-behavior baseline."""
+    """Sign the probe message twice as the RSA material-behavior baseline.
+
+    The double sign proves the v1.5 determinism premise the copy
+    comparisons rely on; a nondeterministic signer voids the leg.
+    """
     try:
-        return sign_single(rs.raw, rs.sh, key, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
+        first = sign_single(rs.raw, rs.sh, key, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
+        second = sign_single(rs.raw, rs.sh, key, CKM_SHA256_RSA_PKCS, _RSA_GUESS_MESSAGE)
     except CkrAssertionError as exc:
         classify_rv_validity_or_none(
             exc.rv,
@@ -1133,6 +1165,17 @@ def _rsa_sign_baseline_or_xfail(rs: Any, key: int, *, label: str) -> bytes:
             actual=exc.rv,
             summary=f"{label}: sealed RSA source will not sign",
         )
+    if first != second:
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: baseline use",
+            operation="C_Sign",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            inherit_mechanism=False,
+            summary=f"{label}: v1.5 signer nondeterministic; guess comparison void",
+        )
+    return first
 
 
 class TestCopyForbiddenMutation:
@@ -1211,8 +1254,8 @@ class TestCopyForbiddenMutation:
         rs = p11_raw_session
         skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         label = "C_CopyObject sealed CKA_PRIVATE_EXPONENT guess-confirm (QC3a oracle)"
-        row = row_by_key("value")
-        _, donor = gen_rsa_keypair_or_xfail(
+        row = row_by_key("private_exponent")
+        donor_pub, donor = gen_rsa_keypair_or_xfail(
             rs,
             usage=RSAUsage.SIGN,
             private_attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
@@ -1221,11 +1264,13 @@ class TestCopyForbiddenMutation:
             components = _read_rsa_components_or_xfail(rs, donor, label=label)
             sealed = _import_sealed_rsa_or_xfail(rs, components, label=label)
         finally:
+            destroy_quietly(rs.raw, rs.sh, donor_pub)
             destroy_quietly(rs.raw, rs.sh, donor)
         try:
             _sealed_exponent_unreadable_or_skip(rs, sealed, label=label)
             baseline_sig = _rsa_sign_baseline_or_xfail(rs, sealed, label=label)
             correct = components["d"]
+            # XOR flips the low bit, so wrong != correct by construction.
             wrong = bytes([correct[0] ^ 0x01]) + correct[1:]
             correct_exc, wrong_exc, correct_ok, wrong_ok, created = _run_guess_legs(
                 rs,

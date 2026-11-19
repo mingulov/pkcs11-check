@@ -101,8 +101,8 @@ validated by a full provider round (see Known limitations).
 - Return-value counters can lose a code when the provider crashes
   mid-call: the call itself is recorded before the provider runs, but
   its return code is journaled after, so a crash in between orphans
-  the code (observed as a couple of codes per hundreds of thousands
-  of calls, only in runs with intentional crash tests). Persisting
+  the code (observed only in runs with intentional crash tests, and
+  rare there). Persisting
   every return before the counters rewrite would roughly double
   flush I/O for negligible gain, so it stays deferred; tracked as
   follow-up work.

@@ -2329,6 +2329,14 @@ def test_qc4a_derive_aux_excluded_control_refused_voids() -> None:
     _assert_cleaned_up(fake)
 
 
+def test_qc4a_derive_aux_setup_import_refused_voids() -> None:
+    """A refused aux import voids with the staged base destroyed (no leak)."""
+    fake = _PolicyFake(create_script=[None, _FUNCTION_FAILED])
+    assert_xfails(_qc4a_derive_aux, _rs_aux(fake), "included")
+    _assert_xfail_record("not_operational")
+    _assert_nothing_leaked(fake)
+
+
 class _FindStub:
     """Minimal raw stub serving one canned find page."""
 
@@ -3652,6 +3660,43 @@ def test_qc4b_genkey_aes_oracle_mismatch_fails_crypto() -> None:
     assert "oracle" in (record.summary or ""), record.summary
     _assert_cleaned_up(fake)
     _assert_no_secret_bytes()
+
+
+@pytest.mark.parametrize(("family", "malformation"), _GENKEY_CELLS)
+def test_qc4b_genkey_attempt_requests_crypt_usage(family: str, malformation: str) -> None:
+    """R2-M12: the genkey attempt requests the symmetric exercise usage."""
+    fake = _PolicyFake(genkey_script=[None, _TEMPLATE_INCONSISTENT])
+    _qc4b_genkey(_rs_genkey(fake), family, malformation)
+    _assert_terminal_pass()
+    attempt = fake.genkey_templates[1]
+    assert _decode_bool(attempt[int(CKA_ENCRYPT)]) is True, attempt
+    assert _decode_bool(attempt[int(CKA_DECRYPT)]) is True, attempt
+
+
+@pytest.mark.parametrize(("family", "malformation"), _GENKEY_CELLS)
+def test_qc4b_genkey_refuse_unlabeled_leak_fails(family: str, malformation: str) -> None:
+    """R2-M12: a refusal creating an unlabeled object fails, never sanctioned."""
+    label = _attempt_label("genkey", family, malformation)
+    fake = _PolicyFake(genkey_script=[None, _TEMPLATE_INCONSISTENT], leak_unlabeled=label)
+    _run_must_fail(_qc4b_genkey, _rs_genkey(fake), family, malformation)
+    record = _assert_fail_record("self_contradiction", "lifecycle")
+    assert "leak" in (record.summary or "").lower(), record.summary
+    assert (record.detail or {}).get("leaked_count") == 1, record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_genkey_refusal_foreign_delta_xfails_unproved_alive() -> None:
+    """R2-M12: a delta object uncorrelated to the attempt is left alive."""
+    label = _attempt_label("genkey", "rsa", "swap_secret_class_asym_type")
+    fake = _PolicyFake(genkey_script=[None, _TEMPLATE_INCONSISTENT], foreign_delta_for_label=label)
+    assert_xfails(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    foreign = fake.foreign_delta_handle
+    assert foreign is not None
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert (record.detail or {}).get("unproved_new_handles") == [foreign], record.detail
+    assert foreign not in fake.destroyed, fake.destroyed
+    assert fake.objects[foreign].destroyed is False
 
 
 @pytest.mark.parametrize(("family", "malformation"), _UNWRAP_CELLS)
@@ -4995,12 +5040,13 @@ def test_qc4c_wrong_algo_sign_refused_xfails_held_at_use() -> None:
     _assert_cleaned_up(fake)
 
 
-def test_qc4c_wrong_algo_sign_general_error_fails() -> None:
-    """Opaque Sign failure after a missed Init refusal is uncontrolled dispatch."""
+def test_qc4c_wrong_algo_sign_general_error_xfails_held() -> None:
+    """Opaque Sign refusal after a missed Init refusal xfails held-at-use (unproved)."""
     fake = _PolicyFake(sign_init_script=[None], sign_script=[_GENERAL_ERROR])
-    _run_must_fail(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
-    record = _assert_fail_record("self_contradiction", "policy")
+    assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
+    record = _assert_xfail_record("honest_deviation")
     assert "CKR_GENERAL_ERROR" in (record.summary or ""), record.summary
+    assert "held at use" in (record.summary or ""), record.summary
     _assert_cleaned_up(fake)
 
 

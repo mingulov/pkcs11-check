@@ -2856,11 +2856,14 @@ def _verify_private_exponent_accept(
 ) -> None:
     """Verdict for an accepted CKA_PRIVATE_EXPONENT change: readback decides.
 
-    The exponent was readable pre-change (premise), so a post-change
-    readback equal to the original proves ignore, while rewritten bytes,
-    an unreadable attribute, or a broken readback proves a forbidden
-    effect and fails. No oracle is involved: this is a direct readback
-    comparison, not a dispatched completion.
+    The exponent was readable pre-change (premise). Equal bytes prove
+    ignore; injected bytes present verbatim prove a rewrite (bytes
+    identity is direct evidence here -- the fixture is deliberately
+    unsealed, unlike the value probe which must argue functionally
+    because sealed values are unreadable); other bytes prove an
+    alteration. Refused, absent, or unusable post-change readbacks
+    are unproved-effect xfails, mirroring the value probe: the effect
+    is observed but its nature is not proved.
     """
     try:
         read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
@@ -2871,8 +2874,8 @@ def _verify_private_exponent_accept(
             operation="C_GetAttributeValue",
             kind="policy",
         )
-        fail_as(
-            "self_contradiction",
+        xfail_as(
+            "not_operational",
             kind="policy",
             label=label,
             operation=operation,
@@ -2881,10 +2884,9 @@ def _verify_private_exponent_accept(
             spec_ref=spec_ref,
             summary=(
                 f"{label}: exponent readable pre-change but refused "
-                f"post-change with {ckr_name(exc.rv)} (accepted change "
-                "altered readability)"
+                f"post-change with {ckr_name(exc.rv)} (unproved-effect)"
             ),
-            detail={"original_len": len(original_d)},
+            detail={"disposition": "unproved-effect", "original_len": len(original_d)},
         )
     current = attr_or_record(
         read,
@@ -2895,7 +2897,33 @@ def _verify_private_exponent_accept(
         inherit_mechanism=False,
         sensitive_is_conformant=True,
     )
-    if current is MISSING_ATTRIBUTE:
+    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes):
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: exponent readable pre-change but absent or unusable "
+                "post-change (unproved-effect)"
+            ),
+            detail={"disposition": "unproved-effect", "original_len": len(original_d)},
+        )
+    if current == original_d:
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(f"{label}: accepted exponent change ignored (exponent preserved)"),
+            detail={"matches_injected": False},
+        )
+    if current == _QC3B_INJECTED_EXPONENT:
         fail_as(
             "self_contradiction",
             kind="policy",
@@ -2903,23 +2931,18 @@ def _verify_private_exponent_accept(
             operation=operation,
             inherit_mechanism=False,
             spec_ref=spec_ref,
-            summary=(
-                f"{label}: exponent readable pre-change but absent "
-                "post-change (accepted change altered readability)"
-            ),
-            detail={"original_len": len(original_d)},
+            summary=(f"{label}: accepted exponent change rewrote key material"),
+            detail={"matches_injected": True, "original_len": len(original_d)},
         )
-    classify_ignored_or_mutated(
-        mutated=current != original_d,
+    fail_as(
+        "self_contradiction",
+        kind="policy",
         label=label,
         operation=operation,
+        inherit_mechanism=False,
         spec_ref=spec_ref,
-        ignored_summary=(f"{label}: accepted exponent change ignored (exponent preserved)"),
-        mutated_summary=(f"{label}: accepted exponent change rewrote key material"),
-        detail={
-            "matches_injected": current == _QC3B_INJECTED_EXPONENT,
-            "readable": isinstance(current, bytes),
-        },
+        summary=(f"{label}: accepted exponent change altered key material"),
+        detail={"matches_injected": False, "original_len": len(original_d)},
     )
 
 
@@ -3122,8 +3145,8 @@ def _run_copy_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
     src_pub = 0
     if probe in ("always_authenticate", "private_exponent"):
         _skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
-        _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         if probe == "always_authenticate":
+            _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
             if get_pin_bytes(p11_config) is None:
                 pytest.skip("Requires PIN to test context-specific re-auth (QC3b re-auth leg void)")
             src_pub, src = _import_reauth_source(rs, label=label)
@@ -3193,8 +3216,8 @@ def _run_set_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
     src_pub = 0
     if probe in ("always_authenticate", "private_exponent"):
         _skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
-        _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         if probe == "always_authenticate":
+            _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
             if get_pin_bytes(p11_config) is None:
                 pytest.skip("Requires PIN to test context-specific re-auth (QC3b re-auth leg void)")
             src_pub, src = _import_reauth_source(rs, label=label)

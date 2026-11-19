@@ -770,3 +770,10 @@ def test_unique_id_override_generate_leak_copy_zero_write_node() -> None:
         if rec.reason == "self_contradiction" and "C_CopyObject" in rec.label
     ]
     _assert_cleanup(fake)
+
+
+def test_derive_staging_data_is_block_aligned() -> None:
+    """Staging derive inputs are 16-byte distinct blocks (raw ECB refuses misaligned)."""
+    assert len(identity_case._QC7C_DERIVE_DATA) == 2
+    assert all(len(block) == 16 for block in identity_case._QC7C_DERIVE_DATA)
+    assert len(set(identity_case._QC7C_DERIVE_DATA)) == 2
