@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKK_DES2,
     CKK_DES3,
     CKK_GENERIC_SECRET,
+    CKM_BLAKE2B_512_KEY_DERIVE,
     CKM_CONCATENATE_BASE_AND_DATA,
     CKM_CONCATENATE_BASE_AND_KEY,
     CKM_CONCATENATE_DATA_AND_BASE,
@@ -41,6 +42,17 @@ from pkcs11_check.raw.types_std import (
     CKM_EXTRACT_KEY_FROM_KEY,
     CKM_HKDF_DERIVE,
     CKM_SHA1_KEY_DERIVATION,
+    CKM_SHA3_256_KEY_DERIVATION,
+    CKM_SHA3_384_KEY_DERIVATION,
+    CKM_SHA3_512_KEY_DERIVATION,
+    CKM_SHA224_KEY_DERIVATION,
+    CKM_SHA256_KEY_DERIVATION,
+    CKM_SHA384_KEY_DERIVATION,
+    CKM_SHA512_224_KEY_DERIVATION,
+    CKM_SHA512_256_KEY_DERIVATION,
+    CKM_SHA512_KEY_DERIVATION,
+    CKM_SHAKE_128_KEY_DERIVATION,
+    CKM_SHAKE_256_KEY_DERIVATION,
     CKM_XOR_BASE_AND_DATA,
     CKR_FUNCTION_FAILED,
     CKR_OK,
@@ -56,6 +68,20 @@ _DAB = int(CKM_CONCATENATE_DATA_AND_BASE)
 _XOR = int(CKM_XOR_BASE_AND_DATA)
 _EXT = int(CKM_EXTRACT_KEY_FROM_KEY)
 _SHA1 = int(CKM_SHA1_KEY_DERIVATION)
+_DIGEST_HASH: dict[int, str] = {
+    int(CKM_SHA224_KEY_DERIVATION): "sha224",
+    int(CKM_SHA256_KEY_DERIVATION): "sha256",
+    int(CKM_SHA384_KEY_DERIVATION): "sha384",
+    int(CKM_SHA512_KEY_DERIVATION): "sha512",
+    int(CKM_SHA512_224_KEY_DERIVATION): "sha512_224",
+    int(CKM_SHA512_256_KEY_DERIVATION): "sha512_256",
+    int(CKM_SHA3_256_KEY_DERIVATION): "sha3_256",
+    int(CKM_SHA3_384_KEY_DERIVATION): "sha3_384",
+    int(CKM_SHA3_512_KEY_DERIVATION): "sha3_512",
+    int(CKM_SHAKE_128_KEY_DERIVATION): "shake_128",
+    int(CKM_SHAKE_256_KEY_DERIVATION): "shake_256",
+}
+_BLAKE2B_512 = int(CKM_BLAKE2B_512_KEY_DERIVE)
 _MECHS = [
     "CKM_CONCATENATE_BASE_AND_KEY",
     "CKM_CONCATENATE_BASE_AND_DATA",
@@ -157,6 +183,13 @@ class _Fake:
             return base_value[param // 8 :]
         if mech_id == _SHA1:
             return hashlib.sha1(base_value, usedforsecurity=False).digest()
+        if mech_id in _DIGEST_HASH:
+            name = _DIGEST_HASH[mech_id]
+            if name.startswith("shake_"):
+                return hashlib.new(name, base_value, usedforsecurity=False).digest(64)
+            return hashlib.new(name, base_value, usedforsecurity=False).digest()
+        if mech_id == _BLAKE2B_512:
+            return hashlib.blake2b(base_value, digest_size=64, usedforsecurity=False).digest()
         raise AssertionError(f"unexpected derive mech {mech_id:#x}")
 
     def C_DeriveKey(  # noqa: N802
@@ -221,6 +254,11 @@ def _run(mp: pytest.MonkeyPatch, fake: _Fake, mech: str, type_name: str) -> None
 def _run_sha1(mp: pytest.MonkeyPatch, fake: _Fake) -> None:
     mp.setattr(tmisc, "import_secret_key_negotiated", fake.import_secret)
     tmisc.TestDerivedDesParity().test_sha1_derive_des_parity(fake.session)
+
+
+def _run_digest(mp: pytest.MonkeyPatch, fake: _Fake, mech: str, type_name: str) -> None:
+    mp.setattr(tmisc, "import_secret_key_negotiated", fake.import_secret)
+    tmisc.TestDerivedDesParity().test_digest_derive_des_parity(fake.session, mech, type_name)
 
 
 def _must_fail(fn: Any, *args: Any, **kw: Any) -> Any:
@@ -290,13 +328,99 @@ def test_wrong_material_with_odd_parity_fails_kat(monkeypatch: pytest.MonkeyPatc
 
 
 def test_sha1_des3_is_not_asserted(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert tmisc._DES_PARITY_SHA1_TYPES == ("DES",)
+    assert tmisc._DES_PARITY_SHA1_TYPES == ("DES", "DES2", "CDMF")
     fake = _Fake()
     _run_sha1(monkeypatch, fake)
     sha1_calls = [c for c in fake.derive_calls if c["mech"] == _SHA1]
     assert sha1_calls
     assert all(c["key_type"] != int(CKK_DES3) for c in sha1_calls)
     assert any(c["key_type"] == int(CKK_DES) for c in sha1_calls)
+
+
+def test_digest_table_pins_mechs_types_and_unresolved() -> None:
+    """The digest parity matrix and its recorded-unresolved row are pinned."""
+    assert set(tmisc._DIGEST_PARITY_MECHS) == {
+        "CKM_SHA224_KEY_DERIVATION",
+        "CKM_SHA256_KEY_DERIVATION",
+        "CKM_SHA384_KEY_DERIVATION",
+        "CKM_SHA512_KEY_DERIVATION",
+        "CKM_SHA512_224_KEY_DERIVATION",
+        "CKM_SHA512_256_KEY_DERIVATION",
+        "CKM_SHA3_256_KEY_DERIVATION",
+        "CKM_SHA3_384_KEY_DERIVATION",
+        "CKM_SHA3_512_KEY_DERIVATION",
+        "CKM_BLAKE2B_512_KEY_DERIVE",
+        "CKM_SHAKE_128_KEY_DERIVATION",
+        "CKM_SHAKE_256_KEY_DERIVATION",
+    }
+    assert tmisc._DIGEST_PARITY_TYPES == ("DES", "DES2", "CDMF")
+    assert set(tmisc._DIGEST_PARITY_UNRESOLVED) == {"CKM_SHA512_T_KEY_DERIVATION"}
+    assert "CKM_SHA512_T_KEY_DERIVATION" not in tmisc._DIGEST_PARITY_MECHS
+    assert "reference vector" in tmisc._DIGEST_PARITY_UNRESOLVED["CKM_SHA512_T_KEY_DERIVATION"]
+
+
+def test_digest_fixture_slices_expose_missing_adjustment() -> None:
+    """Every digest row's expected slice carries an even-parity byte."""
+    for mech_name in tmisc._DIGEST_PARITY_MECHS:
+        for type_name in tmisc._DIGEST_PARITY_TYPES:
+            out_len = tmisc._DES_PARITY_TYPES[type_name][1]
+            _base, raw = tmisc._digest_parity_materials(mech_name, out_len)
+            assert len(raw) == out_len, (mech_name, type_name)
+            assert any(b.bit_count() % 2 == 0 for b in raw), (mech_name, type_name)
+    for type_name in tmisc._DES_PARITY_SHA1_TYPES:
+        out_len = tmisc._DES_PARITY_TYPES[type_name][1]
+        raw = hashlib.sha1(tmisc._SHA1_PARITY_BASE, usedforsecurity=False).digest()[:out_len]
+        assert any(b.bit_count() % 2 == 0 for b in raw), ("SHA1", type_name)
+
+
+@pytest.mark.parametrize(
+    ("mech", "type_name"),
+    [
+        ("CKM_SHA256_KEY_DERIVATION", "DES"),
+        ("CKM_SHAKE_256_KEY_DERIVATION", "DES2"),
+        ("CKM_BLAKE2B_512_KEY_DERIVE", "CDMF"),
+    ],
+)
+def test_digest_healthy_rows_pass(
+    monkeypatch: pytest.MonkeyPatch, mech: str, type_name: str
+) -> None:
+    """Hash, XOF and BLAKE2b rows pass on conformant derive output."""
+    fake = _Fake()
+    _run_digest(monkeypatch, fake, mech, type_name)
+    _cleaned(fake)
+
+
+def test_digest_generic_flipped_fails_on_settled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deviating twin fails on settled-semantics mechs (oracle enforced)."""
+    fake = _Fake(mode="generic_flipped")
+    rec = _must_fail(_run_digest, monkeypatch, fake, "CKM_SHA256_KEY_DERIVATION", "DES")
+    assert rec.reason == "wrong_result"
+    assert "generic" in rec.label.lower()
+    _cleaned(fake)
+
+
+def test_digest_generic_flipped_voids_on_blake2b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deviating twin voids on BLAKE2b (keyed-vs-unkeyed unconfirmed)."""
+    fake = _Fake(mode="generic_flipped")
+    with pytest.raises(XFailed):
+        _run_digest(monkeypatch, fake, "CKM_BLAKE2B_512_KEY_DERIVE", "DES")
+    rec = classification.get_records()[-1]
+    assert rec.reason == "not_operational"
+    assert "unconfirmed" in (rec.summary or "")
+    _cleaned(fake)
+
+
+def test_digest_raw_no_parity_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unadjusted DES output on a digest row fails the parity detector."""
+    fake = _Fake(mode="raw_no_parity")
+    rec = _must_fail(_run_digest, monkeypatch, fake, "CKM_SHA256_KEY_DERIVATION", "DES")
+    assert rec.reason == "wrong_result"
+    assert "parity" in rec.label.lower()
+    _cleaned(fake)
 
 
 def test_hkdf_scope_control_unchanged_or_absent() -> None:
