@@ -107,6 +107,8 @@ class _GenStub:
         self._rv = rv
         self._stored = stored
         self._read_rv = read_rv
+        self.read_handles: list[int] = []
+        self.destroyed: list[int] = []
 
     def C_GenerateKeyPair(  # noqa: N802
         self,
@@ -123,7 +125,8 @@ class _GenStub:
         ctypes.cast(priv_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 302
         return self._rv
 
-    def C_GetAttributeValue(self, _sh: int, _handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        self.read_handles.append(int(handle))
         if self._read_rv is not None:
             return self._read_rv
         for i in range(int(count)):
@@ -135,6 +138,10 @@ class _GenStub:
             else:
                 ctypes.memmove(tmpl[i].pValue, value, len(value))
                 tmpl[i].ulValueLen = len(value)
+        return int(CKR_OK)
+
+    def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
+        self.destroyed.append(int(handle))
         return int(CKR_OK)
 
 
@@ -210,19 +217,48 @@ def test_readable_rsa_normalized_flags_void() -> None:
     """C5: stored flags differing from the readable request void the leg."""
     from _pytest.outcomes import XFailed
 
+    stub = _GenStub(int(CKR_OK), stored=(True, False))
     with pytest.raises(XFailed):
-        _gen_readable(_GenStub(int(CKR_OK), stored=(True, False)))
+        _gen_readable(stub)
     (record,) = classification.get_records()
     assert record.reason == "not_operational"
     assert "differ from the readable request" in (record.summary or "")
+    # R2C3: flags read back from the PRIVATE half; both halves destroyed.
+    assert stub.read_handles and all(h == 302 for h in stub.read_handles), stub.read_handles
+    assert stub.destroyed == [301, 302], stub.destroyed
+    assert (record.detail or {}) == {"sensitive": True, "extractable": False}, record.detail
 
 
 def test_readable_rsa_unreadable_flags_void() -> None:
     """C5: unreadable stored flags void the leg with the RV named."""
     from _pytest.outcomes import XFailed
 
+    stub = _GenStub(int(CKR_OK), read_rv=int(CKR_DEVICE_ERROR))
     with pytest.raises(XFailed):
-        _gen_readable(_GenStub(int(CKR_OK), read_rv=int(CKR_DEVICE_ERROR)))
+        _gen_readable(stub)
     (record,) = classification.get_records()
     assert record.reason == "not_operational"
     assert "CKR_DEVICE_ERROR" in (record.summary or "")
+    assert stub.destroyed == [301, 302], stub.destroyed
+
+
+def test_readable_rsa_ok_reads_private_destroys_nothing() -> None:
+    """R2C3: the vetted pair returns with the private half read, nothing destroyed."""
+    stub = _GenStub(int(CKR_OK))
+    assert _gen_readable(stub) == (301, 302)
+    assert stub.read_handles and all(h == 302 for h in stub.read_handles), stub.read_handles
+    assert stub.destroyed == [], stub.destroyed
+
+
+def test_flag_detail_serializes() -> None:
+    """R2C3: flag detail carries only bools, presence, and shape."""
+    import json
+
+    from pkcs11_check.testcases import test_crossverify_extended as xv_mod
+    from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+
+    assert xv_mod._flag_detail(MISSING_ATTRIBUTE) == "missing"
+    assert xv_mod._flag_detail(True) is True
+    assert xv_mod._flag_detail(b"\x01\x02") == "bytes:2"
+    assert xv_mod._flag_detail(7) == "int"
+    json.dumps({"sensitive": xv_mod._flag_detail(MISSING_ATTRIBUTE), "extractable": True})

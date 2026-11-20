@@ -387,16 +387,21 @@ def _stage_generated_objects(rs: Any) -> list[tuple[int, str, str]]:
 _QC7C_DERIVE_DATA: tuple[bytes, ...] = (b"qc7c-derive-dat1", b"qc7c-derive-dat2")
 
 
-def _note_staging_refusal(exc: CkrAssertionError, *, leg: str, operation: str) -> None:
+def _note_staging_refusal(
+    exc: CkrAssertionError, *, leg: str, operation: str
+) -> C.Classification | None:
     """Record a staging refusal against its operation (C3).
 
-    An undefined RV fails the metadata contract loud. Any defined
-    refusal (standard or vendor) is noted with its operation and RV:
-    the leg runs short, but already-staged outputs stay live for the
-    shared check instead of being discarded.
+    Returns the DEFERRED terminal: an undefined RV records a metadata
+    fail, a vendor-defined RV records a visible alternate xfail, and a
+    standard refusal is noted with its operation and RV (no terminal).
+    The caller runs the shared ID checks and cleanup on the staged
+    outputs first, then raises the deferred terminal: already-accepted
+    handles are never stranded by an immediate raise, and a vendor
+    refusal can never leave the node green.
     """
     if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
-        C.fail_as(
+        return C.record_as(
             "self_contradiction",
             kind="metadata",
             label=f"QC7c {leg} staging",
@@ -405,21 +410,37 @@ def _note_staging_refusal(exc: CkrAssertionError, *, leg: str, operation: str) -
             actual=exc.rv,
             summary=(f"QC7c {leg} staging returned undefined CK_RV {ckr_name(exc.rv)}"),
         )
+    if is_vendor_defined_ckr(exc.rv):
+        return C.record_as(
+            "nonspec_reject",
+            kind="metadata",
+            label=f"QC7c {leg} staging",
+            operation=operation,
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(
+                f"QC7c {leg} staging refused with vendor-defined {ckr_name(exc.rv)}; "
+                "shared checks run on the staged outputs first"
+            ),
+        )
     note(
         f"QC7c {leg} staging refused ({operation} {ckr_name(exc.rv)}); "
         "shared assertion runs with the staged outputs",
         ComplianceLevel.STANDARD,
         reference=f"QC7c #59 {leg} creator leg",
     )
+    return None
 
 
-def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
-    """Two C_DeriveKey outputs for the shared uniqueness assertion.
+def _stage_derived_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Classification | None:
+    """Stage up to two C_DeriveKey outputs for the shared uniqueness assertion.
 
-    A refused setup or derive step ends the leg with whatever is
-    already staged (noted per operation, never fatal), so the shared
-    creator check stays live on the remaining objects. Only an
-    undefined RV fails loud.
+    Each accepted handle is transferred to *into* as it is staged, so
+    the caller's cleanup owns it even when a later step refuses. A
+    refused setup or derive step ends the leg short and returns the
+    deferred terminal (vendor/undefined; None for standard notes and
+    clean runs): the caller runs the shared checks and cleanup first,
+    then raises it.
     """
     if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
         note(
@@ -427,8 +448,7 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
             ComplianceLevel.STANDARD,
             reference="QC7c #59 derive creator leg",
         )
-        return []
-    staged: list[tuple[int, str, str]] = []
+        return None
     base = 0
     try:
         base = import_secret_key(
@@ -443,8 +463,8 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
             },
         )
     except CkrAssertionError as exc:
-        _note_staging_refusal(exc, leg="derive", operation="C_CreateObject")
-        return []
+        return _note_staging_refusal(exc, leg="derive", operation="C_CreateObject")
+    pending: C.Classification | None = None
     try:
         for index in (1, 2):
             try:
@@ -465,22 +485,24 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
                     ),
                 )
             except CkrAssertionError as exc:
-                _note_staging_refusal(exc, leg="derive", operation="C_DeriveKey")
+                pending = _note_staging_refusal(exc, leg="derive", operation="C_DeriveKey")
                 break
-            staged.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
+            into.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
     finally:
         if base:
             destroy_quietly(rs.raw, rs.sh, base)
-    return staged
+    return pending
 
 
-def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
-    """Two C_UnwrapKey outputs for the shared uniqueness assertion.
+def _stage_unwrapped_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Classification | None:
+    """Stage up to two C_UnwrapKey outputs for the shared uniqueness assertion.
 
-    A refused setup, wrap, or unwrap step ends the leg with whatever
-    is already staged (noted per operation, never fatal), so the
-    shared creator check stays live on the remaining objects. Only
-    an undefined RV fails loud.
+    Each accepted handle is transferred to *into* as it is staged, so
+    the caller's cleanup owns it even when a later step refuses. A
+    refused setup, wrap, or unwrap step ends the leg short and returns
+    the deferred terminal (vendor/undefined; None for standard notes
+    and clean runs): the caller runs the shared checks and cleanup
+    first, then raises it.
     """
     if not rs.has_mechanism("AES_KEY_WRAP"):
         note(
@@ -488,8 +510,7 @@ def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
             ComplianceLevel.STANDARD,
             reference="QC7c #59 unwrap creator leg",
         )
-        return []
-    staged: list[tuple[int, str, str]] = []
+        return None
     transient: list[int] = []
     try:
         try:
@@ -506,8 +527,7 @@ def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
                 },
             )
         except CkrAssertionError as exc:
-            _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
-            return []
+            return _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
         transient.append(kek)
         try:
             target = import_secret_key(
@@ -522,14 +542,13 @@ def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
                 },
             )
         except CkrAssertionError as exc:
-            _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
-            return []
+            return _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
         transient.append(target)
         try:
             blob = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
         except CkrAssertionError as exc:
-            _note_staging_refusal(exc, leg="unwrap", operation="C_WrapKey")
-            return []
+            return _note_staging_refusal(exc, leg="unwrap", operation="C_WrapKey")
+        pending: C.Classification | None = None
         for index in (1, 2):
             try:
                 unwrapped = unwrap_key(
@@ -546,12 +565,12 @@ def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
                     },
                 )
             except CkrAssertionError as exc:
-                _note_staging_refusal(exc, leg="unwrap", operation="C_UnwrapKey")
+                pending = _note_staging_refusal(exc, leg="unwrap", operation="C_UnwrapKey")
                 break
-            staged.append((unwrapped, f"CKA_UNIQUE_ID:unwrapped key {index}", "C_UnwrapKey"))
+            into.append((unwrapped, f"CKA_UNIQUE_ID:unwrapped key {index}", "C_UnwrapKey"))
     finally:
         _destroy_all(rs, transient)
-    return staged
+    return pending
 
 
 class TestUniqueIdGeneration:
@@ -654,6 +673,7 @@ class TestUniqueIdGeneration:
         rs = p11_raw_session
         _require_unique_id_applicable(rs)
         staged = _stage_created_objects(rs)
+        pending: list[C.Classification] = []
         try:
             staged.extend(_stage_generated_objects(rs))
             source = staged[0][0]
@@ -665,9 +685,17 @@ class TestUniqueIdGeneration:
                 )
                 raise
             staged.append((copied, "CKA_UNIQUE_ID:copied object", "C_CopyObject"))
-            staged.extend(_stage_derived_objects(rs))
-            staged.extend(_stage_unwrapped_objects(rs))
-            _raise_strongest(_collect_ids(rs, staged))
+            # R2C2: derive/unwrap transfer each accepted handle into
+            # STAGED as it lands and defer vendor/undefined terminals:
+            # the shared checks and cleanup run on everything staged,
+            # then the deferred terminals join the strongest verdict.
+            for leg_pending in (
+                _stage_derived_objects(rs, staged),
+                _stage_unwrapped_objects(rs, staged),
+            ):
+                if leg_pending is not None:
+                    pending.append(leg_pending)
+            _raise_strongest(_collect_ids(rs, staged) + pending)
         finally:
             _destroy_all(rs, [h for h, _, _ in staged])
 
@@ -866,7 +894,7 @@ def _judge_override(
                     summary=f"{label}: caller-supplied CKA_UNIQUE_ID was honored",
                 )
             )
-        else:
+        elif stored is not None:
             records.append(
                 C.record_as(
                     "honest_deviation",
@@ -882,6 +910,25 @@ def _judge_override(
                     summary=(
                         f"{label}: caller-supplied CKA_UNIQUE_ID was accepted but "
                         "ignored (stored ID differs); refusal is required"
+                    ),
+                )
+            )
+        else:
+            records.append(
+                C.record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation=producer_operation,
+                    inherit_mechanism=False,
+                    expected=CKR_ATTRIBUTE_READ_ONLY,
+                    actual=rv,
+                    detail=_detail(
+                        producer_operation=producer_operation, outcome="unproved", **judge_detail
+                    ),
+                    summary=(
+                        f"{label}: caller-supplied CKA_UNIQUE_ID was accepted but "
+                        "the stored ID is unreadable; ignore unproved, refusal is required"
                     ),
                 )
             )

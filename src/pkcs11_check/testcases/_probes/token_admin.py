@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import ctypes
+import hashlib
 import threading
 from collections.abc import Callable
 from contextlib import suppress
@@ -107,6 +108,12 @@ class AdminStep(NamedTuple):
     rv: int
 
 
+class AdminUseCheck(NamedTuple):
+    name: str
+    length: int
+    sha256: str
+
+
 class AdminTrace(NamedTuple):
     steps: tuple[AdminStep, ...]
     flags: tuple[tuple[str, int | None], ...]
@@ -115,6 +122,7 @@ class AdminTrace(NamedTuple):
     ok: bool
     no_slots: bool
     assumption_failed: str | None
+    use_checks: tuple[AdminUseCheck, ...] = ()
 
 
 class TraceParseError(ValueError):
@@ -130,12 +138,30 @@ def _parse_hex(token: str, *, what: str) -> int:
     return int(text, 16)
 
 
+def _parse_use_line(line: str) -> AdminUseCheck:
+    """Parse one ``USE:<name>=<len>:<sha256hex>`` post-use integrity line."""
+    body = line[len("USE:") :]
+    name, sep, rest = body.partition("=")
+    length_text, sep2, digest = rest.partition(":")
+    if not sep or not sep2 or not name.strip() or not digest:
+        raise TraceParseError(f"malformed USE line: {line!r}")
+    try:
+        length = int(length_text.strip())
+    except ValueError:
+        raise TraceParseError(f"malformed USE line: {line!r}") from None
+    digest = digest.strip().lower()
+    if length < 0 or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise TraceParseError(f"malformed USE line: {line!r}")
+    return AdminUseCheck(name.strip(), length, digest)
+
+
 def parse_admin_trace(out: str) -> AdminTrace:
     """Parse child protocol output; unknown lines are ignored, malformed known lines fail."""
     steps: list[AdminStep] = []
     flags: list[tuple[str, int | None]] = []
     pin_bounds: tuple[int, int] | None = None
     inv_objects: list[int] = []
+    use_checks: list[AdminUseCheck] = []
     ok = False
     no_slots = False
     assumption_failed: str | None = None
@@ -195,6 +221,10 @@ def parse_admin_trace(out: str) -> AdminTrace:
                 raise TraceParseError(f"malformed INV line: {line!r}")
             inv_objects.append(count)
             continue
+        if line.startswith("USE:"):
+            check = _parse_use_line(line)
+            use_checks.append(check)
+            continue
     return AdminTrace(
         steps=tuple(steps),
         flags=tuple(flags),
@@ -203,6 +233,7 @@ def parse_admin_trace(out: str) -> AdminTrace:
         ok=ok,
         no_slots=no_slots,
         assumption_failed=assumption_failed,
+        use_checks=tuple(use_checks),
     )
 
 
@@ -429,32 +460,70 @@ def _discover_slot(ctx: ProbeContext) -> int | None:
 _BURN_TOKEN_LABEL = b"qc11-admin-test"
 
 
-def _rediscover_burn_slot(ctx: ProbeContext) -> tuple[int | None, int]:
-    """Find the burn token by label after restart; return (slot, enum_rv).
+def _rediscover_burn_slot(
+    ctx: ProbeContext,
+) -> tuple[tuple[int, ...], int, tuple[tuple[int, int], ...]]:
+    """Find the burn token by label after restart.
 
-    The enumeration RV rides out separately so a refused enumeration
-    stays visible (setup step) instead of collapsing into NO_SLOTS;
-    only a clean enumeration with no label match means genuinely
-    absent. The pre-restart slot is never reused blindly: slot
-    numbering may shift across C_Finalize/C_Initialize.
+    Returns (matches, enum_rv, info_refusals): every slot whose token
+    label matches, the enumeration RV, and (slot, rv) for each refused
+    C_GetTokenInfo. Per-slot refusals are preserved (never discarded):
+    a match hidden behind a refusal is unproved, not absent. The
+    pre-restart slot is never reused blindly: slot numbering may shift
+    across C_Finalize/C_Initialize.
     """
     sc = ctypes.c_ulong(0)
     rv = int(ctx.raw.C_GetSlotList(1, None, ctypes.byref(sc)))
     if rv != int(CKR_OK):
-        return None, rv
+        return (), rv, ()
     if sc.value == 0:
-        return None, int(CKR_OK)
+        return (), int(CKR_OK), ()
     sl = (ctypes.c_ulong * sc.value)()
     rv = int(ctx.raw.C_GetSlotList(1, sl, ctypes.byref(sc)))
     if rv != int(CKR_OK):
-        return None, rv
+        return (), rv, ()
+    matches: list[int] = []
+    info_refusals: list[tuple[int, int]] = []
     for i in range(int(sc.value)):
+        slot = int(sl[i])
         info = CK_TOKEN_INFO()
-        if int(ctx.raw.C_GetTokenInfo(int(sl[i]), ctypes.byref(info))) != int(CKR_OK):
+        irv = int(ctx.raw.C_GetTokenInfo(slot, ctypes.byref(info)))
+        if irv != int(CKR_OK):
+            info_refusals.append((slot, irv))
             continue
         if bytes(info.label).rstrip(b" \x00") == _BURN_TOKEN_LABEL:
-            return int(sl[i]), int(CKR_OK)
-    return None, int(CKR_OK)
+            matches.append(slot)
+    return tuple(matches), int(CKR_OK), tuple(info_refusals)
+
+
+def _phase2_rediscovery_outcome(
+    matches: tuple[int, ...], info_refusals: tuple[tuple[int, int], ...]
+) -> tuple[str, str | int]:
+    """Decide the post-restart attribution (R2C5a).
+
+    Returns ("proceed", slot) only for exactly one label match under
+    complete visibility; ("absent", 0) only when no slot matches and
+    every slot answered; otherwise ("assumption", reason). Absence is
+    never declared while a match could hide behind a refusal, and a
+    duplicated label never resolves to one slot silently.
+    """
+    if len(matches) > 1:
+        return ("assumption", f"burn token label ambiguous across {len(matches)} slots")
+    if not matches:
+        if info_refusals:
+            return (
+                "assumption",
+                "burn token identity unproved: "
+                f"C_GetTokenInfo refused on {len(info_refusals)} slot(s)",
+            )
+        return ("absent", 0)
+    if info_refusals:
+        return (
+            "assumption",
+            "burn token uniqueness unproved: "
+            f"C_GetTokenInfo refused on {len(info_refusals)} slot(s)",
+        )
+    return ("proceed", matches[0])
 
 
 def _open_rw(ctx: ProbeContext, slot: int) -> tuple[int, int]:
@@ -1062,7 +1131,7 @@ def _read_value_rv(ctx: ProbeContext, sh: int, handle: int) -> int:
 
 
 def _read_witness_bytes(ctx: ProbeContext, sh: int, handle: int) -> tuple[int, bytes]:
-    """Read the witness value bytes; (rv, b\"\") unless the read succeeds."""
+    """Read the witness value bytes; (rv, b"") unless the read succeeds."""
     buf = (ctypes.c_ubyte * 64)()
     attr = CK_ATTRIBUTE()
     attr.type = CKA_VALUE
@@ -1073,6 +1142,66 @@ def _read_witness_bytes(ctx: ProbeContext, sh: int, handle: int) -> tuple[int, b
         return rv, b""
     length = int(attr.ulValueLen)
     return rv, bytes(buf[:length])
+
+
+def _read_witness_flags(
+    ctx: ProbeContext, sh: int, handle: int
+) -> tuple[int, bool | None, bool | None]:
+    """Read CKA_PRIVATE/CKA_TOKEN off a witness; (rv, None, None) unless OK."""
+    priv = ctypes.c_ubyte(0)
+    tok = ctypes.c_ubyte(0)
+    tmpl = (CK_ATTRIBUTE * 2)()
+    tmpl[0].type = CKA_PRIVATE
+    tmpl[0].pValue = ctypes.cast(ctypes.pointer(priv), ctypes.c_void_p)
+    tmpl[0].ulValueLen = 1
+    tmpl[1].type = CKA_TOKEN
+    tmpl[1].pValue = ctypes.cast(ctypes.pointer(tok), ctypes.c_void_p)
+    tmpl[1].ulValueLen = 1
+    rv = int(ctx.raw.C_GetAttributeValue(sh, handle, tmpl, 2))
+    if rv != int(CKR_OK):
+        return rv, None, None
+    return rv, bool(priv.value), bool(tok.value)
+
+
+def _emit_use_check(name: str, value: bytes) -> None:
+    """Print a post-use integrity line (length + sha256, never the bytes)."""
+    print(f"USE:{name}={len(value)}:{hashlib.sha256(value).hexdigest()}")
+
+
+def qc9b_witness_digest() -> tuple[int, str]:
+    """(length, sha256) of the fixed cross-token witness value (judge side)."""
+    return (
+        len(_QC9B_WITNESS_VALUE),
+        hashlib.sha256(_QC9B_WITNESS_VALUE).hexdigest(),
+    )
+
+
+def _verify_witness_binding(
+    ctx: ProbeContext, sh: int, handle: int, label: bytes, name: str
+) -> str | None:
+    """Prove a witness is a findable private session object (D1, R2C4).
+
+    Emits ``setup:{name}_witness_flags`` (the CKA_PRIVATE/CKA_TOKEN
+    readback RV) and ``setup:{name}_prefind`` (the pre-logout label
+    search RV). Returns an ASSUMPTION_FAILED reason when the binding
+    is unproved (wrong flags or not uniquely visible) so the caller
+    voids the fixture; None when bound. A non-OK step RV also returns
+    None (the failed setup step skips via the gate); only a
+    successful-but-wrong observation voids explicitly.
+    """
+    frv, is_private, is_token = _read_witness_flags(ctx, sh, handle)
+    _step(f"setup:{name}_witness_flags", frv)
+    if frv != int(CKR_OK):
+        return None
+    if is_private is not True or is_token is not False:
+        return f"{name} witness not a private session object"
+    prv, pcount = _count_labeled(ctx, sh, label)
+    _step(f"setup:{name}_prefind", prv)
+    if prv != int(CKR_OK):
+        return None
+    if pcount != 1:
+        return f"{name} witness not uniquely visible pre-logout"
+    return None
 
 
 def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
@@ -1164,6 +1293,17 @@ def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             print(f"ASSUMPTION_FAILED:{name} witness content mismatch")
             print("OK")
             return
+    # Binding (D1): each witness must be a uniquely findable private
+    # session object before logout proves anything about logout.
+    for sh, handle, witness_label, name in (
+        (tsh, thandle, _QC9B_TARGET_WITNESS_LABEL, "target"),
+        (csh, chandle, _QC9B_CONTROL_WITNESS_LABEL, "control"),
+    ):
+        unbound = _verify_witness_binding(ctx, sh, handle, witness_label, name)
+        if unbound is not None:
+            print(f"ASSUMPTION_FAILED:{unbound}")
+            print("OK")
+            return
     lrv = int(ctx.raw.C_Logout(tsh))
     _step("target_logout", lrv)
     tfrv, tcount = _count_labeled(ctx, tsh, _QC9B_TARGET_WITNESS_LABEL)
@@ -1174,7 +1314,13 @@ def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     _step("control_find", cfrv)
     if cfrv == int(CKR_OK):
         print(f"INV:objects={ccount}")
-    _step("control_use", _read_value_rv(ctx, csh, chandle))
+    curv, cubytes = _read_witness_bytes(ctx, csh, chandle)
+    _step("control_use", curv)
+    if curv == int(CKR_OK):
+        # Post-use integrity (R2C4): CKR_OK alone cannot prove the
+        # control value survived; the length + hash travel separately
+        # for the judge to verify independently.
+        _emit_use_check("control", cubytes)
     _step("target_stale_use", _read_value_rv(ctx, tsh, thandle))
     _quiet_close(ctx, tsh)
     _quiet_close(ctx, csh)
@@ -1218,14 +1364,26 @@ def _qc11a_same_process(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if frv != int(CKR_OK) or irv != int(CKR_OK):
         print("OK")
         return
-    slot2, enum_rv = _rediscover_burn_slot(ctx)
+    matches, enum_rv, info_refusals = _rediscover_burn_slot(ctx)
     _step("setup:phase2_enumerate", enum_rv)
-    if slot2 is None:
-        if enum_rv == int(CKR_OK):
-            print("NO_SLOTS")
+    for slot, irv in info_refusals:
+        # Plain info steps (not setup:*): preserved per-slot RVs that
+        # document the scan without tripping the setup-failure skip.
+        _step(f"info:phase2_tokeninfo_{slot}", irv)
+    if enum_rv != int(CKR_OK):
         print("OK")
         return
-    _read_phase(ctx, slot2, role)
+    action, detail = _phase2_rediscovery_outcome(matches, info_refusals)
+    if action == "absent":
+        print("NO_SLOTS")
+        print("OK")
+        return
+    if action == "assumption":
+        print(f"ASSUMPTION_FAILED:{detail}")
+        print("OK")
+        return
+    assert action == "proceed" and isinstance(detail, int)
+    _read_phase(ctx, detail, role)
     print("OK")
 
 

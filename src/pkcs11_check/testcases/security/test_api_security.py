@@ -2866,6 +2866,7 @@ def _verify_private_exponent_accept(
     are unproved-effect xfails, mirroring the value probe: the effect
     is observed but its nature is not proved.
     """
+    assert original_d, "exponent comparisons need a nonempty original"
     try:
         read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
     except CkrAssertionError as exc:
@@ -2968,6 +2969,7 @@ def _verify_exponent_unchanged_after_refusal(
     no-change proof (the sanctioned refusal record stands, the effect
     is unproved).
     """
+    assert original_d, "exponent comparisons need a nonempty original"
     try:
         read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
     except CkrAssertionError as exc:
@@ -3276,13 +3278,9 @@ def _run_copy_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
             if probe == "label_control":
                 _classify_control_refusal(exc, label=label, operation="C_CopyObject")
                 return
-            classify_forbidden_change_refusal(
-                exc,
-                COPY_FORBIDDEN_REFUSE_RVS,
-                label=label,
-                operation="C_CopyObject",
-            )
             if probe == "private_exponent":
+                # R2B3: read before classifying — a proved change fails
+                # before any alternate verdict can mask it.
                 assert original_d is not None, "exponent probe requires a pre-change readback"
                 _verify_exponent_unchanged_after_refusal(
                     rs,
@@ -3293,6 +3291,12 @@ def _run_copy_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
                     operation="C_CopyObject",
                     refusal_rv=exc.rv,
                 )
+            classify_forbidden_change_refusal(
+                exc,
+                COPY_FORBIDDEN_REFUSE_RVS,
+                label=label,
+                operation="C_CopyObject",
+            )
             return
         try:
             _verify_table_accept(
@@ -3366,13 +3370,9 @@ def _run_set_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
             if probe == "label_control":
                 _classify_control_refusal(exc, label=label, operation="C_SetAttributeValue")
                 return
-            classify_forbidden_change_refusal(
-                exc,
-                SET_FORBIDDEN_REFUSE_RVS,
-                label=label,
-                operation="C_SetAttributeValue",
-            )
             if probe == "private_exponent":
+                # R2B3: read before classifying — a proved change fails
+                # before any alternate verdict can mask it.
                 assert original_d is not None, "exponent probe requires a pre-change readback"
                 _verify_exponent_unchanged_after_refusal(
                     rs,
@@ -3383,6 +3383,12 @@ def _run_set_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
                     operation="C_SetAttributeValue",
                     refusal_rv=exc.rv,
                 )
+            classify_forbidden_change_refusal(
+                exc,
+                SET_FORBIDDEN_REFUSE_RVS,
+                label=label,
+                operation="C_SetAttributeValue",
+            )
             return
         _verify_table_accept(
             rs,

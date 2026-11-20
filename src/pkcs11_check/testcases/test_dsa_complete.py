@@ -250,18 +250,14 @@ _DSA_IMPORT_RUNTIME_REJECT_RVS = (
 )
 
 
-def _import_fixed_dsa_keypair(
-    rs: Any, *, label: str | None = None, copyable: bool | None = None
-) -> tuple[int, int]:
-    """Import the fixed RFC 6979 DSA-2048 keypair (bounded, no generation).
+def _fixed_dsa_public_attrs(
+    *, label: str | None = None, copyable: bool | None = None
+) -> dict[Any, Any]:
+    """Fixed DSA public-half template (shared by pair and public-only imports).
 
-    Returns (pub_handle, priv_handle). A clean refusal raises
-    CkrAssertionError for the caller to route (xfail); the public half is
-    destroyed if the private import fails.
-
-    ``label`` and ``copyable`` are default-omitted and land on the public
-    half only when requested (QC6a search scoping / QC6b copy premise), so
-    the QC5b stimulus stays byte-identical.
+    ``label`` and ``copyable`` land on the public half only when
+    requested (QC6a search scoping / QC6b copy premise), so the QC5b
+    stimulus stays byte-identical.
     """
     public_attrs: dict[Any, Any] = {
         CKA_CLASS: CKO_PUBLIC_KEY,
@@ -277,9 +273,21 @@ def _import_fixed_dsa_keypair(
         public_attrs[CKA_LABEL] = label
     if copyable is not None:
         public_attrs[CKA_COPYABLE] = copyable
+    return public_attrs
+
+
+def _import_fixed_dsa_keypair(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> tuple[int, int]:
+    """Import the fixed RFC 6979 DSA-2048 keypair (bounded, no generation).
+
+    Returns (pub_handle, priv_handle). A clean refusal raises
+    CkrAssertionError for the caller to route (xfail); the public half is
+    destroyed if the private import fails.
+    """
     pub = create_object_negotiated(
         rs,
-        public_attrs,
+        _fixed_dsa_public_attrs(label=label, copyable=copyable),
         purpose="QC5b fixed DSA-2048 public import",
     )
     try:
@@ -301,6 +309,22 @@ def _import_fixed_dsa_keypair(
         destroy_quietly(rs.raw, rs.sh, pub)
         raise
     return pub, priv
+
+
+def _import_fixed_dsa_public(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> int:
+    """Import the fixed DSA public half only (R2-A3).
+
+    Public-only nodes (the QC6b compare) never touch private material,
+    so a provider that refuses the private import must not void them.
+    A clean refusal raises CkrAssertionError for the caller to route.
+    """
+    return create_object_negotiated(
+        rs,
+        _fixed_dsa_public_attrs(label=label, copyable=copyable),
+        purpose="QC6b fixed DSA-2048 public-only import",
+    )
 
 
 def _dsa_parameter_gen_param_mech(
@@ -1711,6 +1735,31 @@ def _stage_fixed_dsa_pair(
     return pub, priv
 
 
+def _stage_fixed_dsa_public(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> int:
+    """Stage the fixed DSA public half for public-only nodes (R2-A3).
+
+    The QC6b compare judges the provider against its own readback
+    bytes, so byte-identical fixture coherence is NOT required (an
+    encoding-divergent module still runs), and no private half is
+    imported (a private-refusing provider still runs). A clean refusal
+    of the valid public vector xfails with the original RV.
+    """
+    if not rs.has_mechanism("DSA"):
+        pytest.skip("CKM_DSA not supported")
+    skip_unless_create_object_supported(rs)
+    try:
+        return _import_fixed_dsa_public(rs, label=label, copyable=copyable)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DSA_IMPORT_RUNTIME_REJECT_RVS,
+            "CKM_DSA advertised but fixed-vector DSA public import is not operational",
+        )
+        raise
+
+
 class TestDSAPublicValueSearch:
     """Exact public-value search over the fixed DSA vector (QC6a, #58.1).
 
@@ -2121,7 +2170,7 @@ class TestDSAPublicCopyCompare:
         """
         rs = p11_module_session
         label = "C_CopyObject DSA public empty-vs-restated (QC6b compare)"
-        pub, priv = _stage_fixed_dsa_pair(rs, copyable=True)
+        pub = _stage_fixed_dsa_public(rs, copyable=True)
         try:
             source_value = _read_dsa_public_value_or_void(rs, pub, label=label)
             empty = run_copy_compare_leg(rs, pub, {}, label=label, leg="empty")
@@ -2139,4 +2188,3 @@ class TestDSAPublicCopyCompare:
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
