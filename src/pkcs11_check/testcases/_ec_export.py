@@ -20,7 +20,11 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._attribute_values import (
+    MISSING_ATTRIBUTE,
+    attr_or_record,
+    refusal_for,
+)
 
 
 class MalformedSignature(ValueError):  # noqa: N818
@@ -407,8 +411,7 @@ def read_conventional_ec_point_or_xfail(
     # R4-F10: the refusals channel carries the observed CKR (and any
     # refusal-with-data evidence) -- a refusal that still wrote bytes
     # fails loud instead of voiding as merely unavailable.
-    refusals = getattr(attrs, "refusals", None) or {}
-    refusal = refusals.get(int(CKA_EC_POINT))
+    refusal = refusal_for(attrs, CKA_EC_POINT)
     if refusal is not None and getattr(refusal, "leaked_len", None) is not None:
         fail_as(
             "self_contradiction",

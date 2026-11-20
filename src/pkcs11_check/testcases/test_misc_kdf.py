@@ -122,6 +122,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
+    refusal_for,
     refusal_rv_for,
 )
 from pkcs11_check.testcases._operability import (
@@ -3375,7 +3376,7 @@ def _adopt_recovery_child(rs: Any, child: int, base: int, *, label: str, leg: st
         # R4-F2: unreadable is not mismatching. Only a refusal that
         # still wrote bytes fails here; every other unreadable shape
         # voids the leg (the absence is already journaled above).
-        refusal = read.refusals.get(int(CKA_LABEL))
+        refusal = refusal_for(read, CKA_LABEL)
         if refusal is not None and refusal.leaked_len is not None:
             fail_as(
                 "self_contradiction",
@@ -3392,21 +3393,22 @@ def _adopt_recovery_child(rs: Any, child: int, base: int, *, label: str, leg: st
                 detail={"base": base, "child": child, "leaked_len": refusal.leaked_len},
             )
         pytest.skip(f"{label}: {leg} child label unreadable; ownership unproved")
-    expected_stamp = f"{label}:{leg}"
-    if claimed != expected_stamp and claimed != expected_stamp.encode():
-        fail_as(
-            "self_contradiction",
-            kind="policy",
-            label=f"{label}: {leg} derive",
-            operation="C_DeriveKey",
-            inherit_mechanism=False,
-            actual=int(CKR_OK),
-            summary=(
-                f"{label}: {leg} child label is not the attempt label; "
-                "refusing to use or destroy it"
-            ),
-            detail={"base": base, "child": child},
-        )
+    else:
+        expected_stamp = f"{label}:{leg}"
+        if claimed != expected_stamp and claimed != expected_stamp.encode():
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=f"{label}: {leg} derive",
+                operation="C_DeriveKey",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                summary=(
+                    f"{label}: {leg} child label is not the attempt label; "
+                    "refusing to use or destroy it"
+                ),
+                detail={"base": base, "child": child},
+            )
     return child
 
 
