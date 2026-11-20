@@ -338,6 +338,7 @@ def flush_probe_sidecar(
     """
     from pkcs11_check.core._counters_durability import (
         PROBE_SIDECAR_ENV,
+        birth_token_for_pid,
         probe_sidecar_identity_from_env,
         write_probe_sidecar,
     )
@@ -357,6 +358,8 @@ def flush_probe_sidecar(
             lost_keys=lost_keys,
             identity=probe_sidecar_identity_from_env(os.environ),
             probes_lost=probes_lost,
+            pid=os.getpid(),
+            birth=birth_token_for_pid(os.getpid()),
         )
     except (OSError, TypeError, ValueError):
         pass

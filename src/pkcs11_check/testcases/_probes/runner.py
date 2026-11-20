@@ -44,6 +44,7 @@ from pkcs11_check.core._counters_durability import (
     PROBE_SIDECAR_ENV,
     PROBE_UNIT_ENV,
     CounterPersistenceError,
+    _replay_probe_tmp_rows,
     durability_dir,
     mark_probe_consumed,
     validate_probe_receipt,
@@ -195,20 +196,37 @@ def _read_probe_json(path: str | None) -> dict[str, Any] | None | _UnreadableEvi
 
 
 def _delete_probe_sidecar(path: str | None) -> bool:
-    """Remove a probe sidecar (never raises). True when gone or absent.
+    """Remove a probe sidecar and its rewrite tmps (never raises).
 
-    A missing file counts as deleted: the sidecar writer suppresses I/O
-    failures, so valid coverage may arrive with no sidecar at all, and
-    that must not escalate into a consumed-marker rename of nothing.
+    True when the sidecar is gone or absent. A missing file counts as
+    deleted: the sidecar writer suppresses I/O failures, so valid
+    coverage may arrive with no sidecar at all, and that must not
+    escalate into a consumed-marker rename of nothing. Rewrite tmps
+    go with the sidecar (#88R3: leaving them strands evidence no
+    later pass references); tmp failures never flip the sidecar's
+    verdict (same directory, same permissions -- independent tmp
+    failure is ~impossible, and a stranded tmp is debris, not loss).
     """
     if not path:
         return True
     try:
         os.unlink(path)
     except FileNotFoundError:
-        return True
+        pass
     except OSError:
         return False
+    parent = os.path.dirname(path) or "."
+    try:
+        names = os.listdir(parent)
+    except OSError:
+        return True
+    prefix = os.path.basename(path) + ".tmp-"
+    for name in names:
+        if name.startswith(prefix):
+            try:
+                os.unlink(os.path.join(parent, name))
+            except OSError:
+                pass
     return True
 
 
@@ -318,6 +336,19 @@ def ingest_probe_payload(
         fallback_counters = fallback.get("counters")
         validated_fallback = validate_probe_receipt(fallback_receipt, seq)
         if validated_fallback is not None and isinstance(fallback_counters, (list, tuple)):
+            # The child is reaped before ingest (run_probe waits), so its
+            # rewrite tmps are quiescent by construction: replay returns
+            # onto the sidecar rows with the shared collector logic
+            # (#88R3). Path freshness binds the run (the slot path carries
+            # a per-spawn nonce), so no producer stamps are needed.
+            assert sidecar is not None  # fallback read implies a path
+            fallback_counters = _replay_probe_tmp_rows(
+                Path(sidecar),
+                validated_fallback[0],
+                validated_fallback[1],
+                fallback,
+                list(fallback_counters),
+            )
             # The consumed identity rides inside the ingest transaction:
             # no checkpoint ever carries absorbed counts without their
             # anti-double-fold proof (codex RC4-R1-2; a post-ingest

@@ -1310,6 +1310,7 @@ class TestCensusEngagement:
             "barrier_ok",
             "fenced",
             "unresolved",
+            "retained_uuids",
             "skipped_units",
             "cache_records",
             "collected_runs",

@@ -820,7 +820,10 @@ def _setup_counters_durability(
         )
     pending_units = _apply_counters_barrier_plan(state_file, plan, pending_units, console)
     sweep_orphans(
-        counters_root, current_run=run_id_value, collected_runs=frozenset(plan["collected_runs"])
+        counters_root,
+        current_run=run_id_value,
+        collected_runs=frozenset(plan["collected_runs"]),
+        retain_uuids=frozenset(plan.get("unresolved", []) + plan.get("retained_uuids", [])),
     )
     return pending_units
 

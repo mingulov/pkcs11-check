@@ -763,17 +763,24 @@ def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
 def _pidfd_exited(fd: int, timeout_s: float) -> bool:
     """Whether a pidfd reports its pinned process exited in time (#88R3).
 
-    A pidfd becomes readable exactly when its process exits (zombies
-    included: they hold no writers, so they are quiescent). No /proc
-    consult, so permission faults can never masquerade as death. Any
-    poll failure or unmet wait reads unresolved (False).
+    Exit readiness (POLLIN) on the pinned fd proves the process
+    exited (zombies included: they hold no writers, so they are
+    quiescent). No /proc consult, so permission faults can never
+    masquerade as death. Only POLLIN counts: hangup/error/invalid
+    masks and any poll failure or unmet wait read unresolved (False).
     """
     try:
         poller = select.poll()
         poller.register(fd, select.POLLIN)
-        return bool(poller.poll(max(int(timeout_s * 1000), 0)))
+        events = poller.poll(max(int(timeout_s * 1000), 0))
     except (OSError, ValueError):
         return False
+    for _, mask in events:
+        if mask & (select.POLLNVAL | select.POLLERR):
+            return False
+        if mask & (select.POLLIN | select.POLLHUP):
+            return True
+    return False
 
 
 def _terminate_pidfd(pid: int, birth: int, timeout_s: float) -> bool:
@@ -1162,6 +1169,8 @@ def write_probe_sidecar(
     identity: dict[str, Any] | None = None,
     finalized: bool = True,
     probes_lost: int = 0,
+    pid: int | None = None,
+    birth: int | None = None,
 ) -> None:
     """Write one probe sidecar atomically (single attempt, tmp + replace).
 
@@ -1174,7 +1183,9 @@ def write_probe_sidecar(
     ``"finalized": false`` (fold but never heal: the tail they never
     saw stays a named loss); finalized snapshots omit the key, so the
     exit shape stays byte-identical to legacy. A crash lands the old
-    or the new content, never a mix.
+    or the new content, never a mix. ``pid``/``birth_token`` bind the
+    slot to the writer incarnation when given (#88R3: quiescence);
+    omitted entirely when None, so legacy shapes stay byte-identical.
 
     Raises:
         OSError: When the file cannot be written.
@@ -1190,6 +1201,10 @@ def write_probe_sidecar(
         payload["lost_keys"] = lost_keys
     if probes_lost:
         payload["probes_lost"] = probes_lost
+    if pid is not None:
+        payload["pid"] = pid
+    if birth is not None:
+        payload["birth_token"] = birth
     for field in _PROBE_IDENTITY_WIRE_ORDER:
         if identity and field in identity:
             payload[field] = identity[field]
@@ -1235,8 +1250,26 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
 
 def _read_probe_orphan(
     path: Path,
-) -> tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any], bool, int, bool] | None:
+) -> (
+    tuple[
+        str,
+        int,
+        list[Any],
+        frozenset[tuple[str, int]],
+        dict[str, Any],
+        bool,
+        int,
+        bool,
+        int | None,
+        int | None,
+    ]
+    | None
+):
     """Return ``(child_uuid, seq, counters, keys, identity, finalized, adopted, vacuous_ok)``.
+
+    Plus the trailing writer incarnation ``(pid, birth_token)`` (#88R3,
+    each None unless well-typed): quiescence binds the slot to a dead
+    or recycled writer, never a live one.
 
     ``identity`` is the F2 self-describing block (parent_uuid/run_id/unit/
     attempt/role/isolation, each present only when well-typed); legacy
@@ -1322,6 +1355,8 @@ def _read_probe_orphan(
     else:
         adopted = 0
         vacuous_ok = False
+    pid = data.get("pid")
+    birth = data.get("birth_token")
     return (
         uuid,
         seq,
@@ -1331,6 +1366,8 @@ def _read_probe_orphan(
         finalized,
         adopted,
         vacuous_ok,
+        pid if _is_nonneg_int(pid) else None,
+        birth if is_birth_token(birth) else None,
     )
 
 
@@ -1477,32 +1514,78 @@ def _merge_probe_tmp_rows(own: list[Any], tmp: list[Any]) -> list[list[Any]]:
     return merged
 
 
+def _tmp_stamp_clash(
+    payload: dict[str, Any],
+    identity: dict[str, Any],
+    producer_run: str | None,
+    producer_unit: str | None,
+    orphan_pid: int | None = None,
+    orphan_birth: int | None = None,
+) -> bool:
+    """Whether a probe tmp's stamps contradict its orphan or producer (#88R3).
+
+    Each F2 stamp (parent, run, unit, attempt) disqualifies only on an
+    explicit contradiction with the orphan's -- a side that does not
+    state a stamp cannot contradict on it (legacy orphans state
+    nothing). The producer's run/unit additionally disqualify a tmp
+    that contradicts the collecting pass, so a legacy orphan cannot
+    launder a cross-run tmp past the reunion checks. The writer
+    incarnation (pid, birth) disqualifies on contradiction the same
+    way: a tmp from another incarnation never replays.
+    """
+    for key in ("parent_uuid", "run_id", "unit", "attempt"):
+        mine = payload.get(key)
+        theirs = identity.get(key)
+        if mine is not None and theirs is not None and mine != theirs:
+            return True
+    run = payload.get("run_id")
+    if run is not None and producer_run is not None and run != producer_run:
+        return True
+    unit = payload.get("unit")
+    if unit is not None and producer_unit is not None and unit != producer_unit:
+        return True
+    tmp_pid = payload.get("pid")
+    if _is_nonneg_int(tmp_pid) and orphan_pid is not None and tmp_pid != orphan_pid:
+        return True
+    tmp_birth = payload.get("birth_token")
+    if is_birth_token(tmp_birth) and orphan_birth is not None and tmp_birth != orphan_birth:
+        return True
+    return False
+
+
 def _replay_probe_tmp_rows(
     path: Path,
     child_uuid: str,
     seq: int,
     identity: dict[str, Any],
     counters: list[Any],
+    *,
+    producer_run: str | None = None,
+    producer_unit: str | None = None,
+    orphan_pid: int | None = None,
+    orphan_birth: int | None = None,
 ) -> list[Any]:
     """Replay the best same-probe rewrite tmp into orphan rows (#88).
 
     A probe return flush that dies inside ``os.replace`` leaves the
     new snapshot in a complete ``{probe}.tmp-{pid}`` while the orphan
     sidecar stays pre-return. A candidate must parse, bind to the
-    probe run (child uuid, probe seq, and the F2 parent when both
-    sides state it), and carry a row list; the largest snapshot (by
-    parsed call volume) replays returns-only onto the orphan's rows.
+    probe run (child uuid, probe seq, the F2 parent/run/unit/
+    attempt stamps, and the writer incarnation -- each compared only
+    when both sides state it, mirroring reunion strictness -- plus
+    the producer's run/unit so legacy orphans cannot launder a
+    cross-run tmp), and carry a row list; selection scores replayable
+    returns, never raw volume, and divergent candidates warn loudly
+    while the orphan rows win.
     Torn, foreign, or row-less tmps read as absent. The orphan's own
     loss keys/scalar always win (a tmp's marginal loss evidence stays
     dropped, as before -- counters-only replay).
     """
-    best: list[Any] | None = None
-    best_volume = 0
     try:
         candidates = sorted(path.parent.glob(f"{path.name}.tmp-*"))
     except OSError:
         return counters
-    own_parent = identity.get("parent_uuid")
+    gated: list[list[Any]] = []
     for tmp in candidates:
         payload = read_json_file(tmp)
         if not isinstance(payload, dict):
@@ -1511,22 +1594,70 @@ def _replay_probe_tmp_rows(
             continue
         if payload.get("probe_seq") != seq:
             continue
-        tmp_parent = payload.get("parent_uuid")
-        if tmp_parent is not None and own_parent is not None and tmp_parent != own_parent:
+        if _tmp_stamp_clash(
+            payload, identity, producer_run, producer_unit, orphan_pid, orphan_birth
+        ):
             continue
         tmp_counters = payload.get("counters")
         if not isinstance(tmp_counters, list):
             continue
-        volume = 0
-        for row in tmp_counters:
-            parsed = _parse_probe_flat_row(row)
-            if parsed is not None:
-                volume += parsed[3]
-        if volume > best_volume:
-            best, best_volume = tmp_counters, volume
-    if best is None:
+        gated.append(tmp_counters)
+    if not gated:
         return counters
-    return _merge_probe_tmp_rows(counters, best)
+    scored: list[tuple[list[Any], dict[tuple[str, ...], int]]] = []
+    merged_by_id: dict[int, list[list[Any]]] = {}
+    for rows in gated:
+        merged = _merge_probe_tmp_rows(counters, rows)
+        merged_by_id[id(rows)] = merged
+        scored.append((rows, _rows_returns_diff(merged, counters)))
+    winners, divergent = _maximal_replayable(scored)
+    if divergent:
+        warnings.warn(
+            f"divergent probe tmps for {path.name} retained "
+            "(irreconcilable rewrites; the orphan rows win)",
+            UserWarning,
+            stacklevel=2,
+        )
+        return counters
+    if all(not vector for _, vector in scored):
+        return counters
+    winner = max(winners, key=_probe_rows_volume)
+    return merged_by_id[id(winner)]
+
+
+def _probe_rows_volume(counters: list[Any]) -> int:
+    """Parsed call volume of flat probe rows (garbage skipped)."""
+    volume = 0
+    for row in counters:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is not None:
+            volume += parsed[3]
+    return volume
+
+
+def _rows_returns_diff(merged: list[Any], own: list[Any]) -> dict[tuple[str, ...], int]:
+    """Per-(module, fn, rv) returns a probe replay would add (#88R3)."""
+    diff: dict[tuple[str, ...], int] = {}
+    own_exits: dict[tuple[str, str, int], int] = {}
+    for row in own:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is None:
+            continue
+        module, fn, rv, count = parsed
+        if rv is not None:
+            own_exits[(module, fn, rv)] = own_exits.get((module, fn, rv), 0) + count
+    merged_exits: dict[tuple[str, str, int], int] = {}
+    for row in merged:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is None:
+            continue
+        module, fn, rv, count = parsed
+        if rv is not None:
+            merged_exits[(module, fn, rv)] = merged_exits.get((module, fn, rv), 0) + count
+    for key, merged_count in merged_exits.items():
+        if merged_count > own_exits.get(key, 0):
+            diff[(key[0], key[1], str(key[2]))] = merged_count - own_exits.get(key, 0)
+    return diff
 
 
 def _adopt_probe_orphans(
@@ -1688,7 +1819,7 @@ def _adopt_probe_orphans(
                 continue
             orphan = _read_probe_orphan(path)
             if orphan is not None:
-                marker_child, marker_seq, _, marker_keys, _, marker_finalized, _, _ = orphan
+                marker_child, marker_seq, _, marker_keys, _, marker_finalized, _, _, _, _ = orphan
                 coverage.add((marker_child, marker_seq))
                 orphan_keys |= marker_keys
                 if marker_finalized and marker_seq == parsed_name[1]:
@@ -1705,10 +1836,43 @@ def _adopt_probe_orphans(
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
-        child_uuid, seq, counters, keys, identity, finalized, adopted, vacuous_ok = orphan
+        (
+            child_uuid,
+            seq,
+            counters,
+            keys,
+            identity,
+            finalized,
+            adopted,
+            vacuous_ok,
+            orphan_pid,
+            orphan_birth,
+        ) = orphan
+        if (
+            orphan_pid is not None
+            and orphan_birth is not None
+            and birth_token_for_pid(orphan_pid) == orphan_birth
+        ):
+            # Quiescence (#88R3): the writer incarnation is still alive,
+            # so the slot retains for a later pass -- folding (or tmp
+            # replay) under a live writer could consume evidence it is
+            # still extending. A mismatched birth proves recycling (the
+            # writer is dead); an unreadable birth cannot prove
+            # aliveness, so adoption proceeds.
+            continue
         # #88: a same-probe rewrite tmp replays its returns onto the
         # orphan's rows before either reunion pass folds them.
-        counters = _replay_probe_tmp_rows(path, child_uuid, seq, identity, counters)
+        counters = _replay_probe_tmp_rows(
+            path,
+            child_uuid,
+            seq,
+            identity,
+            counters,
+            producer_run=producer_run,
+            producer_unit=producer_unit,
+            orphan_pid=orphan_pid,
+            orphan_birth=orphan_birth,
+        )
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
@@ -2396,7 +2560,98 @@ def _sidecar_run(sidecar: dict[str, Any]) -> str:
     return _UNKNOWN_RUN
 
 
-def _adopt_orphan_tmp_payload(
+def _strictly_contains(
+    first: dict[tuple[str, ...], int], second: dict[tuple[str, ...], int]
+) -> bool:
+    """Whether replayable vector ``first`` strictly contains ``second``."""
+    greater = False
+    for key in set(first) | set(second):
+        if first.get(key, 0) < second.get(key, 0):
+            return False
+        if first.get(key, 0) > second.get(key, 0):
+            greater = True
+    return greater
+
+
+def _maximal_replayable(
+    scored: list[tuple[Any, dict[tuple[str, ...], int]]],
+) -> tuple[list[Any], bool]:
+    """Split scored tmp candidates into (equivalent maxima, divergent).
+
+    A candidate is maximal when no other candidate's replayable
+    vector strictly contains it. Equivalent maxima (identical vectors)
+    select deterministically downstream; divergent maxima (no single
+    vector contains the rest) flag a conflict instead of picking
+    silently. Empty vectors are all equivalent (nothing replayable).
+    """
+    maximal_indexes = [
+        index
+        for index, (_, vector) in enumerate(scored)
+        if not any(
+            _strictly_contains(other, vector)
+            for other_index, (_, other) in enumerate(scored)
+            if other_index != index
+        )
+    ]
+    if not maximal_indexes:
+        return [], False
+    first = scored[maximal_indexes[0]][1]
+    if any(scored[index][1] != first for index in maximal_indexes):
+        return [], True
+    return [scored[index][0] for index in maximal_indexes], False
+
+
+def _block_returns_diff(merged_prog: Any, committed_prog: Any) -> dict[tuple[str, ...], int]:
+    """Per-(module, bucket, fn, rv) returns a replay would add (#88R3)."""
+    diff: dict[tuple[str, ...], int] = {}
+    if not isinstance(merged_prog, dict) or not isinstance(committed_prog, dict):
+        return diff
+    merged_modules = merged_prog.get("by_module", {})
+    committed_modules = committed_prog.get("by_module", {})
+    if not isinstance(merged_modules, dict) or not isinstance(committed_modules, dict):
+        return diff
+    for module, merged_module in merged_modules.items():
+        if not isinstance(module, str) or not isinstance(merged_module, dict):
+            continue
+        own_module = committed_modules.get(module, {})
+        if not isinstance(own_module, dict):
+            continue
+        merged_buckets = merged_module.get("buckets", {})
+        own_buckets = own_module.get("buckets", {})
+        if not isinstance(merged_buckets, dict) or not isinstance(own_buckets, dict):
+            continue
+        for bucket, merged_bucket in merged_buckets.items():
+            if not isinstance(bucket, str) or not isinstance(merged_bucket, dict):
+                continue
+            own_bucket = own_buckets.get(bucket, {})
+            if not isinstance(own_bucket, dict):
+                continue
+            merged_fns = merged_bucket.get("by_fn", {})
+            own_fns = own_bucket.get("by_fn", {})
+            if not isinstance(merged_fns, dict) or not isinstance(own_fns, dict):
+                continue
+            for fn, merged_leaf in merged_fns.items():
+                if not isinstance(fn, str):
+                    continue
+                own_leaf = own_fns.get(fn, {})
+                merged_rv = merged_leaf.get("by_rv", {}) if isinstance(merged_leaf, dict) else {}
+                own_rv = own_leaf.get("by_rv", {}) if isinstance(own_leaf, dict) else {}
+                if not isinstance(merged_rv, dict) or not isinstance(own_rv, dict):
+                    continue
+                for rv, merged_item in merged_rv.items():
+                    merged_count = (
+                        merged_item.get("count") if isinstance(merged_item, dict) else None
+                    )
+                    own_item = own_rv.get(rv)
+                    own_count = own_item.get("count") if isinstance(own_item, dict) else 0
+                    if _is_nonneg_int(merged_count) and _is_nonneg_int(own_count):
+                        assert isinstance(merged_count, int) and isinstance(own_count, int)
+                        if merged_count > own_count:
+                            diff[(module, bucket, fn, str(rv))] = merged_count - own_count
+    return diff
+
+
+def _replay_orphan_tmps(
     sidecar_path: Path,
     committed: dict[str, Any] | None,
     *,
@@ -2405,34 +2660,36 @@ def _adopt_orphan_tmp_payload(
     unit: str,
     attempt: int,
     pid: int,
-) -> dict[str, Any] | None:
-    """Select the newest same-window rewrite tmp for a dead producer (#88).
+) -> tuple[dict[str, Any] | None, bool]:
+    """Replay the best same-window rewrite tmp, or flag divergence (#88).
 
-    A K=1 return flush that dies inside ``os.replace`` leaves the new
-    payload in a complete orphan tmp while the committed sidecar stays
-    pre-return. A candidate must parse as a sidecar, bind to the
-    producer's full identity (uuid, run, unit, attempt, pid), hold a
-    valid in-progress block, and carry the committed window mark: the
+    Returns ``(replayed sidecar or None, divergent)``. A K=1 return
+    flush that dies inside ``os.replace`` leaves the new payload in a
+    complete orphan tmp while the committed sidecar stays pre-return.
+    A candidate must parse as a sidecar, bind to the producer's full
+    identity (uuid, run, unit, attempt, pid), hold a valid
+    in-progress block, and carry the committed window mark: the
     in-progress totals reset at every journal boundary, so only
-    same-window snapshots are comparable (an older window's larger
-    total must never displace the current tail, and a newer window's
-    tail belongs to entries the journal has not published). Torn,
-    foreign, stale-window, or mark-less tmps read as absent, as does
-    every tmp when the committed sidecar itself is missing or
-    mark-less (a first-flush tmp is an uncommitted entry snapshot,
-    never replayable). Only called for dead-or-fenced producers.
+    same-window snapshots are comparable. Torn, foreign,
+    stale-window, or mark-less tmps read as absent, as does every tmp
+    when the committed sidecar itself is missing or mark-less.
+    Selection scores replayable returns, never raw volume: a stale
+    larger snapshot cannot displace a smaller one that actually
+    replays. Divergent candidates (no single replayable vector
+    contains the rest) keep the committed baseline and flag a
+    conflict for the lost record. Only called for dead-or-fenced
+    producers.
     """
     if not isinstance(committed, dict):
-        return None
+        return None, False
     committed_seq = committed.get("journal_seq")
     if not _is_nonneg_int(committed_seq):
-        return None
-    best: dict[str, Any] | None = None
-    best_total = -1
+        return None, False
     try:
         candidates = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
     except OSError:
-        return None
+        return None, False
+    gated: list[dict[str, Any]] = []
     for tmp in candidates:
         payload = read_json_file(tmp)
         if not isinstance(payload, dict):
@@ -2450,13 +2707,46 @@ def _adopt_orphan_tmp_payload(
         tmp_seq = payload.get("journal_seq")
         if not _is_nonneg_int(tmp_seq) or tmp_seq != committed_seq:
             continue
-        in_progress = payload.get("in_progress")
-        if not is_module_first_block(in_progress):
+        if not is_module_first_block(payload.get("in_progress")):
             continue
-        total = in_progress["total_calls"]
-        if total > best_total:
-            best, best_total = payload, total
-    return best
+        gated.append(payload)
+    if not gated:
+        return None, False
+    committed_prog = committed.get("in_progress")
+    scored: list[tuple[dict[str, Any], dict[tuple[str, ...], int]]] = []
+    merged_by_id: dict[int, dict[str, Any]] = {}
+    for payload in gated:
+        merged = _replay_tmp_returns(committed, payload)
+        merged_by_id[id(payload)] = merged
+        scored.append((payload, _block_returns_diff(merged.get("in_progress"), committed_prog)))
+    winners, divergent = _maximal_replayable(scored)
+    if divergent:
+        return None, True
+    if all(not vector for _, vector in scored):
+        return None, False
+    winner = max(winners, key=lambda item: item["in_progress"]["total_calls"])
+    return merged_by_id[id(winner)], False
+
+
+def _coverage_keyset(payload: dict[str, Any]) -> set[tuple[str, int]]:
+    """Coverage identities a sidecar claims (receipts + consumed + lost)."""
+    keys: set[tuple[str, int]] = set()
+    for field, id_keys in (
+        ("receipts", ("worker_uuid", "probe_seq")),
+        ("consumed_probes", ("worker_uuid", "probe_seq")),
+        ("lost_keys", ("parent_uuid", "probe_seq")),
+    ):
+        items = payload.get(field)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            first, second = item.get(id_keys[0]), item.get(id_keys[1])
+            if isinstance(first, str) and _is_nonneg_int(second):
+                assert isinstance(second, int)
+                keys.add((first, second))
+    return keys
 
 
 def _replay_tmp_returns(committed: dict[str, Any], tmp: dict[str, Any]) -> dict[str, Any]:
@@ -2471,20 +2761,23 @@ def _replay_tmp_returns(committed: dict[str, Any], tmp: dict[str, Any]) -> dict[
     when the merged returns fit its committed entries (counts are not
     attributable per call, so excess returns -- corrupt at K=1, K-loss
     tradeoff beyond -- keep the committed leaf untouched and stay
-    named in-flight). Receipts, consumed
-    probes, and loss keys union (same-window cumulative sets; dropping
-    the tmp's would double-fold absorbed probes) and the loss scalar
-    takes the max when both sides type-check. The window mark is
-    preserved, so the gap arms treat the replayed sidecar exactly as
-    the committed one. Returns ``committed`` unchanged when its
-    in-progress block is invalid (the gap arms conflict on it as
-    before); callers pass a validated tmp.
+    named in-flight). Coverage stays coupled to its counts (#88R3):
+    a tmp naming coverage the committed sidecar lacks is an ingest
+    checkpoint, and replaying its returns would orphan the only other
+    copy -- so it replays nothing and the orphan folds normally. The
+    loss scalar takes the max when both sides type-check. The window
+    mark is preserved, so the gap arms treat the replayed sidecar
+    exactly as the committed one. Returns ``committed`` unchanged
+    when its in-progress block is invalid (the gap arms conflict on
+    it as before); callers pass a validated tmp.
     """
     in_progress = committed.get("in_progress")
     if not is_module_first_block(in_progress):
         return committed
     tmp_progress = tmp.get("in_progress")
     if not is_module_first_block(tmp_progress):
+        return committed
+    if not _coverage_keyset(tmp) <= _coverage_keyset(committed):
         return committed
     merged_prog: dict[str, Any] = copy.deepcopy(in_progress)
     for module, tmp_module in tmp_progress["by_module"].items():
@@ -2536,12 +2829,9 @@ def _replay_tmp_returns(committed: dict[str, Any], tmp: dict[str, Any]) -> dict[
                         }
     merged = dict(committed)
     merged["in_progress"] = merged_prog
-    for key in ("receipts", "consumed_probes", "lost_keys"):
-        own_items = committed.get(key)
-        tmp_items = tmp.get(key)
-        if not isinstance(own_items, list) or not isinstance(tmp_items, list):
-            continue
-        merged[key] = [*own_items, *[item for item in tmp_items if item not in own_items]]
+    # Coverage lists stay the committed ones verbatim: replay implies no
+    # new coverage (ingest checkpoints return above), so the tmp adds no
+    # identities the committed sidecar lacks.
     own_lost = committed.get("probes_lost")
     tmp_lost = tmp.get("probes_lost")
     if _is_nonneg_int(own_lost) and _is_nonneg_int(tmp_lost):
@@ -2639,13 +2929,15 @@ def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict
         return None
     pid = sidecar.get("pid")
     if _is_nonneg_int(pid):
-        # Quiescence (#88R2): a provably alive pid may still be the
-        # producer, so the sidecar retains for a later pass instead of
-        # folding (and naming losses) under a live writer. An unreadable
-        # birth (dead pid, recycled slot, or a platform without a birth
-        # source) cannot prove aliveness, so adoption proceeds.
+        # Quiescence (#88R2, strict #88R3): without a birth anchor the
+        # only sound question is presence -- a pid that names anything
+        # alive (or unreadable: EPERM proves existence too) may still
+        # be the producer, so the sidecar retains for a later pass
+        # instead of folding (and naming losses) under a live writer.
+        # Only a proven-dead pid (lookup failure) adopts; recycled
+        # slots delay one pass, never misfold.
         assert isinstance(pid, int)
-        if birth_token_for_pid(pid) is not None:
+        if _pid_exists(pid):
             return None
     return (uuid, sidecar)
 
@@ -2678,13 +2970,15 @@ def _collect_dead_producer(
     sidecar_raw = str(content.get("sidecar", ""))
     sidecar_path = Path(sidecar_raw)
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
+    divergent_tmps = False
     if sidecar_raw:
         # #88: a same-window orphan rewrite tmp replays the return its
         # death orphaned (dead-or-fenced producers only; torn, foreign,
         # or stale-window tmps read as absent). Returns merge onto
         # committed entries; entry counts are never adopted (a tmp
         # holding newer entries is an uncommitted admission snapshot).
-        adopted = _adopt_orphan_tmp_payload(
+        # Divergent tmps keep the committed baseline and conflict.
+        replayed, divergent_tmps = _replay_orphan_tmps(
             sidecar_path,
             sidecar if isinstance(sidecar, dict) else None,
             uuid=uuid,
@@ -2693,10 +2987,11 @@ def _collect_dead_producer(
             attempt=content["attempt"],
             pid=content["pid"],
         )
-        if adopted is not None and isinstance(sidecar, dict):
-            sidecar = _replay_tmp_returns(sidecar, adopted)
+        if replayed is not None:
+            sidecar = replayed
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
     block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+    conflict = conflict or divergent_tmps
     scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
     if scalar is None:
         scalar_count = 0
@@ -2875,6 +3170,7 @@ def sweep_orphans(
     current_run: str | None,
     committed_uuids: frozenset[str] = frozenset(),
     collected_runs: frozenset[str] = frozenset(),
+    retain_uuids: frozenset[str] = frozenset(),
 ) -> dict[str, int]:
     """Delete provably-consumable evidence files; retain everything else.
 
@@ -2885,7 +3181,9 @@ def sweep_orphans(
     (undisambiguable debris), and torn probe sidecars. Retains: everything
     else, including live producers' files (verified before any destructive
     decision), valid probe orphans (only collection proves them
-    consumable), and other-run evidence no barrier has claimed. Idempotent:
+    consumable), other-run evidence no barrier has claimed, and every
+    file attributable to ``retain_uuids`` (#88R3: barrier-retained
+    producers whose run credited collected via siblings). Idempotent:
     a second sweep removes nothing further. Never raises.
     """
     root = Path(counters_dir)
@@ -2907,6 +3205,10 @@ def sweep_orphans(
                 retained += 1
 
     for registry_path in sorted(reg_dir.glob("*.json")):
+        claimed = parse_registry_filename(registry_path.name)
+        if claimed is not None and claimed in retain_uuids:
+            retained += 1
+            continue
         content = read_registry_file(registry_path)
         if content is None:
             if _reap_torn_registry(root, registry_path):
@@ -2937,6 +3239,11 @@ def sweep_orphans(
         uuid = _uuid_from_evidence_name(sidecar_path.name)
         if uuid is None:
             continue
+        if uuid in retain_uuids:
+            retained += 1
+            if _journal_for_sidecar(sidecar_path).exists():
+                retained += 1
+            continue
         if (reg_dir / f"{uuid}.json").exists() and read_registry_file(reg_dir / f"{uuid}.json"):
             continue
         sidecar = read_json_file(sidecar_path)
@@ -2954,6 +3261,9 @@ def sweep_orphans(
     for journal_path in sorted(root.glob(f"*{JOURNAL_SUFFIX}")):
         uuid = _uuid_from_evidence_name(journal_path.name)
         if uuid is None:
+            continue
+        if uuid in retain_uuids:
+            retained += 1
             continue
         stem = journal_path.name[: -len(JOURNAL_SUFFIX)]
         if list(root.glob(f"{stem}{SIDECAR_SUFFIX}")):
@@ -3076,6 +3386,7 @@ def prepare_resume(
         "barrier_ok": True,
         "fenced": [],
         "unresolved": [],
+        "retained_uuids": [],
         "skipped_units": [],
         "cache_records": {},
         "collected_runs": [],
@@ -3118,7 +3429,9 @@ def prepare_resume(
         if content is None:
             # #88R2: unreadable is never torn (see collect_unit): reserve
             # the filename uuid so the torn-sidecar sweep cannot adopt a
-            # live producer's evidence this pass.
+            # live producer's evidence this pass. #88R3: the reservation
+            # rides the plan so the post-barrier sweep keeps its hands
+            # off too (its run may still credit collected via siblings).
             reserved = _unreadable_registry_uuid(registry_path)
             if reserved is not None:
                 warnings.warn(
@@ -3128,6 +3441,7 @@ def prepare_resume(
                     stacklevel=2,
                 )
                 seen_uuids.add(reserved)
+                plan["retained_uuids"].append(reserved)
             _reap_torn_registry(root, registry_path)
             continue
         uuid = content["worker_uuid"]
