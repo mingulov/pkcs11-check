@@ -674,6 +674,51 @@ def _collect_counters_for_attempt(
     )
 
 
+def _verify_counters_application(
+    state_file: Path, unit: str, records: list[dict[str, Any]], *, pending: bool
+) -> bool:
+    """Whether every applied record is readable at its destination (#88R12-5).
+
+    Staging must survive until the recovery records prove readable:
+    an applied-but-unreadable batch (torn destination, swallowed
+    write) fails the application instead of discarding its staging.
+    Records without a stable identity hash are unverifiable and pass
+    (they fail open at append time). Never raises.
+    """
+    wanted: set[str] = set()
+    for record in records:
+        identity = _record_identity_hex(record)
+        if identity is not None:
+            wanted.add(identity)
+    if not wanted:
+        return True
+    try:
+        if pending:
+            path = supplements_path(state_file, unit)
+            if not path.exists():
+                return False
+            content = path.read_text(encoding="utf-8")
+            have: set[str] = set()
+            for line in content.splitlines():
+                try:
+                    identity = _record_identity_hex(json.loads(line))
+                except ValueError:
+                    continue
+                if identity is not None:
+                    have.add(identity)
+        else:
+            cache_path = _report_record_cache_path(state_file, unit)
+            have = set()
+            if cache_path.exists():
+                for record in _load_report_log_records(cache_path):
+                    identity = _record_identity_hex(record)
+                    if identity is not None:
+                        have.add(identity)
+    except OSError:
+        return False
+    return wanted <= have
+
+
 def _apply_counters_barrier_plan(
     state_file: Path,
     plan: dict[str, Any],
@@ -703,6 +748,17 @@ def _apply_counters_barrier_plan(
         else:
             landed = _write_counters_recovery_cache(state_file, unit, records)
         if not landed:
+            failed.append(unit)
+    for unit, records in plan["cache_records"].items():
+        if unit in failed or not records:
+            continue
+        if not _verify_counters_application(state_file, unit, records, pending=unit in pending_set):
+            warnings.warn(
+                f"counter barrier plan for {unit} not readable after landing; "
+                "staging retained for the next resume",
+                UserWarning,
+                stacklevel=2,
+            )
             failed.append(unit)
     skipped_live = set(plan.get("skipped_live", plan["skipped_units"]))
     for unit in plan["skipped_units"]:

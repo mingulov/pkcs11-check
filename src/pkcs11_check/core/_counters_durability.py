@@ -56,6 +56,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pkcs11_check.core.counters_schema import (
+    LOST_REPORT_TYPE,
+    PARTIAL_ALLOWED_KEYS,
+    PARTIAL_REPORT_TYPE,
+    PARTIAL_REQUIRED_KEYS,
     REGISTRY_DIRNAME,
     SESSION_REPORT_TYPE,
     TEST_ENTRY_PROPERTY,
@@ -63,6 +67,7 @@ from pkcs11_check.core.counters_schema import (
     ensure_five_buckets,
     is_birth_token,
     is_lost_key,
+    is_lost_record,
     is_module_first_block,
     is_receipt,
     is_registry_content,
@@ -70,6 +75,7 @@ from pkcs11_check.core.counters_schema import (
     is_session_record,
     is_test_entry,
     is_worker_uuid,
+    key_violations,
     merge_module_first,
     mint_filename_nonce,
     parse_registry_filename,
@@ -154,10 +160,30 @@ PROBE_CONSUMED_PREFIX = "probe-consumed-"
 #: any source file is consumed, so a controller death between the barrier
 #: and its application loses nothing. Matches no collector/sweep glob.
 BARRIER_STAGING_FILENAME = "barrier-staging.json"
-# Record shapes that authorize staged-uuid suppression (#88R11-5): only
-# schema-shaped barrier records (never bare dicts that happen to name a
-# uuid) prove the staged evidence behind a collected claim.
-_BARRIER_RECORD_TYPES = frozenset({"CallCountersPartial", "CallCountersLost"})
+
+
+def _is_authoritative_staged_record(record: Any) -> bool:
+    """Whether a staged record proves the evidence behind a uuid claim (#88R12-3).
+
+    Only schema-shaped barrier records authorize suppression: a partial
+    needs the partial key shape with a valid worker uuid, a loss needs
+    the loss schema with a valid worker uuid (a bare dict with a tag
+    proves nothing). The discriminator is type-checked first: an
+    unhashable tag degrades, never raises. Never raises.
+    """
+    if not isinstance(record, dict):
+        return False
+    report_type = record.get("$report_type")
+    if not isinstance(report_type, str):
+        return False
+    if report_type == PARTIAL_REPORT_TYPE:
+        if key_violations(record, allowed=PARTIAL_ALLOWED_KEYS, required=PARTIAL_REQUIRED_KEYS):
+            return False
+        return is_worker_uuid(record.get("worker_uuid"))
+    if report_type == LOST_REPORT_TYPE:
+        return is_lost_record(record) and is_worker_uuid(record.get("worker_uuid"))
+    return False
+
 
 ProducerVerdict = Literal["alive", "dead", "unknown"]
 FenceOutcome = Literal["fenced", "unresolved"]
@@ -2067,9 +2093,29 @@ def _adopt_probe_orphans(
     claimed: list[dict[str, Any]] = []
     consumed: list[Path] = []
     skipped: list[Path] = []
+    marker_paths: dict[tuple[str, int], list[Path]] = {}
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
     adopted_lost: list[int] = []
+
+    def _skip_covered_orphan(path: Path, child_uuid: str, seq: int, reason: str) -> None:
+        """Skip a covered orphan, rolling back its marker's consume+heal (#88R12-1).
+
+        The marker's coverage and keys stand (absorbed facts), but the
+        marker file and the heal wait for the retry: consuming the
+        marker now would strand an advanced orphan uncovered, and
+        healing now would resolve a loss whose tail is outstanding.
+        """
+        skipped.append(path)
+        for marker_path in marker_paths.pop((child_uuid, seq), []):
+            if marker_path in consumed:
+                consumed.remove(marker_path)
+        recovered[:] = [entry for entry in recovered if entry != (worker_uuid, seq)]
+        warnings.warn(
+            f"covered probe orphan {path.name} {reason}; retained for a later pass",
+            UserWarning,
+            stacklevel=3,
+        )
 
     def _fold(
         path: Path,
@@ -2106,13 +2152,7 @@ def _adopt_probe_orphans(
                 raise _DeferProducerError(worker_uuid, None, source=path.name)
             if fold_status != "gone" and not _snapshots_equal(fold_raw, raw_snapshot):
                 if not fence_live and marker_snapshot is not None:
-                    skipped.append(path)
-                    warnings.warn(
-                        f"covered probe orphan {path.name} advanced during collection; "
-                        "retained for a later pass",
-                        UserWarning,
-                        stacklevel=2,
-                    )
+                    _skip_covered_orphan(path, child_uuid, seq, "advanced during collection")
                     return
                 raise _DeferProducerError(worker_uuid, None, source=path.name, reason="changed")
             if marker_snapshot is not None:
@@ -2302,6 +2342,7 @@ def _adopt_probe_orphans(
             continue
         if marker_finalized and marker_seq == filename_seq:
             recovered.append((worker_uuid, marker_seq))
+        marker_paths.setdefault((marker_child, marker_seq), []).append(path)
         consumed.append(path)
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
         parsed_name = _parse_probe_filename(path.name)
@@ -2419,13 +2460,7 @@ def _adopt_probe_orphans(
         ):
             if (child_uuid, seq) not in coverage_snapshots:
                 raise _DeferProducerError(worker_uuid, orphan_pid)
-            skipped.append(path)
-            warnings.warn(
-                f"covered probe orphan {path.name} has a live writer (pid {orphan_pid}); "
-                "retained for a later pass",
-                UserWarning,
-                stacklevel=2,
-            )
+            _skip_covered_orphan(path, child_uuid, seq, f"has a live writer (pid {orphan_pid})")
             continue
         # Re-read after quiescence (#88R8-1): a writer that replaced
         # the file during the fence invalidates the pre-fence rows. Any
@@ -4837,7 +4872,23 @@ def _adopted_staged_probe_targets(
                 stacklevel=2,
             )
             continue
-        adopted.extend([*tmps, *slot_tmps, probe_path])
+        # Set-atomic authority (#88R12-4): every file the adoption
+        # would delete must be listed and byte-identical -- an
+        # unlisted rewrite (appended after staging) holds its whole
+        # slot for replay or conflict handling instead of deleting
+        # unread.
+        for tmp in [*tmps, *slot_tmps]:
+            tmp_digest = _sha256_file_hex(tmp)
+            if tmp_digest is None or (str(tmp), tmp_digest) not in staged_targets:
+                warnings.warn(
+                    f"staged probe {probe_path.name} keeps an unlisted rewrite "
+                    f"({tmp.name}); retained for replay or conflict handling",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                break
+        else:
+            adopted.extend([*tmps, *slot_tmps, probe_path])
     return adopted
 
 
@@ -4919,9 +4970,7 @@ def prepare_resume(
         record["worker_uuid"]
         for per_unit in staged_records.values()
         for record in per_unit
-        if isinstance(record, dict)
-        and record.get("$report_type") in _BARRIER_RECORD_TYPES
-        and isinstance(record.get("worker_uuid"), str)
+        if _is_authoritative_staged_record(record)
     }
     session_uuids = {known_uuid for _, known_uuid in sessions if isinstance(known_uuid, str)}
     validated_collected = frozenset(
@@ -5034,8 +5083,11 @@ def prepare_resume(
                 # A skipped-live orphan keeps its parent association:
                 # the parent files ride the held list (not to_consume)
                 # so the staging survives for a coherent retry
-                # (#88R11-1).
+                # (#88R11-1), and the uuid joins retained_uuids so the
+                # post-application sweep keeps its hands off while the
+                # writer is still live (#88R12-1).
                 skip_retained.extend(_producer_files(content, registry_path))
+                plan["retained_uuids"].append(uuid)
             else:
                 to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
@@ -5272,16 +5324,30 @@ def prepare_resume(
         # Exact cleanup targets (#88R11-6): digest the adjudicated
         # probe slots so a retry adopts only listed, byte-identical
         # ones. Undigestable slots stay unlisted (a later barrier
-        # re-derives them once readable).
+        # re-derives them once readable). The closure covers each
+        # slot's rewrite tmps too (marker globs plus original-slot
+        # globs): adoption is set-atomic, so an unlisted rewrite
+        # holds its whole slot for replay or conflict handling
+        # (#88R12-4).
         probe_targets: list[tuple[str, str]] = []
         for target in to_consume:
             if not target.name.startswith(PROBE_FILE_PREFIX):
                 continue
             if not target.name.endswith(PROBE_FILE_SUFFIX):
                 continue
-            digest = _sha256_file_hex(target)
-            if digest is not None:
-                probe_targets.append((str(target), digest))
+            closure: list[Path] = [target]
+            own_tmps = _list_tmp_paths(root, f"{target.name}.tmp-")
+            if own_tmps is not None:
+                closure.extend(own_tmps)
+            slot_name = _marker_slot_name(target.name)
+            if slot_name is not None:
+                slot_tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
+                if slot_tmps is not None:
+                    closure.extend(slot_tmps)
+            for candidate in closure:
+                digest = _sha256_file_hex(candidate)
+                if digest is not None:
+                    probe_targets.append((str(candidate), digest))
         if not _write_barrier_staging(
             root,
             plan["cache_records"],
@@ -5351,13 +5417,27 @@ def append_supplement_records(
         path.parent.mkdir(parents=True, exist_ok=True)
         applied: set[str] = set()
         if path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
+            content = path.read_text(encoding="utf-8")
+            for line in content.splitlines():
                 try:
                     identity = _record_identity_hex(json.loads(line))
                 except ValueError:
                     continue
                 if identity is not None:
                     applied.add(identity)
+            if content and not content.endswith("\n"):
+                # Torn tail (a crash mid-append left an unterminated
+                # fragment): isolate it on its own line so the records
+                # below land readable. The fragment itself stays for
+                # forensics; only the boundary is repaired (#88R12-5).
+                warnings.warn(
+                    f"counter supplements for {unit} end in a torn record; "
+                    "the tail is isolated before appending",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write("\n")
         fresh: list[dict[str, Any]] = []
         for record in records:
             identity = _record_identity_hex(record)

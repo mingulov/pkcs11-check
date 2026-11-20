@@ -311,7 +311,8 @@ def _fallback_body_is_debris(fallback: Any) -> bool:
 def _commit_sidecar_owned(
     path: str,
     expected: tuple[str, int] | None,
-    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]]] | None = None,
+    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]], tuple[str, int] | None]
+    | None = None,
 ) -> bool:
     """Whether the sidecar at commit time is provably this execution's (#88R8-3).
 
@@ -382,12 +383,16 @@ def _commit_sidecar_owned(
             if proved is not None:
                 # A loss key that landed between absorb and commit was
                 # never checkpointed: only a key set within the
-                # absorbed set retires (#88R11-4).
-                _, commit_keys = proved
+                # absorbed set retires (#88R11-4). And the commit-time
+                # receipt must equal the receipt proved and
+                # checkpointed at ingestion: same rows and keys from a
+                # different child are a different execution, never a
+                # duplicate (#88R12-2).
+                commit_receipt, commit_keys = proved
                 commit_set = frozenset(
                     (key["parent_uuid"], key["probe_seq"]) for key in commit_keys
                 )
-                if commit_set <= absorbed[2]:
+                if commit_receipt == absorbed[3] and commit_set <= absorbed[2]:
                     return True
         if absorbed is not None and type(pseq) is int and pseq == absorbed[0]:
             warnings.warn(
@@ -428,7 +433,8 @@ def _commit_probe_sidecar(
     *,
     force_tmps: bool = False,
     expected: tuple[str, int] | None = None,
-    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]]] | None = None,
+    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]], tuple[str, int] | None]
+    | None = None,
 ) -> None:
     """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
 
@@ -444,10 +450,11 @@ def _commit_probe_sidecar(
     ownership first (a foreign, unreadable, or receipt-contradictory
     body is retained loudly); ``expected`` is the receipt the ingest
     just absorbed (None for legacy-quiet coverage). ``absorbed`` is
-    the ``(seq, exit rows, absorbed keys)`` just folded from
-    receipt-less coverage: it re-proves legacy subsumption at commit
-    time, including the key-subset check (None disables the proof;
-    only the legacy-quiet path passes it).
+    the ``(seq, exit rows, absorbed keys, proved receipt)`` just
+    folded from receipt-less coverage: it re-proves legacy
+    subsumption at commit time, including the key-subset and
+    receipt-identity checks (None disables the proof; only the
+    legacy-quiet path passes it).
 
     Raises:
         CounterPersistenceError: When the parent checkpoint cannot be
@@ -571,7 +578,9 @@ def ingest_probe_payload(
             absorbed_keys = frozenset((key["parent_uuid"], key["probe_seq"]) for key in extra_keys)
             # Exit coverage subsumes every mid-run tmp (#88R3).
             _commit_probe_sidecar(
-                sidecar, force_tmps=True, absorbed=(seq, absorbed_rows, absorbed_keys)
+                sidecar,
+                force_tmps=True,
+                absorbed=(seq, absorbed_rows, absorbed_keys, proved_receipt),
             )
             return "folded"
         if isinstance(counters, (list, tuple)) and receipt is not None:
