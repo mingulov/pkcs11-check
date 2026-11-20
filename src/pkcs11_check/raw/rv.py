@@ -21,10 +21,12 @@ class CkrAssertionError(AssertionError):
     """
 
     rv: int
+    operation: str | None
 
-    def __init__(self, message: str, rv: int) -> None:
+    def __init__(self, message: str, rv: int, operation: str | None = None) -> None:
         super().__init__(message)
         self.rv = rv
+        self.operation = operation
 
 
 def ckr_name(rv: int) -> str:
@@ -42,15 +44,21 @@ def is_vendor_defined_ckr(rv: int) -> bool:
     return int(rv) >= _VENDOR_DEFINED_RV_START
 
 
-def expect_rv(rv: int, *allowed: CKR, context: str | None = None) -> int:
-    """Return rv if allowed, otherwise raise ``CkrAssertionError`` (an AssertionError)."""
+def expect_rv(
+    rv: int, *allowed: CKR, context: str | None = None, operation: str | None = None
+) -> int:
+    """Return rv if allowed, otherwise raise ``CkrAssertionError`` (an AssertionError).
+
+    ``operation`` (a C_* stage name) rides the exception for exact
+    attribution; ``context`` stays message-only and unchanged.
+    """
     if rv in allowed:
         return rv
     msg = f"Unexpected CK_RV {ckr_name(rv)}"
     if context:
         msg = f"{context}: {msg}"
     allowed_names = ", ".join(ckr_name(value) for value in allowed)
-    raise CkrAssertionError(f"{msg}; expected one of: {allowed_names}", rv)
+    raise CkrAssertionError(f"{msg}; expected one of: {allowed_names}", rv, operation)
 
 
 __all__ = [

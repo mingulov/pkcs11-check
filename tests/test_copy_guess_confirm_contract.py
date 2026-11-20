@@ -1662,6 +1662,46 @@ def test_direct_copy_mismatch_fails_untouched(monkeypatch: pytest.MonkeyPatch) -
     assert destroyed == [100], destroyed
 
 
+def test_preserves_use_refusal_names_failing_stage() -> None:
+    """R4-F7: a refused use carries the Init or Encrypt stage that refused it."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    class _UseRaw:
+        def __init__(self, init_rv: int, op_rv: int) -> None:
+            self._init_rv = init_rv
+            self._op_rv = op_rv
+
+        def C_EncryptInit(self, *_args: Any) -> int:  # noqa: N802
+            return self._init_rv
+
+        def C_Encrypt(self, *_args: Any) -> int:  # noqa: N802
+            return self._op_rv
+
+        def C_SignInit(self, *_args: Any) -> int:  # noqa: N802
+            return self._init_rv
+
+        def C_Sign(self, *_args: Any) -> int:  # noqa: N802
+            return self._op_rv
+
+    from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR, CKR_OK
+
+    init_fail = SimpleNamespace(raw=_UseRaw(int(CKR_DEVICE_ERROR), int(CKR_OK)), sh=1)
+    outcome = km._copy_preserves_aes_material(init_fail, 5, b"baseline")
+    assert outcome.preserved is None
+    assert outcome.use_rv == int(CKR_DEVICE_ERROR)
+    assert outcome.operation == "C_EncryptInit", outcome.operation
+
+    op_fail = SimpleNamespace(raw=_UseRaw(int(CKR_OK), int(CKR_DEVICE_ERROR)), sh=1)
+    outcome = km._copy_preserves_aes_material(op_fail, 5, b"baseline")
+    assert outcome.preserved is None
+    assert outcome.operation == "C_Encrypt", outcome.operation
+
+    sign_fail = SimpleNamespace(raw=_UseRaw(int(CKR_DEVICE_ERROR), int(CKR_OK)), sh=1)
+    outcome = km._copy_preserves_rsa_material(sign_fail, 5, b"sig")
+    assert outcome.preserved is None
+    assert outcome.operation == "C_SignInit", outcome.operation
+
+
 def test_unproved_arm_names_retained_deltas(
     captures: dict[str, list[tuple[str, dict[str, Any]]]],
 ) -> None:

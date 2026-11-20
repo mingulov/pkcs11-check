@@ -11,15 +11,16 @@ from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, x448, x25519
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, get_records, raise_for_record, xfail_as
 from pkcs11_check.raw.der import decode_ec_point, ecdsa_sig_from_der
 from pkcs11_check.raw.recipes import read_attributes
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 
 
 class MalformedSignature(ValueError):  # noqa: N818
@@ -403,9 +404,49 @@ def read_conventional_ec_point_or_xfail(
             )
         raise
 
-    if CKA_EC_POINT in attrs:
-        ec_point = attrs[CKA_EC_POINT]
-    else:
+    # R4-F10: the refusals channel carries the observed CKR (and any
+    # refusal-with-data evidence) -- a refusal that still wrote bytes
+    # fails loud instead of voiding as merely unavailable.
+    refusals = getattr(attrs, "refusals", None) or {}
+    refusal = refusals.get(int(CKA_EC_POINT))
+    if refusal is not None and getattr(refusal, "leaked_len", None) is not None:
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: CKA_EC_POINT readback answered {ckr_name(refusal.ckr)} "
+                f"but still wrote {refusal.leaked_len} bytes into the template"
+            ),
+            detail={
+                "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+                "curve": curve.name,
+                "leaked_len": refusal.leaked_len,
+            },
+        )
+    before = len(get_records())
+    ec_point = attr_or_record(
+        attrs,
+        CKA_EC_POINT,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    if ec_point is MISSING_ATTRIBUTE:
+        # The accessor above journaled the absence with its observed CKR
+        # (never invented); enrich that record with the curve and raise it
+        # instead of a fresh CKR-less one (mechanism stays unset).
+        records = get_records()
+        if len(records) > before:
+            journaled = records[-1]
+            detail = dict(journaled.detail or {})
+            detail["curve"] = curve.name
+            journaled.detail = detail
+            raise_for_record(journaled)
         xfail_as(
             "not_operational",
             kind="metadata",

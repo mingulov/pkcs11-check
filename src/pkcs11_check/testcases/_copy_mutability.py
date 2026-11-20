@@ -897,7 +897,8 @@ def judge_guess_confirm(
 
 
 #: One empty/restated compare leg: ("ok", value-or-None), ("refused", rv),
-#: or ("readback-refused", rv) for an accepted copy whose readback refused.
+#: or ("readback-refused", rv) for an accepted copy whose readback refused,
+#: or ("baseline-refused", rv) for a leg whose adoption baseline was refused.
 CopyCompareOutcome = tuple[str, Any]
 
 
@@ -962,10 +963,33 @@ def judge_copy_compare(
                 operation="C_GetAttributeValue",
                 kind="policy",
             )
+        elif outcome[0] == "baseline-refused":
+            # R4-F7: the baseline RV grades with the sibling's evidence
+            # (undefined fails loud; vendor alternates compete).
+            rec = _record_rv_validity(
+                outcome[1],
+                label=f"{label}: {leg} baseline",
+                operation="C_FindObjects",
+                kind="policy",
+            )
         else:
             rec = None
         if rec is not None:
             retained.append(rec)
+    # R4-F7: readback records journal BEFORE any early verdict, so a
+    # mutation terminal never drops the sibling's readback evidence.
+    for leg, outcome in (("empty", empty), ("restated", restated)):
+        readback_rv = outcome[1] if outcome[0] == "readback-refused" else None
+        if readback_rv is not None and is_standard_ckr(readback_rv):
+            record_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: {leg} readback",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=readback_rv,
+                summary=(f"{label}: {leg} copy value unreadable ({ckr_name(readback_rv)})"),
+            )
 
     def _value(outcome: CopyCompareOutcome) -> bytes | None:
         return outcome[1] if outcome[0] == "ok" else None
@@ -975,6 +999,9 @@ def judge_copy_compare(
 
     def _readback_rv(outcome: CopyCompareOutcome) -> int | None:
         return outcome[1] if outcome[0] == "readback-refused" else None
+
+    def _baseline_rv(outcome: CopyCompareOutcome) -> int | None:
+        return outcome[1] if outcome[0] == "baseline-refused" else None
 
     def _changed(value: bytes) -> bool:
         return int.from_bytes(value, "big") != int.from_bytes(source_value, "big")
@@ -1148,21 +1175,18 @@ def judge_copy_compare(
         for leg, rv in (("empty", empty_readback), ("restated", restated_readback))
         if rv is not None
     )
-    # R3F13: a standard readback refusal gets its own
-    # C_GetAttributeValue record with the raw RV (vendor/undefined
-    # already recorded above); the joint terminal below still voids
-    # the comparison once.
-    for leg, readback_rv in (("empty", empty_readback), ("restated", restated_readback)):
-        if readback_rv is not None and is_standard_ckr(readback_rv):
-            record_as(
-                "not_operational",
-                kind="policy",
-                label=f"{label}: {leg} readback",
-                operation="C_GetAttributeValue",
-                inherit_mechanism=False,
-                actual=readback_rv,
-                summary=(f"{label}: {leg} copy value unreadable ({ckr_name(readback_rv)})"),
-            )
+    empty_baseline = _baseline_rv(empty)
+    restated_baseline = _baseline_rv(restated)
+    baseline_names = ", ".join(
+        f"{leg} {ckr_name(rv)}"
+        for leg, rv in (("empty", empty_baseline), ("restated", restated_baseline))
+        if rv is not None
+    )
+    void_summary = f"{label}: copy value unreadable; empty/restated comparison void"
+    if readback_names:
+        void_summary += f" (readbacks refused: {readback_names})"
+    if baseline_names:
+        void_summary += f" (baselines refused: {baseline_names})"
     xfail_as(
         "not_operational",
         kind="policy",
@@ -1170,10 +1194,7 @@ def judge_copy_compare(
         operation=operation,
         inherit_mechanism=False,
         spec_ref=spec_ref,
-        summary=(
-            f"{label}: copy value unreadable; empty/restated comparison void"
-            + (f" (readbacks refused: {readback_names})" if readback_names else "")
-        ),
+        summary=void_summary,
         detail={
             "empty_readable": empty_value is not None,
             "restated_readable": restated_value is not None,
@@ -1183,44 +1204,10 @@ def judge_copy_compare(
             "restated_readback_rv": ckr_name(restated_readback)
             if restated_readback is not None
             else None,
-        },
-    )
-
-
-def _void_copy_leg_on_inventory_refusal(
-    exc: CkrAssertionError, *, label: str, leg: str
-) -> NoReturn:
-    """Void a compare leg whose adoption baseline was refused (R3F2).
-
-    Without a baseline no successful copy can be adopted (its novelty
-    is unproved): the leg voids visibly as honest-deviation
-    unproved-effect (mirroring the guess-confirm judge), never by
-    skipping the copy attempt quietly. An undefined inventory RV fails
-    the metadata contract loud.
-    """
-    rv = exc.rv
-    if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
-        fail_as(
-            "self_contradiction",
-            kind="metadata",
-            label=f"{label}: {leg}",
-            operation="C_FindObjects",
-            inherit_mechanism=False,
-            actual=rv,
-            summary=(f"{label}: {leg} baseline inventory returned undefined CK_RV {ckr_name(rv)}"),
-        )
-    xfail_as(
-        "honest_deviation",
-        kind="policy",
-        label=f"{label}: {leg}",
-        operation="C_FindObjects",
-        inherit_mechanism=False,
-        actual=rv,
-        summary=(f"{label}: {leg} baseline inventory refused ({ckr_name(rv)}); adoption unproved"),
-        detail={
-            "disposition": "unproved-effect",
-            "leg": leg,
-            "inventory_rv": ckr_name(rv),
+            "empty_baseline_rv": ckr_name(empty_baseline) if empty_baseline is not None else None,
+            "restated_baseline_rv": ckr_name(restated_baseline)
+            if restated_baseline is not None
+            else None,
         },
     )
 
@@ -1237,12 +1224,15 @@ def run_copy_compare_leg(
     return their raw RV for the judge. Readback refusals ride as
     ("readback-refused", rv) so the judge collects BOTH legs' RVs
     before any termination -- the sibling leg always runs, and
-    validity defects compete by strength, not by leg order.
+    validity defects compete by strength, not by leg order. A refused
+    baseline rides as ("baseline-refused", rv) for the same reason
+    (R4-F7): terminating here would hide the sibling's proved change
+    or undefined RV behind this leg's void.
     """
     try:
         before = find_objects_exhaustive(rs.raw, rs.sh)
     except CkrAssertionError as exc:
-        _void_copy_leg_on_inventory_refusal(exc, label=label, leg=leg)
+        return ("baseline-refused", exc.rv)
     try:
         copy = copy_object(rs.raw, rs.sh, source, template)
     except CkrAssertionError as exc:

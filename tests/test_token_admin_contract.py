@@ -22,6 +22,7 @@ from _pytest.outcomes import Failed, Skipped, XFailed
 from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
     CK_TOKEN_INFO,
     CK_ULONG,
@@ -30,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKA_LABEL,
     CKA_PRIVATE,
     CKA_TOKEN,
+    CKA_VALUE,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKF_SO_PIN_COUNT_LOW,
@@ -43,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_PIN_LEN_RANGE,
@@ -576,6 +579,8 @@ class _FakeAdminRaw:
         self.flags_manual: bool = False
         self.gettokeninfo_rv: int = _OK
         self.gettokeninfo_script: list[int] = []
+        self.token_label: bytes = b""
+        self.token_serial: bytes = b""
         self.min_pin: int = 4
         self.max_pin: int = 32
         self.max_total: int | None = 100
@@ -641,6 +646,10 @@ class _FakeAdminRaw:
         )
         info.ulMinPinLen = self.min_pin
         info.ulMaxPinLen = self.max_pin
+        ctypes.memmove(info.label, self.token_label + b" " * (32 - len(self.token_label)), 32)
+        ctypes.memmove(
+            info.serialNumber, self.token_serial + b" " * (16 - len(self.token_serial)), 16
+        )
         return _OK
 
     # -- sessions ------------------------------------------------------
@@ -1383,6 +1392,9 @@ class _BindingRaw:
         flags_write: tuple[bool, bool] = (True, True),
         flag_lens: tuple[int, int] | None = None,
         find_over_report: int | None = None,
+        flag_bytes: tuple[bytes, bytes] | None = None,
+        find_pages: list[int] | None = None,
+        final_rv: int = int(CKR_OK),
     ) -> None:
         self._flags_rv = flags_rv
         self._private = private
@@ -1393,6 +1405,10 @@ class _BindingRaw:
         self._flags_write = flags_write
         self._flag_lens = flag_lens
         self._find_over_report = find_over_report
+        self._flag_bytes = flag_bytes
+        self._find_pages = list(find_pages) if find_pages is not None else None
+        self._next_handle = 100
+        self._final_rv = final_rv
 
     def C_GetAttributeValue(self, _sh: int, _handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
         if self._flags_rv != int(CKR_OK):
@@ -1403,8 +1419,12 @@ class _BindingRaw:
             idx = 0 if attr == int(CKA_PRIVATE) else 1
             if not self._flags_write[idx]:
                 continue  # R3F11: OK without touching this slot.
-            flag = self._private if attr == int(CKA_PRIVATE) else self._token
-            ctypes.memmove(tmpl[i].pValue, b"\x01" if flag else b"\x00", 1)
+            if self._flag_bytes is not None:
+                payload = self._flag_bytes[idx]
+            else:
+                flag = self._private if attr == int(CKA_PRIVATE) else self._token
+                payload = b"\x01" if flag else b"\x00"
+            ctypes.memmove(tmpl[i].pValue, payload, 1)
             tmpl[i].ulValueLen = self._flag_lens[idx] if self._flag_lens is not None else 1
         return int(CKR_OK)
 
@@ -1412,7 +1432,14 @@ class _BindingRaw:
         return self._find_rv
 
     def C_FindObjects(self, _sh: int, buf: Any, max_count: int, found_ptr: Any) -> int:  # noqa: N802
-        if self._finds:
+        if self._find_pages is not None:
+            page = self._find_pages[self._finds] if self._finds < len(self._find_pages) else 0
+            real = min(page, int(max_count))
+            for i in range(real):
+                buf[i] = self._next_handle + i
+            self._next_handle += real
+            found = real
+        elif self._finds:
             found = 0
         else:
             real = min(self._find_count, int(max_count))
@@ -1424,10 +1451,31 @@ class _BindingRaw:
         return int(CKR_OK)
 
     def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
-        return int(CKR_OK)
+        return self._final_rv
 
 
 def _binding_ctx(raw: _BindingRaw) -> Any:
+    return ProbeContext(raw=raw, sh=None, slot_id=None, cleanup=lambda: None, module_path="fake")
+
+
+class _ValueRaw:
+    """Single-attribute CKA_VALUE surface for stale-read tests (R4F11)."""
+
+    def __init__(self, *, rv: int, payload: bytes = b"", write: bool = True) -> None:
+        self._rv = rv
+        self._payload = payload
+        self._write = write
+
+    def C_GetAttributeValue(self, _sh: int, _handle: int, attr: Any, _count: int) -> int:  # noqa: N802
+        got = ctypes.cast(attr, ctypes.POINTER(CK_ATTRIBUTE)).contents
+        assert int(got.type) == int(CKA_VALUE), int(got.type)
+        if self._write and self._payload:
+            ctypes.memmove(got.pValue, self._payload, len(self._payload))
+            got.ulValueLen = len(self._payload)
+        return self._rv
+
+
+def _value_ctx(raw: _ValueRaw) -> Any:
     return ProbeContext(raw=raw, sh=None, slot_id=None, cleanup=lambda: None, module_path="fake")
 
 
@@ -1489,10 +1537,56 @@ def test_verify_witness_binding_short_flag_length_voids() -> None:
 
 
 def test_verify_witness_binding_partial_touch_voids() -> None:
-    """R3F11: an untouched token slot never binds (stale False is not proof)."""
+    """R4F11: an untouched slot voids as malformed (nothing was written)."""
     raw = _BindingRaw(token=True, flags_write=(True, False))
     reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness not a private session object", reason
+    assert reason == "target witness flags malformed", reason
+
+
+def test_verify_witness_binding_unwritten_private_voids_malformed() -> None:
+    """R4F11: an unwritten private slot (0xFF poison) never binds as True."""
+    raw = _BindingRaw(flags_write=(False, True))
+    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
+    assert reason == "target witness flags malformed", reason
+
+
+def test_verify_witness_binding_garbage_flag_voids_malformed() -> None:
+    """R4F11: a non-{0,1} flag byte voids as malformed, never reads as True."""
+    raw = _BindingRaw(flag_bytes=(b"\x02", b"\x00"))
+    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
+    assert reason == "target witness flags malformed", reason
+
+
+def test_verify_witness_binding_short_pages_do_not_end_pagination() -> None:
+    """R4F11: two short pages of 1 void as duplicates (no false uniqueness)."""
+    raw = _BindingRaw(find_pages=[1, 1])
+    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
+    assert reason == "target witness not uniquely visible pre-logout", reason
+
+
+def test_verify_witness_binding_final_refusal_voids_prefind(capsys: Any) -> None:
+    """R4F11: a refused Final voids the prefind with the Final RV on the step."""
+    raw = _BindingRaw(final_rv=int(CKR_DEVICE_ERROR))
+    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
+    assert reason is None, reason
+    out = str(capsys.readouterr().out)
+    assert "STEP:setup:target_prefind:CKR:0x00000030" in out, out
+
+
+def test_read_stale_bytes_refusal_with_data_returns_bytes() -> None:
+    """R4F11: a refused stale read that still wrote bytes surfaces them."""
+    raw = _ValueRaw(rv=int(CKR_OBJECT_HANDLE_INVALID), payload=b"leaked!")
+    srv, sbytes = token_admin._read_stale_bytes(_value_ctx(raw), 7, 100)
+    assert srv == int(CKR_OBJECT_HANDLE_INVALID), srv
+    assert sbytes != b"", sbytes
+
+
+def test_read_stale_bytes_clean_refusal_returns_empty() -> None:
+    """R4F11: a refused stale read that wrote nothing returns empty."""
+    raw = _ValueRaw(rv=int(CKR_OBJECT_HANDLE_INVALID), write=False)
+    srv, sbytes = token_admin._read_stale_bytes(_value_ctx(raw), 7, 100)
+    assert srv == int(CKR_OBJECT_HANDLE_INVALID), srv
+    assert sbytes == b"", sbytes
 
 
 def test_emit_phase2_snapshot_refusals_uses_snapshot_vocabulary(capsys: Any) -> None:
@@ -1505,7 +1599,7 @@ def test_emit_phase2_snapshot_refusals_uses_snapshot_vocabulary(capsys: Any) -> 
 class _RediscoverRaw:
     """Slots with scripted token labels or info refusals."""
 
-    def __init__(self, slots: dict[int, bytes | int]) -> None:
+    def __init__(self, slots: dict[int, bytes | int | tuple[bytes, bytes]]) -> None:
         self._slots = slots
 
     def C_GetSlotList(self, _present: int, slot_ptr: Any, count_ptr: Any) -> int:  # noqa: N802
@@ -1524,16 +1618,23 @@ class _RediscoverRaw:
         entry = self._slots[int(slot_id)]
         if isinstance(entry, int):
             return entry
+        label, serial = entry if isinstance(entry, tuple) else (entry, b"")
         info = ctypes.cast(info_ptr, ctypes.POINTER(CK_TOKEN_INFO)).contents
-        padded = entry + b" " * (32 - len(entry))
-        ctypes.memmove(info.label, padded, 32)
+        ctypes.memmove(info.label, label + b" " * (32 - len(label)), 32)
+        ctypes.memmove(info.serialNumber, serial + b" " * (16 - len(serial)), 16)
         return int(CKR_OK)
 
 
+def _rediscover(raw: _RediscoverRaw, label: bytes, serial: bytes = b"") -> Any:
+    return token_admin._rediscover_burn_slot(
+        _binding_ctx(raw), expected_label=label, expected_serial=serial
+    )
+
+
 def test_rediscover_unique_match_proceeds() -> None:
-    """R2C5a: one label match under full visibility rediscovers."""
+    """R2C5a: one identity match under full visibility rediscovers."""
     raw = _RediscoverRaw({3: b"other", 7: token_admin._BURN_TOKEN_LABEL})
-    matches, enum_rv, refusals = token_admin._rediscover_burn_slot(_binding_ctx(raw))
+    matches, enum_rv, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
     assert matches == (7,)
     assert enum_rv == int(CKR_OK)
     assert refusals == ()
@@ -1542,7 +1643,7 @@ def test_rediscover_unique_match_proceeds() -> None:
 def test_rediscover_refusals_preserved_not_absent() -> None:
     """R2C5a: per-slot info refusals ride out; no match is unproved, not absent."""
     raw = _RediscoverRaw({3: b"other", 7: int(CKR_DEVICE_ERROR)})
-    matches, enum_rv, refusals = token_admin._rediscover_burn_slot(_binding_ctx(raw))
+    matches, enum_rv, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
     assert matches == ()
     assert enum_rv == int(CKR_OK)
     assert refusals == ((7, int(CKR_DEVICE_ERROR)),)
@@ -1553,16 +1654,16 @@ def test_rediscover_refusals_preserved_not_absent() -> None:
 def test_rediscover_clean_empty_is_absent() -> None:
     """R2C5a: no match under full visibility is genuinely absent."""
     raw = _RediscoverRaw({3: b"other"})
-    matches, enum_rv, refusals = token_admin._rediscover_burn_slot(_binding_ctx(raw))
+    matches, enum_rv, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
     assert (matches, refusals) == ((), ())
     action, _ = token_admin._phase2_rediscovery_outcome(matches, refusals)
     assert action == "absent"
 
 
-def test_rediscover_duplicate_label_is_ambiguous() -> None:
-    """R2C5a: a duplicated burn label never resolves silently."""
+def test_rediscover_duplicate_identity_is_ambiguous() -> None:
+    """R2C5a: a duplicated burn identity never resolves silently."""
     raw = _RediscoverRaw({3: token_admin._BURN_TOKEN_LABEL, 7: token_admin._BURN_TOKEN_LABEL})
-    matches, _, refusals = token_admin._rediscover_burn_slot(_binding_ctx(raw))
+    matches, _, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
     assert matches == (3, 7)
     action, reason = token_admin._phase2_rediscovery_outcome(matches, refusals)
     assert action == "assumption"
@@ -1572,10 +1673,58 @@ def test_rediscover_duplicate_label_is_ambiguous() -> None:
 def test_rediscover_match_behind_refusal_is_unproved() -> None:
     """R2C5a: one match plus refusals cannot prove uniqueness."""
     raw = _RediscoverRaw({3: token_admin._BURN_TOKEN_LABEL, 7: int(CKR_DEVICE_ERROR)})
-    matches, _, refusals = token_admin._rediscover_burn_slot(_binding_ctx(raw))
+    matches, _, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
     action, reason = token_admin._phase2_rediscovery_outcome(matches, refusals)
     assert action == "assumption"
     assert "uniqueness unproved" in str(reason)
+
+
+def test_rediscover_observed_original_label_proceeds() -> None:
+    """R4F12: a token under its observed original label rediscovers (never falsely vanished)."""
+    raw = _RediscoverRaw({7: (b"original-token", b"SN-1")})
+    matches, enum_rv, refusals = _rediscover(raw, b"original-token", b"SN-1")
+    assert matches == (7,)
+    assert enum_rv == int(CKR_OK)
+    assert refusals == ()
+
+
+def test_rediscover_serial_mismatch_excluded() -> None:
+    """R4F12: a same-label token with a different serial never matches."""
+    burn = token_admin._BURN_TOKEN_LABEL
+    raw = _RediscoverRaw({3: (burn, b"SN-1"), 7: (burn, b"SN-2")})
+    matches, _, _ = _rediscover(raw, burn, b"SN-1")
+    assert matches == (3,)
+
+
+def test_token_info_reads_label_and_serial() -> None:
+    """R4F12: the observed identity is the stripped label + serial pair."""
+    raw = _RediscoverRaw({3: (b"lbl", b"SN-9")})
+    rv, _, _, _, label, serial = token_admin._token_info(_binding_ctx(raw), 3)
+    assert rv == int(CKR_OK), rv
+    assert (label, serial) == (b"lbl", b"SN-9"), (label, serial)
+
+
+def test_token_info_refusal_empties_identity() -> None:
+    """R4F12: a refused info read keeps its RV with empty identity fields."""
+    raw = _RediscoverRaw({3: int(CKR_DEVICE_ERROR)})
+    rv, flags, min_pin, max_pin, label, serial = token_admin._token_info(_binding_ctx(raw), 3)
+    assert rv == int(CKR_DEVICE_ERROR), rv
+    assert (flags, min_pin, max_pin) == (0, 0, 0), (flags, min_pin, max_pin)
+    assert (label, serial) == (b"", b""), (label, serial)
+
+
+def test_burn_setup_returns_observed_identity(capsys: Any) -> None:
+    """R4F12: setup captures the observed (label, serial), not the submitted label."""
+    fake = _FakeAdminRaw()
+    fake.token_label = b"original-token"
+    fake.token_serial = b"SN-1"
+    setup = token_admin._setup_burn_session(_binding_ctx(fake), "user", False)
+    assert setup is not None
+    slot, sh, label, serial = setup
+    assert (slot, sh) == (0, 10), setup
+    assert (label, serial) == (b"original-token", b"SN-1"), setup
+    out = str(capsys.readouterr().out)
+    assert f"TOKENID:{b'original-token'.hex()}:{b'SN-1'.hex()}" in out, out
 
 
 def test_parse_pinbounds_unknown() -> None:
@@ -2969,6 +3118,36 @@ def test_session_undefined_refusal_fails() -> None:
     assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
 
 
+def test_session_undefined_refusal_beats_vendor_reread() -> None:
+    """R4F12: the judge fails an undefined refusal before a vendor reread xfails."""
+    _assert_fails(
+        tse._judge_session_exhaustion,
+        policy=_session_policy(100, 100),
+        own_opens=99,
+        refused_rv=_UNDEFINED_RV,
+        total_now=100,
+        rw_now=100,
+        reread_rv=_VENDOR_RV,
+    )
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_OpenSession", rec.summary
+
+
+def test_session_vendor_reread_xfails_on_clean_refusal() -> None:
+    """R4F12: the judge grades the reread pair (vendor alternate xfail)."""
+    assert_xfails(
+        tse._judge_session_exhaustion,
+        policy=_session_policy(100, 100),
+        own_opens=100,
+        refused_rv=_SESSION_COUNT,
+        total_now=100,
+        rw_now=100,
+        reread_rv=_VENDOR_RV,
+    )
+    rec = _assert_xfail_record("nonspec_reject")
+    assert rec.operation == "C_GetTokenInfo", rec.summary
+
+
 def test_session_over_delivery_xfails_even_with_canonical_rv() -> None:
     assert_xfails(
         tse._judge_session_exhaustion,
@@ -3166,6 +3345,17 @@ def test_limit_node_undefined_refusal_fails() -> None:
     fake.open_script = [_UNDEFINED_RV]
     _assert_fails(_run_limit_node, fake)
     _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_limit_node_undefined_refusal_beats_vendor_reread() -> None:
+    """R4F12: an undefined saturation refusal fails before a vendor reread xfails."""
+    fake = _FakeAdminRaw()
+    fake.open_script = [_UNDEFINED_RV]
+    fake.gettokeninfo_script = [_OK, _VENDOR_RV]
+    _assert_fails(_run_limit_node, fake)
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "undefined" in (rec.summary or ""), rec.summary
+    assert rec.operation == "C_OpenSession", rec.summary
 
 
 def test_limit_node_cleanup_refusal_after_pass_is_terminal() -> None:
@@ -5445,6 +5635,22 @@ def test_capacity_returned_reopen_refused_fails() -> None:
     assert rec.detail["reopen_rv"] == _SESSION_COUNT
 
 
+def test_capacity_returned_device_error_reopen_xfails_not_operational() -> None:
+    """R4F12: an operational reopen refusal never fails as unrestored capacity."""
+    assert_xfails(
+        tse._judge_capacity_returned,
+        baseline_total=3,
+        total_after_close_all=3,
+        reopen_rv=_DEVICE_ERROR,
+        own_opens=4,
+        verified_closes=4,
+        recovery_verified=True,
+        reread_rv=_OK,
+    )
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_OpenSession", rec.summary
+
+
 def test_capacity_returned_leaked_sessions_fail() -> None:
     _assert_fails(
         tse._judge_capacity_returned,
@@ -5470,6 +5676,22 @@ def test_capacity_returned_unknown_counts_skip_count_leg() -> None:
         reread_rv=_DEVICE_ERROR,
     )
     assert classification.get_records() == []
+
+
+def test_capacity_returned_vendor_reread_xfails_on_clean_reopen() -> None:
+    """R4F12: the judge grades the reread pair (vendor alternate xfail)."""
+    assert_xfails(
+        tse._judge_capacity_returned,
+        baseline_total=3,
+        total_after_close_all=3,
+        reopen_rv=_OK,
+        own_opens=4,
+        verified_closes=4,
+        recovery_verified=True,
+        reread_rv=_VENDOR_RV,
+    )
+    rec = _assert_xfail_record("nonspec_reject")
+    assert rec.operation == "C_GetTokenInfo", rec.summary
 
 
 def test_capacity_returned_unverified_close_skips_reopen_refusal() -> None:
@@ -5584,6 +5806,22 @@ def test_reopen_leg_undefined_reopen_fails_without_verified_close(
     assert fails[0].reason == "self_contradiction", fails[0].summary
     assert fails[0].kind == "metadata", fails[0].summary
     assert "undefined CK_RV" in (fails[0].summary or ""), fails[0].summary
+
+
+def test_reopen_leg_undefined_reopen_beats_vendor_reread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R4F12: an undefined reopen fails before a vendor reread xfails."""
+    scenario = _Scenario(
+        open_results=[101, _ckr(_SESSION_COUNT), _ckr(_UNDEFINED_RV)],
+        close_results=[_OK],
+    )
+    with pytest.raises(Failed):
+        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), (None, _VENDOR_RV)])
+    fails = [rec for rec in classification.get_records() if rec.outcome == "fail"]
+    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in fails]
+    assert fails[0].reason == "self_contradiction", fails[0].summary
+    assert fails[0].kind == "metadata", fails[0].summary
+    assert "undefined" in (fails[0].summary or ""), fails[0].summary
+    assert fails[0].operation == "C_OpenSession", fails[0].summary
 
 
 def test_reopen_leg_vendor_reopen_xfails_with_verified_close(
@@ -6084,9 +6322,11 @@ def _truncated_tail_trace(
 
 def test_concurrent_prescan_double_write_beats_setup_skip() -> None:
     """R2C5c: a final-open refusal cannot hide an observed double write."""
+    # R4-F6: winners emit finals winner-first, so with two winners P1's
+    # final precedes P2's; the refusal truncates after both (P0's open).
     trace = _truncated_tail_trace(
         {0: _OK, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {"P2": _OK},
+        {"P1": _OK, "P2": _OK},
     )
     with pytest.raises(Failed):
         sopin_case._prescan_concurrent_pin_fails(trace)
@@ -6097,6 +6337,8 @@ def test_concurrent_prescan_double_write_beats_setup_skip() -> None:
 
 def test_concurrent_prescan_truncated_tail_without_failures_returns() -> None:
     """R3F6: no fail-grade evidence on a truncated tail returns silently."""
+    # R4-F6: P2 is the SOLE winner here, so winner-first emits its
+    # final first and the refusal truncates right after -- emittable.
     trace = _truncated_tail_trace(
         {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
         {"P2": _OK},
@@ -6105,11 +6347,39 @@ def test_concurrent_prescan_truncated_tail_without_failures_returns() -> None:
     assert classification.get_records() == []
 
 
+def test_concurrent_prescan_empty_tail_returns_silently() -> None:
+    """R4-F6: no final checks recorded means nothing observed (never a fail)."""
+    trace = _truncated_tail_trace(
+        {0: _OK, 1: _PIN_INCORRECT, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {},
+    )
+    sopin_case._prescan_concurrent_pin_fails(trace)
+    assert classification.get_records() == []
+
+
+def test_concurrent_judge_all_negative_names_successful() -> None:
+    """R4-F6: proved-negative finals fail, naming the set-but-dead winner."""
+    trace = _concurrent_trace(
+        {0: _OK, 1: _PIN_INCORRECT, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    with pytest.raises(Failed, match="0 PINs work") as exc_info:
+        sopin_case._judge_concurrent_pin_trace(trace)
+    assert "P1" in str(exc_info.value), str(exc_info.value)
+
+
 def test_concurrent_runner_prescan_fails_before_gate() -> None:
     """R2C5c: end to end, observed writes grade before the setup gate."""
+    # R4-F6: winner-first order (P1 precedes P2 when both won).
     trace = _truncated_tail_trace(
         {0: _OK, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {"P2": _OK},
+        {"P1": _OK, "P2": _OK},
     )
     out = _render_trace(trace)
     calls: list[tuple[str, dict[str, Any]]] = []

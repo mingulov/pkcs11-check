@@ -949,6 +949,12 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bo
         "final": {tag: ckr_name(rv) for tag, rv in sorted(final.items())},
     }
     if not working:
+        if not final:
+            # R4-F6: no final checks recorded (the tail never ran -- the
+            # winner-first open refused before the first final): nothing
+            # observed, nothing fail-grade. The prescan returns silently;
+            # the full judge never reaches here (completeness asserts).
+            return
         if unproved and not fails_only:
             pytest.skip(
                 f"{label}: no PIN works and {len(unproved)} final checks are "
@@ -962,7 +968,10 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bo
                 operation="C_Login",
                 mechanism=None,
                 inherit_mechanism=False,
-                summary=f"{label}: 0 PINs work after the race (none); exactly one must",
+                summary=(
+                    f"{label}: 0 PINs work after the race "
+                    f"({', '.join(sorted(successful))} set); exactly one must"
+                ),
                 detail=detail,
             )
     if len(working) > 1:

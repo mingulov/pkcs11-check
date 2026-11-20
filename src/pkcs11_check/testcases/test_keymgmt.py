@@ -783,9 +783,13 @@ def _check_copy_identity_override(
     except CkrAssertionError as exc:
         # R3F7: the use RV grades alongside the identity, never before
         # it: record its validity without terminating so a vendor use
-        # refusal cannot mask a proved applied override below.
+        # refusal cannot mask a proved applied override below. R4-F7:
+        # the RV carries its own failing stage (Init or Encrypt).
         use_validity = _record_rv_validity(
-            exc.rv, label=label, operation="C_Encrypt", kind="policy"
+            exc.rv,
+            label=label,
+            operation=getattr(exc, "operation", None) or "C_Encrypt",
+            kind="policy",
         )
         use_rv: str | None = ckr_name(exc.rv)
         observed_ct = None
@@ -904,7 +908,10 @@ def _copy_preserves_aes_material(rs: Any, target: int, baseline_ct: bytes) -> Gu
         preserved = observed == baseline_ct
     except CkrAssertionError as exc:
         return GuessUseOutcome(
-            preserved=None, use_rv=exc.rv, operation="C_Encrypt", mechanism="CKM_AES_ECB"
+            preserved=None,
+            use_rv=exc.rv,
+            operation=getattr(exc, "operation", None) or "C_Encrypt",
+            mechanism="CKM_AES_ECB",
         )
     return GuessUseOutcome(
         preserved=preserved, use_rv=None, operation="C_Encrypt", mechanism="CKM_AES_ECB"
@@ -927,7 +934,7 @@ def _copy_preserves_rsa_material(rs: Any, target: int, baseline_sig: bytes) -> G
         return GuessUseOutcome(
             preserved=None,
             use_rv=exc.rv,
-            operation="C_Sign",
+            operation=getattr(exc, "operation", None) or "C_Sign",
             mechanism="CKM_SHA256_RSA_PKCS",
         )
     return GuessUseOutcome(

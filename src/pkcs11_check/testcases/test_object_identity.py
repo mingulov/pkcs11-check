@@ -1205,6 +1205,23 @@ def _judge_override(
     honest deviation; zero and the untouched sentinel are normalized.
     """
     records: list[C.Classification] = []
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        # R4-F7: journal the producer undefined RV BEFORE any follow-up
+        # inventory runs, so a follow-up termination can never hide it.
+        # The validity record stands alone (RV plus operation); delta
+        # context rides the follow-up records below.
+        records.append(
+            C.record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=producer_operation,
+                inherit_mechanism=False,
+                actual=rv,
+                detail=_detail(producer_operation=producer_operation),
+                summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
+            )
+        )
     found: list[int] = []
     if label_text is not None:
         found = find_objects_exhaustive(
@@ -1360,21 +1377,9 @@ def _judge_override(
             )
         )
     elif not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
-        # R3F13: validity grades before the honest arms -- an undefined
-        # RV with a nonzero handle or an unproved delta fails, never
-        # xfails as an honest deviation. (Proved leaks still win above.)
-        records.append(
-            C.record_as(
-                "self_contradiction",
-                kind="metadata",
-                label=label,
-                operation=producer_operation,
-                inherit_mechanism=False,
-                actual=rv,
-                detail=_detail(producer_operation=producer_operation, **judge_detail),
-                summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
-            )
-        )
+        # Already journaled above (R4-F7); the chain below grades defined
+        # RVs only. (Proved leaks still win above via their own arm.)
+        pass
     elif unproved_new:
         records.append(
             C.record_as(
@@ -1407,7 +1412,8 @@ def _judge_override(
                 detail=_detail(producer_operation=producer_operation, **judge_detail),
                 summary=(
                     f"{label}: refusal {ckr_name(rv)} wrote non-invalid output "
-                    f"handle {handle_value}; no object created"
+                    f"handle {handle_value}; post-attempt delta: "
+                    f"{new_handles if new_handles else 'none'}"
                 ),
             )
         )

@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CK_UNAVAILABLE_INFORMATION_32,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
+    CKR_DEVICE_ERROR,
     CKR_OK,
     CKR_PIN_LEN_RANGE,
     CKR_SESSION_COUNT,
@@ -385,8 +386,17 @@ def _judge_session_exhaustion(
     refused_rv: int | None,
     total_now: int | None,
     rw_now: int | None,
+    reread_rv: int = int(CKR_OK),
 ) -> None:
-    """Judge an open-until-refusal run against the advertised maxima."""
+    """Judge an open-until-refusal run against the advertised maxima.
+
+    R4F12: both operation/RV pairs grade here (the node only collects):
+    an undefined saturation refusal fails before the reread validity
+    classifies, so a vendor reread can never xfail it away. The vacuous
+    no-refusal skip still grades after the reread, preserving the R3
+    alternate when the boundary went untested. Callers modelling no
+    reread leave the default clean OK.
+    """
     label = "QC11b session limits"
     detail: dict[str, Any] = {
         "advertised_max_total": policy.max_total,
@@ -398,13 +408,9 @@ def _judge_session_exhaustion(
         "observed_rw": rw_now,
         "refused_rv": ckr_name(refused_rv) if refused_rv is not None else None,
     }
-    if refused_rv is None:
-        pytest.skip(
-            f"{label}: opened {own_opens} sessions with no refusal "
-            f"(advertised max total={policy.max_total}, rw={policy.max_rw}); "
-            "boundary-untested, never a pass"
-        )
-    if not (is_standard_ckr(refused_rv) or is_vendor_defined_ckr(refused_rv)):
+    if refused_rv is not None and not (
+        is_standard_ckr(refused_rv) or is_vendor_defined_ckr(refused_rv)
+    ):
         classification.fail_as(
             "self_contradiction",
             kind="metadata",
@@ -416,6 +422,18 @@ def _judge_session_exhaustion(
             actual=refused_rv,
             summary=f"{label}: saturation refusal is an undefined CK_RV",
             detail=detail,
+        )
+    classify_rv_validity_or_none(
+        reread_rv,
+        label=label,
+        operation="C_GetTokenInfo",
+        kind="metadata",
+    )
+    if refused_rv is None:
+        pytest.skip(
+            f"{label}: opened {own_opens} sessions with no refusal "
+            f"(advertised max total={policy.max_total}, rw={policy.max_rw}); "
+            "boundary-untested, never a pass"
         )
     over = (
         policy.max_total is not None and total_now is not None and total_now > policy.max_total
@@ -525,23 +543,35 @@ def _judge_capacity_returned(
         "unverified_closes": unverified_closes,
         "reread_rv": ckr_name(reread_rv),
     }
+    # R4F12: both operation/RV pairs grade here (the node only collects):
+    # an undefined reopen fails before the reread validity classifies,
+    # so a vendor reread can never xfail it away.
+    if reopen_rv != int(CKR_OK) and not (
+        is_standard_ckr(reopen_rv) or is_vendor_defined_ckr(reopen_rv)
+    ):
+        classification.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_OpenSession",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=reopen_rv,
+            summary=(f"{label}: reopen refusal is an undefined CK_RV"),
+            detail=detail,
+        )
+    classify_rv_validity_or_none(
+        reread_rv,
+        label=label,
+        operation="C_GetTokenInfo",
+        kind="metadata",
+    )
     if reopen_rv != int(CKR_OK):
         # R3F12: validity grades before the close-count arms (mirroring
-        # the exhaustion judge and the caller R2C5b arms): an undefined
-        # reopen RV fails, a vendor one xfails, and only a defined
-        # standard refusal reaches the verified-closes logic.
-        if not (is_standard_ckr(reopen_rv) or is_vendor_defined_ckr(reopen_rv)):
-            classification.fail_as(
-                "self_contradiction",
-                kind="metadata",
-                label=label,
-                operation="C_OpenSession",
-                mechanism=None,
-                inherit_mechanism=False,
-                actual=reopen_rv,
-                summary=(f"{label}: reopen refusal is an undefined CK_RV"),
-                detail=detail,
-            )
+        # the exhaustion judge and the caller R2C5b arms): a vendor
+        # reopen xfails, an operational one xfails as non-adjudicating,
+        # and only a defined standard refusal reaches the verified-closes
+        # logic. The undefined arm graded above, ahead of the reread.
         if is_vendor_defined_ckr(reopen_rv):
             classification.xfail_as(
                 "nonspec_reject",
@@ -554,6 +584,24 @@ def _judge_capacity_returned(
                 summary=(
                     f"{label}: reopen refused with vendor-defined {ckr_name(reopen_rv)} "
                     "(alternate refusal; restoration unproved)"
+                ),
+                detail=detail,
+            )
+        if reopen_rv == int(CKR_DEVICE_ERROR):
+            # R4F12: an operational reopen refusal never fails as
+            # unrestored capacity (mirrors the deferred not_operational
+            # lifecycle arm for refused closes).
+            classification.xfail_as(
+                "not_operational",
+                kind="lifecycle",
+                label=label,
+                operation="C_OpenSession",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=reopen_rv,
+                summary=(
+                    f"{label}: reopen refused with {ckr_name(reopen_rv)} "
+                    "(operational refusal; restoration unproved)"
                 ),
                 detail=detail,
             )
@@ -770,12 +818,6 @@ class TestAdvertisedSessionLimits:
                     owned.append((handle, "saturation"))
                     own_opens += 1
                 reread, reread_rv = _read_session_policy(rs.raw, rs.slot_id)
-                classify_rv_validity_or_none(
-                    reread_rv,
-                    label="QC11b session limits",
-                    operation="C_GetTokenInfo",
-                    kind="metadata",
-                )
                 total_now = reread.ambient_total if reread is not None else None
                 rw_now = reread.ambient_rw if reread is not None else None
                 _judge_session_exhaustion(
@@ -784,6 +826,7 @@ class TestAdvertisedSessionLimits:
                     refused_rv=refused_rv,
                     total_now=total_now,
                     rw_now=rw_now,
+                    reread_rv=reread_rv,
                 )
             except BaseException as exc:
                 pending = exc
@@ -891,12 +934,6 @@ class TestAdvertisedSessionLimits:
                         == 1
                     )
                 reread, reread_rv = _read_session_policy(rs.raw, rs.slot_id)
-                classify_rv_validity_or_none(
-                    reread_rv,
-                    label="QC11b capacity return",
-                    operation="C_GetTokenInfo",
-                    kind="metadata",
-                )
                 total_after_close_all = reread.ambient_total if reread is not None else None
                 _judge_capacity_returned(
                     baseline_total=baseline_total,

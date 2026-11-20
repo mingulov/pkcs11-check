@@ -130,6 +130,11 @@ class TestRsaSignWrongAlgorithm:
             "SHA256_RSA_PKCS",
             "SHA384_RSA_PKCS",
             "SHA512_RSA_PKCS",
+            # R4-F8: the four SHA-3 PKCS#1 v1.5 rows complete the matrix.
+            "SHA3_224_RSA_PKCS",
+            "SHA3_256_RSA_PKCS",
+            "SHA3_384_RSA_PKCS",
+            "SHA3_512_RSA_PKCS",
             "RSA_PKCS_PSS",
             "SHA1_RSA_PKCS_PSS",
             "SHA256_RSA_PKCS_PSS",
