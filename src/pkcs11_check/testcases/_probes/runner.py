@@ -240,10 +240,10 @@ def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool
     return True
 
 
-def _legacy_subsumed_keys(
+def _legacy_subsumption_proof(
     body: dict[str, Any], seq: int, absorbed_rows: list[Any]
-) -> list[dict[str, Any]] | None:
-    """Keyed losses a subsumed legacy body contributes, else None (#88R10-4a).
+) -> tuple[tuple[str, int], list[dict[str, Any]]] | None:
+    """(receipt, keys) when a stamped body is proved subsumed, else None (#88R10-4a).
 
     A stamped sidecar beside receipt-less exit coverage for the same
     probe is subsumed when its stamp validates against the caller seq,
@@ -254,18 +254,19 @@ def _legacy_subsumed_keys(
     and its rows subset the absorbed exit rows (the slot nonce plus
     the seq bind one probe execution, so a row-subset is a proved
     prefix, never a coincidental match). Callers absorb the returned
-    keys with the coverage (idempotent union) and retire the body at
-    commit; a swap between absorb and commit still retains loudly,
-    and the absorbed keys cannot double. The caller owns the
-    launcher-clash check (foreign bodies never contribute).
+    keys with the coverage (idempotent union), record the receipt as
+    a consumed probe (the anti-double-fold proof rides the same
+    transaction, so a later commit failure cannot double-fold the
+    retained copy (#88R11-4)), and retire the body at commit; a swap
+    between absorb and commit still retains loudly, and the absorbed
+    keys cannot double. The caller owns the launcher-clash check
+    (foreign bodies never contribute).
     """
-    if (
-        validate_probe_receipt(
-            {"worker_uuid": body.get("worker_uuid"), "probe_seq": body.get("probe_seq")},
-            seq,
-        )
-        is None
-    ):
+    validated = validate_probe_receipt(
+        {"worker_uuid": body.get("worker_uuid"), "probe_seq": body.get("probe_seq")},
+        seq,
+    )
+    if validated is None:
         return None
     if body.get("probes_lost"):
         return None
@@ -281,13 +282,36 @@ def _legacy_subsumed_keys(
         return None
     if not _snapshot_covered_by(rows, frozenset(), 0, list(absorbed_rows), frozenset(), 0):
         return None
-    return keys
+    return validated, keys
+
+
+def _fallback_body_is_debris(fallback: Any) -> bool:
+    """Whether a fallback sidecar body is safe to delete unabsorbed (#88R11-3).
+
+    Only missing/torn bodies (no parsed content) and unstamped
+    payload-free debris (no receipt, no counters, no loss) delete: a
+    stated receipt or any evidence retains loudly for file collection
+    to adjudicate under the body's own identity.
+    """
+    if fallback is None or isinstance(fallback, _UnreadableEvidence):
+        return fallback is None
+    if not isinstance(fallback, dict):
+        return True
+    if fallback.get("worker_uuid") is not None or fallback.get("probe_seq") is not None:
+        return False
+    counters = fallback.get("counters")
+    if isinstance(counters, (list, tuple)):
+        if len(counters) > 0:
+            return False
+    elif counters is not None:
+        return False
+    return not fallback.get("probes_lost") and not fallback.get("lost_keys")
 
 
 def _commit_sidecar_owned(
     path: str,
     expected: tuple[str, int] | None,
-    absorbed: tuple[int, list[Any]] | None = None,
+    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]]] | None = None,
 ) -> bool:
     """Whether the sidecar at commit time is provably this execution's (#88R8-3).
 
@@ -305,10 +329,11 @@ def _commit_sidecar_owned(
     folded, a stamped body proved to be its prefix (stamp, lossless
     scalar, parsed keys, row-subset) retires -- its counts already
     sit in the parent checkpoint and its keys were absorbed with the
-    coverage. Missing, torn, or payload-free files proceed (nothing
-    attributable to protect); payload-free means no counters and no
-    loss (a loss-only body still enters receipt validation). Unreadable
-    bodies retain loudly.
+    coverage. Missing or torn files proceed, as do unstamped
+    payload-free files (nothing attributable to protect); any stated
+    receipt validates first, even on a payload-free body -- an empty
+    baseline must never authorize deleting a foreign rewrite
+    (#88R10-3, #88R11-3). Unreadable bodies retain loudly.
     """
     fallback = _read_probe_json(path)
     if fallback is None:
@@ -328,19 +353,20 @@ def _commit_sidecar_owned(
             stacklevel=2,
         )
         return False
-    counters = fallback.get("counters")
-    has_counters = isinstance(counters, (list, tuple)) and len(counters) > 0
-    # A loss-only body (retired records, zero retained rows) is evidence
-    # too: an empty counters list beside a nonzero loss scalar or a
-    # nonempty key set must enter receipt validation, not retire by the
-    # payload-free quiet path -- retiring it would also co-delete any
-    # surviving rewrite tmps unread (#88R10-3).
-    has_loss = bool(fallback.get("probes_lost")) or bool(fallback.get("lost_keys"))
-    if not has_counters and not has_loss:
-        return True
     worker = fallback.get("worker_uuid")
     pseq = fallback.get("probe_seq")
     if worker is None and pseq is None:
+        counters = fallback.get("counters")
+        has_counters = isinstance(counters, (list, tuple)) and len(counters) > 0
+        # A loss-only body (retired records, zero retained rows) is
+        # evidence too: an empty counters list beside a nonzero loss
+        # scalar or a nonempty key set must enter receipt validation,
+        # not retire by the payload-free quiet path -- retiring it
+        # would also co-delete any surviving rewrite tmps unread
+        # (#88R10-3).
+        has_loss = bool(fallback.get("probes_lost")) or bool(fallback.get("lost_keys"))
+        if not has_counters and not has_loss:
+            return True
         if expected is None:
             return True
         warnings.warn(
@@ -352,9 +378,17 @@ def _commit_sidecar_owned(
         return False
     if expected is None:
         if absorbed is not None:
-            proved = _legacy_subsumed_keys(fallback, absorbed[0], absorbed[1])
+            proved = _legacy_subsumption_proof(fallback, absorbed[0], absorbed[1])
             if proved is not None:
-                return True
+                # A loss key that landed between absorb and commit was
+                # never checkpointed: only a key set within the
+                # absorbed set retires (#88R11-4).
+                _, commit_keys = proved
+                commit_set = frozenset(
+                    (key["parent_uuid"], key["probe_seq"]) for key in commit_keys
+                )
+                if commit_set <= absorbed[2]:
+                    return True
         if absorbed is not None and type(pseq) is int and pseq == absorbed[0]:
             warnings.warn(
                 f"probe sidecar {path} states this probe's receipt under legacy-quiet "
@@ -394,7 +428,7 @@ def _commit_probe_sidecar(
     *,
     force_tmps: bool = False,
     expected: tuple[str, int] | None = None,
-    absorbed: tuple[int, list[Any]] | None = None,
+    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]]] | None = None,
 ) -> None:
     """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
 
@@ -410,9 +444,10 @@ def _commit_probe_sidecar(
     ownership first (a foreign, unreadable, or receipt-contradictory
     body is retained loudly); ``expected`` is the receipt the ingest
     just absorbed (None for legacy-quiet coverage). ``absorbed`` is
-    the ``(seq, exit rows)`` just folded from receipt-less coverage:
-    it re-proves legacy subsumption at commit time (None disables the
-    proof; only the legacy-quiet path passes it).
+    the ``(seq, exit rows, absorbed keys)`` just folded from
+    receipt-less coverage: it re-proves legacy subsumption at commit
+    time, including the key-subset check (None disables the proof;
+    only the legacy-quiet path passes it).
 
     Raises:
         CounterPersistenceError: When the parent checkpoint cannot be
@@ -473,11 +508,14 @@ def ingest_probe_payload(
     ``"lost"`` otherwise. After a commit the sidecar goes only once the
     parent checkpoint flushed (flush-then-delete); on flush failure the
     sidecar is retained and the persistence error propagates loud. A
-    definitive miss still deletes the sidecar (validated-unusable, torn, or
-    missing: nothing recoverable remains); an unreadable sidecar (I/O
-    failure) is retained for collection to retry, as is an unreadable
-    rewrite tmp (replay defers to file collection instead of ingesting
-    a return-less prefix). This function never
+    definitive miss still deletes the sidecar (torn, missing, or
+    unstamped payload-free debris: nothing recoverable remains); a
+    stated-but-mismatched or evidence-bearing body retains loudly
+    for file collection to adjudicate under its own identity
+    (#88R11-3). An unreadable sidecar (I/O failure) is retained for
+    collection to retry, as is an unreadable rewrite tmp (replay
+    defers to file collection instead of ingesting a return-less
+    prefix). This function never
     accounts loss itself: the caller owns ``note_lost_probe`` for
     ``"partial"`` and ``"lost"`` alike (the single accounting site).
 
@@ -506,14 +544,15 @@ def ingest_probe_payload(
             # (#88R10-4a). The proof re-runs at commit against a fresh
             # read, so a swap between absorb and commit still retains.
             extra_keys: list[dict[str, Any]] = []
+            proved_receipt: tuple[str, int] | None = None
             if sidecar is not None:
                 pre = _read_probe_json(sidecar)
                 if isinstance(pre, dict) and (
                     _fallback_identity_clash(pre, get_worker_uuid(), registration_info()) is None
                 ):
-                    proved = _legacy_subsumed_keys(pre, seq, absorbed_rows)
+                    proved = _legacy_subsumption_proof(pre, seq, absorbed_rows)
                     if proved is not None:
-                        extra_keys = proved
+                        proved_receipt, extra_keys = proved
             raw_keys = data.get("lost_keys", ())
             if extra_keys:
                 if not isinstance(raw_keys, (list, tuple)):
@@ -527,9 +566,13 @@ def ingest_probe_payload(
                 data.get("receipts", ()),
                 lost_keys=merged_keys,
                 source=source,
+                consumed_probe=proved_receipt,
             )
+            absorbed_keys = frozenset((key["parent_uuid"], key["probe_seq"]) for key in extra_keys)
             # Exit coverage subsumes every mid-run tmp (#88R3).
-            _commit_probe_sidecar(sidecar, force_tmps=True, absorbed=(seq, absorbed_rows))
+            _commit_probe_sidecar(
+                sidecar, force_tmps=True, absorbed=(seq, absorbed_rows, absorbed_keys)
+            )
             return "folded"
         if isinstance(counters, (list, tuple)) and receipt is not None:
             validated = validate_probe_receipt(receipt, seq)
@@ -616,6 +659,21 @@ def ingest_probe_payload(
             )
             _commit_probe_sidecar(sidecar, expected=validated_fallback)
             return "partial"
+    if sidecar is not None and not _fallback_body_is_debris(fallback):
+        # Torn coverage with an attributable or evidence-bearing body:
+        # live ingest cannot attribute it (no validated receipt), but
+        # deleting it would destroy evidence file collection can still
+        # adjudicate under the body's own identity -- so it retains
+        # loudly instead (#88R11-3). Only missing/torn bodies and
+        # unstamped payload-free debris delete here.
+        warnings.warn(
+            f"probe sidecar {sidecar} unabsorbed at fallback "
+            "(torn coverage, unattributable body); "
+            "evidence retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return "lost"
     _delete_probe_sidecar(sidecar)
     return "lost"
 

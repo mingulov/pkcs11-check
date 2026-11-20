@@ -2001,16 +2001,18 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         payload = json.loads(slot.read_text(encoding="utf-8"))
         assert payload["probe_seq"] == 0
         assert payload["parent_uuid"] == parent
-        merged, claimed, consumed, recovered, _keys, _adopted = durability._adopt_probe_orphans(
-            root,
-            worker_uuid=parent,
-            sidecar=None,
-            journal_lines=[],
-            claims={},
-            known_uuids={parent},
-            producer_run="R1",
-            producer_unit="a.py",
-            fence_live=True,
+        merged, claimed, consumed, recovered, _keys, _adopted, _skipped = (
+            durability._adopt_probe_orphans(
+                root,
+                worker_uuid=parent,
+                sidecar=None,
+                journal_lines=[],
+                claims={},
+                known_uuids={parent},
+                producer_run="R1",
+                producer_unit="a.py",
+                fence_live=True,
+            )
         )
         assert merged is not None
         assert merged["total_calls"] == 3

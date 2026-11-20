@@ -30,6 +30,7 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_UNIT_ENV,
     RECOVERY_SUPPLEMENTS_SUFFIX,
     CounterPersistenceError,
+    _record_identity_hex,
     append_supplement_records,
     collect_unit,
     discard_barrier_staging,
@@ -859,15 +860,30 @@ def _write_counters_recovery_cache(
 
     Pending units receive recovery evidence via supplements (their rerun
     overwrites the cache); skipped units never rerun, so the cache itself
-    carries the records into the merged stream. Returns False (with a
-    warning) on I/O failure. Never raises.
+    carries the records into the merged stream. Idempotent: records
+    already cached (a cleanup retry re-applying an applied batch) are
+    skipped by identity hash, so the cache never republishes
+    (#88R11-7). Returns False (with a warning) on I/O failure. Never
+    raises.
     """
     if not records:
         return True
     try:
         cache_path = _report_record_cache_path(state_file, unit)
         existing = _load_report_log_records(cache_path) if cache_path.exists() else []
-        _write_unit_report_record_cache(state_file, unit, [*existing, *records])
+        applied = {
+            identity
+            for record in existing
+            if (identity := _record_identity_hex(record)) is not None
+        }
+        fresh: list[dict[str, Any]] = []
+        for record in records:
+            identity = _record_identity_hex(record)
+            if identity is None or identity not in applied:
+                if identity is not None:
+                    applied.add(identity)
+                fresh.append(record)
+        _write_unit_report_record_cache(state_file, unit, [*existing, *fresh])
     except (OSError, ValueError) as exc:
         warnings.warn(
             f"counter recovery cache for {unit} failed ({exc}); recovery evidence dropped",
