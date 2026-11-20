@@ -4270,25 +4270,308 @@ class TestSweepAndFence:
         assert probe.exists()
         assert tmp.exists()
         blocked = False
-        real_sha = durability._sha256_file_hex
+        real_read_bytes = Path.read_bytes
         reads = {"count": 0}
 
-        def _evolving_sha(path: Path) -> str | None:
-            if path.name == tmp.name:
+        def _evolving_read_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self.name == tmp.name:
                 reads["count"] += 1
                 if reads["count"] > 1:
                     tmp.write_text(
                         json.dumps(_probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 9]])),
                         encoding="utf-8",
                     )
-            return real_sha(path)
+            return real_read_bytes(self, *args, **kwargs)
 
-        monkeypatch.setattr(durability, "_sha256_file_hex", _evolving_sha)
+        monkeypatch.setattr(Path, "read_bytes", _evolving_read_bytes)
         with pytest.warns(UserWarning, match="unadjudicated tmp"):
             second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert second["barrier_ok"] is True
         assert probe.exists(), "evolution holds the whole set"
         assert tmp.exists()
+
+    def test_skip_hold_survives_in_staging(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R14-1: a skip-held parent reunites instead of skip-adopting."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            pid_b, birth_b = _dead_pid_with_birth()
+            _plant_producer(
+                engaged,
+                uuid=_UUID_B,
+                unit="b.py",
+                pid=pid_b,
+                birth=birth_b,
+                in_progress=_counts_block(3, fn="C_Digest"),
+            )
+            marker_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=birth,
+            )
+            marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+            marker_src.rename(marker)
+            orphan = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=durability.birth_token_for_pid(proc.pid),
+            )
+            prior = _write_jsonl(
+                tmp_path / "prior.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    _session_record(
+                        pid,
+                        _counts_block(2, fn="C_Digest"),
+                        extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                    ),
+                    {"$report_type": "SessionFinish", "exitstatus": 0},
+                ],
+            )
+            with pytest.warns(UserWarning, match="live writer"):
+                first = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+            assert first["barrier_ok"] is True
+            assert Path(planted["registry"]).exists()
+            assert marker.exists()
+            assert orphan.exists()
+            staged = json.loads(
+                (engaged / durability.BARRIER_STAGING_FILENAME).read_text(encoding="utf-8")
+            )
+            assert staged["skip_held_uuids"] == [_UUID_A]
+            with pytest.warns(UserWarning, match="live writer"):
+                second = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+            assert second["barrier_ok"] is True
+            assert Path(planted["registry"]).exists(), "skip-held reunites, never adopts"
+            assert Path(planted["sidecar"]).exists()
+            assert marker.exists()
+            assert orphan.exists()
+            proc.kill()
+            assert proc.wait(timeout=30) is not None
+            third = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+            assert third["barrier_ok"] is True
+            assert not Path(planted["registry"]).exists()
+            assert not Path(planted["sidecar"]).exists()
+            assert not marker.exists()
+            assert not orphan.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_malformed_skip_held_degrades_loudly(self, engaged: Path) -> None:
+        """#88R14-1: corrupt skip-holds are not trusted (loud empty)."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(
+            json.dumps(
+                {
+                    "cache_records": {
+                        "a.py": [
+                            {
+                                "$report_type": "CallCountersPartial",
+                                "worker_uuid": _UUID_A,
+                                "truncated": True,
+                                "total_calls": 0,
+                                "by_module": {},
+                            }
+                        ]
+                    },
+                    "consumed": 1,
+                    "collected_uuids": [_UUID_A],
+                    "cleanup_targets": [],
+                    "skip_held_uuids": "garbage",
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.warns(UserWarning, match="malformed skip_held_uuids"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert not Path(planted["registry"]).exists(), "empty hold skips adopt"
+        assert not Path(planted["sidecar"]).exists()
+
+    def test_rejected_read_never_overwrites_digest(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R14-2: first adjudicated read wins the staged digest."""
+        import hashlib
+
+        pid_a, birth_a = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid_a,
+            birth=birth_a,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert first["barrier_ok"] is True
+        pid_b, birth_b = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_B,
+            pid=pid_b,
+            birth=birth_b,
+            unit="b.py",
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        probe = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_B,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_B, unit="b.py"),
+            pid=pid_b,
+            birth=birth_b,
+        )
+        pristine = probe.read_bytes()
+        pristine_digest = hashlib.sha256(pristine).hexdigest()
+        real_digested = durability._read_json_evidence_digested
+        reads = {"count": 0}
+
+        def _ghosting_read(path: Path) -> Any:
+            if path.name == probe.name:
+                reads["count"] += 1
+                if reads["count"] > 1:
+                    probe.write_text(
+                        json.dumps(_probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 1]])),
+                        encoding="utf-8",
+                    )
+            return real_digested(path)
+
+        monkeypatch.setattr(durability, "_read_json_evidence_digested", _ghosting_read)
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert probe.exists(), "the ghost never inherits the adjudication"
+        staged = json.loads(
+            (engaged / durability.BARRIER_STAGING_FILENAME).read_text(encoding="utf-8")
+        )
+        listed = {entry["path"]: entry["sha256"] for entry in staged["cleanup_targets"]}
+        assert listed.get(str(probe)) == pristine_digest
+
+    def test_listed_prune_reads_once(self, engaged: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#88R13-2c: listed prune verifies and classifies one read."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        probe = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        tmp = _plant_probe_tmp(probe, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 1]]))
+        real_unlink = Path.unlink
+        blocked = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if blocked and self.name in {probe.name, tmp.name}:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert first["barrier_ok"] is True
+        assert probe.exists()
+        assert tmp.exists()
+        blocked = False
+        real_read_text = durability._read_text_with_retry
+        text_reads = {"count": 0}
+
+        def _counting_read_text(path: Path) -> str:
+            if path.name == tmp.name:
+                text_reads["count"] += 1
+            return real_read_text(path)
+
+        monkeypatch.setattr(durability, "_read_text_with_retry", _counting_read_text)
+        second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert text_reads["count"] == 0, "listed prune never re-reads as text"
+        assert not probe.exists()
+        assert not tmp.exists()
+
+    def test_marker_slot_debris_listed_for_cleanup(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R14-4: a marker's slot tmps stage with the marker."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        tmp = slot.with_name(f"{slot.name}.tmp-4242")
+        tmp.write_text("{torn", encoding="utf-8")
+        real_unlink = Path.unlink
+        blocked = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if blocked and self.name == tmp.name:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert first["barrier_ok"] is True
+        assert marker.exists()
+        assert tmp.exists()
+        staged = json.loads(
+            (engaged / durability.BARRIER_STAGING_FILENAME).read_text(encoding="utf-8")
+        )
+        listed = {entry["path"] for entry in staged["cleanup_targets"]}
+        assert str(marker) in listed
+        assert str(tmp) in listed, "slot debris stages with its marker"
+        blocked = False
+        second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert not marker.exists()
+        assert not tmp.exists()
 
     def test_malformed_cleanup_targets_disable_adoption(self, engaged: Path) -> None:
         """#88R11-6: malformed targets fail closed with a loud warning."""

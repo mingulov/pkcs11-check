@@ -1936,7 +1936,7 @@ def _replay_probe_tmp_rows(
     for tmp in candidates:
         status, payload, digest = _read_json_evidence_digested(tmp)
         if digest is not None and digests is not None:
-            digests[str(tmp)] = digest
+            digests.setdefault(str(tmp), digest)
         if status == "gone":
             continue
         if status == "unreadable":
@@ -2317,7 +2317,7 @@ def _adopt_probe_orphans(
             continue
         status, raw, read_digest = _read_json_evidence_digested(path)
         if read_digest is not None and digests is not None:
-            digests[str(path)] = read_digest
+            digests.setdefault(str(path), read_digest)
         if status == "gone":
             continue
         if status == "unreadable":
@@ -2419,7 +2419,7 @@ def _adopt_probe_orphans(
             continue
         status, raw, read_digest = _read_json_evidence_digested(path)
         if read_digest is not None and digests is not None:
-            digests[str(path)] = read_digest
+            digests.setdefault(str(path), read_digest)
         if status == "gone":
             continue
         if status == "unreadable":
@@ -2788,7 +2788,7 @@ def _slot_rewrite_unresolved(
     for tmp in tmps:
         status, payload, digest = _read_json_evidence_digested(tmp)
         if digest is not None and digests is not None:
-            digests[str(tmp)] = digest
+            digests.setdefault(str(tmp), digest)
         if status in {"gone", "torn"}:
             continue
         if status != "ok":
@@ -2928,30 +2928,46 @@ def _prune_sidecar_tmps(
     removed = 0
     hold_baseline = False
     for tmp in tmps:
+        payload: Any = None
+        torn = False
         if listed is not None:
-            digest = _sha256_file_hex(tmp)
-            if digest is None or listed.get(str(tmp)) != digest:
+            # Verify and classify the same bytes (#88R13-2c): one
+            # atomic read feeds both the digest check and the content
+            # rules, so a replacement between two reads can never
+            # inherit the verified file's authorization.
+            try:
+                data = _read_bytes_with_retry(tmp)
+            except FileNotFoundError:
+                continue
+            except OSError:
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
-        try:
-            raw = _read_text_with_retry(tmp)
-        except FileNotFoundError:
-            continue
-        except ValueError:
-            if _unlink_counted(tmp):
-                removed += 1
-            else:
+            if hashlib.sha256(data).hexdigest() != listed.get(str(tmp)):
                 retained.append(tmp.name)
                 hold_baseline = True
-            continue
-        except OSError:
-            retained.append(tmp.name)
-            hold_baseline = True
-            continue
-        try:
-            payload = _json_loads_evidence(raw)
-        except ValueError:
+                continue
+            try:
+                payload = _json_loads_evidence(data.decode("utf-8"))
+            except ValueError:
+                torn = True
+        else:
+            try:
+                raw = _read_text_with_retry(tmp)
+            except FileNotFoundError:
+                continue
+            except ValueError:
+                torn = True
+            except OSError:
+                retained.append(tmp.name)
+                hold_baseline = True
+                continue
+            else:
+                try:
+                    payload = _json_loads_evidence(raw)
+                except ValueError:
+                    torn = True
+        if torn:
             if _unlink_counted(tmp):
                 removed += 1
             else:
@@ -4741,6 +4757,7 @@ def _write_barrier_staging(
     consumed: int,
     collected: Collection[str],
     targets: Collection[tuple[str, str]],
+    skip_held: Collection[str] = (),
 ) -> bool:
     """Persist the collected barrier plan atomically (never raises).
 
@@ -4749,7 +4766,10 @@ def _write_barrier_staging(
     adjudicating (and re-emitting) the evidence again (#88R9-4).
     ``targets`` carries the exact adjudicated probe cleanup targets as
     ``(path, sha256)`` pairs: a retry adopts only listed, byte-identical
-    slots, never newly discovered ones (#88R11-6).
+    slots, never newly discovered ones (#88R11-6). ``skip_held``
+    carries the uuids whose parents a skip retained for a live writer:
+    a retry reunites them (never skip-adopts) so the association
+    survives until the writer exits (#88R14-1).
     """
     path = root / BARRIER_STAGING_FILENAME
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -4764,6 +4784,7 @@ def _write_barrier_staging(
                         {"path": target_path, "sha256": digest}
                         for target_path, digest in sorted(set(targets))
                     ],
+                    "skip_held_uuids": sorted(set(skip_held)),
                 }
             ),
             encoding="utf-8",
@@ -4785,8 +4806,10 @@ def _write_barrier_staging(
 
 def _load_barrier_staging(
     root: Path,
-) -> tuple[dict[str, list[dict[str, Any]]], int, frozenset[str], frozenset[tuple[str, str]]]:
-    """Load retained staging ``(cache_records, consumed, collected, targets)``.
+) -> tuple[
+    dict[str, list[dict[str, Any]]], int, frozenset[str], frozenset[tuple[str, str]], frozenset[str]
+]:
+    """Load retained staging ``(cache_records, consumed, collected, targets, skip_held)``.
 
     Absent reads empty. Torn or misshapen staging warns loudly (staged
     recovery evidence may be lost: atomic writes make this
@@ -4795,11 +4818,14 @@ def _load_barrier_staging(
     staging behaves exactly as before). A malformed ``cleanup_targets``
     list degrades to empty with a loud warning (probe adoption
     disables for the pass); an absent list reads empty silently
-    (pre-targets staging adopts nothing until re-staged). Never raises.
+    (pre-targets staging adopts nothing until re-staged). A malformed
+    ``skip_held_uuids`` list degrades to empty with a loud warning
+    (skip-holds are not trusted from corrupt staging); absent reads
+    empty silently. Never raises.
     """
     path = root / BARRIER_STAGING_FILENAME
     if not path.exists():
-        return {}, 0, frozenset(), frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset()
     try:
         raw = _json_loads_evidence(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -4820,7 +4846,7 @@ def _load_barrier_staging(
             path.unlink(missing_ok=True)
         except OSError:
             pass
-        return {}, 0, frozenset(), frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset()
     collected: frozenset[str] = frozenset()
     claimed_clean = True
     if isinstance(raw, dict):
@@ -4875,7 +4901,19 @@ def _load_barrier_staging(
                 UserWarning,
                 stacklevel=2,
             )
-    return records, consumed, collected, targets
+    skip_held: frozenset[str] = frozenset()
+    if isinstance(raw, dict) and "skip_held_uuids" in raw:
+        claimed_held = raw["skip_held_uuids"]
+        if isinstance(claimed_held, list) and all(isinstance(uuid, str) for uuid in claimed_held):
+            skip_held = frozenset(claimed_held)
+        else:
+            warnings.warn(
+                f"counter barrier staging {path} has malformed skip_held_uuids; "
+                "skip-holds not trusted from this staging",
+                UserWarning,
+                stacklevel=2,
+            )
+    return records, consumed, collected, targets, skip_held
 
 
 def discard_barrier_staging(root: Path | str) -> bool:
@@ -4955,7 +4993,7 @@ def _adopted_staged_probe_targets(
     for probe_path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
         status, raw, read_digest = _read_json_evidence_digested(probe_path)
         if read_digest is not None and digests is not None:
-            digests[str(probe_path)] = read_digest
+            digests.setdefault(str(probe_path), read_digest)
         if status == "gone":
             continue
         if status == "unreadable":
@@ -5015,7 +5053,7 @@ def _adopted_staged_probe_targets(
             )
             continue
         if digests is not None:
-            digests[str(probe_path)] = digest
+            digests.setdefault(str(probe_path), digest)
         slot_tmps: list[Path] = []
         if _parse_consumed_probe_filename(probe_path.name) is not None:
             slot_name = _marker_slot_name(probe_path.name)
@@ -5064,7 +5102,7 @@ def _adopted_staged_probe_targets(
                 )
                 break
             if digests is not None:
-                digests[str(tmp)] = tmp_digest
+                digests.setdefault(str(tmp), tmp_digest)
         else:
             adopted.append(probe_path)
     return adopted
@@ -5122,13 +5160,20 @@ def prepare_resume(
         warnings.warn(f"counter resume barrier unavailable ({exc})", UserWarning, stacklevel=2)
         plan["barrier_ok"] = False
         return plan
-    staged_records, staged_consumed, staged_collected, staged_targets = _load_barrier_staging(root)
+    staged_records, staged_consumed, staged_collected, staged_targets, staged_skip_held = (
+        _load_barrier_staging(root)
+    )
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
     collected_now: set[str] = set()
     to_consume: list[Path] = []
     skip_retained: list[Path] = []
+    skip_held_now: set[str] = set()
+    # First read wins (#88R14-2): every recording uses setdefault so a
+    # later scan can never overwrite the digest of the bytes actually
+    # adjudicated (a rejected read deciding nothing must not move the
+    # staged identity either).
     read_digests: dict[str, str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
     prior_arg = prior if prior and prior.exists() else None
@@ -5236,7 +5281,11 @@ def prepare_resume(
         uuid = content["worker_uuid"]
         seen_uuids.add(uuid)
         seen_runs.add(content["run_id"])
-        if uuid in validated_collected and verify_producer(content) == "dead":
+        if (
+            uuid in validated_collected
+            and uuid not in staged_skip_held
+            and verify_producer(content) == "dead"
+        ):
             # Staged retry (#88R13-2): this producer's evidence was
             # adjudicated by the earlier barrier and its records stand
             # staged, so reunion runs no second adjudication (a
@@ -5244,7 +5293,8 @@ def prepare_resume(
             # The parent files consume directly (a dead writer cannot
             # ghost them) while parentless probes converge through
             # digest-gated adoption below. Anything not proven dead
-            # reunites normally (a live writer needs fencing).
+            # reunites normally (a live writer needs fencing), as does
+            # anything a skip held for a live writer (#88R14-1).
             to_consume.extend(_producer_files(content, registry_path))
             continue
         # Resume track (postponed): uuid-only matching preserves the
@@ -5280,9 +5330,12 @@ def prepare_resume(
                 # so the staging survives for a coherent retry
                 # (#88R11-1), and the uuid joins retained_uuids so the
                 # post-application sweep keeps its hands off while the
-                # writer is still live (#88R12-1).
+                # writer is still live (#88R12-1). The hold persists
+                # in staging so a retry reunites instead of
+                # skip-adopting the parent away (#88R14-1).
                 skip_retained.extend(_producer_files(content, registry_path))
                 plan["retained_uuids"].append(uuid)
+                skip_held_now.add(uuid)
             else:
                 to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
@@ -5535,17 +5588,29 @@ def prepare_resume(
         # ghosts, but captured bytes are exactly what reunion decided
         # on (#88R13-2).
         consumed_set = {str(path) for path in to_consume}
+        slot_bases = set()
+        for consumed_path in consumed_set:
+            slot_name = _marker_slot_name(Path(consumed_path).name)
+            if slot_name is not None:
+                slot_bases.add(str(Path(consumed_path).parent / slot_name))
         probe_targets = sorted(
             (path_str, digest)
             for path_str, digest in read_digests.items()
-            if path_str in consumed_set or path_str.split(".tmp-", 1)[0] in consumed_set
+            if path_str in consumed_set
+            or path_str.split(".tmp-", 1)[0] in consumed_set
+            or path_str.split(".tmp-", 1)[0] in slot_bases
         )
+        # Skip-holds persist until a clean application discards the
+        # staging: a pass that never revisits the producer (deferred
+        # elsewhere) must not silently drop its hold (#88R14-1).
+        skip_held_union = skip_held_now | set(staged_skip_held)
         if not _write_barrier_staging(
             root,
             plan["cache_records"],
             plan["consumed"],
             collected_union,
             probe_targets,
+            skip_held_union,
         ):
             warnings.warn(
                 f"counter resume barrier cannot stage recovery evidence in {root}; "
