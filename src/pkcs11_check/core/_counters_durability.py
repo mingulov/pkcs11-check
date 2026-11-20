@@ -1936,7 +1936,10 @@ def _replay_probe_tmp_rows(
     for tmp in candidates:
         status, payload, digest = _read_json_evidence_digested(tmp)
         if digest is not None and digests is not None:
-            digests.setdefault(str(tmp), digest)
+            # Assign (not setdefault): the replay read is the fold
+            # decision, so it wins over any earlier informational
+            # scan of the same tmp (#88R15-3).
+            digests[str(tmp)] = digest
         if status == "gone":
             continue
         if status == "unreadable":
@@ -5173,7 +5176,9 @@ def prepare_resume(
     # First read wins (#88R14-2): every recording uses setdefault so a
     # later scan can never overwrite the digest of the bytes actually
     # adjudicated (a rejected read deciding nothing must not move the
-    # staged identity either).
+    # staged identity either). The one exception is replay, which
+    # assigns: its read is the fold decision, so it wins over any
+    # earlier informational scan of the same tmp (#88R15-3).
     read_digests: dict[str, str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
     prior_arg = prior if prior and prior.exists() else None
@@ -5197,6 +5202,30 @@ def prepare_resume(
         if _is_authoritative_staged_record(record)
     }
     session_uuids = {known_uuid for _, known_uuid in sessions if isinstance(known_uuid, str)}
+    staged_key_sets: dict[str, dict[str, set[tuple[str, int]]]] = {}
+    for staged_list in staged_records.values():
+        for staged_record in staged_list:
+            if not _is_authoritative_staged_record(staged_record):
+                continue
+            worker_keys = staged_key_sets.setdefault(
+                staged_record["worker_uuid"],
+                {"recovered": set(), "orphan": set(), "lost": set()},
+            )
+            for field, bucket in (
+                ("recovered_keys", "recovered"),
+                ("orphan_keys", "orphan"),
+                ("lost_keys", "lost"),
+            ):
+                keys = staged_record.get(field)
+                if not isinstance(keys, list):
+                    continue
+                for entry in keys:
+                    if (
+                        isinstance(entry, dict)
+                        and isinstance(entry.get("parent_uuid"), str)
+                        and type(entry.get("probe_seq")) is int
+                    ):
+                        worker_keys[bucket].add((entry["parent_uuid"], entry["probe_seq"]))
     validated_collected = frozenset(
         uuid for uuid in staged_collected if uuid in recorded_uuids or uuid in session_uuids
     )
@@ -5220,6 +5249,76 @@ def prepare_resume(
     def _emit(unit: str, records: list[dict[str, Any]]) -> None:
         if records:
             plan["cache_records"].setdefault(unit, []).extend(records)
+
+    def _emit_key_delta(
+        unit: str,
+        fresh: list[dict[str, Any]],
+        uuid: str,
+        *,
+        run_id: str,
+        attempt: int,
+        pid: int | None,
+        role: str,
+        isolation: str,
+    ) -> None:
+        """Publish newly proved keys suppressed by the collected gate (#88R15-1).
+
+        A gated retry normally emits nothing (its records stand staged),
+        but reunion can prove NEW keys since staging (a heal landing
+        after a skip, while the marker's nested keys were already
+        staged): those ride a zero-count delta partial. Key unions are
+        idempotent downstream, so repeats are harmless; counts never
+        ride a delta (their overlap with staged totals is unprovable).
+        """
+        if not fresh:
+            return
+        staged = staged_key_sets.get(uuid, {"recovered": set(), "orphan": set(), "lost": set()})
+        new: dict[str, set[tuple[str, int]]] = {
+            "recovered": set(),
+            "orphan": set(),
+            "lost": set(),
+        }
+        for record in fresh:
+            if not isinstance(record, dict):
+                continue
+            for field, bucket in (
+                ("recovered_keys", "recovered"),
+                ("orphan_keys", "orphan"),
+                ("lost_keys", "lost"),
+            ):
+                keys = record.get(field)
+                if not isinstance(keys, list):
+                    continue
+                for entry in keys:
+                    if (
+                        isinstance(entry, dict)
+                        and isinstance(entry.get("parent_uuid"), str)
+                        and type(entry.get("probe_seq")) is int
+                    ):
+                        key = (entry["parent_uuid"], entry["probe_seq"])
+                        if key not in staged[bucket]:
+                            new[bucket].add(key)
+        if not any(new.values()):
+            return
+        _emit(
+            unit,
+            [
+                _partial_record(
+                    worker_uuid=uuid,
+                    run_id=run_id,
+                    unit=unit,
+                    attempt=attempt,
+                    pid=pid,
+                    block={"total_calls": 0, "by_module": {}},
+                    receipts=[],
+                    role=role,
+                    isolation=isolation,
+                    lost_keys=_keys_to_wire(new["lost"]) or None,
+                    orphan_keys=_keys_to_wire(new["orphan"]) or None,
+                    recovered_keys=_keys_to_wire(new["recovered"]) or None,
+                )
+            ],
+        )
 
     def _note_collected(uuid: str) -> bool:
         """Record uuid as collected; False when already staged (#88R9-4).
@@ -5324,6 +5423,17 @@ def prepare_resume(
             if _note_collected(uuid):
                 _emit(content["unit"], claim_records)
                 plan["consumed"] += 1
+            else:
+                _emit_key_delta(
+                    content["unit"],
+                    claim_records,
+                    uuid,
+                    run_id=content["run_id"],
+                    attempt=content["attempt"],
+                    pid=content["pid"],
+                    role=content["role"],
+                    isolation=content.get("isolation", "unknown"),
+                )
             if skipped_live:
                 # A skipped-live orphan keeps its parent association:
                 # the parent files ride the held list (not to_consume)
@@ -5438,32 +5548,40 @@ def prepare_resume(
         if isinstance(barrier_run, str):
             seen_runs.add(barrier_run)
         journal_path = _journal_for_sidecar(sidecar_path)
-        if uuid in validated_collected:
+        if uuid in validated_collected and uuid not in staged_skip_held:
             # Staged retry (#88R13-2): no second reunion (see the
             # registry loop); the files consume directly while probes
             # converge through digest-gated adoption. Quiescence was
-            # proven by the adoption gate above.
+            # proven by the adoption gate above. Skip-held producers
+            # reunite below instead (#88R15-2).
             to_consume.extend([sidecar_path, journal_path])
             continue
         # Resume track (postponed past 0.3.0): recovered/orphan-keys/
         # adopted scalar are unpacked but deliberately not wired yet;
         # behavior preserved exactly.
         barrier_unit = sidecar.get("unit")
+        routed_committed = any(known_uuid == uuid for _, known_uuid in sessions)
         try:
             journal_lines = _read_journal_lines_strict(journal_path, uuid)
-            orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys, _adopted, _ = (
-                _adopt_probe_orphans(
-                    root,
-                    worker_uuid=uuid,
-                    sidecar=sidecar,
-                    journal_lines=journal_lines,
-                    claims=claims,
-                    known_uuids=known_uuids,
-                    producer_run=barrier_run if isinstance(barrier_run, str) else None,
-                    producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
-                    fence_live=True,
-                    digests=read_digests,
-                )
+            (
+                orphan_block,
+                orphan_receipts,
+                consumed,
+                _recovered,
+                _orphan_keys,
+                _adopted,
+                skipped_live,
+            ) = _adopt_probe_orphans(
+                root,
+                worker_uuid=uuid,
+                sidecar=sidecar,
+                journal_lines=journal_lines,
+                claims=claims,
+                known_uuids=known_uuids,
+                producer_run=barrier_run if isinstance(barrier_run, str) else None,
+                producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
+                fence_live=not (uuid in staged_skip_held and routed_committed),
+                digests=read_digests,
             )
         except _DeferProducerError as exc:
             warnings.warn(
@@ -5481,7 +5599,7 @@ def prepare_resume(
             continue
         # Resume track (postponed): uuid-only matching preserves the
         # frozen claim-vs-gap routing exactly.
-        if any(known_uuid == uuid for _, known_uuid in sessions):
+        if routed_committed:
             claim_records = []
             if orphan_block is not None:
                 barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
@@ -5503,7 +5621,29 @@ def prepare_resume(
             if _note_collected(uuid):
                 _emit(str(sidecar.get("unit", "")), claim_records)
                 plan["consumed"] += 1
-            to_consume.extend([sidecar_path, journal_path])
+            else:
+                barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
+                _emit_key_delta(
+                    str(sidecar.get("unit", "")),
+                    claim_records,
+                    uuid,
+                    run_id=_sidecar_run(sidecar),
+                    attempt=sidecar.get("attempt", 0)
+                    if _is_nonneg_int(sidecar.get("attempt"))
+                    else 0,
+                    pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
+                    role=barrier_stamp_role,
+                    isolation=barrier_stamp_isolation,
+                )
+            if skipped_live:
+                # Skip-held reunion skipped again: retain the parent
+                # association exactly like the registry branch
+                # (#88R15-2).
+                skip_retained.extend([sidecar_path, journal_path])
+                plan["retained_uuids"].append(uuid)
+                skip_held_now.add(uuid)
+            else:
+                to_consume.extend([sidecar_path, journal_path])
             to_consume.extend(consumed)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
@@ -5593,12 +5733,19 @@ def prepare_resume(
             slot_name = _marker_slot_name(Path(consumed_path).name)
             if slot_name is not None:
                 slot_bases.add(str(Path(consumed_path).parent / slot_name))
+
+        def _tmp_base(path_str: str) -> str:
+            # Split on the filename only: a directory component may
+            # itself contain ".tmp-" (#88R15-4).
+            parent, name = str(Path(path_str).parent), Path(path_str).name
+            return str(Path(parent) / name.split(".tmp-", 1)[0])
+
         probe_targets = sorted(
             (path_str, digest)
             for path_str, digest in read_digests.items()
             if path_str in consumed_set
-            or path_str.split(".tmp-", 1)[0] in consumed_set
-            or path_str.split(".tmp-", 1)[0] in slot_bases
+            or _tmp_base(path_str) in consumed_set
+            or _tmp_base(path_str) in slot_bases
         )
         # Skip-holds persist until a clean application discards the
         # staging: a pass that never revisits the producer (deferred
