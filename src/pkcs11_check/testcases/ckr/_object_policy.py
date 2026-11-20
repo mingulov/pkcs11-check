@@ -1359,23 +1359,73 @@ def _assert_no_labeled_objects(
     retained = _record_rv_validity(
         rv, label=label, operation=operation, kind="policy", mechanism=mechanism
     )
-    after, inventory_rv = _find_allowing_partial(rs)
+    scan = _find_allowing_partial(rs)
+    after, stages, oversize = scan.handles, scan.stages, scan.oversize
     records: list[Any] = []
     if retained is not None:
         records.append(retained)
-    if inventory_rv != int(CKR_OK):
-        inventory_retained = _record_rv_validity(
-            inventory_rv,
-            label=f"{label}: inventory",
+    # R4-F1: validity first -- an undefined RV at ANY stage fails under
+    # its own operation (a refused page never hides the Final RV).
+    for stage_op, stage_rv in stages:
+        if (
+            stage_rv != int(CKR_OK)
+            and not is_standard_ckr(stage_rv)
+            and not is_vendor_defined_ckr(stage_rv)
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=stage_op,
+                inherit_mechanism=False,
+                actual=stage_rv,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: post-attempt inventory {stage_op} returned "
+                    f"undefined CK_RV {ckr_name(stage_rv)}"
+                ),
+            )
+    for stage_op, stage_rv in stages:
+        if stage_rv != int(CKR_OK):
+            inventory_retained = _record_rv_validity(
+                stage_rv,
+                label=f"{label}: inventory",
+                operation=stage_op,
+                kind="policy",
+            )
+            if inventory_retained is not None:
+                records.append(inventory_retained)
+    stopped = next(((op, srv) for op, srv in stages if srv != int(CKR_OK)), None)
+    clean_scan = stopped is None and oversize is None
+
+    def _fail_oversize() -> NoReturn:
+        assert oversize is not None
+        count, capacity = oversize
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
             operation="C_FindObjects",
-            kind="policy",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: post-attempt inventory C_FindObjects claimed CKR_OK "
+                f"with count {count} on a {capacity}-element buffer"
+            ),
+            detail={"count": count, "capacity": capacity},
         )
-        if inventory_retained is not None:
-            records.append(inventory_retained)
+
     before_set = set(before)
     new = [int(handle) for handle in after if int(handle) not in before_set]
     if not new:
-        if inventory_rv != int(CKR_OK):
+        # R4-F1: a lying page fails even with no delta (proved metadata
+        # defect); earlier-page leaks grade before it below.
+        if oversize is not None:
+            _fail_oversize()
+        if not clean_scan:
+            assert stopped is not None
+            stop_op, stop_rv = stopped
             void = record_as(
                 "honest_deviation",
                 kind="policy",
@@ -1386,12 +1436,14 @@ def _assert_no_labeled_objects(
                 spec_ref=spec_ref,
                 summary=(
                     f"{label}: refused with {ckr_name(rv)} but the post-attempt "
-                    f"inventory failed with {ckr_name(inventory_rv)}; zero-delta unproved"
+                    f"inventory {stop_op} failed with {ckr_name(stop_rv)}; "
+                    "zero-delta unproved"
                 ),
                 detail={
                     "disposition": "unproved-effect",
                     "refusal_rv": ckr_name(rv),
-                    "inventory_rv": ckr_name(inventory_rv),
+                    "inventory_rv": ckr_name(stop_rv),
+                    "inventory_operation": stop_op,
                 },
             )
             records.append(void)
@@ -1498,6 +1550,10 @@ def _assert_no_labeled_objects(
             for error in errors:
                 terminal.add_note(f"cleanup also raised {type(error).__name__}: {error}")
             raise
+    # R4-F1: earlier pages graded (a leak failed above); a lying page
+    # now fails before any void can soften it.
+    if oversize is not None:
+        _fail_oversize()
     if uncorrelated:
         records.append(
             record_as(
@@ -3426,49 +3482,56 @@ def _find_all(rs: Any) -> list[int]:
     return _run_inventory(rs, None, 0, record_label="full inventory")
 
 
-def _find_allowing_partial(rs: Any) -> tuple[list[int], int]:
-    """Inventory, retaining pages collected before a refusal (R3F1).
+@dataclass
+class _PartialInventory:
+    """Handles plus per-stage evidence from a possibly-refused scan (R4-F1).
 
-    Returns (handles, terminal_rv): CKR_OK when the scan exhausts
-    cleanly, else the Init/Find/Final RV that stopped it. Pages
-    observed before the refusal stay valid evidence (a post-attempt
-    delta against a complete baseline still proves creation); only a
-    clean scan proves absence. Over-capacity counts still fail loud
-    (proved metadata defect, mirroring _run_inventory).
+    ``stages`` carries (operation, RV) for every stage that ran, in run
+    order: Init always, then the last Find call's RV when pagination ran,
+    then Final whenever it was attempted (always after a successful
+    Init -- a refused page never discards the Final RV). ``oversize``
+    carries (count, capacity) when a page lied about its count; the
+    lying page's handles are never read (buffer garbage past capacity)
+    and earlier pages stay valid evidence for the caller to grade.
     """
+
+    handles: list[int]
+    stages: list[tuple[str, int]]
+    oversize: tuple[int, int] | None = None
+
+
+def _find_allowing_partial(rs: Any) -> _PartialInventory:
+    """Inventory, retaining pages collected before a refusal (R3F1, R4-F1).
+
+    Pages observed before a refusal stay valid evidence (a post-attempt
+    delta against a complete baseline still proves creation); only a
+    clean scan proves absence. Every stage RV rides along for the
+    caller to grade under its own operation (an undefined Final behind
+    a standard page refusal fails there, never hides). An over-capacity
+    count is returned as an observation (the caller grades earlier-page
+    leaks before the metadata defect); the lying page itself is never
+    read.
+    """
+    stages: list[tuple[str, int]] = []
     rv = int(rs.raw.C_FindObjectsInit(rs.sh, None, 0))
+    stages.append(("C_FindObjectsInit", rv))
     if rv != int(CKR_OK):
-        return [], rv
+        return _PartialInventory([], stages)
     out: list[int] = []
-    stopped_rv: int | None = None
+    oversize: tuple[int, int] | None = None
+    find_rv = int(CKR_OK)
     try:
         while True:
             handles = (CK_OBJECT_HANDLE * _FIND_PAGE_SIZE)()
             found = CK_ULONG(0)
             rv = int(rs.raw.C_FindObjects(rs.sh, handles, _FIND_PAGE_SIZE, byref(found)))
+            find_rv = rv
             if rv != int(CKR_OK):
-                stopped_rv = rv
                 break
             raw_count = int(found.value)
             if raw_count > _FIND_PAGE_SIZE:
-                fail_as(
-                    "self_contradiction",
-                    kind="metadata",
-                    label="partial inventory",
-                    operation="C_FindObjects",
-                    inherit_mechanism=False,
-                    expected=f"find count <= {_FIND_PAGE_SIZE}",
-                    actual=f"find count {raw_count}",
-                    summary=(
-                        "partial inventory: C_FindObjects claimed CKR_OK with count "
-                        f"{raw_count} on a {_FIND_PAGE_SIZE}-element buffer"
-                    ),
-                    detail={
-                        "session": int(rs.sh),
-                        "count": raw_count,
-                        "capacity": _FIND_PAGE_SIZE,
-                    },
-                )
+                oversize = (raw_count, _FIND_PAGE_SIZE)
+                break
             out.extend(int(handles[i]) for i in range(raw_count))
             if raw_count == 0:
                 break
@@ -3477,9 +3540,9 @@ def _find_allowing_partial(rs: Any) -> tuple[list[int], int]:
             final_rv = int(rs.raw.C_FindObjectsFinal(rs.sh))
         except AttributeError:
             final_rv = int(CKR_OK)
-        if stopped_rv is None:
-            stopped_rv = final_rv
-    return out, stopped_rv
+    stages.append(("C_FindObjects", find_rv))
+    stages.append(("C_FindObjectsFinal", final_rv))
+    return _PartialInventory(out, stages, oversize)
 
 
 def _adopt_qc4_output_or_xfail(
