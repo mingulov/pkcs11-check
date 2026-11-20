@@ -2169,7 +2169,9 @@ def _adopt_probe_orphans(
     claimed: list[dict[str, Any]] = []
     consumed: list[Path] = []
     skipped: list[Path] = []
+    skipped_slots: set[str] = set()
     marker_paths: dict[tuple[str, int], list[Path]] = {}
+    withheld: list[tuple[str, int, Path, int, bool]] = []
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
     adopted_lost: list[int] = []
@@ -2314,7 +2316,48 @@ def _adopt_probe_orphans(
     # markers, prefix fallback only for legacy markers under an
     # unambiguous prefix. A foreign marker heals nothing here.
     ambiguous_reporter = colliders[:1] == [worker_uuid]
-    for path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
+    # Receipt-level live holds (#88R18-3): duplicate markers for one
+    # receipt resolve together -- if any copy names a live writer, no
+    # copy heals or consumes until it exits. The pre-scan records
+    # (receipt -> writer incarnations) plus the live paths for
+    # live-first order (postmortem fences before duplicates proceed);
+    # the main gate re-checks liveness fresh (never trusts the scan).
+    # Reads here are informational only (never captured): the main
+    # loop's reads bind the digests.
+    live_writers: dict[tuple[str, int], list[tuple[int, int | None]]] = {}
+    live_marker_names: set[str] = set()
+    for scan_path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
+        scan_parsed = _parse_consumed_probe_filename(scan_path.name)
+        if scan_parsed is None:
+            continue
+        scan_owner, _ = scan_parsed
+        if len(scan_owner) == 32:
+            if scan_owner != worker_uuid:
+                continue
+        elif scan_owner != prefix:
+            continue
+        scan_status, scan_raw = _read_json_evidence(scan_path)
+        if scan_status != "ok" or not isinstance(scan_raw, dict):
+            continue
+        scan_child = scan_raw.get("worker_uuid")
+        scan_seq = scan_raw.get("probe_seq")
+        scan_pid = scan_raw.get("pid")
+        scan_birth = scan_raw.get("birth_token")
+        if not isinstance(scan_child, str) or type(scan_seq) is not int:
+            continue
+        if (
+            type(scan_pid) is int
+            and scan_pid > 0
+            and _incarnation_alive(scan_pid, scan_birth if type(scan_birth) is int else None)
+        ):
+            live_writers.setdefault((scan_child, scan_seq), []).append(
+                (scan_pid, scan_birth if type(scan_birth) is int else None)
+            )
+            live_marker_names.add(scan_path.name)
+    for path in sorted(
+        root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}"),
+        key=lambda candidate: (candidate.name not in live_marker_names, candidate.name),
+    ):
         parsed_name = _parse_consumed_probe_filename(path.name)
         if parsed_name is None:
             continue
@@ -2416,6 +2459,9 @@ def _adopt_probe_orphans(
         ):
             if not fence_live:
                 skipped.append(path)
+                held_slot_name = _marker_slot_name(path.name)
+                if held_slot_name is not None:
+                    skipped_slots.add(held_slot_name)
                 warnings.warn(
                     f"consumed marker {path.name} has a live writer (pid {marker_pid}); "
                     "recovery withheld for a later pass",
@@ -2428,6 +2474,24 @@ def _adopt_probe_orphans(
                     raise _DeferProducerError(worker_uuid, marker_pid)
             elif not _terminate_verified(marker_pid, validated_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, marker_pid)
+        if not fence_live and any(
+            _incarnation_alive(pid, birth)
+            for pid, birth in live_writers.get((marker_child, marker_seq), [])
+        ):
+            # A co-marker for this receipt names a still-live writer
+            # (re-checked fresh): withhold with it rather than
+            # publishing through one copy while another may still
+            # complete (#88R18-3). Reaching here means this copy is
+            # not itself live (its own gate above would have
+            # continued).
+            skipped.append(path)
+            warnings.warn(
+                f"consumed marker {path.name} shares its receipt with a live writer; "
+                "recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         # A surviving rewrite tmp for this slot means the absorbed
         # snapshot is not the latest word: healing here would clear a
         # stranded rewrite silently (the orphan loop never visits a
@@ -2446,6 +2510,7 @@ def _adopt_probe_orphans(
                 UserWarning,
                 stacklevel=2,
             )
+            withheld.append((marker_child, marker_seq, path, filename_seq, marker_finalized))
             continue
         if marker_finalized and marker_seq == filename_seq:
             recovered.append((worker_uuid, marker_seq))
@@ -2544,6 +2609,12 @@ def _adopt_probe_orphans(
                     raise _DeferProducerError(worker_uuid, orphan_pid)
             elif not _terminate_verified(orphan_pid, orphan_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, orphan_pid)
+        # A live marker's hold covers its whole slot (#88R18-2): the
+        # baseline and rewrite tmps wait with the marker instead of
+        # folding or pruning around a writer that may still complete.
+        if path.name in skipped_slots:
+            _skip_covered_orphan(path, child_uuid, seq, "shares its slot with a live marker writer")
+            continue
         # An orphan with a live writer must not fold or suppress on
         # the committed path: the writer may replace the file after
         # our reads (postmortem paths fence first and defer on
@@ -2629,6 +2700,22 @@ def _adopt_probe_orphans(
             replay_divergent,
             raw,
         )
+    # Reconcile withheld markers with the replay result (#88R18-1): a
+    # slot whose baseline the orphan loop consumed proved absorbed
+    # (replayed at or under the marker snapshot), so its marker heals
+    # now instead of stranding past its parent's consumption. Anything
+    # else keeps the parent association for retry.
+    consumed_set = {str(path) for path in consumed}
+    for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
+        held_slot = _marker_slot_name(held_path.name)
+        if held_slot is not None and str(root / held_slot) in consumed_set:
+            if held_finalized and held_seq == held_filename_seq:
+                recovered.append((worker_uuid, held_seq))
+            marker_paths.setdefault((held_child, held_seq), []).append(held_path)
+            consumed.append(held_path)
+            consumed_set.add(str(held_path))
+        else:
+            skipped.append(held_path)
     adopted = sum(adopted_lost)
     skipped_live = len(skipped) > 0
     if merged["total_calls"] == 0:
