@@ -16,7 +16,13 @@ import pkcs11_check.testcases._copy_mutability as cm
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_UNAVAILABLE_INFORMATION,
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_LABEL,
+    CKA_TOKEN,
     CKA_VALUE,
+    CKK_AES,
+    CKO_SECRET_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
@@ -303,8 +309,39 @@ def test_inventory_object_set_unfiltered(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(seen) == 1 and seen[0].count == 0, "filtered inventory hides token objects"
 
 
-def test_guess_legs_token_object_delta_proves_creation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pre-review 4: a token-object delta across a refused copy proves creation."""
+def _script_identities(
+    monkeypatch: pytest.MonkeyPatch, script: dict[tuple[int, int], Any]
+) -> list[tuple[int, int]]:
+    """Script (handle, attr) reads for the real adoption logic (R4-F1).
+
+    Returns the consumed-read list; callers assert it to prove the
+    correlation reads actually happened (not just the verdict).
+    """
+    from pkcs11_check.testcases import _adoption as ad
+
+    consumed: list[tuple[int, int]] = []
+
+    def _fake(_rs: Any, handle: int, attr: int, **kw: Any) -> Any:
+        key = (int(handle), int(attr))
+        assert key in script, f"unscripted identity read {key}"
+        consumed.append(key)
+        return script[key]
+
+    monkeypatch.setattr(ad, "read_identity_attr", _fake)
+    return consumed
+
+
+def _source_script(handle: int, label: str = "src") -> dict[tuple[int, int], Any]:
+    return {
+        (handle, int(CKA_LABEL)): label,
+        (handle, int(CKA_TOKEN)): False,
+        (handle, int(CKA_CLASS)): int(CKO_SECRET_KEY),
+        (handle, int(CKA_KEY_TYPE)): int(CKK_AES),
+    }
+
+
+def test_guess_legs_session_delta_proves_creation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R4-F1: a session-correlated delta across a refused copy proves creation."""
     import pkcs11_check.testcases.test_keymgmt as km
 
     pages = iter([[9], [9, 200], [9], [9]])
@@ -317,6 +354,8 @@ def test_guess_legs_token_object_delta_proves_creation(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(km, "find_objects_exhaustive", _find)
     monkeypatch.setattr(km, "copy_object", _refuse)
+    script = _source_script(100) | _source_script(200)
+    consumed = _script_identities(monkeypatch, script)
     rs = SimpleNamespace(raw=object(), sh=1)
     _cx, _wx, _cu, _wu, created, _rvs, deltas = km._run_guess_legs(
         rs,
@@ -328,6 +367,80 @@ def test_guess_legs_token_object_delta_proves_creation(monkeypatch: pytest.Monke
         label="t",
     )
     assert created == (True, False), created
+    assert deltas == (frozenset({200}), frozenset()), deltas
+    assert set(consumed) == set(script), consumed
+
+
+def test_guess_legs_token_delta_without_correlation_is_unproved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: a foreign token delta voids creation (never a leak finding)."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    pages = iter([[9], [9, 200], [9], [9]])
+
+    def _find(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        return next(pages)
+
+    def _refuse(_raw: Any, _sh: int, _handle: int, _attrs: Any) -> int:
+        raise CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)
+
+    monkeypatch.setattr(km, "find_objects_exhaustive", _find)
+    monkeypatch.setattr(km, "copy_object", _refuse)
+    script = _source_script(100) | {
+        (200, int(CKA_LABEL)): "foreign",
+        (200, int(CKA_TOKEN)): True,
+        (200, int(CKA_CLASS)): int(CKO_SECRET_KEY),
+        (200, int(CKA_KEY_TYPE)): int(CKK_AES),
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    _cx, _wx, _cu, _wu, created, _rvs, deltas = km._run_guess_legs(
+        rs,
+        100,
+        CKA_VALUE,
+        (b"correct-guess", b"wrong-guess"),
+        b"baseline",
+        lambda *a: _use(True),
+        label="t",
+    )
+    assert created == (None, False), created
+    assert deltas == (frozenset({200}), frozenset()), deltas
+
+
+def test_guess_legs_unreadable_delta_is_unproved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R4-F1: an unreadable delta voids creation (never assumed absent/present)."""
+    import pkcs11_check.testcases.test_keymgmt as km
+    from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+
+    pages = iter([[9], [9, 200], [9], [9]])
+
+    def _find(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        return next(pages)
+
+    def _refuse(_raw: Any, _sh: int, _handle: int, _attrs: Any) -> int:
+        raise CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)
+
+    monkeypatch.setattr(km, "find_objects_exhaustive", _find)
+    monkeypatch.setattr(km, "copy_object", _refuse)
+    script = _source_script(100) | {
+        (200, int(CKA_LABEL)): MISSING_ATTRIBUTE,
+        (200, int(CKA_TOKEN)): MISSING_ATTRIBUTE,
+        (200, int(CKA_CLASS)): MISSING_ATTRIBUTE,
+        (200, int(CKA_KEY_TYPE)): MISSING_ATTRIBUTE,
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    _cx, _wx, _cu, _wu, created, _rvs, deltas = km._run_guess_legs(
+        rs,
+        100,
+        CKA_VALUE,
+        (b"correct-guess", b"wrong-guess"),
+        b"baseline",
+        lambda *a: _use(True),
+        label="t",
+    )
+    assert created == (None, False), created
     assert deltas == (frozenset({200}), frozenset()), deltas
 
 
@@ -466,6 +579,7 @@ def test_recycled_handle_leak_still_fails(monkeypatch: pytest.MonkeyPatch) -> No
     The delta is graded against the leg's own bracketing inventories
     only: a handle seen in an earlier leg and freed since is a fresh
     leak when it reappears, never voided by naive cross-leg matching.
+    R4-F1: the leak is correlation-proved (session + attempt identity).
     """
     from _pytest.outcomes import Failed
 
@@ -487,6 +601,8 @@ def test_recycled_handle_leak_still_fails(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(km, "find_objects_exhaustive", _find)
     monkeypatch.setattr(km, "copy_object", _copy)
     monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | _source_script(101)
+    consumed = _script_identities(monkeypatch, script)
     rs = SimpleNamespace(raw=object(), sh=1)
     out = km._run_guess_legs(
         rs, 100, CKA_VALUE, (b"c", b"w"), b"base", lambda *a: _use(True), label="t"
@@ -495,6 +611,7 @@ def test_recycled_handle_leak_still_fails(monkeypatch: pytest.MonkeyPatch) -> No
     assert created == (False, True), created
     assert deltas == (frozenset(), frozenset({101})), deltas
     assert destroyed == [101], destroyed
+    assert set(consumed) == set(script), consumed
     with pytest.raises(Failed, match="created"):
         cm.judge_guess_confirm(
             correct_exc=correct_exc,
@@ -509,6 +626,102 @@ def test_recycled_handle_leak_still_fails(monkeypatch: pytest.MonkeyPatch) -> No
             operation=OPERATION,
             spec_ref=SPEC_REF,
         )
+
+
+def test_accepted_guess_without_baseline_skips_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted copy with a refused baseline is never used nor destroyed."""
+    from _pytest.outcomes import Skipped
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    calls = iter([None])
+    uses: list[int] = []
+    destroyed: list[int] = []
+
+    def _inventory(_rs: Any, **_kw: Any) -> tuple[Any, Any]:
+        if next(calls, "after") is None:
+            return None, int(CKR_DEVICE_ERROR)
+        return {100}, None
+
+    def _uses(_rs: Any, handle: int, _baseline: bytes) -> Any:
+        uses.append(int(handle))
+        return _use(True)
+
+    monkeypatch.setattr(km, "_inventory_object_set", _inventory)
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 101)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Skipped, match="ownership unproved"):
+        km._run_guess_legs(rs, 100, CKA_VALUE, (b"c", b"w"), b"base", _uses, label="t")
+    assert uses == [], uses
+    assert destroyed == [], destroyed
+
+
+def test_accepted_guess_identity_mismatch_fails_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted copy with foreign identity fails; never used nor destroyed."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    uses: list[int] = []
+    destroyed: list[int] = []
+
+    def _uses(_rs: Any, handle: int, _baseline: bytes) -> Any:
+        uses.append(int(handle))
+        return _use(True)
+
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({100}, None))
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 101)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (101, int(CKA_LABEL)): "foreign",
+        (101, int(CKA_TOKEN)): True,
+        (101, int(CKA_CLASS)): int(CKO_SECRET_KEY),
+        (101, int(CKA_KEY_TYPE)): int(CKK_AES),
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="not the attempt"):
+        km._run_guess_legs(rs, 100, CKA_VALUE, (b"c", b"w"), b"base", _uses, label="t")
+    assert uses == [], uses
+    assert destroyed == [], destroyed
+
+
+def test_accepted_guess_unproved_identity_skips_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted copy with unreadable identity voids; never used nor destroyed."""
+    from _pytest.outcomes import Skipped
+
+    import pkcs11_check.testcases.test_keymgmt as km
+    from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+
+    uses: list[int] = []
+    destroyed: list[int] = []
+
+    def _uses(_rs: Any, handle: int, _baseline: bytes) -> Any:
+        uses.append(int(handle))
+        return _use(True)
+
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({100}, None))
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 101)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (101, int(CKA_LABEL)): MISSING_ATTRIBUTE,
+        (101, int(CKA_TOKEN)): MISSING_ATTRIBUTE,
+        (101, int(CKA_CLASS)): MISSING_ATTRIBUTE,
+        (101, int(CKA_KEY_TYPE)): MISSING_ATTRIBUTE,
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Skipped, match="ownership unproved"):
+        km._run_guess_legs(rs, 100, CKA_VALUE, (b"c", b"w"), b"base", _uses, label="t")
+    assert uses == [], uses
+    assert destroyed == [], destroyed
 
 
 def test_oracle_pair_with_refused_third_fails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -529,6 +742,8 @@ def test_oracle_pair_with_refused_third_fails(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(km, "copy_object", _oracle)
     monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({100}, None))
     monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | _source_script(101)
+    consumed = _script_identities(monkeypatch, script)
     rs = SimpleNamespace(raw=object(), sh=1)
     out = km._run_guess_legs(
         rs, 100, CKA_VALUE, (b"correct", b"wrong"), b"base", lambda *a: _use(True), label="t"
@@ -537,6 +752,7 @@ def test_oracle_pair_with_refused_third_fails(monkeypatch: pytest.MonkeyPatch) -
     third = km._probe_third_value(rs, 100, CKA_VALUE, b"third", label="t")
     assert [a[CKA_VALUE] for a in attempts] == [b"correct", b"wrong", b"third"], attempts
     assert third == ("refused", int(CKR_ATTRIBUTE_READ_ONLY)), third
+    assert set(consumed) == set(script), consumed
     with pytest.raises(Failed, match="oracle"):
         cm.judge_guess_confirm(
             correct_exc=correct_exc,
@@ -842,6 +1058,73 @@ def test_unproved_inventory_on_accepted_pair_proceeds(
     assert reason == "honest_deviation"
 
 
+def test_standard_divergence_beats_vendor_inventory(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R4-F3: differing standard refusals fail despite a vendor inventory alternate."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            inventory_rvs=(0x80000001, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert "oracle" in kw["summary"]
+    assert captures["xfail"] == []
+
+
+def test_standard_divergence_beats_vendor_third_probe(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R4-F3: differing standard refusals fail despite a vendor third probe."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            third_outcome=("refused", 0x80000002),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert "oracle" in kw["summary"]
+    assert captures["xfail"] == []
+
+
+@pytest.mark.parametrize("mutated_leg", ["correct", "wrong"])
+def test_proved_mutation_beats_sibling_use_void(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    mutated_leg: str,
+) -> None:
+    """R4-F3: one leg's proved mutation fails despite the sibling's refused use."""
+    voided = _use(None, int(CKR_DEVICE_ERROR))
+    mutated = _use(False)
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_use=mutated if mutated_leg == "correct" else voided,
+            wrong_use=voided if mutated_leg == "correct" else mutated,
+            created_on_refusal=(False, False),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    assert [reason for reason, _ in captures["fail"]] == ["self_contradiction"]
+
+
 def test_both_accepted_use_refused_voids_not_mutated(
     captures: dict[str, list[tuple[str, dict[str, Any]]]],
 ) -> None:
@@ -1140,10 +1423,266 @@ def test_third_probe_accepted_reports_and_destroys(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(km, "copy_object", _copy)
     monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
     monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (55, int(CKA_LABEL)): "src",
+        (55, int(CKA_TOKEN)): False,
+    }
+    consumed = _script_identities(monkeypatch, script)
     rs = SimpleNamespace(raw=object(), sh=1)
     assert km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t") == ("accepted", None)
     assert seen == [{CKA_VALUE: b"v" * 16}]
     assert destroyed == [55]
+    assert set(consumed) == set(script), consumed
+
+
+def test_third_probe_unproved_identity_leaks_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted third with unreadable identity leaks deliberately; signal kept."""
+    import pkcs11_check.testcases.test_keymgmt as km
+    from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (55, int(CKA_LABEL)): MISSING_ATTRIBUTE,
+        (55, int(CKA_TOKEN)): MISSING_ATTRIBUTE,
+        (55, int(CKA_CLASS)): MISSING_ATTRIBUTE,
+        (55, int(CKA_KEY_TYPE)): MISSING_ATTRIBUTE,
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    from pkcs11_check.compliance import get_notes
+
+    before = len(get_notes())
+    assert km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t") == ("accepted", None)
+    assert destroyed == [], destroyed
+    fresh = get_notes()[before:]
+    assert any("leaked deliberately" in n.description for n in fresh), fresh
+
+
+def test_third_probe_identity_mismatch_fails_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted third with foreign identity fails; nothing destroyed."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (55, int(CKA_LABEL)): "foreign",
+        (55, int(CKA_TOKEN)): True,
+        (55, int(CKA_CLASS)): int(CKO_SECRET_KEY),
+        (55, int(CKA_KEY_TYPE)): int(CKK_AES),
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="not the attempt"):
+        km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+    assert destroyed == [], destroyed
+
+
+def test_third_probe_without_baseline_leaks_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted third with a refused baseline leaks deliberately; signal kept."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(
+        km, "_inventory_object_set", lambda _rs, **_kw: (None, int(CKR_DEVICE_ERROR))
+    )
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    from pkcs11_check.compliance import get_notes
+
+    before = len(get_notes())
+    assert km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t") == ("accepted", None)
+    assert destroyed == [], destroyed
+    fresh = get_notes()[before:]
+    assert any("leaked deliberately" in n.description for n in fresh), fresh
+
+
+def test_control_accepted_without_baseline_skips_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted control with a refused baseline is never used nor destroyed."""
+    from _pytest.outcomes import Skipped
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    uses: list[int] = []
+    destroyed: list[int] = []
+
+    def _uses(_rs: Any, handle: int, _baseline: bytes) -> Any:
+        uses.append(int(handle))
+        return _use(True)
+
+    monkeypatch.setattr(
+        km, "_inventory_object_set", lambda _rs, **_kw: (None, int(CKR_DEVICE_ERROR))
+    )
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Skipped, match="ownership unproved"):
+        km._copy_unchanged_control_or_skip(rs, 100, b"baseline", label="t", preserves=_uses)
+    assert uses == [], uses
+    assert destroyed == [], destroyed
+
+
+def test_control_accepted_identity_mismatch_fails_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F1: an accepted control with foreign identity fails; never used nor destroyed."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    uses: list[int] = []
+    destroyed: list[int] = []
+
+    def _uses(_rs: Any, handle: int, _baseline: bytes) -> Any:
+        uses.append(int(handle))
+        return _use(True)
+
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({100}, None))
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (55, int(CKA_LABEL)): "foreign",
+        (55, int(CKA_TOKEN)): True,
+        (55, int(CKA_CLASS)): int(CKO_SECRET_KEY),
+        (55, int(CKA_KEY_TYPE)): int(CKK_AES),
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="not the attempt"):
+        km._copy_unchanged_control_or_skip(rs, 100, b"baseline", label="t", preserves=_uses)
+    assert uses == [], uses
+    assert destroyed == [], destroyed
+
+
+def test_control_accepted_correlated_proceeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R4-F1: an accepted control with proved identity is used and destroyed."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    uses: list[int] = []
+    destroyed: list[int] = []
+
+    def _uses(_rs: Any, handle: int, _baseline: bytes) -> Any:
+        uses.append(int(handle))
+        return _use(True)
+
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({100}, None))
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (55, int(CKA_LABEL)): "src",
+        (55, int(CKA_TOKEN)): False,
+    }
+    consumed = _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    km._copy_unchanged_control_or_skip(rs, 100, b"baseline", label="t", preserves=_uses)
+    assert uses == [55], uses
+    assert destroyed == [55], destroyed
+    assert set(consumed) == set(script), consumed
+
+
+def test_guess_sources_stamp_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R4-F1: guess sources carry labels so copies inherit correlation identity."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    seen_aes: dict[Any, Any] = {}
+    seen_rsa: dict[Any, Any] = {}
+
+    def _aes(*args: Any, **kwargs: Any) -> int:
+        seen_aes.update(kwargs.get("attrs", {}))
+        return 100
+
+    def _rsa(*args: Any, **kwargs: Any) -> int:
+        seen_rsa.update(kwargs.get("attrs", {}))
+        return 101
+
+    monkeypatch.setattr(km, "import_secret_key", _aes)
+    monkeypatch.setattr(km, "import_rsa_private_key_negotiated", _rsa)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    km._import_copy_mutability_source(rs)
+    km._import_sealed_rsa_or_xfail(
+        rs,
+        {
+            "n": b"n",
+            "e": b"e",
+            "d": b"d",
+            "p": b"p",
+            "q": b"q",
+            "dmp1": b"a",
+            "dmq1": b"b",
+            "iqmp": b"c",
+        },
+        label="t",
+    )
+    assert seen_aes.get(CKA_LABEL), seen_aes
+    assert seen_rsa.get(CKA_LABEL), seen_rsa
+
+
+def test_direct_copy_mismatch_fails_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R4-F1 variant: the direct copy node adopts only a correlated handle."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    checked: list[int] = []
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "skip_unless_mechanism", lambda _rs, _m: None)
+    monkeypatch.setattr(km, "row_by_key", lambda _k: SimpleNamespace(citation="cite"))
+    monkeypatch.setattr(km, "_import_copy_mutability_source", lambda _rs, **_kw: 100)
+    monkeypatch.setattr(km, "_encrypt_baseline_or_xfail", lambda *a, **k: b"base")
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
+    monkeypatch.setattr(km, "check_material_preserved", lambda *a, **k: checked.append(1))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    script = _source_script(100) | {
+        (55, int(CKA_LABEL)): "foreign",
+        (55, int(CKA_TOKEN)): True,
+        (55, int(CKA_CLASS)): int(CKO_SECRET_KEY),
+        (55, int(CKA_KEY_TYPE)): int(CKK_AES),
+    }
+    _script_identities(monkeypatch, script)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _m: True)
+    with pytest.raises(Failed, match="not the attempt"):
+        km.TestCopyForbiddenMutation().test_copy_different_value_material_ignored_or_refused(rs)
+    assert checked == [], checked
+    assert destroyed == [100], destroyed
+
+
+def test_unproved_arm_names_retained_deltas(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R4-F3: the unproved terminal names the retained delta handles per leg."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(None, False),
+            inventory_rvs=(int(CKR_DEVICE_ERROR), None),
+            created_deltas=(frozenset({200}), frozenset()),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "honest_deviation"
+    assert kw["detail"].get("retained_deltas") == {"correct": [200], "wrong": []}
 
 
 def test_third_probe_refused_reports_rv_without_skipping(

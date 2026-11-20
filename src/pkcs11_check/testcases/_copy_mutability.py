@@ -760,8 +760,10 @@ def judge_guess_confirm(
             raise_for_record(_strongest_record(use_retained))
         use_legs = (("correct", correct_use), ("wrong", wrong_use))
         refused_uses = [(leg, use) for leg, use in use_legs if use.preserved is None]
-        if not refused_uses and not (correct_use.preserved and wrong_use.preserved):
-            # Proved forbidden effect beats every alternate.
+        if correct_use.preserved is False or wrong_use.preserved is False:
+            # Proved forbidden effect beats every alternate AND every
+            # void (R4-F3): a sibling's refused use cannot un-prove
+            # this leg's independently observed change.
             classify_ignored_or_mutated(
                 mutated=True,
                 label=label,
@@ -801,6 +803,12 @@ def judge_guess_confirm(
                     "wrong_preserved": wrong_use.preserved,
                 },
             )
+        # R4-F3: only both-preserved reaches here (a proved False
+        # failed above; a None voided above).
+        assert correct_use.preserved and wrong_use.preserved, (
+            correct_use.preserved,
+            wrong_use.preserved,
+        )
         classify_ignored_or_mutated(
             mutated=False,
             label=label,
@@ -817,23 +825,32 @@ def judge_guess_confirm(
                 "use_operation": correct_use.operation,
             },
         )
+    if correct_exc is not None and wrong_exc is not None:
+        if correct_exc.rv != wrong_exc.rv:
+            if is_standard_ckr(correct_exc.rv) and is_standard_ckr(wrong_exc.rv):
+                # R4-F3: a proved standard asymmetry beats vendor
+                # alternates (the documented never-preempts contract).
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label=label,
+                    operation=operation,
+                    inherit_mechanism=False,
+                    actual=correct_exc.rv,
+                    summary=(
+                        "refusal codes differ between correct and wrong guesses (copy oracle)"
+                    ),
+                    detail={"correct_rv": correct_exc.rv, "wrong_rv": wrong_exc.rv},
+                )
+            # Vendor-involving divergence grades through the retained
+            # vendor alternate below (validity tiers always retain
+            # vendor RVs, so the alternate is present).
     if xfail_retained:
         # Both-refused path (the accepted pair never falls through):
         # a vendor alternate beats unproved voids and pair passes.
         raise_for_record(xfail_retained[0])
     unproved_legs = [name for name, exc, flag in legs if flag is None and exc is not None]
     if correct_exc is not None and wrong_exc is not None:
-        if correct_exc.rv != wrong_exc.rv:
-            fail_as(
-                "self_contradiction",
-                kind="policy",
-                label=label,
-                operation=operation,
-                inherit_mechanism=False,
-                actual=correct_exc.rv,
-                summary=("refusal codes differ between correct and wrong guesses (copy oracle)"),
-                detail={"correct_rv": correct_exc.rv, "wrong_rv": wrong_exc.rv},
-            )
         if unproved_legs:
             unproved_exc = next(exc for name, exc, _flag in legs if name in unproved_legs)
             assert unproved_exc is not None
@@ -860,6 +877,12 @@ def judge_guess_confirm(
                             ("wrong", inventory_rvs[1]),
                         )
                         if leg in unproved_legs
+                    },
+                    # R4-F3: the retained delta sets stay on the record
+                    # so the unproved evidence is named, not dropped.
+                    "retained_deltas": {
+                        "correct": sorted(created_deltas[0]),
+                        "wrong": sorted(created_deltas[1]),
                     },
                 },
             )
