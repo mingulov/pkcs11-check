@@ -297,6 +297,19 @@ def test_recovery_end_to_end_xor_zeros_finds_recovery() -> None:
     assert rs.raw.derive_data == [b"\x00" * 32, b"\x00" * 32]
 
 
+def test_recovery_end_to_end_xor_short_finds_recovery() -> None:
+    """Pre-review 3: the distinct short-data stimulus recovers end to end."""
+    rs = _kdf_rs()
+    with pytest.raises(Failed):
+        kdf._run_byte_recovery_case(rs, shape="xor_short", label="t")
+    assert any(
+        "recovered through 1-byte child" in rec.summary for rec in classification.get_records()
+    )
+    # Both legs carry the 1-byte datum: short input, not short output.
+    assert rs.raw.derive_data == [kdf._RECOVERY_XOR_SHORT_DATA] * 2
+    assert len(kdf._RECOVERY_XOR_SHORT_DATA) == 1
+
+
 def test_recovery_end_to_end_refused_passes() -> None:
     rs = _kdf_rs(refuse_sealed=True)
     kdf._run_byte_recovery_case(rs, shape="extract", label="t")

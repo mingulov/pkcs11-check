@@ -907,7 +907,11 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bo
                 summary=f"{label}: final login returned undefined CK_RV {ckr_name(rv)}",
             )
     successful = {f"P{int(i) + 1}" for i, rv in setpin.items() if rv == int(CKR_OK)}
-    if not successful and not fails_only:
+    if not successful:
+        # A race that never ran has no fail-grade evidence: the prescan
+        # returns silently (the gate, then the judge, decides the skip).
+        if fails_only:
+            return
         pytest.skip(f"{label}: no SetPIN succeeded; races untestable")
     if len(successful) > 1:
         fail_as(

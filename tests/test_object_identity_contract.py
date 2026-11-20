@@ -617,6 +617,25 @@ def test_unique_id_override_ignored_xfails() -> None:
     _assert_cleanup(fake)
 
 
+def test_unique_id_override_unreadable_stored_id_xfails_unproved() -> None:
+    """Pre-review 4: an unreadable stored ID voids ignore, never claims differ."""
+    fake = _IdentityRaw()
+    fake.override_mode = "ignore"
+    fake.uid_mode = "missing"
+    assert_xfails(
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create,
+        _rs(fake),
+    )
+    matches = [
+        rec
+        for rec in C.get_records()
+        if rec.outcome == "xfail" and "ignore unproved" in (rec.summary or "")
+    ]
+    assert len(matches) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert matches[0].detail is not None and matches[0].detail.get("outcome") == "unproved"
+    _assert_cleanup(fake)
+
+
 def test_unique_id_override_other_clean_refusal_xfails() -> None:
     fake = _IdentityRaw()
     fake.override_mode = "general"
