@@ -705,6 +705,99 @@ class TestProbeChannel:
             durability.mark_probe_consumed(sidecar, parent_uuid="f" * 32)
         assert sidecar.exists()
 
+    def test_commit_foreign_sidecar_retained_on_coverage_path(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R8-3: the folded path never marks a foreign body as consumed."""
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        call_counters.ensure_registered()
+        seq = call_counters.assign_probe_seq()
+        sidecar = tmp_path / "probe-13.json"
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": seq,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": "f" * 32,
+                }
+            ),
+            encoding="utf-8",
+        )
+        cov = tmp_path / "cov.json"
+        cov.write_text(
+            json.dumps(
+                _coverage_payload(
+                    [["m", "C_Login", 0, 4]],
+                    receipt={"worker_uuid": _UUID_A, "probe_seq": seq},
+                )
+            ),
+            encoding="utf-8",
+        )
+        real_unlink = os.unlink
+
+        def _failing_unlink(path: Any, *args: Any, **kwargs: Any) -> None:
+            if str(path).endswith(sidecar.name):
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", _failing_unlink)
+        with pytest.warns(UserWarning, match="contradict"):
+            assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "folded"
+        assert call_counters.serialize_current()["total_calls"] == 4
+        assert sidecar.exists()
+        assert list(tmp_path.glob("probe-consumed-*.json")) == []
+
+    def test_commit_unreadable_sidecar_retained_on_coverage_path(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R8-3: an unreadable commit body is retained, never renamed blind."""
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        call_counters.ensure_registered()
+        seq = call_counters.assign_probe_seq()
+        sidecar = tmp_path / "probe-14.json"
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": seq,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                }
+            ),
+            encoding="utf-8",
+        )
+        cov = tmp_path / "cov.json"
+        cov.write_text(
+            json.dumps(
+                _coverage_payload(
+                    [["m", "C_Login", 0, 4]],
+                    receipt={"worker_uuid": _UUID_A, "probe_seq": seq},
+                )
+            ),
+            encoding="utf-8",
+        )
+        real_unlink = os.unlink
+        real_open = open
+
+        def _failing_unlink(path: Any, *args: Any, **kwargs: Any) -> None:
+            if str(path).endswith(sidecar.name):
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(path, *args, **kwargs)
+
+        def _eperm_sidecar(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path) == str(sidecar):
+                raise OSError("injected sidecar EPERM")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", _failing_unlink)
+        monkeypatch.setattr("builtins.open", _eperm_sidecar)
+        with pytest.warns(UserWarning, match="unreadable"):
+            assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "folded"
+        assert sidecar.exists()
+        assert list(tmp_path.glob("probe-consumed-*.json")) == []
+
     def test_fallback_unreadable_tmp_is_lost_and_retained(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2122,6 +2215,81 @@ class TestSweepAndFence:
         second = durability.sweep_orphans(engaged, current_run=_RUN)
         assert second["removed"] == 2, "torn baseline + torn tmp"
         assert not orphan.exists()
+        assert not tmp.exists()
+
+    def test_consume_honors_prune_hold(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R8-4: consumption keeps a baseline its tmps hold."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(1, fn="C_Digest"),
+        )
+        sidecar = Path(planted["sidecar"])
+        tmp = _plant_tmp(sidecar, _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid))
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self.name == tmp.name:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        with pytest.warns(UserWarning, match="unadjudicated tmp"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert not Path(planted["registry"]).exists()
+        assert sidecar.exists(), "held baseline stays discoverable for retry"
+        assert tmp.exists()
+
+    def test_sweep_finishes_held_cleanup(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R8-4: a healed sweep finishes held cleanup without re-emitting."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="OLD",
+            in_progress=_counts_block(1, fn="C_Digest"),
+        )
+        sidecar = Path(planted["sidecar"])
+        tmp = _plant_tmp(sidecar, _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid))
+        Path(planted["registry"]).unlink()
+        real_unlink = Path.unlink
+        blocked = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if blocked and self.name == tmp.name:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        first = durability.sweep_orphans(
+            engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
+        )
+        assert first["removed"] == 0
+        assert sidecar.exists()
+        assert tmp.exists()
+        blocked = False
+        second = durability.sweep_orphans(
+            engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
+        )
+        assert second == {"removed": 2, "retained": 0}
+        assert not sidecar.exists()
         assert not tmp.exists()
 
     def test_sweep_mutual_debris_converges(self, engaged: Path) -> None:
@@ -9437,6 +9605,172 @@ def test_covered_ambiguous_foreign_run_retained(tmp_path: Path) -> None:
     assert not marker.exists(), "A's own marker consumes normally"
 
 
+def test_fence_race_replacement_defers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R8-1: a replace landing during the fence is never folded stale."""
+    proc = _live_sleeper()
+    try:
+        birth = durability.birth_token_for_pid(proc.pid)
+        if birth is None:
+            pytest.skip("birth tokens unavailable on this platform")
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            tmp_path,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5, fn="C_Login"),
+        )
+        orphan = _plant_probe_orphan(
+            tmp_path,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=proc.pid,
+            birth=birth,
+        )
+        real_terminate = durability._terminate_verified
+
+        def _racing_fence(pid: int, birth: int, timeout: float) -> bool:
+            payload = json.loads(orphan.read_text(encoding="utf-8"))
+            payload["counters"] = [["m", "C_Digest", 0, 1]]
+            orphan.write_text(json.dumps(payload), encoding="utf-8")
+            return real_terminate(pid, birth, timeout)
+
+        monkeypatch.setattr(durability, "_terminate_verified", _racing_fence)
+        with pytest.warns(UserWarning, match="deferred"):
+            records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        assert records == []
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        assert json.loads(orphan.read_text(encoding="utf-8"))["counters"] == [
+            ["m", "C_Digest", 0, 1]
+        ]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+
+
+def test_covered_advanced_baseline_defers(tmp_path: Path) -> None:
+    """#88R8-1: a baseline newer than its marker is preserved, not dropped."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(5, fn="C_Login"),
+    )
+    marker_src = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 1]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+    )
+    marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+    marker_src.rename(marker)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 1]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+        nonce="bead1234",
+    )
+    with pytest.warns(UserWarning, match="deferred"):
+        records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    assert records == []
+    assert Path(planted["registry"]).exists()
+    assert marker.exists()
+    assert orphan.exists()
+
+
+def test_covered_stale_baseline_suppresses(tmp_path: Path) -> None:
+    """#88R8-1: a baseline within its marker snapshot still suppresses."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(5, fn="C_Login"),
+    )
+    marker_src = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 1]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+    )
+    marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+    marker_src.rename(marker)
+    _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 1]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+        nonce="bead1234",
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Login")["calls"] == 5
+    assert not Path(planted["registry"]).exists()
+    assert not marker.exists()
+
+
+def test_covered_divergent_defers(tmp_path: Path) -> None:
+    """#88R8-2: a covered divergence preserves baseline, marker, and claim."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(5, fn="C_Login"),
+    )
+    marker_src = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 2]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+    )
+    marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+    marker_src.rename(marker)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 2]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+        nonce="bead1234",
+    )
+    _plant_probe_tmp(orphan, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 2]]), pid=999)
+    _plant_probe_tmp(orphan, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 1, 2]]), pid=1000)
+    with pytest.warns(UserWarning, match="deferred"):
+        records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    assert records == []
+    assert Path(planted["registry"]).exists()
+    assert marker.exists()
+    assert orphan.exists()
+
+
 def test_transient_baseline_fault_folds_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -11219,6 +11553,100 @@ def test_committed_unreadable_probe_defers_barrier(
     assert not durability.is_sealed(tmp_path)
     assert Path(planted["registry"]).exists()
     assert orphan.exists()
+
+
+def test_deferred_evidence_message_not_live(tmp_path: Path) -> None:
+    """#88R8-5: an evidence skip never reports a running producer."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pkcs11_check.core.file_runner import _apply_counters_barrier_plan
+
+    pid, _ = _dead_pid_with_birth()
+    _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=424243,
+        in_progress=_counts_block(5, fn="C_Login"),
+    )
+    marker_src = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 2]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+    )
+    marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+    marker_src.rename(marker)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 2]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+        nonce="bead1234",
+    )
+    _plant_probe_tmp(orphan, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 2]]), pid=999)
+    _plant_probe_tmp(orphan, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 1, 2]]), pid=1000)
+    with pytest.warns(UserWarning, match="deferred"):
+        plan = durability.prepare_resume(tmp_path, prior_merged_jsonl=None)
+    assert plan["skipped_units"] == ["a.py"]
+    assert plan["skipped_live"] == []
+    stream = StringIO()
+    pending = _apply_counters_barrier_plan(
+        tmp_path / "state.json", plan, ["a.py"], Console(file=stream, force_terminal=False)
+    )
+    assert pending == []
+    text = " ".join(stream.getvalue().split())
+    assert "still running" not in text
+    assert "undecided" in text
+
+
+def test_deferred_live_writer_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R8-5: a live-writer skip keeps the running-producer message."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pkcs11_check.core.file_runner import _apply_counters_barrier_plan
+
+    proc = _live_sleeper()
+    try:
+        birth = durability.birth_token_for_pid(proc.pid)
+        if birth is None:
+            pytest.skip("birth tokens unavailable on this platform")
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=424243)
+        _plant_probe_orphan(
+            tmp_path,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=proc.pid,
+            birth=birth,
+        )
+        monkeypatch.setattr(durability, "_terminate_verified", lambda *a: False)
+        with pytest.warns(UserWarning, match="deferred"):
+            plan = durability.prepare_resume(tmp_path, prior_merged_jsonl=None)
+        assert plan["skipped_units"] == ["a.py"]
+        assert plan["skipped_live"] == ["a.py"]
+        stream = StringIO()
+        pending = _apply_counters_barrier_plan(
+            tmp_path / "state.json", plan, ["a.py"], Console(file=stream, force_terminal=False)
+        )
+        assert pending == []
+        assert "still running" in " ".join(stream.getvalue().split())
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
 
 
 def test_dead_writer_without_birth_proceeds(tmp_path: Path) -> None:

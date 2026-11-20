@@ -1578,6 +1578,48 @@ def _durable_receipts(sidecar: Any | None, journal_lines: list[str]) -> set[tupl
     return keys
 
 
+def _probe_rows_groups(rows: list[Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """Group flat rows per (module, fn) into entries + per-RV exits (#88R8-1).
+
+    Garbage rows are skipped, mirroring the merge. Shared by the
+    returns merge and the marker-coverage subset check so both agree
+    on what a row set proves.
+    """
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is None:
+            continue
+        module, fn, rv, count = parsed
+        group = groups.setdefault((module, fn), {"entries": 0, "exits": {}})
+        group["entries"] += count
+        if rv is not None:
+            group["exits"][rv] = group["exits"].get(rv, 0) + count
+    return groups
+
+
+def _rows_covered_by(orphan_rows: list[Any], marker_rows: list[Any]) -> bool:
+    """Whether a marker snapshot covers every countable orphan row (#88R8-1).
+
+    Per (module, fn) key the orphan's entries must not exceed the
+    marker's and every orphan exit count must sit inside the marker's;
+    a newer rewrite (or a mid-fence replacement the reread caught)
+    fails the subset and defers instead of dropping or doubling.
+    """
+    own = _probe_rows_groups(orphan_rows)
+    covered = _probe_rows_groups(marker_rows)
+    for key, group in own.items():
+        other = covered.get(key)
+        if other is None:
+            return False
+        if group["entries"] > other["entries"]:
+            return False
+        for rv, count in group["exits"].items():
+            if other["exits"].get(rv, 0) < count:
+                return False
+    return True
+
+
 def _merge_probe_tmp_rows(own: list[Any], tmp: list[Any]) -> list[list[Any]]:
     """Merge a same-probe rewrite tmp's returns into orphan rows (#88).
 
@@ -1591,26 +1633,8 @@ def _merge_probe_tmp_rows(own: list[Any], tmp: list[Any]) -> list[list[Any]]:
     skipped (their entries are unproved). Garbage rows on either side
     are skipped, never fatal.
     """
-    own_groups: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in own:
-        parsed = _parse_probe_flat_row(row)
-        if parsed is None:
-            continue
-        module, fn, rv, count = parsed
-        group = own_groups.setdefault((module, fn), {"entries": 0, "exits": {}})
-        group["entries"] += count
-        if rv is not None:
-            group["exits"][rv] = group["exits"].get(rv, 0) + count
-    tmp_groups: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in tmp:
-        parsed = _parse_probe_flat_row(row)
-        if parsed is None:
-            continue
-        module, fn, rv, count = parsed
-        group = tmp_groups.setdefault((module, fn), {"entries": 0, "exits": {}})
-        group["entries"] += count
-        if rv is not None:
-            group["exits"][rv] = group["exits"].get(rv, 0) + count
+    own_groups = _probe_rows_groups(own)
+    tmp_groups = _probe_rows_groups(tmp)
     merged: list[list[Any]] = []
     for (module, fn), group in own_groups.items():
         exits: dict[int, int] = dict(group["exits"])
@@ -1697,7 +1721,7 @@ def _replay_probe_tmp_rows(
     orphan_pid: int | None = None,
     orphan_birth: int | None = None,
     producer_uuid: str,
-) -> list[Any]:
+) -> tuple[list[Any], bool]:
     """Replay the best same-probe rewrite tmp into orphan rows (#88).
 
     A probe return flush that dies inside ``os.replace`` leaves the
@@ -1714,6 +1738,8 @@ def _replay_probe_tmp_rows(
     loss keys/scalar always win (a tmp's marginal loss evidence stays
     dropped, as before -- counters-only replay). Raises
     ``_DeferProducerError`` on a persistently unreadable candidate.
+    Returns ``(rows, divergent)``: a held conflict the caller must
+    not silently clear when the baseline is covered (#88R8-2).
     """
     quarantined = _list_tmp_paths(path.parent, f"{path.name}.quarantined-")
     if quarantined is None:
@@ -1765,9 +1791,9 @@ def _replay_probe_tmp_rows(
             UserWarning,
             stacklevel=2,
         )
-        return counters
+        return counters, True
     if not gated:
-        return counters
+        return counters, False
     vectors: list[dict[tuple[str, ...], int]] = []
     merged_sides: list[list[list[Any]]] = []
     for _, rows in gated:
@@ -1786,11 +1812,11 @@ def _replay_probe_tmp_rows(
             UserWarning,
             stacklevel=2,
         )
-        return counters
+        return counters, True
     if all(not vector for vector in vectors):
-        return counters
+        return counters, False
     winner = max(winner_indexes, key=lambda index: _probe_rows_volume(gated[index][1]))
-    return merged_sides[winner]
+    return merged_sides[winner], False
 
 
 def _probe_rows_volume(counters: list[Any]) -> int:
@@ -1854,6 +1880,10 @@ class _DeferProducerError(Exception):
             return f"live probe writer (pid {self.pid}) unfenceable"
         if self.reason == "rewrite":
             return f"rewrite newer than marker coverage ({self.source or 'unknown file'})"
+        if self.reason == "divergent":
+            return f"divergent rewrites under marker coverage ({self.source or 'unknown file'})"
+        if self.reason == "changed":
+            return f"evidence changed during collection ({self.source or 'unknown file'})"
         if self.reason == "enum":
             return f"tmp listing failed under {self.source or 'unknown file'}"
         if self.source:
@@ -1941,6 +1971,7 @@ def _adopt_probe_orphans(
     colliders = sorted(uuid for uuid in known_uuids if uuid.startswith(prefix))
     unambiguous = colliders == [worker_uuid]
     coverage = _durable_receipts(sidecar, journal_lines) | claims.get(worker_uuid, set())
+    coverage_rows: dict[tuple[str, int], list[Any]] = {}
     merged: dict[str, Any] = {"total_calls": 0, "by_module": {}}
     claimed: list[dict[str, Any]] = []
     consumed: list[Path] = []
@@ -1959,13 +1990,27 @@ def _adopt_probe_orphans(
         adopted: int,
         vacuous_ok: bool,
         replayed_adopted: bool,
+        replay_divergent: bool,
     ) -> None:
         if (child_uuid, seq) in coverage:
-            if replayed_adopted:
-                # The marker covers the baseline snapshot, not this
-                # newer rewrite: suppressing would drop the delta and
-                # folding would double the baseline, so the producer
-                # defers with the association intact (#88R7-1).
+            if replay_divergent:
+                # An unresolved conflict must never clear silently
+                # under coverage: the baseline, marker, and loss claim
+                # stay associated for forensic resolution (#88R8-2).
+                raise _DeferProducerError(worker_uuid, None, source=path.name, reason="divergent")
+            marker_rows = coverage_rows.get((child_uuid, seq))
+            if marker_rows is not None:
+                # Marker coverage proves exactly the marker snapshot:
+                # anything beyond it is a newer rewrite the marker
+                # never saw (or a mid-fence replacement the reread
+                # caught) and defers instead of dropping (#88R8-1).
+                if not _rows_covered_by(counters, marker_rows):
+                    raise _DeferProducerError(worker_uuid, None, source=path.name, reason="rewrite")
+            elif replayed_adopted:
+                # Durable (session/checkpoint) coverage carries no
+                # snapshot to compare: any adopted rewrite is
+                # unprovably newer, so it defers rather than dropping
+                # silently (#88R7-1).
                 raise _DeferProducerError(worker_uuid, None, source=path.name, reason="rewrite")
             consumed.append(path)
             return
@@ -2062,7 +2107,7 @@ def _adopt_probe_orphans(
         (
             marker_child,
             marker_seq,
-            _,
+            marker_counters,
             marker_keys,
             marker_identity,
             marker_finalized,
@@ -2104,6 +2149,7 @@ def _adopt_probe_orphans(
             )
             continue
         coverage.add((marker_child, marker_seq))
+        coverage_rows[(marker_child, marker_seq)] = marker_counters
         orphan_keys |= marker_keys
         if marker_finalized and marker_seq == filename_seq:
             recovered.append((worker_uuid, marker_seq))
@@ -2199,10 +2245,21 @@ def _adopt_probe_orphans(
                     raise _DeferProducerError(worker_uuid, orphan_pid)
             elif not _terminate_verified(orphan_pid, orphan_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, orphan_pid)
+        # Re-read after quiescence (#88R8-1): a writer that replaced
+        # the file during the fence invalidates the pre-fence rows. Any
+        # change (or a new read fault) defers; a vanished file was
+        # absorbed live and needs nothing.
+        fresh_status, fresh_raw = _read_json_evidence(path)
+        if fresh_status == "gone":
+            continue
+        if fresh_status == "unreadable":
+            raise _DeferProducerError(worker_uuid, None, source=path.name)
+        if fresh_raw != raw:
+            raise _DeferProducerError(worker_uuid, None, source=path.name, reason="changed")
         # #88: a same-probe rewrite tmp replays its returns onto the
         # orphan's rows before the reunion fold.
         pre_replay_exits = _rows_exit_total(counters)
-        counters = _replay_probe_tmp_rows(
+        counters, replay_divergent = _replay_probe_tmp_rows(
             path,
             child_uuid,
             seq,
@@ -2226,6 +2283,7 @@ def _adopt_probe_orphans(
             adopted,
             vacuous_ok,
             replayed_adopted,
+            replay_divergent,
         )
     adopted = sum(adopted_lost)
     if merged["total_calls"] == 0:
@@ -2523,9 +2581,19 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
 
 
 def _consume_producer_files(paths: list[Path]) -> None:
-    """Delete collected/committed evidence files (best effort, never raises)."""
+    """Delete collected/committed evidence files (best effort, never raises).
+
+    A baseline whose tmps the prune holds (failed unlink, unreadable
+    tmp, or listing fault) stays as the discoverable cleanup record:
+    the tmp glob keys off its name, so a later sweep retries the whole
+    set without publishing anything twice (unit collection is
+    single-shot per attempt; resume re-collection dedups through
+    barrier staging and session routing).
+    """
     for path in paths:
-        _prune_sidecar_tmps(path)
+        _, _, hold = _prune_sidecar_tmps(path)
+        if hold:
+            continue
         try:
             path.unlink(missing_ok=True)
         except OSError:
@@ -4308,6 +4376,7 @@ def prepare_resume(
         "unresolved": [],
         "retained_uuids": [],
         "skipped_units": [],
+        "skipped_live": [],
         "cache_records": {},
         "collected_runs": [],
         "consumed": 0,
@@ -4339,6 +4408,7 @@ def prepare_resume(
     seen_runs: set[str] = set()
     retained_runs: set[str] = set()
     deferred_units: set[str] = set()
+    skipped_live_units: set[str] = set()
     seen_uuids: set[str] = set()
 
     def _emit(unit: str, records: list[dict[str, Any]]) -> None:
@@ -4404,6 +4474,8 @@ def prepare_resume(
                 plan["unresolved"].append(uuid)
                 retained_runs.add(content["run_id"])
                 deferred_units.add(content["unit"])
+                if exc.pid is not None:
+                    skipped_live_units.add(content["unit"])
                 continue
             _emit(content["unit"], claim_records)
             to_consume.extend(_producer_files(content, registry_path))
@@ -4431,6 +4503,8 @@ def prepare_resume(
                 plan["unresolved"].append(uuid)
                 retained_runs.add(content["run_id"])
                 deferred_units.add(content["unit"])
+                if exc.pid is not None:
+                    skipped_live_units.add(content["unit"])
                 continue
             _emit(content["unit"], records)
             to_consume.extend(_producer_files(content, registry_path))
@@ -4458,6 +4532,8 @@ def prepare_resume(
                 plan["unresolved"].append(uuid)
                 retained_runs.add(content["run_id"])
                 deferred_units.add(content["unit"])
+                if exc.pid is not None:
+                    skipped_live_units.add(content["unit"])
                 continue
             _emit(content["unit"], records)
             to_consume.extend(_producer_files(content, registry_path))
@@ -4481,6 +4557,7 @@ def prepare_resume(
             _emit(content["unit"], [lost])
         plan["unresolved"].append(uuid)
         retained_runs.add(content["run_id"])
+        skipped_live_units.add(content["unit"])
     for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_uuids)
         if adopted is None:
@@ -4529,6 +4606,8 @@ def prepare_resume(
                 retained_runs.add(barrier_run)
             if isinstance(barrier_unit, str):
                 deferred_units.add(barrier_unit)
+                if exc.pid is not None:
+                    skipped_live_units.add(barrier_unit)
             continue
         # Resume track (postponed): uuid-only matching preserves the
         # frozen claim-vs-gap routing exactly.
@@ -4605,6 +4684,11 @@ def prepare_resume(
         }
         | deferred_units
     )
+    # The live subset of skipped units (#88R8-5): the runner reports
+    # these as still-running producers and every other skip as
+    # undecided evidence, so a quiescent rewrite conflict never reads
+    # as a live process.
+    plan["skipped_live"] = sorted(skipped_live_units & set(plan["skipped_units"]))
     # Run-granular authority (known residual, codex R9-F1): consumption
     # is file-granular but the sweep deletes by run match, so a same-run
     # straggler unreadable during the barrier is swept as a leftover

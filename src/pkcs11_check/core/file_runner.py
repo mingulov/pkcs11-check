@@ -703,12 +703,19 @@ def _apply_counters_barrier_plan(
             landed = _write_counters_recovery_cache(state_file, unit, records)
         if not landed:
             failed.append(unit)
+    skipped_live = set(plan.get("skipped_live", plan["skipped_units"]))
     for unit in plan["skipped_units"]:
-        console.print(
-            f"[red]Skipping conflicting rerun[/red] {unit}: an unverified live "
-            f"counter producer is still running there (never assumed quiescent; "
-            f"resolve it and resume again)"
-        )
+        if unit in skipped_live:
+            console.print(
+                f"[red]Skipping conflicting rerun[/red] {unit}: an unverified live "
+                f"counter producer is still running there (never assumed quiescent; "
+                f"resolve it and resume again)"
+            )
+        else:
+            console.print(
+                f"[red]Skipping conflicting rerun[/red] {unit}: counter evidence there "
+                f"is undecided (never assumed quiescent; resolve it and resume again)"
+            )
     if plan["consumed"]:
         console.print(
             f"[dim]Counter resume barrier: collected {plan['consumed']} orphaned producer(s)[/dim]"

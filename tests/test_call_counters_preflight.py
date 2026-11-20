@@ -1312,6 +1312,7 @@ class TestCensusEngagement:
             "unresolved",
             "retained_uuids",
             "skipped_units",
+            "skipped_live",
             "cache_records",
             "collected_runs",
             "consumed",

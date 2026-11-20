@@ -239,6 +239,39 @@ def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool
     return True
 
 
+def _commit_sidecar_owned(path: str) -> bool:
+    """Whether the sidecar at commit time is provably the launcher's (#88R8-3).
+
+    A stale or foreign sidecar can reach the commit (the coverage path
+    never validated it): deleting it would destroy foreign evidence
+    and marking it would mint an unclaimable marker (launcher name,
+    foreign body). A contradiction -- or an unreadable body, which
+    proves nothing -- retains the file loudly instead; the ingest
+    stands (coverage counts are already checkpointed) and file
+    collection routes the sidecar by content. Missing or torn files
+    proceed (nothing attributable to protect).
+    """
+    fallback = _read_probe_json(path)
+    if fallback is None:
+        return True
+    if isinstance(fallback, _UnreadableEvidence):
+        warnings.warn(
+            f"probe sidecar {path} unreadable at commit; evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    clash = _fallback_identity_clash(fallback, get_worker_uuid(), registration_info())
+    if clash is not None:
+        warnings.warn(
+            f"probe sidecar {path} contradicts the launcher ({clash}); evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    return True
+
+
 def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None:
     """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
 
@@ -250,7 +283,8 @@ def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None
     delete itself fails after a good flush, the sidecar renames to a
     consumed marker instead: the parent checkpoint already holds the
     counts, and the marker tells orphan adoption to suppress rather than
-    fold them a second time.
+    fold them a second time. Delete and mark both require validated
+    ownership first (a foreign or unreadable body is retained loudly).
 
     Raises:
         CounterPersistenceError: When the parent checkpoint cannot be
@@ -261,6 +295,8 @@ def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None
     """
     flush_counters()
     if path is None:
+        return
+    if not _commit_sidecar_owned(path):
         return
     if _delete_probe_sidecar(path, force_tmps=force_tmps):
         return
@@ -393,7 +429,10 @@ def ingest_probe_payload(
                 )
                 return "lost"
             try:
-                fallback_counters = _replay_probe_tmp_rows(
+                # Divergent rewrites keep the orphan rows (quarantined
+                # loudly inside the replay); the live path ingests that
+                # baseline exactly like the file path folds it.
+                fallback_counters, _divergent = _replay_probe_tmp_rows(
                     Path(sidecar),
                     validated_fallback[0],
                     validated_fallback[1],
