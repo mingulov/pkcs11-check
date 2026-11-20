@@ -773,6 +773,10 @@ class _PolicyFake:
         minted = bytes([(handle_preview * 31 + i) % 251 + 1 for i in range(value_len)])
         _register_minted_blob(minted)
         attrs[int(CKA_VALUE)] = minted
+        # R4-F1: an AES-generated key is a secret key even when the
+        # template leaves the class to the provider default (mirrors
+        # the keypair backfill below; never overwrites the template).
+        attrs.setdefault(int(CKA_CLASS), int(CKO_SECRET_KEY))
         self._apply_extra(attrs)
         handle = self._store(attrs, role="genkey")
         _fill_ulong(out, handle)
@@ -908,17 +912,16 @@ class _PolicyFake:
         if self._keypair_priv_extra:
             priv_attrs.update(self._keypair_priv_extra)
         if self._keypair_success_handles is not None and len(self.keypair_calls) > 1:
-            # R3F2: a scripted output claims created objects; file them.
-            claimed = (int(self._keypair_success_handles[0]), int(self._keypair_success_handles[1]))
-            self._store_claimed(claimed[0], pub_attrs, role="keypair")
-            self._store_claimed(claimed[1], priv_attrs, role="keypair")
+            # R4-F1: a scripted output claims NO objects -- filing them
+            # would beg the ownership question a success return must
+            # prove. The numbers are returned bare; production must
+            # correlate (or void) without assuming they exist.
             _fill_ulong(pub_out, self._keypair_success_handles[0])
             _fill_ulong(priv_out, self._keypair_success_handles[1])
             return _OK
         if len(self.keypair_calls) == 1 and "keypair" in self._control_handles:
+            # R4-F1: same honesty for the control override (no filing).
             override = self._control_handles.pop("keypair")
-            self._store_claimed(int(override[0]), pub_attrs, role="keypair")
-            self._store_claimed(int(override[1]), priv_attrs, role="keypair")
             _fill_ulong(pub_out, int(override[0]))
             _fill_ulong(priv_out, int(override[1]))
             return _OK
@@ -966,7 +969,10 @@ class _PolicyFake:
         if scripted is not None:
             return scripted
         stored = self.objects.get(int(handle))
-        assert stored is not None, f"read from unknown handle {handle}"
+        if stored is None:
+            # R4-F1: a real provider answers HANDLE_INVALID for unknown
+            # handles; asserting here would hide unproved-ownership paths.
+            return int(CKR_OBJECT_HANDLE_INVALID)
         row_rvs: list[int] = []
         for i in range(count):
             attr = int(tmpl[i].type)
@@ -2497,6 +2503,52 @@ def test_qc4a_derive_aux_null_target_handle_fails_untouched() -> None:
     assert 0 not in fake.destroyed, fake.destroyed
 
 
+def test_qc4a_derive_aux_control_identity_mismatch_fails_untouched() -> None:
+    """R4-F1: a control derive with foreign identity fails; never used nor destroyed."""
+    fake = _PolicyFake(
+        extra_for_label=b"qc4a-derive-aux-included-control-derived",
+        extra_attrs={int(CKA_LABEL): b"foreign"},
+    )
+    _run_must_fail(_qc4a_derive_aux, _rs_aux(fake), "included")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "not the attempt" in (record.summary or ""), record.summary
+    derived = fake.created[-1]
+    assert derived not in fake.destroy_calls, fake.destroy_calls
+
+
+def test_qc4a_derive_aux_target_identity_mismatch_fails_untouched() -> None:
+    """R4-F1: a target derive with foreign identity fails; never used nor destroyed."""
+    fake = _PolicyFake(
+        extra_for_label=b"qc4a-derive-aux-included-derived",
+        extra_attrs={int(CKA_LABEL): b"foreign"},
+    )
+    _run_must_fail(_qc4a_derive_aux, _rs_aux(fake), "included")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "not the attempt" in (record.summary or ""), record.summary
+    derived = fake.created[-1]
+    assert derived not in fake.destroy_calls, fake.destroy_calls
+
+
+def test_qc4a_derive_aux_control_unproved_identity_xfails_untouched() -> None:
+    """R4-F1: a control derive with unreadable identity xfails; never used nor destroyed."""
+    fake = _PolicyFake(derive_concat_handles=[55])
+    assert_xfails(_qc4a_derive_aux, _rs_aux(fake), "included")
+    record = _assert_xfail_record("honest_deviation")
+    assert "ownership unproved" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert 55 not in fake.destroy_calls, fake.destroy_calls
+
+
+def test_qc4a_derive_aux_target_unproved_identity_xfails_untouched() -> None:
+    """R4-F1: a target derive with unreadable identity xfails; never used nor destroyed."""
+    fake = _PolicyFake(derive_concat_handles=[None, 55])
+    assert_xfails(_qc4a_derive_aux, _rs_aux(fake), "included")
+    record = _assert_xfail_record("honest_deviation")
+    assert "ownership unproved" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert 55 not in fake.destroy_calls, fake.destroy_calls
+
+
 class _FindStub:
     """Minimal raw stub serving one canned find page plus identity readback."""
 
@@ -3694,6 +3746,59 @@ def test_cleanup_owned_refused_destroy_raises_with_handle_identity() -> None:
     assert any(f"owned handle {handle}" in note for note in notes), notes
 
 
+@pytest.mark.parametrize("boom", [OSError("binding dead"), AttributeError("no destroy")])
+def test_destroy_quietly_python_failure_returns_none(boom: BaseException) -> None:
+    """R4-F2: a harness-side destroy failure is distinct from any provider RV."""
+
+    class _Boom:
+        def C_DestroyObject(self, _sh: int, _handle: int) -> int:  # noqa: N802
+            raise boom
+
+    from pkcs11_check.raw.recipes import destroy_quietly
+
+    assert destroy_quietly(_Boom(), 1, 2) is None
+
+
+def test_destroy_all_python_failure_collects_harness_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F2: a None destroy collects a harness error, never an invented RV."""
+    mod = _policy_module()
+    monkeypatch.setattr(mod, "destroy_quietly", lambda *_a: None)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    (error,) = mod._destroy_all(rs, [5])
+    assert type(error) is RuntimeError, error
+    assert "owned handle 5" in str(error), str(error)
+
+
+def test_cleanup_owned_undefined_destroy_rv_escalates_under_primary() -> None:
+    """R4-F2: an undefined destroy RV fails even under a primary xfail."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    mod = _policy_module()
+    fake = _PolicyFake(destroy_script=[0x7FFFFFFF])
+    handle = fake._store({int(CKA_LABEL): b"undefined-destroy"}, role="create")
+    try:
+        raise XFailed("primary capability xfail")
+    except XFailed:
+        with pytest.raises(CkrAssertionError) as exc_info:
+            mod._cleanup_owned(_rs(fake), [handle])
+    assert exc_info.value.rv == 0x7FFFFFFF, exc_info.value
+
+
+def test_cleanup_owned_defined_refusal_stays_note_under_primary() -> None:
+    """R4-F2: a defined destroy refusal still notes under a primary (no escalation)."""
+    mod = _policy_module()
+    fake = _PolicyFake(destroy_script=[int(CKR_OBJECT_HANDLE_INVALID)])
+    handle = fake._store({int(CKA_LABEL): b"defined-destroy"}, role="create")
+    try:
+        raise XFailed("primary capability xfail")
+    except XFailed as primary:
+        mod._cleanup_owned(_rs(fake), [handle])
+        notes = getattr(primary, "__notes__", [])
+    assert any("cleanup also raised" in note for note in notes), notes
+
+
 def test_vet_control_handles_aliased_pair_fails() -> None:
     """R3F2: a control returning the same fresh handle twice fails the vet."""
     mod = _policy_module()
@@ -3716,8 +3821,8 @@ def test_qc4b_generate_control_aliased_halves_fail_without_destroy() -> None:
     assert fake.destroy_calls == [], fake.destroy_calls
 
 
-def test_keypair_scripted_handles_exist_as_objects() -> None:
-    """R3F2: scripted keypair outputs are filed as live fake objects."""
+def test_keypair_scripted_handles_stay_unfiled_and_untouched() -> None:
+    """R4-F1: scripted outputs claim nothing; unproved halves are never destroyed."""
     fake = _PolicyFake(
         keypair_script=[None, None],
         plant=[
@@ -3726,9 +3831,11 @@ def test_keypair_scripted_handles_exist_as_objects() -> None:
         keypair_success_handles=(100, 201),
     )
     _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
-    assert 201 in fake.objects, sorted(fake.objects)
-    assert fake.objects[201].destroyed is True
-    assert 100 not in fake.destroyed, fake.destroyed
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "pre-existing halves" in (record.summary or ""), record.summary
+    assert 201 not in fake.objects, sorted(fake.objects)
+    assert 201 not in fake.destroy_calls, fake.destroy_calls
+    assert 100 not in fake.destroy_calls, fake.destroy_calls
 
 
 def test_fake_destroy_rejects_unknown_handle() -> None:
@@ -4351,6 +4458,40 @@ def test_qc4b_genkey_null_control_fails() -> None:
     record = _assert_fail_record("self_contradiction", "policy")
     assert "null" in (record.summary or ""), record.summary
     assert len(fake.genkey_templates) == 1, "vet must precede the malformed attempt"
+
+
+def test_qc4b_genkey_control_unproved_xfails_untouched() -> None:
+    """R4-F1: an unproved control handle xfails; the malformed attempt never runs."""
+    fake = _PolicyFake(control_handles={"genkey": 201})
+    assert_xfails(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "ownership unproved" in (record.summary or ""), record.summary
+    assert 201 not in fake.destroy_calls, fake.destroy_calls
+    assert len(fake.genkey_templates) == 1, "adoption must precede the malformed attempt"
+
+
+def test_qc4b_genkey_success_unproved_xfails_untouched() -> None:
+    """R4-F1: a novel-but-unreadable success handle xfails; never used nor destroyed."""
+    fake = _PolicyFake(genkey_script=[None, None], genkey_success_handle=201)
+    assert_xfails(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "ownership unproved" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert 201 not in fake.destroyed, fake.destroyed
+
+
+def test_qc4b_genkey_token_handle_mismatch_fails_untouched() -> None:
+    """R4-F1: a token-persistent success handle fails; never used nor destroyed."""
+    label = _attempt_label("genkey", "rsa", "swap_secret_class_asym_type")
+    fake = _PolicyFake(
+        genkey_script=[None, None],
+        extra_for_label=label,
+        extra_attrs={int(CKA_TOKEN): True},
+    )
+    _run_must_fail(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "not the attempt" in (record.summary or ""), record.summary
+    assert fake.created[-1] not in fake.destroy_calls, fake.destroy_calls
 
 
 def test_qc4b_genkey_aes_oracle_mismatch_fails_crypto() -> None:
@@ -5345,12 +5486,17 @@ def test_qc4b_generate_accept_unusable_xfails(family: str, malformation: str) ->
 @pytest.mark.parametrize(("family", "malformation"), _GENERATE_CELLS)
 def test_qc4b_generate_accept_readback_refused_is_unproved(family: str, malformation: str) -> None:
     """Accepted generate with refused identity inspection never fails unproved."""
-    fake = _PolicyFake(get_attr_script=[_DEVICE_ERROR])
+    # R4-F1: the control halves adopt first (4 identity reads = 8 raw
+    # calls), so the refusal lands on the attempt's adoption read; the
+    # control cleans up and the unproved attempt halves are left untouched.
+    fake = _PolicyFake(get_attr_script=[None] * 8 + [_DEVICE_ERROR])
     assert_xfails(_qc4b_generate, _rs(fake), family, malformation)
     record = _assert_xfail_record("honest_deviation")
     assert record.actual_ckr == ckr_name(_OK), record.summary
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
-    _assert_cleaned_up(fake)
+    assert set(fake.destroyed) >= set(fake.created[:2]), (fake.created, fake.destroyed)
+    for half in fake.created[2:]:
+        assert half not in fake.destroy_calls, fake.destroy_calls
 
 
 def test_qc4b_generate_vendor_refusal_xfails() -> None:
@@ -5411,8 +5557,8 @@ def test_qc4b_generate_success_stale_halves_fail_without_destroy() -> None:
     assert fake.objects[101].destroyed is False
 
 
-def test_qc4b_generate_success_aliased_halves_fail_destroy_owned_once() -> None:
-    """R2C1: aliased-new halves fail; the single owned object is destroyed once."""
+def test_qc4b_generate_success_aliased_halves_fail_without_destroy() -> None:
+    """R4-F1: aliased-new halves fail; the unproved handle is never destroyed."""
     fake = _PolicyFake(
         keypair_script=[None, None],
         keypair_success_handles=(200, 200),
@@ -5420,12 +5566,12 @@ def test_qc4b_generate_success_aliased_halves_fail_destroy_owned_once() -> None:
     _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
     record = _assert_fail_record("self_contradiction", "policy")
     assert "aliased halves" in (record.summary or ""), record.summary
-    assert (record.detail or {}).get("destroyed_owned") == [200], record.detail
-    assert fake.destroyed.count(200) == 1, fake.destroyed
+    assert (record.detail or {}).get("destroyed_owned") == [], record.detail
+    assert 200 not in fake.destroy_calls, fake.destroy_calls
 
 
-def test_qc4b_generate_success_mixed_halves_fail_keep_stale() -> None:
-    """R2C1: one invalid output never strands a proved-new sibling half."""
+def test_qc4b_generate_success_mixed_halves_fail_keep_unproved() -> None:
+    """R4-F1: a stale half fails the pair; the unproved novel half is left alone."""
     fake = _PolicyFake(
         keypair_script=[None, None],
         plant=[
@@ -5436,10 +5582,51 @@ def test_qc4b_generate_success_mixed_halves_fail_keep_stale() -> None:
     _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
     record = _assert_fail_record("self_contradiction", "policy")
     assert "pre-existing halves" in (record.summary or ""), record.summary
-    assert (record.detail or {}).get("destroyed_owned") == [201], record.detail
-    assert 201 in fake.destroyed, fake.destroyed
-    assert 100 not in fake.destroyed, fake.destroyed
+    assert (record.detail or {}).get("destroyed_owned") == [], record.detail
+    assert 201 not in fake.destroy_calls, fake.destroy_calls
+    assert 100 not in fake.destroy_calls, fake.destroy_calls
     assert fake.objects[100].destroyed is False
+
+
+def test_qc4b_generate_success_unproved_halves_xfail_untouched() -> None:
+    """R4-F1: novel-but-unreadable halves xfail; never used nor destroyed."""
+    fake = _PolicyFake(
+        keypair_script=[None, None],
+        keypair_success_handles=(201, 202),
+    )
+    assert_xfails(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "ownership unproved" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert 201 not in fake.destroy_calls and 202 not in fake.destroy_calls, fake.destroy_calls
+
+
+def test_qc4b_generate_token_half_mismatch_fails_untouched() -> None:
+    """R4-F1: a token-persistent success half fails; never used nor destroyed."""
+    label = _attempt_label("generate", "rsa", "swap_secret_class_asym_type")
+    fake = _PolicyFake(
+        keypair_script=[None, None],
+        extra_for_label=label,
+        extra_attrs={int(CKA_TOKEN): True},
+    )
+    _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "not the attempt" in (record.summary or ""), record.summary
+    for half in fake.created[-2:]:
+        assert half not in fake.destroy_calls, fake.destroy_calls
+
+
+def test_qc4b_generate_control_unproved_halves_xfail_untouched() -> None:
+    """R4-F1: unproved control halves xfail; the malformed attempt never runs."""
+    fake = _PolicyFake(
+        keypair_script=[None, None],
+        control_handles={"keypair": (777, 778)},
+    )
+    assert_xfails(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "ownership unproved" in (record.summary or ""), record.summary
+    assert 777 not in fake.destroy_calls and 778 not in fake.destroy_calls, fake.destroy_calls
+    assert len(fake.keypair_calls) == 1, "adoption must precede the malformed attempt"
 
 
 def test_qc4b_generate_device_error_zero_delta_xfails_unadjudicated() -> None:

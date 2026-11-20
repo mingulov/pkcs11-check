@@ -194,6 +194,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._adoption import (
+    OwnershipUnprovedError,
+    adopt_correlated_output,
+    compare_attempt_identity,
+    read_attempt_identity,
+)
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
@@ -1195,6 +1201,15 @@ def _destroy_all(rs: Any, handles: Iterable[int | None]) -> list[BaseException]:
             exc.add_note(f"C_DestroyObject cleanup raised for owned handle {handle}")
             errors.append(exc)
             continue
+        if drv is None:
+            # R4-F2: harness-side teardown failure -- no provider RV was
+            # ever produced, so this is a harness error, never a refusal.
+            harness_failure = RuntimeError(
+                f"C_DestroyObject cleanup failed without a provider RV for owned handle {handle}"
+            )
+            harness_failure.add_note(f"C_DestroyObject cleanup failed for owned handle {handle}")
+            errors.append(harness_failure)
+            continue
         if drv != int(CKR_OK):
             failure = CkrAssertionError(
                 f"C_DestroyObject cleanup refused for owned handle {handle} ({ckr_name(drv)})",
@@ -1210,8 +1225,10 @@ def _cleanup_owned(rs: Any, handles: Iterable[int | None]) -> None:
 
     With a primary exception in flight the primary is preserved exactly
     and each cleanup failure is attached to it as a note (never replacing
-    it, never lost). Without a primary, a single cleanup failure raises
-    as-is and several raise grouped.
+    it, never lost) -- except an undefined destroy RV, which is fail-grade
+    on its own merit and escalates past a primary xfail/skip (R4-F2).
+    Without a primary, a single cleanup failure raises as-is and several
+    raise grouped.
     """
     errors = _destroy_all(rs, handles)
     if not errors:
@@ -1221,6 +1238,24 @@ def _cleanup_owned(rs: Any, handles: Iterable[int | None]) -> None:
         if len(errors) == 1:
             raise errors[0]
         raise BaseExceptionGroup("QC4 owned-handle cleanup failures", errors)
+    # R4-F2: an undefined destroy RV is fail-grade on its own merit -- it
+    # must not survive as a note under a primary xfail/skip. Defined
+    # teardown observations stay notes (teardown races stay non-fatal
+    # under a primary verdict).
+    fatal = [
+        error
+        for error in errors
+        if isinstance(error, CkrAssertionError)
+        and not is_standard_ckr(error.rv)
+        and not is_vendor_defined_ckr(error.rv)
+    ]
+    if fatal:
+        for error in errors:
+            if error not in fatal:
+                pending.add_note(f"cleanup also raised {type(error).__name__}: {error}")
+        if len(fatal) == 1:
+            raise fatal[0]
+        raise BaseExceptionGroup("QC4 owned-handle cleanup failures", fatal)
     for error in errors:
         pending.add_note(f"cleanup also raised {type(error).__name__}: {error}")
 
@@ -1839,6 +1874,20 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
                 ),
                 detail={"handle": int(control_derived)},
             )
+        # R4-F1: novelty is not ownership -- the handle's identity must
+        # match before use/destroy. Controls prove ownership only
+        # (label plus session-ness); shape stays out of setup verdicts.
+        _adopt_qc4_output_or_xfail(
+            rs,
+            int(control_derived),
+            label=f"{label} control",
+            operation="C_DeriveKey",
+            spec_ref=row.citation,
+            expect_label=derive_template[CKA_LABEL],
+            expect_token=bool(derive_template[CKA_TOKEN]),
+            expect_class=None,
+            expect_key_type=None,
+        )
         # F5: the control runs the SAME value/oracle checks as the
         # main leg before its negative oracle is admitted.
         try:
@@ -1918,6 +1967,19 @@ def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
                 ),
                 detail={"handle": int(derived)},
             )
+        # R4-F1: novelty is not ownership -- the handle's identity must
+        # match the attempt before use/destroy.
+        _adopt_qc4_output_or_xfail(
+            rs,
+            int(derived),
+            label=label,
+            operation="C_DeriveKey",
+            spec_ref=row.citation,
+            expect_label=derive_template[CKA_LABEL],
+            expect_token=bool(derive_template[CKA_TOKEN]),
+            expect_class=int(derive_template[CKA_CLASS]),
+            expect_key_type=int(derive_template[CKA_KEY_TYPE]),
+        )
         try:
             value = read_secret_or_unproved(
                 rs, derived, label=label, operation="C_DeriveKey", spec_ref=row.citation
@@ -3418,6 +3480,75 @@ def _find_allowing_partial(rs: Any) -> tuple[list[int], int]:
         if stopped_rv is None:
             stopped_rv = final_rv
     return out, stopped_rv
+
+
+def _adopt_qc4_output_or_xfail(
+    rs: Any,
+    handle: int,
+    *,
+    label: str,
+    operation: str,
+    spec_ref: str,
+    expect_label: str | bytes | None,
+    expect_token: bool | None,
+    expect_class: int | None,
+    expect_key_type: int | None,
+) -> None:
+    """Adopt a novel QC4 success handle; xfail unproved-effect when unproved (R4-F1).
+
+    A read-back identity that differs from the attempt fails loud WITHOUT
+    touching the handle; an unprovable identity xfails visibly (the handle
+    is never used nor destroyed).
+    """
+    try:
+        adopt_correlated_output(
+            rs,
+            handle,
+            label=label,
+            operation=operation,
+            expect_label=expect_label,
+            expect_token=expect_token,
+            expect_class=expect_class,
+            expect_key_type=expect_key_type,
+            spec_ref=spec_ref,
+        )
+    except OwnershipUnprovedError as exc:
+        fields = ", ".join(f"{name}: {why}" for name, why in exc.fields.items())
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: accepted output ownership unproved ({fields}); "
+                "refusing to use or destroy it"
+            ),
+            detail={"disposition": "unproved-effect", "handle": handle},
+        )
+
+
+def _half_correlated(
+    rs: Any,
+    half: int,
+    *,
+    label: str,
+    attempt_label: str,
+) -> bool:
+    """Whether a novel keypair half matches its attempt identity (R4-F1).
+
+    Never fails on mismatch or unproved shapes (the halves contradiction
+    already failed; this only filters cleanup); validity findings inside
+    the reads still fail loud. Label plus session-ness only (the
+    malformation owns shape verdicts downstream).
+    """
+    expected: dict[str, Any] = {"label": attempt_label, "token": False}
+    observed = read_attempt_identity(
+        rs, half, label=label, operation="C_GenerateKeyPair", fields=tuple(expected)
+    )
+    return compare_attempt_identity(observed, expected) == "match"
 
 
 def _record_rv_validity(
@@ -5762,6 +5893,20 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
         operation="C_GenerateKey",
         spec_ref=_QC4B_GENKEY_SPEC,
     )
+    # R4-F1: vetting is not ownership -- the control's identity must
+    # match before it is destroyed (label plus session-ness; controls
+    # never judge shape).
+    _adopt_qc4_output_or_xfail(
+        rs,
+        int(control),
+        label=f"{label} legal control",
+        operation="C_GenerateKey",
+        spec_ref=_QC4B_GENKEY_SPEC,
+        expect_label=ctrl_label,
+        expect_token=False,
+        expect_class=None,
+        expect_key_type=None,
+    )
     _cleanup_owned(rs, [control])
     try:
         before = _find_all(rs)
@@ -5806,6 +5951,20 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             ),
             detail={"handle": int(handle.value)},
         )
+    # R4-F1: novelty is not ownership. Class/type stay out of the
+    # adoption (the malformation owns them; downstream adjudication
+    # grades the readback) -- label plus session-ness prove the handle.
+    _adopt_qc4_output_or_xfail(
+        rs,
+        int(handle.value),
+        label=label,
+        operation="C_GenerateKey",
+        spec_ref=_QC4B_GENKEY_SPEC,
+        expect_label=attempt_label,
+        expect_token=False,
+        expect_class=None,
+        expect_key_type=None,
+    )
     try:
         readback = _inspect_identity(
             rs,
@@ -5861,6 +6020,24 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
         operation="C_GenerateKeyPair",
         spec_ref=_QC4B_SPEC,
     )
+    # R4-F1: vetting is not ownership -- each control half's identity
+    # must match before it is destroyed (label plus session-ness;
+    # controls never judge shape).
+    for half, half_label in (
+        (ctrl_pub, f"{ctrl_label}-src-pub"),
+        (ctrl_priv, f"{ctrl_label}-src-priv"),
+    ):
+        _adopt_qc4_output_or_xfail(
+            rs,
+            int(half),
+            label=f"{label} legal control",
+            operation="C_GenerateKeyPair",
+            spec_ref=_QC4B_SPEC,
+            expect_label=half_label,
+            expect_token=False,
+            expect_class=None,
+            expect_key_type=None,
+        )
     _cleanup_owned(rs, [ctrl_pub, ctrl_priv])
     try:
         before = _find_all(rs)
@@ -5905,17 +6082,23 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
     )
     if _halves_bad:
         # A1: success halves must be nonzero, distinct, and newly live.
-        # Ownership is per half: proved-owned halves (nonzero, new,
-        # deduped) are destroyed so one invalid output never strands a
-        # proved-new sibling; null and pre-existing halves are refused
-        # untouched. Use is refused for both halves either way.
+        # Ownership is per half: correlation-proved halves are destroyed
+        # so one invalid output never strands a proved sibling; null,
+        # pre-existing, foreign, and unproved halves are refused
+        # untouched (R4-F1: novelty alone never authorizes cleanup). Use
+        # is refused for both halves either way.
         if not all(_halves):
             _cause = "null"
         elif _halves[0] == _halves[1]:
             _cause = "aliased"
         else:
             _cause = "pre-existing"
-        _owned = sorted({half for half in _halves if half and half not in set(before)})
+        _candidates = sorted({half for half in _halves if half and half not in set(before)})
+        _owned = [
+            half
+            for half in _candidates
+            if _half_correlated(rs, half, label=label, attempt_label=attempt_label)
+        ]
         # F14: the halves contradiction is RECORDED BEFORE cleanup runs;
         # a destroy failure is attached to the terminal, never replaces it.
         record = record_as(
@@ -5939,6 +6122,21 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             for error in errors:
                 terminal.add_note(f"cleanup also raised {type(error).__name__}: {error}")
             raise
+    # R4-F1: novelty is not ownership. Both halves correlate on label
+    # plus session-ness only (the malformation owns shape verdicts;
+    # downstream adjudication grades the class/type readback).
+    for half in (int(pub_handle.value), int(priv_handle.value)):
+        _adopt_qc4_output_or_xfail(
+            rs,
+            half,
+            label=label,
+            operation="C_GenerateKeyPair",
+            spec_ref=_QC4B_SPEC,
+            expect_label=attempt_label,
+            expect_token=False,
+            expect_class=None,
+            expect_key_type=None,
+        )
     try:
         readback = _inspect_identity(
             rs,

@@ -235,12 +235,11 @@ _FIXED_DSA_SAMPLE_S = bytes.fromhex(
 )
 
 # Expected C_CreateObject refusals while staging the fixed DSA vector:
-# the module advertises CKM_DSA but cannot stage the vector, so the
-# padded-half oracle never ran -- xfail (recorded), never a crypto
-# finding. Notably CKR_DOMAIN_PARAMS_INVALID is NOT here: the RFC 6979
-# parameters are valid (and the reference provider accepts them), so
-# rejecting them as invalid is a proved provider contradiction and
-# fails loudly through _grade_dsa_import_refusal (W2 pins this).
+# the module cannot stage the vector, so the padded-half oracle never
+# ran -- xfail (recorded), never a crypto finding. CKR_DOMAIN_PARAMS_INVALID
+# IS here (R4-A3): the RV definition covers unsupported as well as invalid
+# parameters, and support for the exact fixed domain stays provider-specific,
+# so a clean refusal xfails with the original RV.
 _DSA_IMPORT_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -251,33 +250,24 @@ _DSA_IMPORT_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_DOMAIN_PARAMS_INVALID,
 )
 
 
 def _grade_dsa_import_refusal(exc: AssertionError, msg: str) -> NoReturn:
-    """Grade a fixed-DSA-vector import refusal at source (R3-A3).
+    """Grade a fixed-DSA-vector import refusal at source (R3-A3, R4-A3).
 
-    Listed clean RVs xfail operational with the original RV;
-    CKR_DOMAIN_PARAMS_INVALID fails loudly (the RFC 6979 vector is
-    valid, so the invalidity claim is a proved contradiction -- W2);
-    other standard RVs xfail as unexpected-but-clean; vendor RVs
-    xfail as alternates; undefined RVs fail the metadata contract.
-    No import RV escapes through a raw raise. Non-CKR assertion
-    errors (fixture bugs) reraise untouched.
+    Listed clean RVs xfail operational with the original RV (this
+    includes CKR_DOMAIN_PARAMS_INVALID: unsupported is inside the RV
+    per its definition); other standard RVs xfail as
+    unexpected-but-clean; vendor RVs xfail as alternates; undefined
+    RVs fail the metadata contract. No import RV escapes through a
+    raw raise. Non-CKR assertion errors (fixture bugs) reraise
+    untouched.
     """
     if isinstance(exc, CkrAssertionError) and exc.rv in _DSA_IMPORT_RUNTIME_REJECT_RVS:
         xfail_if_known_ckr(exc, _DSA_IMPORT_RUNTIME_REJECT_RVS, msg)
     if isinstance(exc, CkrAssertionError):
-        if exc.rv == int(CKR_DOMAIN_PARAMS_INVALID):
-            fail_as(
-                "self_contradiction",
-                kind="metadata",
-                label=msg,
-                operation="C_CreateObject",
-                inherit_mechanism=False,
-                actual=exc.rv,
-                summary=(f"{msg}: valid fixed vector refused as invalid domain parameters"),
-            )
         rec = _record_rv_validity(exc.rv, label=msg, operation="C_CreateObject", kind="metadata")
         if rec is not None:
             raise_for_record(rec)
@@ -1789,9 +1779,7 @@ def _stage_fixed_dsa_public(
     try:
         return _import_fixed_dsa_public(rs, label=label, copyable=copyable)
     except AssertionError as exc:
-        _grade_dsa_import_refusal(
-            exc, "CKM_DSA advertised but fixed-vector DSA public import is not operational"
-        )
+        _grade_dsa_import_refusal(exc, "fixed-vector DSA public import is not operational")
 
 
 class TestDSAPublicValueSearch:
