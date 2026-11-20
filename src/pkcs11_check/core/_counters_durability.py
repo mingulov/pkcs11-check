@@ -50,7 +50,7 @@ import signal
 import sys
 import time
 import warnings
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -1266,16 +1266,18 @@ def write_probe_sidecar(
         raise
 
 
-def mark_probe_consumed(sidecar: Path | str) -> Path:
+def mark_probe_consumed(sidecar: Path | str, *, parent_uuid: str | None = None) -> Path:
     """Rename a committed probe sidecar to its consumed marker (atomic).
 
     Used when the sidecar delete fails after the parent checkpoint
     flushed: the parent already holds the counts, and the marker tells
     orphan adoption to suppress instead of folding them again. Same
     directory, same content, ``probe-consumed-`` prefix. The marker
-    carries the full parent uuid when the sidecar stamps one (#88R5-4:
-    routable by owner even when unreadable), else the legacy 8-hex
-    filename prefix.
+    carries the full parent uuid -- the caller's ``parent_uuid`` when
+    given (the absorbing checkpoint's owner; infallible and immune to
+    stamp-read faults, #88R6-2c), else the sidecar's stamped
+    ``parent_uuid`` (#88R5-4: routable by owner even when unreadable),
+    else the legacy 8-hex filename prefix.
 
     Raises:
         CounterPersistenceError: When the name is foreign (unparseable)
@@ -1289,12 +1291,16 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
     stem = path.name[len(PROBE_FILE_PREFIX) : -len(PROBE_FILE_SUFFIX)]
     _, seq, nonce = stem.split("-")
     owner = parsed[0]
-    content = read_json_file(path)
-    if isinstance(content, dict):
-        parent = content.get("parent_uuid")
-        if is_worker_uuid(parent):
-            assert isinstance(parent, str)
-            owner = parent
+    if is_worker_uuid(parent_uuid):
+        assert isinstance(parent_uuid, str)
+        owner = parent_uuid
+    else:
+        content = read_json_file(path)
+        if isinstance(content, dict):
+            parent = content.get("parent_uuid")
+            if is_worker_uuid(parent):
+                assert isinstance(parent, str)
+                owner = parent
     marked = path.with_name(f"{PROBE_CONSUMED_PREFIX}{owner}-{seq}-{nonce}{PROBE_FILE_SUFFIX}")
     try:
         os.replace(path, marked)
@@ -1694,6 +1700,20 @@ def _replay_probe_tmp_rows(
         candidates = sorted(path.parent.glob(f"{path.name}.tmp-*"))
     except OSError:
         return counters
+
+    def _gates(payload: Any) -> bool:
+        return _probe_tmp_gates_clean(
+            payload,
+            child_uuid=child_uuid,
+            seq=seq,
+            identity=identity,
+            producer_run=producer_run,
+            producer_unit=producer_unit,
+            orphan_pid=orphan_pid,
+            orphan_birth=orphan_birth,
+            producer_uuid=producer_uuid,
+        )
+
     gated: list[tuple[Path, list[Any]]] = []
     for tmp in candidates:
         status, payload = _read_json_evidence(tmp)
@@ -1703,34 +1723,11 @@ def _replay_probe_tmp_rows(
             # An I/O fault is never a skip (see the producer replay):
             # defer for a coherent retry.
             raise _DeferProducerError(producer_uuid, None, source=tmp.name)
-        if not isinstance(payload, dict):
+        if not _gates(payload):
             continue
-        if payload.get("worker_uuid") != child_uuid:
-            continue
-        tmp_seq = payload.get("probe_seq")
-        if type(tmp_seq) is not int or tmp_seq != seq:
-            continue
-        if _tmp_stamp_clash(
-            payload,
-            identity,
-            producer_run,
-            producer_unit,
-            orphan_pid,
-            orphan_birth,
-            producer_uuid,
-        ):
-            continue
-        tmp_counters = payload.get("counters")
-        if not isinstance(tmp_counters, list):
-            continue
-        gated.append((tmp, tmp_counters))
-    if quarantined and _divergence_vetoed(
-        quarantined,
-        uuid=child_uuid,
-        seq_field="probe_seq",
-        seq=seq,
-        defer_uuid=producer_uuid,
-    ):
+        assert isinstance(payload, dict)
+        gated.append((tmp, payload["counters"]))
+    if quarantined and _divergence_vetoed(quarantined, _gates, producer_uuid):
         # A previous pass already judged this probe divergent but died
         # between renames: re-quarantine stragglers and hold the
         # conflict without replaying (#88R4-F3). The orphan rows win.
@@ -2044,30 +2041,7 @@ def _adopt_probe_orphans(
         parent_claim = marker_identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's marker (content-exact).
-        if parent_claim == worker_uuid:
-            marker_run = marker_identity.get("run_id")
-            if marker_run is not None and producer_run is not None and marker_run != producer_run:
-                warnings.warn(
-                    f"cross-run consumed marker {path.name} retained "
-                    f"(marker run {marker_run!r} != producer run {producer_run!r})",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                continue
-            marker_unit = marker_identity.get("unit")
-            if (
-                marker_unit is not None
-                and producer_unit is not None
-                and marker_unit != producer_unit
-            ):
-                warnings.warn(
-                    f"cross-unit consumed marker {path.name} retained "
-                    f"(marker unit {marker_unit!r} != producer unit {producer_unit!r})",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                continue
-        elif len(owner) != 32 and not unambiguous:
+        if parent_claim is None and len(owner) != 32 and not unambiguous:
             if ambiguous_reporter:
                 warnings.warn(
                     f"ambiguous consumed marker {path.name} retained "
@@ -2075,6 +2049,26 @@ def _adopt_probe_orphans(
                     UserWarning,
                     stacklevel=2,
                 )
+            continue
+        # Run/unit agreement holds for stamped and legacy-routed alike:
+        # any stated stamp contradicting the producer retains loudly.
+        marker_run = marker_identity.get("run_id")
+        if marker_run is not None and producer_run is not None and marker_run != producer_run:
+            warnings.warn(
+                f"cross-run consumed marker {path.name} retained "
+                f"(marker run {marker_run!r} != producer run {producer_run!r})",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        marker_unit = marker_identity.get("unit")
+        if marker_unit is not None and producer_unit is not None and marker_unit != producer_unit:
+            warnings.warn(
+                f"cross-unit consumed marker {path.name} retained "
+                f"(marker unit {marker_unit!r} != producer unit {producer_unit!r})",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         coverage.add((marker_child, marker_seq))
         orphan_keys |= marker_keys
@@ -2115,37 +2109,17 @@ def _adopt_probe_orphans(
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
-        if parent_claim == worker_uuid:
-            # Pass 1: content-exact reunion. Run/unit must agree with the
-            # producer when both sides state them; a contradiction retains
-            # the orphan loudly instead of misfolding another run's calls.
-            orphan_run = identity.get("run_id")
-            if orphan_run is not None and producer_run is not None and orphan_run != producer_run:
-                warnings.warn(
-                    f"cross-run probe orphan {path.name} retained "
-                    f"(orphan run {orphan_run!r} != producer run {producer_run!r})",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                continue
-            orphan_unit = identity.get("unit")
-            if (
-                orphan_unit is not None
-                and producer_unit is not None
-                and orphan_unit != producer_unit
-            ):
-                warnings.warn(
-                    f"cross-unit probe orphan {path.name} retained "
-                    f"(orphan unit {orphan_unit!r} != producer unit {producer_unit!r})",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                continue
-        elif not unambiguous:
+        if parent_claim is None and not unambiguous:
             # Pass 2: legacy filename fallback (no content identity).
             # Under a prefix collision the orphan could belong to any
             # collider, so it retains with one warning instead of
-            # attributing by a hint.
+            # attributing by a hint -- unless a consumed marker already
+            # proved this exact evidence absorbed (#88R6-2a): then it
+            # suppresses like any covered orphan instead of stranding
+            # for a later pass that can no longer see the marker.
+            if (child_uuid, seq) in coverage:
+                consumed.append(path)
+                continue
             if ambiguous_reporter:
                 warnings.warn(
                     f"ambiguous probe orphan {path.name} retained "
@@ -2153,6 +2127,27 @@ def _adopt_probe_orphans(
                     UserWarning,
                     stacklevel=2,
                 )
+            continue
+        # Run/unit agreement holds for content-exact and legacy-routed
+        # alike (#88R6-2b): any stated stamp contradicting the producer
+        # retains loudly instead of misfolding another run's calls.
+        orphan_run = identity.get("run_id")
+        if orphan_run is not None and producer_run is not None and orphan_run != producer_run:
+            warnings.warn(
+                f"cross-run probe orphan {path.name} retained "
+                f"(orphan run {orphan_run!r} != producer run {producer_run!r})",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        orphan_unit = identity.get("unit")
+        if orphan_unit is not None and producer_unit is not None and orphan_unit != producer_unit:
+            warnings.warn(
+                f"cross-unit probe orphan {path.name} retained "
+                f"(orphan unit {orphan_unit!r} != producer unit {producer_unit!r})",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         if fence_live and orphan_pid is not None:
             # Quiescence (#88R3): on postmortem paths a stamped live
@@ -2400,7 +2395,7 @@ def _unlink_counted(path: Path) -> bool:
         return False
 
 
-def _prune_sidecar_tmps(path: Path) -> tuple[int, int, int]:
+def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
     """Delete a sidecar's rewrite tmps except unadjudicable ones (#88R3).
 
     A tmp deletes when it proves debris (torn/unparseable, or carrying
@@ -2408,22 +2403,22 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, int]:
     replayed or ruled out upstream). Unreadable tmps (after retry) and
     complete-with-returns tmps without a usable baseline retain for a
     later pass or forensic review, named loudly (never silently).
-    Returns ``(removed, retained, failed)`` so authoritative callers
-    (the sweep) can account the deletions and hold the baseline while
-    any tmp unlink failed (#88R5-6: a baseline removed around a
-    failed tmp unlink would strand the tmp beyond re-discovery).
-    Never raises.
+    Returns ``(removed, retained, hold_baseline)``: authoritative
+    callers (the sweep) hold the baseline while any tmp unlink failed
+    or any tmp stayed unreadable (#88R5-6/#88R6-3: a baseline removed
+    around either would strand the tmp beyond re-discovery). Forensic
+    retention of a classified-complete tmp never holds. Never raises.
     """
     try:
         tmps = sorted(path.parent.glob(f"{path.name}.tmp-*"))
     except OSError:
-        return (0, 0, 0)
+        return (0, 0, False)
     if not tmps:
-        return (0, 0, 0)
+        return (0, 0, False)
     baseline_usable = _replay_baseline_usable(path)
     retained: list[str] = []
     removed = 0
-    failed = 0
+    hold_baseline = False
     for tmp in tmps:
         try:
             raw = _read_text_with_retry(tmp)
@@ -2434,10 +2429,11 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, int]:
                 removed += 1
             else:
                 retained.append(tmp.name)
-                failed += 1
+                hold_baseline = True
             continue
         except OSError:
             retained.append(tmp.name)
+            hold_baseline = True
             continue
         try:
             payload = _json_loads_evidence(raw)
@@ -2446,7 +2442,7 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, int]:
                 removed += 1
             else:
                 retained.append(tmp.name)
-                failed += 1
+                hold_baseline = True
             continue
         if _tmp_has_return_rows(payload) and not baseline_usable:
             retained.append(tmp.name)
@@ -2455,7 +2451,7 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, int]:
             removed += 1
         else:
             retained.append(tmp.name)
-            failed += 1
+            hold_baseline = True
     if retained:
         shown = ", ".join(retained[:3])
         if len(retained) > 3:
@@ -2465,7 +2461,7 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, int]:
             UserWarning,
             stacklevel=3,
         )
-    return (removed, len(retained), failed)
+    return (removed, len(retained), hold_baseline)
 
 
 def _consume_producer_files(paths: list[Path]) -> None:
@@ -3082,23 +3078,95 @@ def _quarantine_all(paths: list[Path]) -> tuple[list[str], list[str]]:
     return kept, dropped
 
 
-def _divergence_vetoed(
-    quarantined: list[Path],
+def _producer_tmp_gates_clean(
+    payload: Any,
     *,
     uuid: str,
-    seq_field: str,
+    run_id: str,
+    unit: str,
+    attempt: int,
+    pid: int,
+    committed_seq: int,
+) -> bool:
+    """Whether a rewrite-tmp payload gates for replay (#88R6-1).
+
+    Single predicate shared by candidate gating and the quarantine
+    veto: a quarantine vetoes only evidence that would gate today
+    (same writer, run, unit, attempt, pid, window, and a valid
+    block) -- stale quarantines from another incarnation bind
+    nothing.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("worker_uuid") != uuid:
+        return False
+    if payload.get("run_id") != run_id:
+        return False
+    if payload.get("unit") != unit:
+        return False
+    tmp_attempt = payload.get("attempt")
+    if type(tmp_attempt) is not int or tmp_attempt != attempt:
+        return False
+    tmp_pid = payload.get("pid")
+    if type(tmp_pid) is not int or tmp_pid != pid:
+        return False
+    tmp_seq = payload.get("journal_seq")
+    if not _is_nonneg_int(tmp_seq) or tmp_seq != committed_seq:
+        return False
+    return is_module_first_block(payload.get("in_progress"))
+
+
+def _probe_tmp_gates_clean(
+    payload: Any,
+    *,
+    child_uuid: str,
     seq: int,
+    identity: dict[str, Any],
+    producer_run: str | None,
+    producer_unit: str | None,
+    orphan_pid: int | None,
+    orphan_birth: int | None,
+    producer_uuid: str,
+) -> bool:
+    """Whether a probe rewrite-tmp payload gates for replay (#88R6-1).
+
+    Single predicate shared by candidate gating and the quarantine
+    veto (same writer, seq, stamps, incarnation, and a row list).
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("worker_uuid") != child_uuid:
+        return False
+    tmp_seq = payload.get("probe_seq")
+    if type(tmp_seq) is not int or tmp_seq != seq:
+        return False
+    if _tmp_stamp_clash(
+        payload,
+        identity,
+        producer_run,
+        producer_unit,
+        orphan_pid,
+        orphan_birth,
+        producer_uuid,
+    ):
+        return False
+    return isinstance(payload.get("counters"), list)
+
+
+def _divergence_vetoed(
+    quarantined: list[Path],
+    gate: Callable[[Any], bool],
     defer_uuid: str,
 ) -> bool:
     """Whether a prior divergence decision binds this checkpoint (#88R5-3).
 
-    A quarantined payload vetoes replay only when it names this same
-    writer (``worker_uuid``) and checkpoint (``seq_field``): a stale
-    quarantine from another window or child binds nothing. Gated
-    candidates always carry both fields, so a match proves a previous
-    pass judged THIS checkpoint divergent (possibly dying between
-    renames). Torn quarantines match nothing; an unreadable one defers
-    the producer rather than vetoing (or clearing) silently.
+    A quarantined payload vetoes replay only when it passes today's
+    gate predicate: same writer, checkpoint, and identity stamps as a
+    live candidate would need. Gated candidates always carry those
+    fields, so a match proves a previous pass judged THIS checkpoint
+    divergent (possibly dying between renames). Torn quarantines match
+    nothing; an unreadable one defers the producer rather than vetoing
+    (or clearing) silently.
     """
     for path in quarantined:
         status, payload = _read_json_evidence(path)
@@ -3106,12 +3174,7 @@ def _divergence_vetoed(
             continue
         if status == "unreadable":
             raise _DeferProducerError(defer_uuid, None, source=path.name)
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("worker_uuid") != uuid:
-            continue
-        candidate_seq = payload.get(seq_field)
-        if type(candidate_seq) is int and candidate_seq == seq:
+        if gate(payload):
             return True
     return False
 
@@ -3239,6 +3302,18 @@ def _replay_orphan_tmps(
         candidates = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
     except OSError:
         return None, False
+
+    def _gates(payload: Any) -> bool:
+        return _producer_tmp_gates_clean(
+            payload,
+            uuid=uuid,
+            run_id=run_id,
+            unit=unit,
+            attempt=attempt,
+            pid=pid,
+            committed_seq=committed_seq,
+        )
+
     gated: list[tuple[Path, dict[str, Any]]] = []
     for tmp in candidates:
         status, payload = _read_json_evidence(tmp)
@@ -3249,33 +3324,11 @@ def _replay_orphan_tmps(
             # candidate while the prune later deletes it healed would
             # silently drop its return. Defer for a coherent retry.
             raise _DeferProducerError(uuid, None, source=tmp.name)
-        if not isinstance(payload, dict):
+        if not _gates(payload):
             continue
-        if payload.get("worker_uuid") != uuid:
-            continue
-        if payload.get("run_id") != run_id:
-            continue
-        if payload.get("unit") != unit:
-            continue
-        tmp_attempt = payload.get("attempt")
-        if type(tmp_attempt) is not int or tmp_attempt != attempt:
-            continue
-        tmp_pid = payload.get("pid")
-        if type(tmp_pid) is not int or tmp_pid != pid:
-            continue
-        tmp_seq = payload.get("journal_seq")
-        if not _is_nonneg_int(tmp_seq) or tmp_seq != committed_seq:
-            continue
-        if not is_module_first_block(payload.get("in_progress")):
-            continue
+        assert isinstance(payload, dict)
         gated.append((tmp, payload))
-    if quarantined and _divergence_vetoed(
-        quarantined,
-        uuid=uuid,
-        seq_field="journal_seq",
-        seq=committed_seq,
-        defer_uuid=uuid,
-    ):
+    if quarantined and _divergence_vetoed(quarantined, _gates, uuid):
         # A previous pass already judged this checkpoint divergent but
         # died between renames (or before reporting): re-quarantine any
         # stragglers and hold the conflict without replaying (#88R4-F3).
@@ -3950,14 +4003,18 @@ def sweep_orphans(
         pass converges).
         """
         nonlocal removed, retained
-        for tmp in tmps:
+        for index, tmp in enumerate(tmps):
             if not tmp.exists() and not tmp.is_symlink():
                 continue
             try:
                 tmp.unlink()
                 removed += 1
             except OSError:
-                retained += 1
+                # Every survivor counts: the failed tmp, the unvisited
+                # rest, and the held primaries (#88R6-3).
+                for rest in tmps[index:]:
+                    if rest.exists() or rest.is_symlink():
+                        retained += 1
                 for path in paths:
                     if path.exists() or path.is_symlink():
                         retained += 1
@@ -4030,10 +4087,10 @@ def sweep_orphans(
             # on the next pass), but rewrite tmps triage by content --
             # complete ones retain loudly for forensics (F1), never
             # silently with the baseline.
-            pruned, kept, failed = _prune_sidecar_tmps(sidecar_path)
+            pruned, kept, hold = _prune_sidecar_tmps(sidecar_path)
             removed += pruned
             retained += kept
-            if failed:
+            if hold:
                 retained += 1
             else:
                 _remove([sidecar_path])
@@ -4071,10 +4128,10 @@ def sweep_orphans(
             retained += 1
             continue
         if raw is None or not isinstance(raw, dict):
-            pruned, kept, failed = _prune_sidecar_tmps(probe_path)
+            pruned, kept, hold = _prune_sidecar_tmps(probe_path)
             removed += pruned
             retained += kept
-            if failed:
+            if hold:
                 retained += 1
             else:
                 _remove([probe_path])

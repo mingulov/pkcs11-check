@@ -263,7 +263,7 @@ def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None
         return
     if _delete_probe_sidecar(path, force_tmps=force_tmps):
         return
-    mark_probe_consumed(path)
+    mark_probe_consumed(path, parent_uuid=get_worker_uuid())
 
 
 def ingest_probe_payload(
