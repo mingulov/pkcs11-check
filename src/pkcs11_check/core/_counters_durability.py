@@ -47,6 +47,7 @@ import json
 import os
 import select
 import signal
+import stat
 import sys
 import time
 import warnings
@@ -315,8 +316,12 @@ def ensure_layout(root: Path | str) -> Path:
 
 
 def is_sealed(root: Path | str) -> bool:
-    """Whether the admission barrier is sealed (post-seal producers rejected)."""
-    return (Path(root) / SEAL_FILENAME).exists()
+    """Whether the admission barrier is sealed (post-seal producers rejected).
+
+    An unreadable seal reads sealed (#88R24-1): admission proceeds
+    only on a proven-absent seal, never on a fault.
+    """
+    return _path_state(Path(root) / SEAL_FILENAME) != "missing"
 
 
 def seal(root: Path | str, *, reason: str = "") -> Path:
@@ -327,8 +332,12 @@ def seal(root: Path | str, *, reason: str = "") -> Path:
     """
     resolved = ensure_layout(root)
     path = resolved / SEAL_FILENAME
-    if path.exists():
+    if _path_state(path) == "present":
         return path
+    # A missing seal proceeds to the O_EXCL create below (the real
+    # arbiter); an unreadable one falls through to it too, where
+    # FileExistsError still wins first-seal and any other OSError
+    # raises typed (#88R24-1 -- the fast path never leaks raw).
     payload = json.dumps({"sealed": True, "timestamp": time.time(), "reason": reason})
     try:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
@@ -1227,7 +1236,17 @@ def _known_producer_uuids(root: Path) -> set[str]:
     """Return every producer uuid visible in the counters dir (content-authoritative)."""
     uuids: set[str] = set()
     reg_dir = root / REGISTRY_DIRNAME
-    if reg_dir.is_dir():
+    reg_state = _path_is_dir(reg_dir)
+    if reg_state == "unreadable":
+        # An unreadable registry dir contributes nothing, loudly
+        # (#88R24-1): downstream ambiguity checks fail conservative
+        # on the incomplete set (no uuid proves unambiguous).
+        warnings.warn(
+            f"producer registry dir {reg_dir} is unreadable; identity scan degraded",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif reg_state == "present":
         for registry_path in reg_dir.glob("*.json"):
             content = read_registry_file(registry_path)
             if content is not None:
@@ -2151,6 +2170,10 @@ class _DeferProducerError(Exception):
             return f"evidence changed during collection ({self.source or 'unknown file'})"
         if self.reason == "enum":
             return f"tmp listing failed under {self.source or 'unknown file'}"
+        if self.reason == "enum-probe":
+            return f"probe listing failed under {self.source or 'unknown file'}"
+        if self.reason == "enum-spawn":
+            return f"spawn listing failed under {self.source or 'unknown file'}"
         if self.source:
             return f"unreadable evidence ({self.source})"
         return "unreadable evidence"
@@ -2944,7 +2967,12 @@ def _adopt_probe_orphans(
             )
         else:
             consumed.append(undecided_path)
-    for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
+    orphan_files = _list_evidence_files(root, PROBE_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    if orphan_files is None:
+        # An unlistable orphan dir defers the producer (#88R24-1):
+        # proceeding blind would strand any orphans the fault hides.
+        raise _DeferProducerError(worker_uuid, None, source=root.name, reason="enum-probe")
+    for path in orphan_files:
         parsed_name = _parse_probe_filename(path.name)
         if parsed_name is None or parsed_name[0] != prefix:
             continue
@@ -3211,7 +3239,20 @@ def _adopt_probe_orphans(
         cand_birth_valid,
     ) in heal_candidates:
         cand_key = (cand_child, cand_seq)
-        if not cand_path.exists():
+        cand_state = _path_state(cand_path)
+        if cand_state == "missing":
+            continue
+        if cand_state == "unreadable":
+            # An unreadable marker is a recorded skip, never a bare
+            # one (#88R24-1): skipping past it silently would let the
+            # parent consume underneath (3.14) or escape raw (3.13).
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} is unreadable; "
+                "recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         if cand_key in held_receipts:
             skipped.append(cand_path)
@@ -3398,7 +3439,20 @@ def _adopt_probe_orphans(
         slot_path = Path(spawn_entry["slot"])
         if not slot_path.is_absolute():
             slot_path = root / slot_path
-        if slot_path.exists():
+        slot_state = _path_state(slot_path)
+        if slot_state == "present":
+            continue
+        if slot_state == "unreadable":
+            # Never reunite through an unreadable slot (#88R24-1): the
+            # slot may hold an unflushed orphan, so the file waits for
+            # a pass that can prove its disposition.
+            skipped.append(spawn_path)
+            warnings.warn(
+                f"spawn record {spawn_path.name} has an unreadable slot; "
+                "reunion withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         spawn_pid = spawn_entry["pid"]
         spawn_birth = spawn_entry.get("birth_token")
@@ -3751,6 +3805,82 @@ def _unlink_counted(path: Path) -> bool:
         return False
 
 
+#: Errnos proving absence (mirrors pathlib's own ignore set): anything
+#: else from stat (EACCES, EPERM, EIO, ...) proves nothing and reads
+#: unreadable instead of missing (#88R24-1).
+_MISSING_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+
+PathState = Literal["present", "missing", "unreadable"]
+
+
+def _path_state(path: Path | str) -> PathState:
+    """Classify a path without misreading faults (#88R24-1).
+
+    ``pathlib`` stat predicates disagree across versions (3.12/3.13
+    re-raise EACCES; 3.14 swallows it as missing), and both shapes are
+    wrong somewhere (a raw escape breaks the never-raises collectors;
+    a silent misread lets cleanup publish through unreadable
+    evidence). This lookup distinguishes all three outcomes uniformly:
+    lstat success reads present (symlinks count: evidence paths are
+    never links, so a link is suspicious-never-absent); missing errnos
+    (plus unencodable paths) read missing; every other OSError reads
+    unreadable. Callers fail closed on unreadable (defer/retain/hold),
+    never as missing. Never raises.
+    """
+    try:
+        os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno in _MISSING_ERRNOS:
+            return "missing"
+        return "unreadable"
+    except ValueError:
+        return "missing"
+    return "present"
+
+
+def _path_is_dir(path: Path | str) -> PathState:
+    """Whether a path is a directory, faults distinguished (#88R24-1).
+
+    Same tri-state as :func:`_path_state`, but ``present`` additionally
+    requires directory-ness (a file where a directory belongs reads
+    ``missing``: callers skip it exactly as before). Single stat, so no
+    check-then-act gap. Never raises.
+    """
+    try:
+        mode = os.stat(path, follow_symlinks=False).st_mode
+    except OSError as exc:
+        if exc.errno in _MISSING_ERRNOS:
+            return "missing"
+        return "unreadable"
+    except ValueError:
+        return "missing"
+    return "present" if stat.S_ISDIR(mode) else "missing"
+
+
+def _list_evidence_files(directory: Path, prefix: str, suffix: str) -> list[Path] | None:
+    """List ``prefix*`` + ``suffix`` entries; None when enumeration faults (#88R24-1).
+
+    Same contract as :func:`_list_tmp_paths` (a missing directory reads
+    empty; any other OSError reads None): ``pathlib`` globbing swallows
+    listing errors, which would silently strand evidence behind a
+    missed file. Callers defer or hold on None, never proceed blind.
+    ``os.scandir`` surfaces faults; matching is an exact literal
+    prefix+suffix (equivalent to the glob for patterns without
+    character classes). Never raises.
+    """
+    try:
+        with os.scandir(directory) as entries:
+            return sorted(
+                directory / entry.name
+                for entry in entries
+                if entry.name.startswith(prefix) and entry.name.endswith(suffix)
+            )
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return None
+
+
 def _list_tmp_paths(directory: Path, prefix: str) -> list[Path] | None:
     """List ``prefix*`` entries; None when enumeration itself faults (#88R7-4).
 
@@ -3914,7 +4044,17 @@ def _consume_producer_files(
     for path in paths:
         key = str(path)
         if digests is not None and key in digests:
-            if (path.exists() or path.is_symlink()) and _sha256_file_hex(path) != digests[key]:
+            state = _path_state(path)
+            if state == "unreadable":
+                # Unverifiable bytes never delete (#88R24-1).
+                warnings.warn(
+                    f"cleanup target {path.name} cannot be verified; held",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                held.append(path)
+                continue
+            if state == "present" and _sha256_file_hex(path) != digests[key]:
                 warnings.warn(
                     f"cleanup target {path.name} changed since adjudication; held",
                     UserWarning,
@@ -3950,7 +4090,9 @@ def _consume_producer_files(
                 path.unlink(missing_ok=True)
             except OSError:
                 pass
-        if path.exists() or path.is_symlink():
+        if _path_state(path) != "missing":
+            # Present means the unlink failed; unreadable means gone is
+            # unprovable. Either way the target stays held (#88R24-1).
             held.append(path)
     return held
 
@@ -4159,10 +4301,23 @@ def collect_unit(
     """
     root = Path(counters_dir)
     reg_dir = root / REGISTRY_DIRNAME
-    if not reg_dir.is_dir():
+    reg_state = _path_is_dir(reg_dir)
+    if reg_state == "unreadable":
+        # Nothing is decidable without the registry (#88R24-1): warn
+        # and retain everything for a pass that can see it.
+        warnings.warn(
+            f"counters dir {root} is unreadable; collection deferred",
+            UserWarning,
+            stacklevel=2,
+        )
+        return []
+    if reg_state == "missing":
         return []
     child_path = Path(child_jsonl)
-    child_arg = child_path if child_path.exists() else None
+    # A missing child is a normal first collect (empty authority); a
+    # present-or-unreadable one goes to the readers, whose None
+    # contract routes read faults to the loud-retain path (#88R24-1).
+    child_arg = None if _path_state(child_path) == "missing" else child_path
     committed = _committed_from_jsonl(child_arg)
     claims = _claimed_receipts_from_jsonl(child_arg)
     if committed is None or claims is None:
@@ -5190,6 +5345,31 @@ def _spawn_entry_valid(entry: Any) -> bool:
     )
 
 
+def _parse_spawn_filename(name: str) -> tuple[str, int] | None:
+    """Return ``(parent prefix, seq)`` bound by a spawn filename, else None (#88R24-2).
+
+    Strict like :func:`_parse_probe_filename`: ``spawn-<8hex>-<seq>-<nonce>.json``
+    with a numeric seq and a non-empty nonce. Used ONLY to scope
+    content-mute files (torn/unreadable/parent-mistyped) to their
+    probable owner; readable files always route by content
+    (filename hints never override evidence).
+    """
+    if not name.startswith(SPAWN_FILE_PREFIX) or not name.endswith(PROBE_FILE_SUFFIX):
+        return None
+    stem = name[len(SPAWN_FILE_PREFIX) : -len(PROBE_FILE_SUFFIX)]
+    parts = stem.split("-")
+    if len(parts) != 3:
+        return None
+    owner, seq, nonce = parts
+    if len(owner) != 8 or any(char not in "0123456789abcdef" for char in owner):
+        return None
+    if not seq.isascii() or not seq.isdigit():
+        return None
+    if not nonce:
+        return None
+    return (owner, int(seq))
+
+
 def _read_spawn_file_records(
     root: Path, uuid: str
 ) -> list[tuple[Path, dict[str, Any] | None, str | None]]:
@@ -5198,26 +5378,45 @@ def _read_spawn_file_records(
     Returns ``[(path, entry-or-None, digest-or-None)]``: ``None`` entry
     marks a torn/unreadable/malformed file (fail closed: outstanding);
     the digest binds validated bytes for cleanup authorization.
-    Foreign files (another ``parent_uuid``) are skipped silently (their
-    own producer's pass owns them); a missing/mistyped ``parent_uuid``
-    cannot prove foreign, so it reads malformed. Never raises.
+    Readable files route by content: another ``parent_uuid`` skips
+    silently (its own producer's pass owns it), so renaming a record
+    cannot misroute it. Content-mute files (torn, unreadable, or a
+    missing/mistyped ``parent_uuid``) cannot prove foreign, so they
+    scope by filename hint instead (#88R24-2): only the pass whose
+    uuid matches the filename prefix defers on them (a shared prefix
+    defers every colliding producer, conservatively); unparsable
+    names attribute to nobody (honest writers mint fixed-shape
+    names).
+
+    Raises:
+        _DeferProducerError: When the spawn dir itself cannot be
+            listed (callers reunite-or-retain instead of consuming
+            through hidden launches).
     """
-    try:
-        candidates = sorted(root.glob(f"{SPAWN_FILE_PREFIX}*{PROBE_FILE_SUFFIX}"))
-    except OSError:
-        return []
+    candidates = _list_evidence_files(root, SPAWN_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    if candidates is None:
+        # An unlistable spawn dir defers the producer (#88R24-1/2):
+        # proceeding blind would publish through a hidden launch.
+        raise _DeferProducerError(uuid, None, source=root.name, reason="enum-spawn")
+
+    def _hinted_owner(path: Path) -> bool:
+        parsed = _parse_spawn_filename(path.name)
+        return parsed is not None and uuid.startswith(parsed[0])
+
     records: list[tuple[Path, dict[str, Any] | None, str | None]] = []
     for path in candidates:
         status, payload, digest = _read_json_evidence_digested(path)
         if status == "gone":
             continue
         if status != "ok" or not isinstance(payload, dict):
-            records.append((path, None, None))
+            if _hinted_owner(path):
+                records.append((path, None, None))
             continue
         if payload.get("parent_uuid") != uuid:
             if is_worker_uuid(payload.get("parent_uuid")):
                 continue
-            records.append((path, None, None))
+            if _hinted_owner(path):
+                records.append((path, None, None))
             continue
         if not _spawn_entry_valid(payload):
             records.append((path, None, None))
@@ -5238,8 +5437,13 @@ def _entry_unflushed(entry: dict[str, Any]) -> bool:
     pid = entry["pid"]
     birth = entry.get("birth_token")
     assert isinstance(slot, str) and isinstance(pid, int)
-    if Path(slot).exists():
+    slot_state = _path_state(Path(slot))
+    if slot_state == "present":
         return False
+    if slot_state == "unreadable":
+        # An unreadable slot may hold an unflushed orphan: outstanding
+        # until a pass proves otherwise (#88R24-1).
+        return True
     return _incarnation_alive(pid, birth if isinstance(birth, int) else None)
 
 
@@ -5256,7 +5460,11 @@ def _unflushed_live_spawns(
     forged file can never clear a real outstanding). A slot file
     present means flushed (fold it on reunion); a dead-verified pid
     means nothing is coming. Malformed records fail closed
-    (outstanding). Never raises.
+    (outstanding).
+
+    Raises:
+        _DeferProducerError: When the spawn dir cannot be listed
+            (an enumeration fault hides launches; callers defer).
     """
     outstanding: list[dict[str, Any]] = []
     if isinstance(sidecar, dict):
@@ -5677,13 +5885,46 @@ def sweep_orphans(
     removed = 0
     retained = 0
     reg_dir = root / REGISTRY_DIRNAME
-    if not reg_dir.is_dir():
+    reg_state = _path_is_dir(reg_dir)
+    if reg_state == "unreadable":
+        warnings.warn(
+            f"producer registry dir {reg_dir} is unreadable; sweep skipped",
+            UserWarning,
+            stacklevel=2,
+        )
         return {"removed": 0, "retained": 0}
+    if reg_state == "missing":
+        return {"removed": 0, "retained": 0}
+
+    def _count_if_present(path: Path) -> None:
+        # Retention counts stay truthful through faults (#88R24-1):
+        # unreadable counts as retained (present-but-unprovable),
+        # loudly; only proven-missing counts as gone.
+        nonlocal retained
+        state = _path_state(path)
+        if state == "missing":
+            return
+        if state == "unreadable":
+            warnings.warn(
+                f"sweep target {path.name} is unreadable; counted as retained",
+                UserWarning,
+                stacklevel=2,
+            )
+        retained += 1
 
     def _remove(paths: list[Path]) -> None:
         nonlocal removed, retained
         for path in paths:
-            if not path.exists() and not path.is_symlink():
+            state = _path_state(path)
+            if state == "missing":
+                continue
+            if state == "unreadable":
+                warnings.warn(
+                    f"sweep target {path.name} is unreadable; retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
                 continue
             try:
                 path.unlink()
@@ -5701,26 +5942,40 @@ def sweep_orphans(
         pass converges). An unlistable tmp set holds too (#88R7-4).
         """
         nonlocal removed, retained
-        if tmps is None:
-            for path in paths:
-                if path.exists() or path.is_symlink():
+
+        def _count_survivors(from_index: int) -> None:
+            # Every survivor counts: the failed tmp, the unvisited
+            # rest, and the held primaries (#88R6-3). Unreadable
+            # counts as retained (present-but-unprovable), never as
+            # gone (#88R24-1).
+            nonlocal retained
+            for rest in (tmps or [])[from_index:]:
+                if _path_state(rest) != "missing":
                     retained += 1
+            for path in paths:
+                if _path_state(path) != "missing":
+                    retained += 1
+
+        if tmps is None:
+            _count_survivors(0)
             return
         for index, tmp in enumerate(tmps):
-            if not tmp.exists() and not tmp.is_symlink():
+            tmp_state = _path_state(tmp)
+            if tmp_state == "missing":
                 continue
+            if tmp_state == "unreadable":
+                warnings.warn(
+                    f"sweep tmp {tmp.name} is unreadable; primaries held",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                _count_survivors(index)
+                return
             try:
                 tmp.unlink()
                 removed += 1
             except OSError:
-                # Every survivor counts: the failed tmp, the unvisited
-                # rest, and the held primaries (#88R6-3).
-                for rest in tmps[index:]:
-                    if rest.exists() or rest.is_symlink():
-                        retained += 1
-                for path in paths:
-                    if path.exists() or path.is_symlink():
-                        retained += 1
+                _count_survivors(index)
                 return
         _remove(paths)
 
@@ -5751,21 +6006,29 @@ def sweep_orphans(
         sidecar_raw = str(content.get("sidecar", ""))
         if sidecar_raw:
             sidecar_path = Path(sidecar_raw)
-            if sidecar_path.exists():
-                retained += 1
-            if _journal_for_sidecar(sidecar_path).exists():
-                retained += 1
+            _count_if_present(sidecar_path)
+            _count_if_present(_journal_for_sidecar(sidecar_path))
     for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
         uuid = _uuid_from_evidence_name(sidecar_path.name)
         if uuid is None:
             continue
         if uuid in retain_uuids:
             retained += 1
-            if _journal_for_sidecar(sidecar_path).exists():
-                retained += 1
+            _count_if_present(_journal_for_sidecar(sidecar_path))
             continue
         reg_path = reg_dir / f"{uuid}.json"
-        if reg_path.exists() and read_registry_file(reg_path) is not None:
+        reg_state = _path_state(reg_path)
+        if reg_state == "unreadable":
+            # An unreadable registry shields its sidecar (#88R24-1):
+            # it may well exist, so the sidecar waits for a pass
+            # that can prove its disposition.
+            warnings.warn(
+                f"registry {reg_path.name} is unreadable; sidecar shielded",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if reg_state == "present" and read_registry_file(reg_path) is not None:
             continue
         status, sidecar = _read_json_evidence(sidecar_path)
         journal_path = _journal_for_sidecar(sidecar_path)
@@ -5776,14 +6039,13 @@ def sweep_orphans(
                 [sidecar_path, journal_path],
                 _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.tmp-"),
             )
-        elif status == "unreadable" or (reg_path.exists() and isinstance(sidecar, dict)):
+        elif status == "unreadable" or (reg_state != "missing" and isinstance(sidecar, dict)):
             # An I/O fault proves nothing either way (retry later), and a
             # present registry shields a readable sidecar even when the
             # registry itself is torn (a live producer's evidence must
             # never die to a sibling-credited collected run).
             retained += 1
-            if journal_path.exists():
-                retained += 1
+            _count_if_present(journal_path)
         elif not isinstance(sidecar, dict):
             # Provably unusable evidence. A torn registry alongside is
             # mutual debris: the torn baseline goes (the registry reaps
@@ -5804,8 +6066,7 @@ def sweep_orphans(
             )
         else:
             retained += 1
-            if journal_path.exists():
-                retained += 1
+            _count_if_present(journal_path)
     for journal_path in sorted(root.glob(f"*{JOURNAL_SUFFIX}")):
         uuid = _uuid_from_evidence_name(journal_path.name)
         if uuid is None:
@@ -5816,7 +6077,18 @@ def sweep_orphans(
         stem = journal_path.name[: -len(JOURNAL_SUFFIX)]
         if list(root.glob(f"{stem}{SIDECAR_SUFFIX}")):
             continue
-        if (reg_dir / f"{uuid}.json").exists():
+        shield_state = _path_state(reg_dir / f"{uuid}.json")
+        if shield_state == "unreadable":
+            # An unreadable registry shields its orphan journal,
+            # loudly: it may well exist (#88R24-1).
+            warnings.warn(
+                f"registry {uuid}.json is unreadable; journal shielded",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained += 1
+            continue
+        if shield_state == "present":
             retained += 1
             continue
         _remove([journal_path])
@@ -5840,6 +6112,84 @@ def sweep_orphans(
                 _remove([probe_path])
         else:
             retained += 1
+    spawn_files = _list_evidence_files(root, SPAWN_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    if spawn_files is None:
+        warnings.warn(
+            f"spawn listing under {root.name} unlistable (I/O fault); retained",
+            UserWarning,
+            stacklevel=2,
+        )
+    else:
+        for spawn_path in spawn_files:
+            status, payload = _read_json_evidence(spawn_path)
+            if status == "gone":
+                continue
+            if (
+                status != "ok"
+                or not isinstance(payload, dict)
+                or not is_worker_uuid(payload.get("parent_uuid"))
+                or not _spawn_entry_valid(payload)
+            ):
+                # Mute or malformed launch records are never sweepable:
+                # they stay visible until collection (which owns live
+                # producers) or a human adjudicates them (#88R24-3).
+                warnings.warn(
+                    f"spawn file {spawn_path.name} unreadable or invalid; retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                continue
+            parent = payload["parent_uuid"]
+            assert isinstance(parent, str)
+            if _path_state(reg_dir / f"{parent}.json") != "missing":
+                retained += 1
+                continue
+            parent_sidecars = _list_evidence_files(root, f"{parent}-", SIDECAR_SUFFIX)
+            parent_journals = _list_evidence_files(root, f"{parent}-", JOURNAL_SUFFIX)
+            if parent_sidecars is None or parent_journals is None:
+                warnings.warn(
+                    f"spawn file {spawn_path.name} producer ambiguous (I/O fault); retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                continue
+            if parent_sidecars or parent_journals:
+                retained += 1
+                continue
+            pid = payload["pid"]
+            birth_raw = payload.get("birth_token")
+            birth = birth_raw if isinstance(birth_raw, int) else None
+            assert isinstance(pid, int)
+            if _incarnation_alive(pid, birth):
+                warnings.warn(
+                    f"spawn file {spawn_path.name} has a live writer (pid {pid}); retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                continue
+            slot_path = Path(payload["slot"])
+            if not slot_path.is_absolute():
+                slot_path = root / slot_path
+            if _path_state(slot_path) != "missing":
+                warnings.warn(
+                    f"spawn file {spawn_path.name} slot undecided; retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                continue
+            # Settled and parentless: the birth-pinned death plus an
+            # unreusable slot proves nothing is coming (a dead writer
+            # cannot flush, and slots never repeat), so reaping is
+            # sound with no TOCTOU (#88R24-3). Write tmps prune as
+            # debris under legacy content rules.
+            _remove_with_tmps(
+                [spawn_path],
+                _list_tmp_paths(root, f"{spawn_path.name}.tmp-"),
+            )
     return {"removed": removed, "retained": retained}
 
 
@@ -5913,14 +6263,26 @@ def _load_barrier_staging(
     (pre-targets staging adopts nothing until re-staged). A malformed
     ``skip_held_uuids`` list degrades to empty with a loud warning
     (skip-holds are not trusted from corrupt staging); absent reads
-    empty silently. Never raises.
+    empty silently.
+
+    Raises:
+        CounterPersistenceError: When the staging file is unreadable
+            (fail-closed: the barrier refuses without its memory
+            rather than discarding maybe-valid staged state as torn)
+            (#88R24-1).
     """
     path = root / BARRIER_STAGING_FILENAME
-    if not path.exists():
+    staging_state = _path_state(path)
+    if staging_state == "missing":
         return {}, 0, frozenset(), frozenset(), frozenset()
-    try:
-        raw = _json_loads_evidence(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    if staging_state == "unreadable":
+        raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
+    status, raw = _read_json_evidence(path)
+    if status == "gone":
+        return {}, 0, frozenset(), frozenset(), frozenset()
+    if status == "unreadable":
+        raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
+    if status == "torn" or not isinstance(raw, dict):
         raw = None
     records = raw.get("cache_records") if isinstance(raw, dict) else None
     consumed = raw.get("consumed") if isinstance(raw, dict) else 0
@@ -6056,7 +6418,7 @@ def _adopted_staged_probe_targets(
     validated: frozenset[str],
     staged_targets: frozenset[tuple[str, str]],
     digests: dict[str, str] | None = None,
-) -> list[Path]:
+) -> tuple[list[Path], list[Path]]:
     """Cleanup targets for parentless probes of collected parents (#88R10-4c).
 
     A valid probe orphan or marker whose parent validated as collected
@@ -6077,12 +6439,25 @@ def _adopted_staged_probe_targets(
     a marker whose original slot keeps an undecided rewrite stays
     until the slot resolves. Quarantined forensics never adopt (the
     glob excludes them). ``digests`` records ``{path: sha256}`` for
-    every probe file read (None discards). Never raises.
+    every probe file read (None discards). Returns ``(adopted,
+    retained)``: retained paths ride ``cleanup_held`` so staging
+    survives for their retry instead of expiring underneath them
+    (#88R24-3). Never raises.
     """
     adopted: list[Path] = []
+    retained: list[Path] = []
     if not validated:
-        return adopted
-    for probe_path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
+        return adopted, retained
+    probe_files = _list_evidence_files(root, PROBE_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    if probe_files is None:
+        warnings.warn(
+            f"staged probe listing under {root.name} unlistable (I/O fault); retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        retained.append(root)
+        return adopted, retained
+    for probe_path in probe_files:
         status, raw, read_digest = _read_json_evidence_digested(probe_path)
         if read_digest is not None and digests is not None:
             digests.setdefault(str(probe_path), read_digest)
@@ -6097,6 +6472,7 @@ def _adopted_staged_probe_targets(
                     UserWarning,
                     stacklevel=2,
                 )
+                retained.append(probe_path)
             continue
         if not isinstance(raw, dict):
             # Torn: the sweep converges debris; adoption needs linkage.
@@ -6113,6 +6489,7 @@ def _adopted_staged_probe_targets(
                 UserWarning,
                 stacklevel=2,
             )
+            retained.append(probe_path)
             continue
         if not link:
             continue
@@ -6126,6 +6503,7 @@ def _adopted_staged_probe_targets(
                 UserWarning,
                 stacklevel=2,
             )
+            retained.append(probe_path)
             continue
         if _incarnation_alive(pid, birth):
             warnings.warn(
@@ -6134,6 +6512,7 @@ def _adopted_staged_probe_targets(
                 UserWarning,
                 stacklevel=2,
             )
+            retained.append(probe_path)
             continue
         digest = _sha256_file_hex(probe_path)
         if digest is None or (str(probe_path), digest) not in staged_targets:
@@ -6143,6 +6522,7 @@ def _adopted_staged_probe_targets(
                 UserWarning,
                 stacklevel=2,
             )
+            retained.append(probe_path)
             continue
         if digests is not None:
             digests.setdefault(str(probe_path), digest)
@@ -6156,6 +6536,7 @@ def _adopted_staged_probe_targets(
                     UserWarning,
                     stacklevel=2,
                 )
+                retained.append(probe_path)
                 continue
             # Resolved slots contribute their debris tmps too: the gate
             # above proved no complete-with-returns tmp survives, so
@@ -6167,6 +6548,7 @@ def _adopted_staged_probe_targets(
                     UserWarning,
                     stacklevel=2,
                 )
+                retained.append(probe_path)
                 continue
             slot_tmps = maybe_slot_tmps
         tmps = _list_tmp_paths(root, f"{probe_path.name}.tmp-")
@@ -6176,6 +6558,7 @@ def _adopted_staged_probe_targets(
                 UserWarning,
                 stacklevel=2,
             )
+            retained.append(probe_path)
             continue
         # Set-atomic authority (#88R12-4): every rewrite under the
         # slot must be listed and byte-identical -- an unlisted rewrite
@@ -6192,12 +6575,104 @@ def _adopted_staged_probe_targets(
                     UserWarning,
                     stacklevel=2,
                 )
+                retained.append(probe_path)
                 break
             if digests is not None:
                 digests.setdefault(str(tmp), tmp_digest)
         else:
             adopted.append(probe_path)
-    return adopted
+    return adopted, retained
+
+
+def _adopted_staged_spawn_targets(
+    root: Path,
+    validated: frozenset[str],
+    staged_targets: frozenset[tuple[str, str]],
+    digests: dict[str, str] | None = None,
+) -> tuple[list[Path], list[Path]]:
+    """Cleanup targets for parentless spawn files of collected parents (#88R24-3).
+
+    Mirrors :func:`_adopted_staged_probe_targets` for child-side spawn
+    records: a file the earlier barrier consumed (its path rode
+    ``to_consume``) but whose delete held while its parent files went.
+    Linkage is content-exact (``parent_uuid`` in ``validated``);
+    content-mute files scope by filename hint (shared prefixes defer
+    every colliding producer); fresh, foreign, torn, or unparsable
+    files are never adopted here (the sweep converges debris).
+    Adoption re-proves writer quiescence (a live writer means the
+    pass-1 absorb decision is stale -- birthless pid recycle can
+    resurrect it) and byte-identity against the staged digest, then
+    adopts straight into ``to_consume``. Returns ``(adopted,
+    retained)`` like the probe twin. Never raises.
+    """
+    adopted: list[Path] = []
+    retained: list[Path] = []
+    if not validated:
+        return adopted, retained
+    candidates = _list_evidence_files(root, SPAWN_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    if candidates is None:
+        warnings.warn(
+            f"staged spawn listing under {root.name} unlistable (I/O fault); retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        retained.append(root)
+        return adopted, retained
+    for spawn_path in candidates:
+        status, payload, read_digest = _read_json_evidence_digested(spawn_path)
+        if read_digest is not None and digests is not None:
+            digests.setdefault(str(spawn_path), read_digest)
+        if status == "gone":
+            continue
+        if status != "ok" or not isinstance(payload, dict):
+            parsed = _parse_spawn_filename(spawn_path.name)
+            if parsed is not None and any(uuid.startswith(parsed[0]) for uuid in validated):
+                warnings.warn(
+                    f"staged spawn {spawn_path.name} unreadable; retained for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained.append(spawn_path)
+            continue
+        parent = payload.get("parent_uuid")
+        if parent not in validated:
+            continue
+        assert isinstance(parent, str)
+        if not _spawn_entry_valid(payload):
+            warnings.warn(
+                f"staged spawn {spawn_path.name} is malformed; retained (no authority)",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained.append(spawn_path)
+            continue
+        pid = payload["pid"]
+        birth_raw = payload.get("birth_token")
+        birth = birth_raw if isinstance(birth_raw, int) else None
+        assert isinstance(pid, int)
+        if _incarnation_alive(pid, birth):
+            warnings.warn(
+                f"staged spawn {spawn_path.name} has a live writer (pid {pid}); "
+                "retained for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained.append(spawn_path)
+            continue
+        digest = _sha256_file_hex(spawn_path)
+        if digest is None or (str(spawn_path), digest) not in staged_targets:
+            warnings.warn(
+                f"staged spawn {spawn_path.name} is not a staged cleanup target; "
+                "retained (new or evolved since collection)",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained.append(spawn_path)
+            continue
+        if digests is not None:
+            digests.setdefault(str(spawn_path), digest)
+        adopted.append(spawn_path)
+    return adopted, retained
 
 
 def prepare_resume(
@@ -6252,9 +6727,22 @@ def prepare_resume(
         warnings.warn(f"counter resume barrier unavailable ({exc})", UserWarning, stacklevel=2)
         plan["barrier_ok"] = False
         return plan
-    staged_records, staged_consumed, staged_collected, staged_targets, staged_skip_held = (
-        _load_barrier_staging(root)
-    )
+    try:
+        staged_records, staged_consumed, staged_collected, staged_targets, staged_skip_held = (
+            _load_barrier_staging(root)
+        )
+    except CounterPersistenceError as exc:
+        # Unreadable barrier memory fails the barrier without
+        # discarding it (#88R24-1): the next barrier retries with a
+        # fresh seal instead of proceeding blind.
+        warnings.warn(
+            f"counter resume barrier cannot read staged recovery ({exc})",
+            UserWarning,
+            stacklevel=2,
+        )
+        plan["barrier_ok"] = False
+        _release_barrier_seal(root)
+        return plan
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
@@ -6270,9 +6758,13 @@ def prepare_resume(
     # earlier informational scan of the same tmp (#88R15-3).
     read_digests: dict[str, str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
-    prior_arg = prior if prior and prior.exists() else None
+    prior_arg = prior if prior and _path_state(prior) == "present" else None
     # Resume track (postponed past 0.3.0): an unreadable prior keeps the
-    # legacy empty-reading here; behavior preserved exactly.
+    # legacy empty-reading here; behavior preserved exactly on every
+    # interpreter (present-only gates it; faults read empty like 3.14).
+    # NOTE for the resume track: re-collection under an empty prior
+    # relies on barrier/extractor idempotence to avoid double-folds;
+    # re-verify that assumption if this line ever changes (#88R24-1).
     committed = _committed_from_jsonl(prior_arg)
     sessions, entries = committed[:2] if committed is not None else (set(), set())
     claims = _claimed_receipts_from_jsonl(prior_arg)
@@ -6680,11 +7172,14 @@ def prepare_resume(
         if isinstance(barrier_run, str):
             seen_runs.add(barrier_run)
         journal_path = _journal_for_sidecar(sidecar_path)
-        if (
-            uuid in validated_collected
-            and uuid not in staged_skip_held
-            and not _unflushed_live_spawns(uuid, sidecar, root)
-        ):
+        try:
+            spawns_settled = not _unflushed_live_spawns(uuid, sidecar, root)
+        except _DeferProducerError:
+            # An unlistable spawn dir skips the staged shortcut: the
+            # reunion below re-decides (and defers loudly) instead of
+            # consuming through hidden launches (#88R24-1/2).
+            spawns_settled = False
+        if uuid in validated_collected and uuid not in staged_skip_held and spawns_settled:
             # Staged retry (#88R13-2): no second reunion (see the
             # registry loop); the files consume directly while probes
             # converge through digest-gated adoption. Quiescence was
@@ -6865,9 +7360,14 @@ def prepare_resume(
         to_consume.extend(consumed)
     # Parentless probe adoption: probes of validated parents are
     # interrupted cleanup, never fresh evidence (#88R10-4c).
-    to_consume.extend(
-        _adopted_staged_probe_targets(root, validated_collected, staged_targets, read_digests)
+    adopted_probes, retained_probes = _adopted_staged_probe_targets(
+        root, validated_collected, staged_targets, read_digests
     )
+    adopted_spawns, retained_spawns = _adopted_staged_spawn_targets(
+        root, validated_collected, staged_targets, read_digests
+    )
+    to_consume.extend([*adopted_probes, *adopted_spawns])
+    adoption_retained = [*retained_probes, *retained_spawns]
     plan["fenced"].sort()
     plan["unresolved"].sort()
     plan["skipped_units"] = sorted(
@@ -6950,12 +7450,26 @@ def prepare_resume(
     # barrier finishes the cleanup without re-emitting (#88R10-4c).
     # Skip-retained parents ride along: their association stays until
     # a coherent retry revisits the skipped orphan (#88R11-1).
-    plan["cleanup_held"] = sorted({str(path) for path in [*held, *skip_retained]})
+    # Adoption retains ride along: their staging must survive for the
+    # retry instead of expiring underneath them (#88R24-3).
+    plan["cleanup_held"] = sorted(
+        {str(path) for path in [*held, *skip_retained, *adoption_retained]}
+    )
+    _release_barrier_seal(root)
+    return plan
+
+
+def _release_barrier_seal(root: Path) -> None:
+    """Release the resume barrier seal, warning loudly when stuck (#88R24-1).
+
+    Shared by the success path and the fail-closed refusal paths so a
+    barrier that stops early never leaves reruns blocked behind it.
+    Never raises.
+    """
     try:
         unseal(root)
     except CounterPersistenceError as exc:
         warnings.warn(f"counter resume barrier stuck sealed ({exc})", UserWarning, stacklevel=2)
-    return plan
 
 
 def supplements_path(state_file: Path | str, unit: str) -> Path:
