@@ -6375,6 +6375,309 @@ class TestSweepAndFence:
         assert not marker.exists()
         assert not Path(planted["sidecar"]).exists()
 
+    def test_reconcile_binds_proof_to_receipt(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R21-1: one slot's proof heals only its own receipt."""
+        child_c = "c" * 32
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        legacy_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            child_uuid=_UUID_B,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        legacy = legacy_src.with_name(legacy_src.name.replace("probe-", "probe-consumed-", 1))
+        legacy_src.rename(legacy)
+        midrun = json.loads(legacy.read_text(encoding="utf-8"))
+        midrun["finalized"] = False
+        legacy.write_text(json.dumps(midrun), encoding="utf-8")
+        full_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            child_uuid=child_c,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        full = engaged / f"probe-consumed-{_UUID_A}-0-feedface.json"
+        full_src.rename(full)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        assert legacy.name != full.name
+        assert durability._marker_slot_name(legacy.name) == slot.name
+        assert durability._marker_slot_name(full.name) == slot.name
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            child_uuid=_UUID_B,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        tmp = _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows]))
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="recovery withheld"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert full.exists(), "the foreign receipt borrows no proof"
+        assert not legacy.exists(), "the proved nonfinalized copy still suppresses"
+        assert not baseline.exists()
+        assert not tmp.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_contradictory_live_marker_registers_slot_hold(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R21-5: a live slot stays held even when its counts are contested."""
+        proc = _live_sleeper()
+        try:
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            first_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                nonce="aaaa1111",
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=None,
+            )
+            first = first_src.with_name(first_src.name.replace("probe-", "probe-consumed-", 1))
+            first_src.rename(first)
+            second_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                nonce="bbbb2222",
+                counters=[["m", "C_Digest", 0, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=None,
+            )
+            second = second_src.with_name(second_src.name.replace("probe-", "probe-consumed-", 1))
+            second_src.rename(second)
+            slot_b = engaged / f"probe-{_UUID_A[:8]}-0-bbbb2222.json"
+            slot_b.write_text("{torn", encoding="utf-8")
+            child = _committed_child(tmp_path, pid, _counts_block(10))
+            with pytest.warns(UserWarning, match="contradictory"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+                )
+            assert records == []
+            assert proc.poll() is None
+            assert first.exists()
+            assert second.exists()
+            assert slot_b.exists(), "the live writer may still publish here"
+            assert Path(planted["registry"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_garbage_rows_break_coherence(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R21-6: malformed rows never read as an empty snapshot."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        empty_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            nonce="aaaa1111",
+            counters=[],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        empty = empty_src.with_name(empty_src.name.replace("probe-", "probe-consumed-", 1))
+        empty_src.rename(empty)
+        midrun = json.loads(empty.read_text(encoding="utf-8"))
+        midrun["finalized"] = False
+        empty.write_text(json.dumps(midrun), encoding="utf-8")
+        garbage_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            nonce="bbbb2222",
+            counters=[["m", "C_Digest", 0, True]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        garbage = garbage_src.with_name(garbage_src.name.replace("probe-", "probe-consumed-", 1))
+        garbage_src.rename(garbage)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="contradictory"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert empty.exists()
+        assert garbage.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_identical_garbage_never_heals(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R21-6: agreed corruption still proves nothing."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, True]]
+        for nonce in ("aaaa1111", "bbbb2222"):
+            src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                nonce=nonce,
+                counters=[list(row) for row in rows],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=None,
+            )
+            src.rename(src.with_name(src.name.replace("probe-", "probe-consumed-", 1)))
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert records == []
+        assert len(list(engaged.glob("probe-consumed-*.json"))) == 2
+        assert Path(planted["registry"]).exists()
+
+    def test_finalize_catches_late_torn_hold(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R21-2: a hold recorded anywhere blocks every affected heal."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        clean_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            nonce="cccc3333",
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        clean = clean_src.with_name(clean_src.name.replace("probe-", "probe-consumed-", 1))
+        clean_src.rename(clean)
+        torn = engaged / f"probe-consumed-{_UUID_A[:8]}-0-tttt4444.json"
+        torn.write_text("{torn", encoding="utf-8")
+        slot_t = engaged / f"probe-{_UUID_A[:8]}-0-tttt4444.json"
+        tmp = _plant_probe_tmp(slot_t, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows]))
+        real_list_tmps = durability._list_tmp_paths
+        calls = 0
+
+        def _hiding_list_tmps(directory: Path, prefix: str) -> list[Path] | None:
+            nonlocal calls
+            if prefix == f"{slot_t.name}.tmp-":
+                calls += 1
+                if calls == 1:
+                    return []
+            return real_list_tmps(directory, prefix)
+
+        monkeypatch.setattr(durability, "_list_tmp_paths", _hiding_list_tmps)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="unresolved rewrite"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert calls >= 2, "the rewrite must surface mid-pass"
+        assert records == []
+        assert clean.exists(), "the late hold blocks the early copy"
+        assert torn.exists()
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_finalize_withholds_late_admitted_rewrite(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R21-2: a rewrite landing after its turn withholds at finalize."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        tmp = _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows]))
+        real_list_tmps = durability._list_tmp_paths
+        calls = 0
+
+        def _hiding_list_tmps(directory: Path, prefix: str) -> list[Path] | None:
+            nonlocal calls
+            if prefix == f"{slot.name}.tmp-":
+                calls += 1
+                if calls <= 2:
+                    return []
+            return real_list_tmps(directory, prefix)
+
+        monkeypatch.setattr(durability, "_list_tmp_paths", _hiding_list_tmps)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="keeps an unresolved rewrite"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert calls >= 3, "the rewrite must surface at finalize"
+        assert records == []
+        assert marker.exists()
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+
     def test_duplicate_markers_resolve_receipt_together(
         self, engaged: Path, tmp_path: Path
     ) -> None:

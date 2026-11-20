@@ -1706,6 +1706,17 @@ def _durable_receipts(sidecar: Any | None, journal_lines: list[str]) -> set[tupl
     return keys
 
 
+def _probe_rows_garbage_count(rows: list[Any]) -> int:
+    """Count rows no valid parse accepts (garbage identity for coherence).
+
+    Grouping drops garbage silently, so two row sets can group
+    identically while proving different things (one malformed row vs
+    none). The count travels beside the groups: coherence requires
+    equal garbage, and heals require none (#88R21-6).
+    """
+    return sum(1 for row in rows if _parse_probe_flat_row(row) is None)
+
+
 def _probe_rows_groups(rows: list[Any]) -> dict[tuple[str, str], dict[str, Any]]:
     """Group flat rows per (module, fn) into entries + per-RV exits (#88R8-1).
 
@@ -2220,7 +2231,9 @@ def _adopt_probe_orphans(
     receipt_first_snapshot: dict[
         tuple[str, int], tuple[list[Any], frozenset[tuple[str, int]], int]
     ] = {}
+    receipt_first_garbage: dict[tuple[str, int], int] = {}
     incoherent_receipts: set[tuple[str, int]] = set()
+    heal_candidates: list[tuple[str, int, Path, int, bool, Any, int | None]] = []
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
     adopted_lost: list[int] = []
@@ -2603,6 +2616,16 @@ def _adopt_probe_orphans(
         orphan_keys |= marker_keys
         receipt_key = (marker_child, marker_seq)
         _observe_marker_slot(path, marker_seq, receipt_key)
+        assert isinstance(raw, dict)  # torn markers continued above
+        marker_pid = raw.get("pid")
+        marker_birth = raw.get("birth_token")
+        validated_birth = marker_birth if type(marker_birth) is int else None
+        marker_live_now = (
+            type(marker_pid) is int
+            and marker_pid > 0
+            and _incarnation_alive(marker_pid, validated_birth)
+        )
+        marker_slot_name = _marker_slot_name(path.name)
         # Group coherence (#88R20-1): every admitted copy of one receipt
         # must agree numerically (mutual subset against the first --
         # equality is transitive, so one comparison per copy suffices).
@@ -2613,13 +2636,27 @@ def _adopt_probe_orphans(
         # claim would read silent-complete).
         snapshot = (marker_counters, marker_keys, marker_adopted)
         first_snapshot = receipt_first_snapshot.setdefault(receipt_key, snapshot)
+        garbage = _probe_rows_garbage_count(marker_counters)
+        first_garbage = receipt_first_garbage.setdefault(receipt_key, garbage)
         if receipt_key not in incoherent_receipts and not (
-            _snapshot_covered_by(*snapshot, *first_snapshot)
+            garbage == first_garbage
+            and _snapshot_covered_by(*snapshot, *first_snapshot)
             and _snapshot_covered_by(*first_snapshot, *snapshot)
         ):
             incoherent_receipts.add(receipt_key)
         if receipt_key in incoherent_receipts:
-            _withdraw_receipt_heal(marker_child, marker_seq)
+            if marker_live_now and marker_slot_name is not None:
+                # A live slot stays held even when its counts are
+                # contested (#88R21-5): the orphan loop must wait for
+                # the writer exactly as for a coherent live marker.
+                skipped_slots.add(marker_slot_name)
+            if marker_live_now and not fence_live:
+                _rollback_receipt_group(marker_child, marker_seq)
+            else:
+                # Postmortem never fences a corrupt-contested writer:
+                # evidence preservation beats quiescence here, and the
+                # coherence flag already blocks every heal.
+                _withdraw_receipt_heal(marker_child, marker_seq)
             skipped.append(path)
             warnings.warn(
                 f"contradictory consumed marker {path.name} "
@@ -2635,21 +2672,12 @@ def _adopt_probe_orphans(
         # skip (retain + report, like an orphan skip, except nothing
         # needs rolling back since the heal runs below); postmortem
         # paths fence first and defer on failure, mirroring orphans.
-        assert isinstance(raw, dict)  # torn markers continued above
-        marker_pid = raw.get("pid")
-        marker_birth = raw.get("birth_token")
-        validated_birth = marker_birth if type(marker_birth) is int else None
-        if (
-            type(marker_pid) is int
-            and marker_pid > 0
-            and _incarnation_alive(marker_pid, validated_birth)
-        ):
+        if marker_live_now:
             if not fence_live:
                 _rollback_receipt_group(marker_child, marker_seq)
                 skipped.append(path)
-                held_slot_name = _marker_slot_name(path.name)
-                if held_slot_name is not None:
-                    skipped_slots.add(held_slot_name)
+                if marker_slot_name is not None:
+                    skipped_slots.add(marker_slot_name)
                 warnings.warn(
                     f"consumed marker {path.name} has a live writer (pid {marker_pid}); "
                     "recovery withheld for a later pass",
@@ -2657,6 +2685,7 @@ def _adopt_probe_orphans(
                     stacklevel=2,
                 )
                 continue
+            assert isinstance(marker_pid, int)  # marker_live_now proved it
             if validated_birth is None:
                 if _pid_exists(marker_pid):
                     raise _DeferProducerError(worker_uuid, marker_pid)
@@ -2723,10 +2752,128 @@ def _adopt_probe_orphans(
                 stacklevel=2,
             )
             continue
-        if marker_finalized and marker_seq == filename_seq:
-            recovered.append((worker_uuid, marker_seq))
-        marker_paths.setdefault((marker_child, marker_seq), []).append(path)
-        consumed.append(path)
+        if receipt_first_garbage[receipt_key] != 0:
+            # Malformed rows prove corruption (writers emit ints), so
+            # even a coherent group of them waits for forensics
+            # instead of healing or consuming (#88R21-6).
+            skipped.append(path)
+            warnings.warn(
+                f"consumed marker {path.name} carries malformed rows; "
+                "recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        heal_candidates.append(
+            (
+                marker_child,
+                marker_seq,
+                path,
+                filename_seq,
+                marker_finalized,
+                marker_pid,
+                validated_birth,
+            )
+        )
+    # Finalize direct heals after every slot observation (#88R21-2): a
+    # heal publishes only on fresh group truth, so a hold recorded
+    # anywhere in the pass (including a torn marker's late debris
+    # re-observe, which cannot withdraw by receipt) blocks every
+    # affected copy. Each candidate re-verifies pins, liveness
+    # (recorded stamps rechecked against the world: birthless reuse,
+    # mainstream on platforms without birth tokens, can flip late),
+    # and group holds (every group slot re-observed fresh, catching
+    # rewrites that landed mid-loop). Marker bytes are not re-read:
+    # markers never mutate honestly (unlike baselines, whose reread
+    # is load-bearing), so a mid-pass marker change is external-only
+    # (same model line as the R20-3 rebuttal). Residual: a change
+    # landing between this final observation and return
+    # (microseconds; deletions stay digest-verified at cleanup).
+    for (
+        cand_child,
+        cand_seq,
+        cand_path,
+        cand_filename_seq,
+        cand_finalized,
+        cand_pid,
+        cand_birth_valid,
+    ) in heal_candidates:
+        cand_key = (cand_child, cand_seq)
+        if not cand_path.exists():
+            continue
+        if cand_key in held_receipts:
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} shares its receipt with an "
+                "outstanding hold; recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if (
+            type(cand_pid) is int
+            and cand_pid > 0
+            and _incarnation_alive(cand_pid, cand_birth_valid)
+        ):
+            if not fence_live:
+                _rollback_receipt_group(cand_child, cand_seq)
+                skipped.append(cand_path)
+                cand_slot_name = _marker_slot_name(cand_path.name)
+                if cand_slot_name is not None:
+                    skipped_slots.add(cand_slot_name)
+                warnings.warn(
+                    f"consumed marker {cand_path.name} has a live writer (pid {cand_pid}); "
+                    "recovery withheld for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            if cand_birth_valid is None:
+                if _pid_exists(cand_pid):
+                    raise _DeferProducerError(worker_uuid, cand_pid)
+            elif not _terminate_verified(cand_pid, cand_birth_valid, 5.0):
+                raise _DeferProducerError(worker_uuid, cand_pid)
+        cand_group = receipt_slots.get(cand_key, set()) | seq_slots.get(cand_seq, set())
+        for group_slot in sorted(cand_group):
+            if _slot_rewrite_unresolved(root, group_slot, digests):
+                rewrite_held_slots.add(group_slot)
+            else:
+                rewrite_held_slots.discard(group_slot)
+        cand_slot = _marker_slot_name(cand_path.name)
+        if cand_slot is not None and cand_slot in rewrite_held_slots:
+            _withdraw_receipt_heal(cand_child, cand_seq)
+            withheld.append((cand_child, cand_seq, cand_path, cand_filename_seq, cand_finalized))
+            warnings.warn(
+                f"consumed marker {cand_path.name} slot {cand_slot} keeps an unresolved "
+                "rewrite; recovery withheld",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_group & rewrite_held_slots:
+            _withdraw_receipt_heal(cand_child, cand_seq)
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} shares its receipt with an unresolved "
+                "rewrite; recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_key in incoherent_receipts:
+            skipped.append(cand_path)
+            warnings.warn(
+                f"contradictory consumed marker {cand_path.name} "
+                "(another copy of its receipt disagrees); "
+                "recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_finalized and cand_seq == cand_filename_seq:
+            recovered.append((worker_uuid, cand_seq))
+        marker_paths.setdefault(cand_key, []).append(cand_path)
+        consumed.append(cand_path)
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
         parsed_name = _parse_probe_filename(path.name)
         if parsed_name is None or parsed_name[0] != prefix:
@@ -2823,6 +2970,12 @@ def _adopt_probe_orphans(
             # ghost can slip between decide and delete, and fencing a
             # corrupt-contested writer would destroy evidence.
             _skip_covered_orphan(path, child_uuid, seq, "sits under contradictory markers")
+            continue
+        if receipt_first_garbage.get((child_uuid, seq), 0) != 0:
+            # Malformed marker rows void suppression too (#88R21-6):
+            # grouped numbers understate corrupt evidence, so the
+            # baseline waits rather than dropping rows as absorbed.
+            _skip_covered_orphan(path, child_uuid, seq, "sits under malformed markers")
             continue
         if fence_live and orphan_pid is not None:
             # Quiescence (#88R3): on postmortem paths a stamped live
@@ -2948,7 +3101,7 @@ def _adopt_probe_orphans(
     # whose every slot cleared, that stay coherent and unpinned
     # (#88R20-1/#88R20-2); anything else keeps the parent association
     # for retry.
-    proved_slots: set[str] = set()
+    proved_receipt_slots: dict[str, tuple[str, int]] = {}
     for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
         held_slot = _marker_slot_name(held_path.name)
         covered = marker_covered_slots.get(held_slot) if held_slot is not None else None
@@ -2957,7 +3110,12 @@ def _adopt_probe_orphans(
             and covered == (held_child, held_seq)
             and _slot_tmps_adjudicated(root, held_slot, digests)
         ):
-            proved_slots.add(held_slot)
+            # Proof binds slot AND receipt (#88R21-1): two markers
+            # aliasing one slot (legacy + full-uuid names) must not
+            # borrow each other's replay. First proof wins; a second
+            # receipt proving the same slot keeps the first (either
+            # order converges: the unproved copy retries).
+            proved_receipt_slots.setdefault(held_slot, (held_child, held_seq))
             rewrite_held_slots.discard(held_slot)
     for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
         held_slot = _marker_slot_name(held_path.name)
@@ -2965,9 +3123,10 @@ def _adopt_probe_orphans(
         group_slots = receipt_slots.get(held_key, set()) | seq_slots.get(held_seq, set())
         if (
             held_slot is not None
-            and held_slot in proved_slots
+            and proved_receipt_slots.get(held_slot) == held_key
             and held_key not in held_receipts
             and held_key not in incoherent_receipts
+            and receipt_first_garbage.get(held_key, 0) == 0
             and not (group_slots & rewrite_held_slots)
         ):
             if held_finalized and held_seq == held_filename_seq:
