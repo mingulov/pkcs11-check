@@ -30,6 +30,7 @@ from ctypes import byref
 from typing import Any, Literal, NamedTuple, NoReturn
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check import classification as C  # noqa: N812
@@ -110,8 +111,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
-from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
+from pkcs11_check.testcases._copy_mutability import (
+    _record_rv_validity,
+    classify_rv_validity_or_none,
+)
 from pkcs11_check.testcases._ec_export import (
+    ConventionalECPoint,
     read_conventional_ec_point_or_xfail,
     select_ecdh_point_form,
 )
@@ -1516,7 +1521,20 @@ def _adopt_derived_pub(candidate: int, *, pub_a: int, priv_a: int, label: str) -
     double-destroy the aliased handle in the ``finally`` cleanup when
     the guard fires.
     """
-    assert candidate != 0, f"{label}: derive returned handle 0"
+    if candidate == 0:
+        # R3F10: a null success handle is a classified CKR_OK
+        # contradiction, never a raw assertion.
+        C.fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(f"{label}: derive returned handle 0; refusing to adopt it"),
+            detail={"candidate": candidate},
+        )
     _fail_on_derive_alias(candidate, pub_a, label=label, role="comparison public")
     _fail_on_derive_alias(candidate, priv_a, label=label, role="derive input")
     return candidate
@@ -1526,6 +1544,31 @@ def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str)
     """Route a derived-EC staging refusal: clean RV xfail, undefined fail."""
     classify_rv_validity_or_none(exc.rv, label=label, operation=operation, kind="metadata")
     C.xfail_as(
+        "not_operational",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        actual=exc.rv,
+        summary=(
+            f"{label}: {operation} refused with {ckr_name(exc.rv)}; "
+            "the derived-EC search premise never established"
+        ),
+    )
+
+
+def _qc6a_staging_record(exc: CkrAssertionError, *, label: str, operation: str) -> Any:
+    """Non-raising twin of _qc6a_staging_refusal (R3F10).
+
+    Mirrors the refusal mapping exactly (undefined fails, vendor
+    xfails, standard operational refusals xfail) but RETURNS the
+    record so the separate-search node can run the sibling leg before
+    grading.
+    """
+    rec = _record_rv_validity(exc.rv, label=label, operation=operation, kind="metadata")
+    if rec is not None:
+        return rec
+    return C.record_as(
         "not_operational",
         kind="metadata",
         label=label,
@@ -1771,50 +1814,90 @@ class TestDerivedECPublicSearch:
                 _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
             derived_pub = _adopt_derived_pub(candidate, pub_a=pub_a, priv_a=priv_a, label=label)
 
-            derived_point = read_conventional_ec_point_or_xfail(
-                rs,
-                derived_pub,
-                ec.SECP256R1(),
-                label=f"{label}: derived CKA_EC_POINT",
-            )
-            original_point = read_conventional_ec_point_or_xfail(
-                rs,
-                pub_a,
-                ec.SECP256R1(),
-                label=f"{label}: original CKA_EC_POINT",
-            )
-            if derived_point.public_key.public_numbers() != (
-                original_point.public_key.public_numbers()
-            ):
-                C.fail_as(
-                    "wrong_result",
-                    kind="crypto",
-                    label=label,
-                    operation="C_DeriveKey",
-                    mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
-                    inherit_mechanism=False,
-                    summary=(
-                        f"{label}: derived public point does not equal the original public key"
-                    ),
-                    detail={
-                        "curve": "secp256r1",
-                        "derived_point_len": len(derived_point.provider_bytes),
-                        "original_point_len": len(original_point.provider_bytes),
-                    },
-                )
-            derived_params = _read_ec_params_bytes(rs, derived_pub, label=label, role="derived")
-            original_params = _read_ec_params_bytes(rs, pub_a, label=label, role="original")
+            # R3F10 collect-then-judge: each attribute leg reads
+            # WITHOUT terminating, both searches run on whatever bytes
+            # are available, and the strongest record wins. A refused
+            # point read voids only the point-dependent legs -- the
+            # params stimulus still runs.
+            deferred: list[Any] = []
 
-            records = []
-            for attr_name, attr, derived_bytes, original_bytes in (
-                ("params", CKA_EC_PARAMS, derived_params, original_params),
-                (
-                    "point",
-                    CKA_EC_POINT,
-                    derived_point.provider_bytes,
-                    original_point.provider_bytes,
-                ),
-            ):
+            def _read_point_captured(handle: int, role: str) -> ConventionalECPoint | None:
+                before = len(C.get_records())
+                try:
+                    return read_conventional_ec_point_or_xfail(
+                        rs,
+                        handle,
+                        ec.SECP256R1(),
+                        label=f"{label}: {role} CKA_EC_POINT",
+                    )
+                except (Failed, XFailed):
+                    deferred.extend(C.get_records()[before:])
+                    return None
+                except CkrAssertionError as exc:
+                    deferred.append(
+                        _qc6a_staging_record(exc, label=label, operation="C_GetAttributeValue")
+                    )
+                    return None
+
+            def _read_params_captured(
+                handle: int, role: Literal["derived", "original"]
+            ) -> bytes | None:
+                before = len(C.get_records())
+                try:
+                    if role == "derived":
+                        return _read_ec_params_bytes(rs, handle, label=label, role="derived")
+                    return _read_ec_params_bytes(rs, handle, label=label, role="original")
+                except (Failed, XFailed):
+                    deferred.extend(C.get_records()[before:])
+                    return None
+                except CkrAssertionError as exc:
+                    deferred.append(
+                        _qc6a_staging_record(exc, label=label, operation="C_GetAttributeValue")
+                    )
+                    return None
+
+            derived_point = _read_point_captured(derived_pub, "derived")
+            original_point = _read_point_captured(pub_a, "original")
+            derived_params = _read_params_captured(derived_pub, "derived")
+            original_params = _read_params_captured(pub_a, "original")
+            if derived_point is not None and original_point is not None:
+                if derived_point.public_key.public_numbers() != (
+                    original_point.public_key.public_numbers()
+                ):
+                    deferred.append(
+                        C.record_as(
+                            "wrong_result",
+                            kind="crypto",
+                            label=label,
+                            operation="C_DeriveKey",
+                            mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+                            inherit_mechanism=False,
+                            summary=(
+                                f"{label}: derived public point does not equal "
+                                "the original public key"
+                            ),
+                            detail={
+                                "curve": "secp256r1",
+                                "derived_point_len": len(derived_point.provider_bytes),
+                                "original_point_len": len(original_point.provider_bytes),
+                            },
+                        )
+                    )
+
+            records = list(deferred)
+            legs: list[tuple[str, int, bytes, bytes]] = []
+            if derived_params is not None and original_params is not None:
+                legs.append(("params", CKA_EC_PARAMS, derived_params, original_params))
+            if derived_point is not None and original_point is not None:
+                legs.append(
+                    (
+                        "point",
+                        CKA_EC_POINT,
+                        derived_point.provider_bytes,
+                        original_point.provider_bytes,
+                    )
+                )
+            for attr_name, attr, derived_bytes, original_bytes in legs:
                 records.extend(
                     separate_search_records(
                         rs,

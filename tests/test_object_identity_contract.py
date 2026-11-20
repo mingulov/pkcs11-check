@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
+    CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
@@ -93,6 +94,8 @@ class _IdentityRaw:
         # refusal (None leaves the prefilled sentinel untouched), and a
         # per-operation object leaked before returning the refusal.
         self.override_handle_write: int | None = None
+        # R3F13 knob: explicit refusal RV for caller-UID templates.
+        self.override_refusal_rv: int | None = None
         self.override_leak_by_op: dict[str, str] = {}  # op -> labeled | unlabeled
         self.override_leak_write_created: bool = False
         # R2 knob: on an accepting override leg, return CKR_OK with this
@@ -106,6 +109,12 @@ class _IdentityRaw:
         self.derived_handles: list[int] = []
         self.unwrapped_handles: list[int] = []
         self.foreign_delta_handle: int | None = None
+        # R3F2 knobs: per-op successful-output handle overrides (sticky;
+        # the op returns CKR_OK with this handle and allocates nothing),
+        # keypair-half overrides, and baseline Find refusals.
+        self.ok_handle_by_op: dict[str, int] = {}
+        self.ok_keypair_handles: tuple[int, int] | None = None
+        self.find_script: list[int | None] = []
 
     def _fresh_uid(self) -> bytes:
         self._uid_counter += 1
@@ -135,6 +144,8 @@ class _IdentityRaw:
         """Return a refusal RV for a caller-UID template, or None to create."""
         if _UID not in attrs:
             return None
+        if self.override_refusal_rv is not None:
+            return self.override_refusal_rv
         if self.override_mode == "read_only":
             return _READ_ONLY
         if self.override_mode == "general":
@@ -222,6 +233,9 @@ class _IdentityRaw:
             return refusal
         if self._apply_override_ok_existing(attrs, handle_ptr):
             return _OK
+        if "create" in self.ok_handle_by_op:
+            _write_handle(handle_ptr, self.ok_handle_by_op["create"])
+            return _OK
         _write_handle(handle_ptr, self._alloc_with_override(attrs))
         return _OK
 
@@ -239,6 +253,9 @@ class _IdentityRaw:
             return refusal
         if self._apply_override_ok_existing(attrs, handle_ptr):
             return _OK
+        if "generate" in self.ok_handle_by_op:
+            _write_handle(handle_ptr, self.ok_handle_by_op["generate"])
+            return _OK
         _write_handle(handle_ptr, self._alloc_with_override(attrs))
         return _OK
 
@@ -253,6 +270,10 @@ class _IdentityRaw:
         pub_ptr: Any,
         priv_ptr: Any,
     ) -> int:
+        if self.ok_keypair_handles is not None:
+            _write_handle(pub_ptr, self.ok_keypair_handles[0])
+            _write_handle(priv_ptr, self.ok_keypair_handles[1])
+            return _OK
         pub = self._alloc(_decode_template(pub_tmpl, int(pub_count)))
         priv = self._alloc(_decode_template(priv_tmpl, int(priv_count)))
         _write_handle(pub_ptr, pub)
@@ -268,6 +289,9 @@ class _IdentityRaw:
         if refusal is not None:
             return refusal
         if self._apply_override_ok_existing(attrs, handle_ptr):
+            return _OK
+        if "copy" in self.ok_handle_by_op:
+            _write_handle(handle_ptr, self.ok_handle_by_op["copy"])
             return _OK
         source = dict(self.objects.get(int(handle), {}))
         source.update(attrs)
@@ -288,6 +312,9 @@ class _IdentityRaw:
             scripted = self.derive_script.pop(0)
             if scripted is not None:
                 return scripted
+        if "derive" in self.ok_handle_by_op:
+            _write_handle(handle_ptr, self.ok_handle_by_op["derive"])
+            return _OK
         attrs = _decode_template(tmpl, int(count))
         handle = self._alloc(attrs)
         self.derived_handles.append(handle)
@@ -323,6 +350,9 @@ class _IdentityRaw:
             scripted = self.unwrap_script.pop(0)
             if scripted is not None:
                 return scripted
+        if "unwrap" in self.ok_handle_by_op:
+            _write_handle(handle_ptr, self.ok_handle_by_op["unwrap"])
+            return _OK
         attrs = _decode_template(tmpl, int(count))
         handle = self._alloc(attrs)
         self.unwrapped_handles.append(handle)
@@ -336,6 +366,10 @@ class _IdentityRaw:
 
     # -- search -----------------------------------------------------------------
     def C_FindObjectsInit(self, _sh: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        if self.find_script:
+            scripted = self.find_script.pop(0)
+            if scripted is not None:
+                return scripted
         wanted = _decode_template(tmpl, int(count))
         label = wanted.get(int(CKA_LABEL))
         self._search = [
@@ -755,6 +789,50 @@ def test_unique_id_override_dead_nonzero_handle_xfails_honest_deviation() -> Non
     assert _DEAD_HANDLE not in fake.destroyed
 
 
+def test_unique_id_override_undefined_rv_with_dead_handle_fails() -> None:
+    """R3F13: an undefined refusal with a dead handle fails (never honest-xfails)."""
+    fake = _IdentityRaw()
+    fake.override_refusal_rv = 0x7FFFFFFF
+    fake.override_handle_write = _DEAD_HANDLE
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    rec = _record("self_contradiction", "C_CreateObject")
+    assert rec.kind == "metadata", rec.summary
+    assert "undefined" in (rec.summary or ""), rec.summary
+    assert _DEAD_HANDLE not in fake.destroyed
+
+
+def test_unique_id_override_undefined_rv_with_unproved_delta_fails() -> None:
+    """R3F13: an undefined refusal with an unproved delta fails (never honest-xfails)."""
+    fake = _IdentityRaw()
+    fake.override_refusal_rv = 0x7FFFFFFF
+    fake.override_handle_write = _DEAD_HANDLE
+    fake.override_foreign_delta_by_op["create"] = True
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    rec = _record("self_contradiction", "C_CreateObject")
+    assert rec.kind == "metadata", rec.summary
+    assert "undefined" in (rec.summary or ""), rec.summary
+
+
+def test_unique_id_override_accepted_without_target_names_missing_target() -> None:
+    """R3F13: an accepted override with no proved target names it (not unreadable)."""
+    fake = _IdentityRaw()
+    fake.override_mode = "ignore"
+    fake.ok_handle_by_op["create"] = 0
+    assert_xfails(
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create,
+        _rs(fake),
+    )
+    matches = [
+        rec
+        for rec in C.get_records()
+        if rec.outcome == "xfail" and "ignore unproved" in (rec.summary or "")
+    ]
+    assert len(matches) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert "no readback target was proved" in (matches[0].summary or ""), matches[0].summary
+
+
 def test_unique_id_override_refusal_labeled_leak_fails() -> None:
     fake = _IdentityRaw()
     fake.override_mode = "general"
@@ -888,3 +966,107 @@ def test_derive_staging_data_is_block_aligned() -> None:
     assert len(identity_case._QC7C_DERIVE_DATA) == 2
     assert all(len(block) == 16 for block in identity_case._QC7C_DERIVE_DATA)
     assert len(set(identity_case._QC7C_DERIVE_DATA)) == 2
+
+
+def test_created_staging_null_output_fails_without_destroy() -> None:
+    """R3F2: a null create output fails adoption; nothing is staged or destroyed."""
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["create"] = 0
+    with pytest.raises(Failed, match="null handle"):
+        identity_case.TestUniqueIdGeneration().test_created_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert fake.destroyed == [], fake.destroyed
+
+
+def test_created_staging_preexisting_output_fails_without_destroy() -> None:
+    """R3F2: a create output predating the baseline fails; the foreign object survives."""
+    fake = _IdentityRaw()
+    foreign = fake._alloc({int(CKA_LABEL): b"foreign"})
+    fake.ok_handle_by_op["create"] = foreign
+    with pytest.raises(Failed, match="pre-existing"):
+        identity_case.TestUniqueIdGeneration().test_created_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert foreign not in fake.destroyed, fake.destroyed
+    assert foreign in fake.objects, sorted(fake.objects)
+
+
+def test_generated_keypair_aliased_halves_fail() -> None:
+    """R3F2: keypair halves sharing one handle fail; the single object is cleaned once."""
+    fake = _IdentityRaw()
+    fake.ok_keypair_handles = (203, 203)
+    with pytest.raises(Failed, match="alias"):
+        identity_case.TestUniqueIdGeneration().test_generated_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert fake.destroyed == [201, 202, 203], fake.destroyed
+
+
+def test_cross_creator_copy_alias_fails_without_second_destroy() -> None:
+    """R3F2: a copy returning a staged handle fails; the staged object is cleaned once."""
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["copy"] = 201  # staged[0], the created data object
+    with pytest.raises(Failed, match="alias"):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert fake.destroyed.count(201) == 1, fake.destroyed
+
+
+def test_copy_own_id_alias_fails_with_source_cleaned_once() -> None:
+    """R3F2: a copy returning its source fails; the source cleanup runs exactly once."""
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["copy"] = 201  # the gen-AES source itself
+    with pytest.raises(Failed, match="alias"):
+        identity_case.TestUniqueIdGeneration().test_copy_gets_own_unique_id(_rs(fake))
+    assert fake.destroyed == [201], fake.destroyed
+
+
+def test_cross_creator_derived_alias_fails_without_second_destroy() -> None:
+    """R3F2: a derive returning a staged handle fails; staged cleanup stays single."""
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["derive"] = 201
+    with pytest.raises(Failed, match="alias"):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert fake.destroyed.count(201) == 1, fake.destroyed
+
+
+def test_cross_creator_unwrapped_alias_fails_without_second_destroy() -> None:
+    """R3F2: an unwrap returning a staged handle fails; staged cleanup stays single."""
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["unwrap"] = 201
+    with pytest.raises(Failed, match="alias"):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert fake.destroyed.count(201) == 1, fake.destroyed
+
+
+def test_kem_keypair_aliased_halves_fail() -> None:
+    """R3F2: ML-KEM halves sharing one handle fail; the single object is cleaned once."""
+    fake = _IdentityRaw()
+    fake.ok_keypair_handles = (201, 201)
+    with pytest.raises(Failed, match="alias"):
+        identity_case.TestUniqueIdGeneration().test_kem_outputs_have_unique_ids(_rs(fake))
+    assert fake.destroyed == [201], fake.destroyed
+
+
+def test_staging_refused_baseline_xfails_unproved() -> None:
+    """R3F2: a refused adoption baseline voids staging visibly; nothing is created."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.find_script = [int(CKR_DEVICE_ERROR)]
+    with pytest.raises(XFailed, match="unproved"):
+        identity_case.TestUniqueIdGeneration().test_created_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert fake.create_calls == [], fake.create_calls
+
+
+def test_staging_undefined_baseline_rv_fails() -> None:
+    """R3F2: an undefined baseline RV fails loud, never voids quietly."""
+    fake = _IdentityRaw()
+    fake.find_script = [0x7FFFFFFF]
+    with pytest.raises(Failed, match="undefined") as exc_info:
+        identity_case.TestUniqueIdGeneration().test_created_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert type(exc_info.value) is Failed, exc_info.value

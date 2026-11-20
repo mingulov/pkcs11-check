@@ -15,11 +15,13 @@ from typing import Any, NoReturn
 
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import fail_as, raise_for_record, record_as, xfail_as
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.recipes import (
     copy_object,
     decrypt_single,
     destroy_quietly,
     encrypt_single,
+    find_objects_exhaustive,
     read_attributes,
 )
 from pkcs11_check.raw.rv import (
@@ -560,6 +562,42 @@ def classify_ignored_or_mutated(
     )
 
 
+def _note_third_qualification(
+    third_outcome: tuple[str, int | None] | None, *, pair_rv: int, label: str, spec_ref: str
+) -> None:
+    """Annotate an identical-refusals pass with the third-value outcome (R3F3).
+
+    The pair property (correct and wrong treated identically) already
+    passed; the note records whether value handling was live
+    (selective: third accepted) or the module refuses uniformly.
+    """
+    if third_outcome is None:
+        return
+    status, third_rv = third_outcome
+    if status == "accepted":
+        note(
+            f"{label}: identical guess refusals are selective "
+            "(third value accepted; guesses treated identically despite live value handling)",
+            ComplianceLevel.STANDARD,
+            reference=spec_ref,
+        )
+    elif third_rv == pair_rv:
+        note(
+            f"{label}: identical guess refusals are uniform "
+            f"(third value refused with {ckr_name(pair_rv)}, like the guesses)",
+            ComplianceLevel.STANDARD,
+            reference=spec_ref,
+        )
+    else:
+        assert third_rv is not None
+        note(
+            f"{label}: identical guess refusals with a differently-refused third value "
+            f"(guesses {ckr_name(pair_rv)}, third {ckr_name(third_rv)})",
+            ComplianceLevel.STANDARD,
+            reference=spec_ref,
+        )
+
+
 def judge_guess_confirm(
     *,
     correct_exc: CkrAssertionError | None,
@@ -568,6 +606,8 @@ def judge_guess_confirm(
     wrong_use: GuessUseOutcome | None,
     created_on_refusal: tuple[bool | None, bool | None],
     inventory_rvs: tuple[int | None, int | None] = (None, None),
+    created_deltas: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
+    third_outcome: tuple[str, int | None] | None = None,
     expected_rvs: tuple[Any, ...],
     label: str,
     operation: str,
@@ -581,24 +621,32 @@ def judge_guess_confirm(
     a copy oracle and fails, as does a refused leg that still creates an
     object. ``created_on_refusal`` carries per-leg creation evidence:
     True proved creation, False proved none, None a refused inventory
-    (creation unproved, never assumed absent). Use outcomes ride per
+    (creation unproved, never assumed absent); ``created_deltas``
+    carries the retained delta handle sets naming that evidence.
+    ``third_outcome`` carries the post-legs third-value probe
+    (("accepted", None) or ("refused", rv)): its RV grades with the
+    validity tiers, and an identical-refusals pass is annotated
+    uniform (third refused) or selective (third accepted).
+    Use outcomes ride per
     accepted leg: a refused use voids the material comparison with its
     RV (never a mutation claim). Accepted legs inherit the sibling
     accepted-change tiers. Verdicts grade collect-first (R2B1):
     refusal RVs are recorded without terminating; proved creation
     fails; validity fails follow; then the pair verdicts (mixed
-    oracle, vendor alternates, differing codes, unproved
-    inventories, identical refusals, accepted legs). A vendor
-    alternate or a refused inventory never preempts a proved effect
-    or a proved asymmetry. The oracle failures cite no spec clause:
-    identical treatment of correct and wrong guesses is a pkcs11-check
-    consistency rule (#55.1), carried by the summary text.
+    oracle, accepted-pair mutation, vendor alternates, differing
+    codes, unproved inventories, identical refusals, accepted-pair
+    voids). A vendor alternate or a refused inventory never preempts
+    a proved effect or a proved asymmetry. The oracle failures cite
+    no spec clause: identical treatment of correct and wrong guesses
+    is a pkcs11-check consistency rule (#55.1), carried by the
+    summary text.
     """
     # R2B1 collect-first: record every leg's refusal RV without
     # terminating, grade the independently observed creation evidence
     # first, then validity fails, then the pair verdicts. A vendor
     # alternate or a refused inventory never preempts a proved effect
-    # or a proved asymmetry.
+    # or a proved asymmetry. (R3F3: retained inventory RVs grade in
+    # the same validity tiers.)
     retained: list[Any] = []
     for leg, exc in (("correct", correct_exc), ("wrong", wrong_exc)):
         if exc is not None:
@@ -607,6 +655,33 @@ def judge_guess_confirm(
             )
             if rec is not None:
                 retained.append(rec)
+    # R3F3: inventory RVs grade alongside the refusal RVs (same tiers)
+    # now that collection retains them instead of terminating: an
+    # undefined inventory fails with the validity tier, a vendor one
+    # xfails as the established alternate -- both after a proved leak
+    # and, for vendor, after a proved oracle asymmetry.
+    for leg, inv_rv in (("correct", inventory_rvs[0]), ("wrong", inventory_rvs[1])):
+        if inv_rv is not None:
+            rec = _record_rv_validity(
+                inv_rv,
+                label=f"{label}: {leg} creation inventory",
+                operation="C_FindObjects",
+                kind="policy",
+            )
+            if rec is not None:
+                retained.append(rec)
+    third_refused_rv = (
+        third_outcome[1] if third_outcome is not None and third_outcome[0] == "refused" else None
+    )
+    if third_refused_rv is not None:
+        rec = _record_rv_validity(
+            third_refused_rv,
+            label=f"{label}: third value",
+            operation=operation,
+            kind="policy",
+        )
+        if rec is not None:
+            retained.append(rec)
     legs = (
         ("correct", correct_exc, created_on_refusal[0]),
         ("wrong", wrong_exc, created_on_refusal[1]),
@@ -633,6 +708,10 @@ def judge_guess_confirm(
                 "label": label,
                 "created_legs": created_legs,
                 "refusal_rv": ckr_name(refusing.rv),
+                "created_handles": {
+                    "correct": sorted(created_deltas[0]),
+                    "wrong": sorted(created_deltas[1]),
+                },
             },
         )
     fail_retained = [rec for rec in retained if rec.outcome == "fail"]
@@ -660,7 +739,87 @@ def judge_guess_confirm(
             },
         )
     xfail_retained = [rec for rec in retained if rec.outcome != "fail"]
+    if correct_exc is None and wrong_exc is None:
+        # R3F3: the accepted pair grades BEFORE vendor alternates --
+        # a proved mutation must fail, never hide behind a retained
+        # vendor inventory/third xfail. (Refusal alternates are
+        # impossible here: both legs accepted.)
+        assert correct_use is not None and wrong_use is not None, "accepted legs need use evidence"
+        use_retained: list[Any] = []
+        for leg, use in (("correct", correct_use), ("wrong", wrong_use)):
+            if use.use_rv is not None:
+                rec = _record_rv_validity(
+                    use.use_rv,
+                    label=f"{label}: {leg} use",
+                    operation=use.operation,
+                    kind="policy",
+                )
+                if rec is not None:
+                    use_retained.append(rec)
+        if use_retained:
+            raise_for_record(_strongest_record(use_retained))
+        use_legs = (("correct", correct_use), ("wrong", wrong_use))
+        refused_uses = [(leg, use) for leg, use in use_legs if use.preserved is None]
+        if not refused_uses and not (correct_use.preserved and wrong_use.preserved):
+            # Proved forbidden effect beats every alternate.
+            classify_ignored_or_mutated(
+                mutated=True,
+                label=label,
+                operation=operation,
+                spec_ref=spec_ref,
+                ignored_summary="",
+                mutated_summary="an accepted guess mutated sealed material",
+                detail={
+                    "correct_preserved": correct_use.preserved,
+                    "wrong_preserved": wrong_use.preserved,
+                    "use_operation": correct_use.operation,
+                },
+            )
+        if xfail_retained:
+            # No mutation: the retained vendor alternate is the
+            # established result over voids and deviations.
+            raise_for_record(xfail_retained[0])
+        if refused_uses:
+            leg, use = refused_uses[0]
+            assert use.use_rv is not None
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=label,
+                operation=use.operation,
+                mechanism=use.mechanism,
+                inherit_mechanism=False,
+                actual=use.use_rv,
+                summary=(
+                    f"{label}: accepted {leg} guess use refused with "
+                    f"{ckr_name(use.use_rv)}; material comparison void"
+                ),
+                detail={
+                    "void_leg": leg,
+                    "use_rv": ckr_name(use.use_rv),
+                    "correct_preserved": correct_use.preserved,
+                    "wrong_preserved": wrong_use.preserved,
+                },
+            )
+        classify_ignored_or_mutated(
+            mutated=False,
+            label=label,
+            operation=operation,
+            spec_ref=spec_ref,
+            ignored_summary=(
+                f"both guesses accepted with sealed material preserved "
+                f"({correct_use.operation} output match; input ignored)"
+            ),
+            mutated_summary="",
+            detail={
+                "correct_preserved": correct_use.preserved,
+                "wrong_preserved": wrong_use.preserved,
+                "use_operation": correct_use.operation,
+            },
+        )
     if xfail_retained:
+        # Both-refused path (the accepted pair never falls through):
+        # a vendor alternate beats unproved voids and pair passes.
         raise_for_record(xfail_retained[0])
     unproved_legs = [name for name, exc, flag in legs if flag is None and exc is not None]
     if correct_exc is not None and wrong_exc is not None:
@@ -708,62 +867,10 @@ def judge_guess_confirm(
             correct_exc, expected_rvs, label=label, operation=operation
         )
         classify_forbidden_change_refusal(wrong_exc, expected_rvs, label=label, operation=operation)
-        return
-    if correct_exc is None and wrong_exc is None:
-        assert correct_use is not None and wrong_use is not None, "accepted legs need use evidence"
-        retained = []
-        for leg, use in (("correct", correct_use), ("wrong", wrong_use)):
-            if use.use_rv is not None:
-                rec = _record_rv_validity(
-                    use.use_rv,
-                    label=f"{label}: {leg} use",
-                    operation=use.operation,
-                    kind="policy",
-                )
-                if rec is not None:
-                    retained.append(rec)
-        if retained:
-            raise_for_record(_strongest_record(retained))
-        use_legs = (("correct", correct_use), ("wrong", wrong_use))
-        refused_uses = [(leg, use) for leg, use in use_legs if use.preserved is None]
-        if refused_uses:
-            leg, use = refused_uses[0]
-            assert use.use_rv is not None
-            xfail_as(
-                "not_operational",
-                kind="policy",
-                label=label,
-                operation=use.operation,
-                mechanism=use.mechanism,
-                inherit_mechanism=False,
-                actual=use.use_rv,
-                summary=(
-                    f"{label}: accepted {leg} guess use refused with "
-                    f"{ckr_name(use.use_rv)}; material comparison void"
-                ),
-                detail={
-                    "void_leg": leg,
-                    "use_rv": ckr_name(use.use_rv),
-                    "correct_preserved": correct_use.preserved,
-                    "wrong_preserved": wrong_use.preserved,
-                },
-            )
-        classify_ignored_or_mutated(
-            mutated=not (correct_use.preserved and wrong_use.preserved),
-            label=label,
-            operation=operation,
-            spec_ref=spec_ref,
-            ignored_summary=(
-                f"both guesses accepted with sealed material preserved "
-                f"({correct_use.operation} output match; input ignored)"
-            ),
-            mutated_summary="an accepted guess mutated sealed material",
-            detail={
-                "correct_preserved": correct_use.preserved,
-                "wrong_preserved": wrong_use.preserved,
-                "use_operation": correct_use.operation,
-            },
+        _note_third_qualification(
+            third_outcome, pair_rv=correct_exc.rv, label=label, spec_ref=spec_ref
         )
+        return
 
 
 #: One empty/restated compare leg: ("ok", value-or-None), ("refused", rv),
@@ -1018,6 +1125,21 @@ def judge_copy_compare(
         for leg, rv in (("empty", empty_readback), ("restated", restated_readback))
         if rv is not None
     )
+    # R3F13: a standard readback refusal gets its own
+    # C_GetAttributeValue record with the raw RV (vendor/undefined
+    # already recorded above); the joint terminal below still voids
+    # the comparison once.
+    for leg, readback_rv in (("empty", empty_readback), ("restated", restated_readback)):
+        if readback_rv is not None and is_standard_ckr(readback_rv):
+            record_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: {leg} readback",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=readback_rv,
+                summary=(f"{label}: {leg} copy value unreadable ({ckr_name(readback_rv)})"),
+            )
     xfail_as(
         "not_operational",
         kind="policy",
@@ -1042,25 +1164,77 @@ def judge_copy_compare(
     )
 
 
+def _void_copy_leg_on_inventory_refusal(
+    exc: CkrAssertionError, *, label: str, leg: str
+) -> NoReturn:
+    """Void a compare leg whose adoption baseline was refused (R3F2).
+
+    Without a baseline no successful copy can be adopted (its novelty
+    is unproved): the leg voids visibly as honest-deviation
+    unproved-effect (mirroring the guess-confirm judge), never by
+    skipping the copy attempt quietly. An undefined inventory RV fails
+    the metadata contract loud.
+    """
+    rv = exc.rv
+    if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{label}: {leg}",
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            actual=rv,
+            summary=(f"{label}: {leg} baseline inventory returned undefined CK_RV {ckr_name(rv)}"),
+        )
+    xfail_as(
+        "honest_deviation",
+        kind="policy",
+        label=f"{label}: {leg}",
+        operation="C_FindObjects",
+        inherit_mechanism=False,
+        actual=rv,
+        summary=(f"{label}: {leg} baseline inventory refused ({ckr_name(rv)}); adoption unproved"),
+        detail={
+            "disposition": "unproved-effect",
+            "leg": leg,
+            "inventory_rv": ckr_name(rv),
+        },
+    )
+
+
 def run_copy_compare_leg(
     rs: Any, source: int, template: Mapping[Any, Any], *, label: str, leg: str
 ) -> CopyCompareOutcome:
     """Run one empty/restated compare leg; refusal RVs ride unjudged.
 
-    Accepted copies are read back (value bytes or None when unreadable)
-    and destroyed; refusals return their raw RV for the judge. Readback
-    refusals ride as ("readback-refused", rv) so the judge collects
-    BOTH legs' RVs before any termination -- the sibling leg always
-    runs, and validity defects compete by strength, not by leg order.
+    A per-leg baseline inventory precedes the copy (R3F2): only a
+    nonzero handle that is neither the source nor already live is
+    adopted for readback and cleanup. Accepted copies are read back
+    (value bytes or None when unreadable) and destroyed; refusals
+    return their raw RV for the judge. Readback refusals ride as
+    ("readback-refused", rv) so the judge collects BOTH legs' RVs
+    before any termination -- the sibling leg always runs, and
+    validity defects compete by strength, not by leg order.
     """
+    try:
+        before = find_objects_exhaustive(rs.raw, rs.sh)
+    except CkrAssertionError as exc:
+        _void_copy_leg_on_inventory_refusal(exc, label=label, leg=leg)
     try:
         copy = copy_object(rs.raw, rs.sh, source, template)
     except CkrAssertionError as exc:
         return ("refused", exc.rv)
-    if not copy or copy == source:
-        # A1: a copy handle aliasing the source (or null) is a proved
-        # provider contradiction; fail WITHOUT destroying, or cleanup
-        # would delete the source mid-test and poison the sibling leg.
+    if not copy or copy == source or copy in set(before):
+        # A1 (R3F2): a copy handle that is null, aliases the source,
+        # or predates the attempt is a proved provider contradiction;
+        # fail WITHOUT destroying, or cleanup would delete the source
+        # (or a foreign object) mid-test and poison the sibling leg.
+        if not copy:
+            cause = "a null handle"
+        elif copy == source:
+            cause = "the source handle"
+        else:
+            cause = "a pre-existing handle"
         fail_as(
             "self_contradiction",
             kind="policy",
@@ -1068,11 +1242,7 @@ def run_copy_compare_leg(
             operation="C_CopyObject",
             inherit_mechanism=False,
             actual=int(CKR_OK),
-            summary=(
-                f"{label}: {leg} copy returned "
-                f"{'a null handle' if not copy else 'the source handle'} "
-                f"({copy}); refusing to destroy it"
-            ),
+            summary=(f"{label}: {leg} copy returned {cause} ({copy}); refusing to destroy it"),
             detail={"source": source, "copy": copy},
         )
     try:

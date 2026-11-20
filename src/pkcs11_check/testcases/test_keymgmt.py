@@ -95,6 +95,7 @@ from pkcs11_check.testcases._copy_mutability import (
     PROBE_ORIGINAL_VALUE,
     PROBE_PLAINTEXT,
     GuessUseOutcome,
+    _record_rv_validity,
     check_ecb_baseline_or_fail,
     check_material_preserved,
     classify_forbidden_change_refusal,
@@ -764,17 +765,17 @@ def _check_copy_identity_override(
             premise=False,
             spec_ref=_QC3A_IDENTITY_CITATION,
         )
+    use_validity: Any = None
     try:
         observed_ct: bytes | None = encrypt_single(
             rs.raw, rs.sh, copy, CKM_AES_ECB, PROBE_PLAINTEXT
         )
     except CkrAssertionError as exc:
-        classify_rv_validity_or_none(
-            exc.rv,
-            label=label,
-            operation="C_Encrypt",
-            mechanism="CKM_AES_ECB",
-            kind="policy",
+        # R3F7: the use RV grades alongside the identity, never before
+        # it: record its validity without terminating so a vendor use
+        # refusal cannot mask a proved applied override below.
+        use_validity = _record_rv_validity(
+            exc.rv, label=label, operation="C_Encrypt", kind="policy"
         )
         use_rv: str | None = ckr_name(exc.rv)
         observed_ct = None
@@ -793,20 +794,10 @@ def _check_copy_identity_override(
         "use_matches_baseline": use_matches,
         "use_rv": use_rv,
     }
-    if missing:
-        xfail_as(
-            "honest_deviation",
-            kind="policy",
-            label=label,
-            operation="C_CopyObject",
-            inherit_mechanism=False,
-            actual=int(CKR_OK),
-            spec_ref=_QC3A_IDENTITY_CITATION,
-            summary=(
-                f"{label}: accepted but the copy identity is unreadable; override effect unproved"
-            ),
-            detail={"disposition": "unproved-effect", **evidence},
-        )
+    if use_validity is not None and use_validity.outcome == "fail":
+        # An undefined use RV is a metadata violation on any identity:
+        # it fails before the identity tiers read the evidence.
+        C.raise_for_record(use_validity)
     if shows_override:
         classify_ignored_or_mutated(
             mutated=True,
@@ -820,6 +811,26 @@ def _check_copy_identity_override(
                 f"use_rv={use_rv})"
             ),
             detail={"disposition": "forbidden-mutation", **evidence},
+        )
+    if use_validity is not None:
+        # R3F7 strongest-after-grading: no identity tier claimed the
+        # verdict, so a retained vendor use refusal is the established
+        # result (it beats the unproved-effect tiers below, but never
+        # the proved applied override above).
+        C.raise_for_record(use_validity)
+    if missing:
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation="C_CopyObject",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=_QC3A_IDENTITY_CITATION,
+            summary=(
+                f"{label}: accepted but the copy identity is unreadable; override effect unproved"
+            ),
+            detail={"disposition": "unproved-effect", **evidence},
         )
     if unchanged and use_matches is True:
         classify_ignored_or_mutated(
@@ -859,21 +870,16 @@ def _inventory_object_set(rs: Any, *, label: str) -> tuple[set[int] | None, int 
     """Exhaustive all-object inventory; (None, rv) when the module refuses it.
 
     Unfiltered: a refused copy creating a token object must not hide
-    behind a session-only filter. A refused inventory classifies
-    validity-first (undefined fails, vendor xfails) and otherwise
-    yields None: creation is unproved, never assumed absent. The
-    refusal RV rides along for the judge's unproved record.
+    behind a session-only filter. A refusal NEVER terminates here
+    (R3F3): the RV rides along for the judge, which grades inventory
+    validity after both legs run -- a first-leg vendor alternate must
+    not mask the sibling's evidence. Creation is unproved on refusal,
+    never assumed absent.
     """
     try:
         handles = find_objects_exhaustive(rs.raw, rs.sh, template_from_dict({}))
         return {int(handle) for handle in handles}, None
     except CkrAssertionError as exc:
-        classify_rv_validity_or_none(
-            exc.rv,
-            label=f"{label}: creation inventory",
-            operation="C_FindObjects",
-            kind="policy",
-        )
         return None, exc.rv
 
 
@@ -1181,21 +1187,24 @@ def _run_guess_legs(
     GuessUseOutcome | None,
     tuple[bool | None, bool | None],
     tuple[int | None, int | None],
+    tuple[frozenset[int], frozenset[int]],
 ]:
     """Run the correct/wrong guess legs for #55.1.
 
     Returns ``(correct_exc, wrong_exc, correct_use, wrong_use, created,
-    inventory_rvs)`` where an ``exc`` of None means the leg accepted
+    inventory_rvs, deltas)`` where an ``exc`` of None means the leg accepted
     (with ``use`` carrying the material-use evidence, None for refused
     legs); ``created`` carries per-leg creation evidence (True proved
-    creation, False proved none, None a refused inventory) and
+    creation, False proved none, None a refused inventory),
     ``inventory_rvs`` the inventory refusal RV per leg (None when the
-    inventory succeeded).
+    inventory succeeded), and ``deltas`` the retained after-minus-before
+    handle set per leg (empty when none or unproved).
     """
     excs: list[CkrAssertionError | None] = []
     uses: list[GuessUseOutcome | None] = []
     created: list[bool | None] = []
     inventory_rvs: list[int | None] = []
+    deltas: list[frozenset[int]] = []
     for guess in guesses:
         before, before_rv = _inventory_object_set(rs, label=label)
         try:
@@ -1206,20 +1215,36 @@ def _run_guess_legs(
             if before is None:
                 created.append(None)
                 inventory_rvs.append(before_rv)
+                deltas.append(frozenset())
                 continue
             after, after_rv = _inventory_object_set(rs, label=label)
             if after is None:
                 created.append(None)
                 inventory_rvs.append(after_rv)
+                deltas.append(frozenset())
             else:
-                created.append(bool(set(after) - set(before)))
+                # R3F3: the delta SET is retained (not just its
+                # emptiness) so the creation terminal names its
+                # evidence; a nonempty delta across complete
+                # inventories proves creation (single session: nothing
+                # else runs between them).
+                delta = frozenset(set(after) - set(before))
+                created.append(bool(delta))
                 inventory_rvs.append(None)
+                deltas.append(delta)
             continue
         excs.append(None)
-        if not copy or copy == original:
-            # A1: an accepted copy aliasing the source is a proved
+        if not copy or copy == original or (before is not None and copy in before):
+            # A1 (R3F2): an accepted copy that is null, aliases the
+            # source, or predates the attempt inventory is a proved
             # contradiction; fail WITHOUT destroying, or cleanup would
-            # delete the sealed source mid-test.
+            # delete the sealed source (or a foreign object) mid-test.
+            if not copy:
+                cause = "a null handle"
+            elif copy == original:
+                cause = "the source handle"
+            else:
+                cause = "a pre-existing handle"
             fail_as(
                 "self_contradiction",
                 kind="policy",
@@ -1228,7 +1253,7 @@ def _run_guess_legs(
                 inherit_mechanism=False,
                 actual=int(CKR_OK),
                 summary=(
-                    f"{label}: accepted guess copy returned the source handle "
+                    f"{label}: accepted guess copy returned {cause} "
                     f"({copy}); refusing to destroy it"
                 ),
                 detail={"source": original, "copy": copy},
@@ -1239,11 +1264,13 @@ def _run_guess_legs(
             destroy_quietly(rs.raw, rs.sh, copy)
         created.append(False)
         inventory_rvs.append(None)
+        deltas.append(frozenset())
     correct_exc, wrong_exc = excs
     correct_use, wrong_use = uses
     created_pair = (created[0], created[1])
     inventory_pair = (inventory_rvs[0], inventory_rvs[1])
-    return correct_exc, wrong_exc, correct_use, wrong_use, created_pair, inventory_pair
+    deltas_pair = (deltas[0], deltas[1])
+    return correct_exc, wrong_exc, correct_use, wrong_use, created_pair, inventory_pair, deltas_pair
 
 
 def _copy_unchanged_control_or_skip(
@@ -1260,6 +1287,7 @@ def _copy_unchanged_control_or_skip(
     pass vacuously, so an empty-template duplicate (which must succeed)
     plus a use check gates them.
     """
+    before, _before_rv = _inventory_object_set(rs, label=label)
     try:
         control = copy_object(rs.raw, rs.sh, original, {})
     except CkrAssertionError as exc:
@@ -1272,9 +1300,16 @@ def _copy_unchanged_control_or_skip(
         pytest.skip(
             f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); verdict would be vacuous"
         )
-    if not control or control == original:
-        # R2B1: the ownership guard covers the control too; an aliased
-        # control duplicate fails WITHOUT destroying the source.
+    if not control or control == original or (before is not None and control in before):
+        # R2B1/R3F3: the ownership guard covers the control too; a
+        # null, aliased, or pre-existing control duplicate fails
+        # WITHOUT destroying the source (or a foreign object).
+        if not control:
+            cause = "a null handle"
+        elif control == original:
+            cause = "the source handle"
+        else:
+            cause = "a pre-existing handle"
         fail_as(
             "self_contradiction",
             kind="policy",
@@ -1283,8 +1318,7 @@ def _copy_unchanged_control_or_skip(
             inherit_mechanism=False,
             actual=int(CKR_OK),
             summary=(
-                f"{label}: unchanged control copy returned "
-                f"{'a null handle' if not control else 'the source handle'} "
+                f"{label}: unchanged control copy returned {cause} "
                 f"({control}); refusing to destroy it"
             ),
             detail={"source": original, "copy": control},
@@ -1303,30 +1337,31 @@ def _copy_unchanged_control_or_skip(
         destroy_quietly(rs.raw, rs.sh, control)
 
 
-def _copy_value_control_or_skip(
+def _probe_third_value(
     rs: Any, original: int, attr: int, value: bytes, *, label: str
-) -> None:
-    """Prove a value-carrying copy is processed; skip the guess legs otherwise.
+) -> tuple[str, int | None]:
+    """Run the post-legs third-value probe; never skips (R3F3).
 
-    A module that refuses every VALUE override would let identical
-    guess refusals pass without ever consulting a guess; the empty
-    control cannot catch that. Acceptance (then destroy) proves the
-    guess templates reach value handling.
+    The probe runs AFTER both guess legs: a refused third value must
+    not void the pair (a value-sensitive oracle refuses it too -- the
+    old pre-leg control skipped exactly the oracle under test).
+    Returns ("accepted", None) or ("refused", rv) for the judge, which
+    qualifies an identical-refusals pair as uniform (third refused)
+    or selective (third accepted). A null, aliased, or pre-existing
+    output fails WITHOUT destroying.
     """
+    before, _before_rv = _inventory_object_set(rs, label=label)
     try:
         control = copy_object(rs.raw, rs.sh, original, {attr: value})
     except CkrAssertionError as exc:
-        classify_rv_validity_or_none(
-            exc.rv,
-            label=f"{label}: value control",
-            operation="C_CopyObject",
-            kind="policy",
-        )
-        pytest.skip(
-            f"{label}: value-carrying copy refused ({ckr_name(exc.rv)}); "
-            "guesses never consulted, verdict would be vacuous"
-        )
-    if not control or control == original:
+        return ("refused", exc.rv)
+    if not control or control == original or (before is not None and control in before):
+        if not control:
+            cause = "a null handle"
+        elif control == original:
+            cause = "the source handle"
+        else:
+            cause = "a pre-existing handle"
         fail_as(
             "self_contradiction",
             kind="policy",
@@ -1335,13 +1370,12 @@ def _copy_value_control_or_skip(
             inherit_mechanism=False,
             actual=int(CKR_OK),
             summary=(
-                f"{label}: value control copy returned "
-                f"{'a null handle' if not control else 'the source handle'} "
-                f"({control}); refusing to destroy it"
+                f"{label}: third-value copy returned {cause} ({control}); refusing to destroy it"
             ),
             detail={"source": original, "copy": control},
         )
     destroy_quietly(rs.raw, rs.sh, control)
+    return ("accepted", None)
 
 
 def _rsa_sign_baseline_or_xfail(
@@ -1454,9 +1488,6 @@ class TestCopyForbiddenMutation:
             _sealed_value_unreadable_or_skip(rs, original, label=label)
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
             _copy_unchanged_control_or_skip(rs, original, baseline_ct, label=label)
-            _copy_value_control_or_skip(
-                rs, original, CKA_VALUE, bytes(range(0x40, 0x50)), label=label
-            )
             out = _run_guess_legs(
                 rs,
                 original,
@@ -1466,7 +1497,20 @@ class TestCopyForbiddenMutation:
                 _copy_preserves_aes_material,
                 label=label,
             )
-            correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = out
+            (
+                correct_exc,
+                wrong_exc,
+                correct_use,
+                wrong_use,
+                created,
+                inventory_rvs,
+                deltas,
+            ) = out
+            # R3F3: the third value probes AFTER the legs (a refused
+            # third must not void the pair -- oracles refuse it too).
+            third = _probe_third_value(
+                rs, original, CKA_VALUE, bytes(range(0x40, 0x50)), label=label
+            )
             judge_guess_confirm(
                 correct_exc=correct_exc,
                 wrong_exc=wrong_exc,
@@ -1474,6 +1518,8 @@ class TestCopyForbiddenMutation:
                 wrong_use=wrong_use,
                 created_on_refusal=created,
                 inventory_rvs=inventory_rvs,
+                created_deltas=deltas,
+                third_outcome=third,
                 expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
                 label=label,
                 operation="C_CopyObject",
@@ -1510,13 +1556,6 @@ class TestCopyForbiddenMutation:
             correct = components["d"]
             # XOR flips the low bit, so wrong != correct by construction.
             wrong = bytes([correct[0] ^ 0x01]) + correct[1:]
-            _copy_value_control_or_skip(
-                rs,
-                sealed,
-                CKA_PRIVATE_EXPONENT,
-                bytes([correct[0] ^ 0x02]) + correct[1:],
-                label=label,
-            )
             out = _run_guess_legs(
                 rs,
                 sealed,
@@ -1526,7 +1565,24 @@ class TestCopyForbiddenMutation:
                 _copy_preserves_rsa_material,
                 label=label,
             )
-            correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = out
+            (
+                correct_exc,
+                wrong_exc,
+                correct_use,
+                wrong_use,
+                created,
+                inventory_rvs,
+                deltas,
+            ) = out
+            # R3F3: the third value probes AFTER the legs (a refused
+            # third must not void the pair -- oracles refuse it too).
+            third = _probe_third_value(
+                rs,
+                sealed,
+                CKA_PRIVATE_EXPONENT,
+                bytes([correct[0] ^ 0x02]) + correct[1:],
+                label=label,
+            )
             judge_guess_confirm(
                 correct_exc=correct_exc,
                 wrong_exc=wrong_exc,
@@ -1534,6 +1590,8 @@ class TestCopyForbiddenMutation:
                 wrong_use=wrong_use,
                 created_on_refusal=created,
                 inventory_rvs=inventory_rvs,
+                created_deltas=deltas,
+                third_outcome=third,
                 expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
                 label=label,
                 operation="C_CopyObject",

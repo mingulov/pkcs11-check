@@ -103,7 +103,7 @@ def test_accept_refused_readback_attributes_getattr() -> None:
     assert record.actual_ckr == "CKR_DEVICE_ERROR", record.summary
 
 
-def _refused(rs: Any) -> None:
+def _refused(rs: Any, *, refusal_rv: int = int(CKR_ATTRIBUTE_READ_ONLY)) -> None:
     sec._verify_exponent_unchanged_after_refusal(
         rs,
         100,
@@ -111,7 +111,7 @@ def _refused(rs: Any) -> None:
         spec_ref=SPEC,
         label=LABEL,
         operation="C_SetAttributeValue",
-        refusal_rv=int(CKR_ATTRIBUTE_READ_ONLY),
+        refusal_rv=refusal_rv,
     )
 
 
@@ -134,6 +134,58 @@ def test_refusal_unreadable_voids_no_change() -> None:
     (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
     assert record.operation == "C_GetAttributeValue", record.operation
+    # R3F7: the terminal carries the read's own RV, not the producer's.
+    assert record.actual_ckr == "CKR_DEVICE_ERROR", record.summary
+
+
+def test_r3f7_undefined_producer_beats_unreadable_void() -> None:
+    """R3F7: an undefined producer RV fails even when the post-read voids."""
+    with pytest.raises(Failed):
+        _refused(
+            _rs(None, read_rv=int(CKR_DEVICE_ERROR)),
+            refusal_rv=0xDEAD,
+        )
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "fail"]
+    assert record.reason == "self_contradiction", record.summary
+    assert record.kind == "metadata", record.summary
+
+
+def test_r3f7_vendor_producer_journaled_beside_void() -> None:
+    """R3F7: a vendor producer RV is retained while the void surfaces."""
+    with pytest.raises(XFailed):
+        _refused(
+            _rs(None, read_rv=int(CKR_DEVICE_ERROR)),
+            refusal_rv=0x80000001,
+        )
+    xfails = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert [(rec.reason) for rec in xfails] == ["nonspec_reject", "honest_deviation"], [
+        (rec.reason, rec.summary) for rec in xfails
+    ]
+
+
+def test_r3f7_missing_readback_names_producer_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3F7: the absent-attribute void carries the producer operation + RV."""
+    monkeypatch.setattr(sec, "read_attributes", lambda *_a, **_k: {})
+    with pytest.raises(XFailed):
+        sec._verify_exponent_unchanged_after_refusal(
+            SimpleNamespace(raw=object(), sh=7),
+            100,
+            ORIGINAL,
+            spec_ref=SPEC,
+            label=LABEL,
+            operation="C_SetAttributeValue",
+            refusal_rv=int(CKR_ATTRIBUTE_READ_ONLY),
+        )
+    voids = [
+        rec
+        for rec in classification.get_records()
+        if rec.outcome == "xfail" and "no-change unproved" in (rec.summary or "")
+    ]
+    assert len(voids) == 1, [(rec.reason, rec.summary) for rec in voids]
+    assert voids[0].operation == "C_SetAttributeValue", voids[0].operation
+    assert voids[0].actual_ckr == "CKR_ATTRIBUTE_READ_ONLY", voids[0].summary
 
 
 def test_r2b3_empty_original_rejected() -> None:

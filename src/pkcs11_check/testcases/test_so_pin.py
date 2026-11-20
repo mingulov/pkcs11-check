@@ -854,8 +854,10 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bo
     (skip). With fails_only, only FAIL grades raise (prescan).
     """
     label = "QC11c concurrent PIN"
+    # Observed evidence grades BEFORE completeness (R2C5c/R3F6): a
+    # truncated tail (e.g. final_open refused) must never mask a
+    # proved double write or login contradiction with an assertion.
     thread_rvs = {step.name: step.rv for step in trace.steps if step.name.startswith("thread:")}
-    assert thread_rvs, f"{label}: probe contract broken (no thread steps)"
     for name, rv in sorted(thread_rvs.items()):
         if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
             fail_as(
@@ -878,22 +880,27 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bo
         for name, rv in thread_rvs.items()
         if name.endswith(":setpin") and name.count(":") == 2
     }
-    assert login_idx, f"{label}: probe contract broken (no thread logins)"
-    assert set(setpin) == login_idx, (
-        f"{label}: probe contract broken (setpin/login mismatch "
-        f"{sorted(setpin)} vs {sorted(login_idx)})"
-    )
     final = {
         name.rpartition(":")[2]: rv
         for name, rv in (
             (step.name, step.rv) for step in trace.steps if step.name.startswith("final:login:")
         )
     }
-    expected_final = {"P0"} | {f"P{int(i) + 1}" for i in login_idx}
-    assert set(final) == expected_final, (
-        f"{label}: probe contract broken (final coverage {sorted(final)} "
-        f"vs {sorted(expected_final)})"
-    )
+    if not fails_only:
+        # Completeness belongs to the final oracle only: post-gate
+        # traces promise it (the prescan grades observed evidence on
+        # possibly truncated traces and never asserts it).
+        assert thread_rvs, f"{label}: probe contract broken (no thread steps)"
+        assert login_idx, f"{label}: probe contract broken (no thread logins)"
+        assert set(setpin) == login_idx, (
+            f"{label}: probe contract broken (setpin/login mismatch "
+            f"{sorted(setpin)} vs {sorted(login_idx)})"
+        )
+        expected_final = {"P0"} | {f"P{int(i) + 1}" for i in login_idx}
+        assert set(final) == expected_final, (
+            f"{label}: probe contract broken (final coverage {sorted(final)} "
+            f"vs {sorted(expected_final)})"
+        )
     for tag, rv in sorted(final.items()):
         if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
             fail_as(

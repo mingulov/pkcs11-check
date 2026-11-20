@@ -17,7 +17,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import (
+    classify,
+    fail_as,
+    raise_for_record,
+    record_as,
+    xfail_as,
+)
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -95,6 +101,7 @@ from pkcs11_check.testcases._copy_mutability import (
     SEALED_WRAP_REFUSE_RV,
     SET_FORBIDDEN_REFUSE_RVS,
     TABLE_PROBES,
+    _record_rv_validity,
     aes_ecb_encrypt,
     check_cbc_oracle_or_fail,
     check_ecb_baseline_or_fail,
@@ -2970,6 +2977,12 @@ def _verify_exponent_unchanged_after_refusal(
     is unproved).
     """
     assert original_d, "exponent comparisons need a nonempty original"
+    # R3F7: the producer refusal grades alongside the post-read, never
+    # after it: record its validity without terminating so an undefined
+    # producer RV still fails when the post-read voids.
+    producer_retained = _record_rv_validity(
+        refusal_rv, label=label, operation=operation, kind="policy"
+    )
     try:
         read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
     except CkrAssertionError as exc:
@@ -2979,13 +2992,13 @@ def _verify_exponent_unchanged_after_refusal(
             operation="C_GetAttributeValue",
             kind="policy",
         )
-        xfail_as(
+        void = record_as(
             "honest_deviation",
             kind="policy",
             label=f"{label}: post-refusal readback",
             operation="C_GetAttributeValue",
             inherit_mechanism=False,
-            actual=refusal_rv,
+            actual=exc.rv,
             spec_ref=spec_ref,
             summary=(
                 f"{label}: {operation} refused with {ckr_name(refusal_rv)} but the "
@@ -2998,6 +3011,9 @@ def _verify_exponent_unchanged_after_refusal(
                 "readback_rv": ckr_name(exc.rv),
             },
         )
+        if producer_retained is not None and producer_retained.outcome == "fail":
+            raise_for_record(producer_retained)
+        raise_for_record(void)
     current = attr_or_record(
         read,
         CKA_PRIVATE_EXPONENT,
@@ -3008,11 +3024,11 @@ def _verify_exponent_unchanged_after_refusal(
         sensitive_is_conformant=True,
     )
     if current is MISSING_ATTRIBUTE or not isinstance(current, bytes) or not current:
-        xfail_as(
+        void = record_as(
             "honest_deviation",
             kind="policy",
             label=f"{label}: post-refusal readback",
-            operation="C_GetAttributeValue",
+            operation=operation,
             inherit_mechanism=False,
             actual=refusal_rv,
             spec_ref=spec_ref,
@@ -3022,6 +3038,9 @@ def _verify_exponent_unchanged_after_refusal(
             ),
             detail={"disposition": "unproved-effect", "refusal_rv": ckr_name(refusal_rv)},
         )
+        if producer_retained is not None and producer_retained.outcome == "fail":
+            raise_for_record(producer_retained)
+        raise_for_record(void)
     if int.from_bytes(current, "big") != int.from_bytes(original_d, "big"):
         fail_as(
             "self_contradiction",

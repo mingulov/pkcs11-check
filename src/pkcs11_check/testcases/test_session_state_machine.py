@@ -48,7 +48,13 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     to_ubyte_buf,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -1020,21 +1026,58 @@ def _judge_cross_token_trace(trace: Any) -> None:
     # fails, and CKR_OK with changed bytes fails (the USE line carries
     # length + hash for independent verification).
     if by_name["control_use"] != int(CKR_OK):
-        candidates.append(
-            record_as(
-                "self_contradiction",
-                kind="lifecycle",
-                label=label,
-                operation="C_GetAttributeValue",
-                mechanism=None,
-                inherit_mechanism=False,
-                actual=by_name["control_use"],
-                summary=(
-                    f"{label}: control witness unusable without relogin "
-                    f"({ckr_name(by_name['control_use'])})"
-                ),
+        curv = by_name["control_use"]
+        # R3F11: validity grades first -- an undefined RV fails the
+        # metadata contract, a vendor RV xfails as the alternate, and
+        # only a defined standard refusal keeps the lifecycle fail
+        # (the pre-logout byte-exact readability premise isolates the
+        # logout as the cause).
+        if not is_standard_ckr(curv) and not is_vendor_defined_ckr(curv):
+            candidates.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=curv,
+                    summary=(
+                        f"{label}: control witness use returned undefined CK_RV {ckr_name(curv)}"
+                    ),
+                )
             )
-        )
+        elif is_vendor_defined_ckr(curv):
+            candidates.append(
+                record_as(
+                    "nonspec_reject",
+                    kind="lifecycle",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=curv,
+                    summary=(
+                        f"{label}: control witness use refused with vendor-defined "
+                        f"{ckr_name(curv)} (alternate refusal; standard outcome unproved)"
+                    ),
+                )
+            )
+        else:
+            candidates.append(
+                record_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=curv,
+                    summary=(
+                        f"{label}: control witness unusable without relogin ({ckr_name(curv)})"
+                    ),
+                )
+            )
     else:
         expected_len, expected_hash = token_admin.qc9b_witness_digest()
         controls = [use for use in trace.use_checks if use.name == "control"]
@@ -1130,6 +1173,21 @@ def _judge_cross_token_trace(trace: Any) -> None:
     if xfails:
         raise_for_record(xfails[0])
     if refused:
+        # R3F11: an undefined find RV fails the metadata contract --
+        # only defined refusals (standard or vendor) void into the skip.
+        for leg in refused:
+            rv = by_name[leg]
+            if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_FindObjects",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=rv,
+                    summary=(f"{label}: {leg} refused with undefined CK_RV {ckr_name(rv)}"),
+                )
         unobservable = "; ".join(f"{leg} ({ckr_name(by_name[leg])})" for leg in refused)
         pytest.skip(
             f"{label}: post-logout finds unobservable ({unobservable}); find-count leg untestable"

@@ -245,7 +245,7 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(km, "copy_object", _capture)
     monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
     rs = SimpleNamespace(raw=object(), sh=1)
-    correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = km._run_guess_legs(
+    out = km._run_guess_legs(
         rs,
         100,
         CKA_VALUE,
@@ -254,6 +254,7 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
         lambda *a: _use(True),
         label="t",
     )
+    correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs, deltas = out
     assert seen == [{CKA_VALUE: b"correct-guess"}, {CKA_VALUE: b"wrong-guess"}]
     assert correct_exc is not None and wrong_exc is not None
     assert (correct_use, wrong_use, created, inventory_rvs) == (
@@ -262,6 +263,27 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
         (False, False),
         (None, None),
     )
+    assert deltas == (frozenset(), frozenset()), deltas
+
+
+def test_accepted_guess_copy_predating_inventory_fails_without_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3F2: an accepted guess copy returning a baseline handle fails; no destroy."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 9)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="pre-existing"):
+        km._run_guess_legs(
+            rs, 100, CKA_VALUE, (b"c", b"w"), b"base", lambda *a: _use(True), label="t"
+        )
+    assert destroyed == [], destroyed
 
 
 def test_inventory_object_set_unfiltered(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -296,7 +318,7 @@ def test_guess_legs_token_object_delta_proves_creation(monkeypatch: pytest.Monke
     monkeypatch.setattr(km, "find_objects_exhaustive", _find)
     monkeypatch.setattr(km, "copy_object", _refuse)
     rs = SimpleNamespace(raw=object(), sh=1)
-    _cx, _wx, _cu, _wu, created, _rvs = km._run_guess_legs(
+    _cx, _wx, _cu, _wu, created, _rvs, deltas = km._run_guess_legs(
         rs,
         100,
         CKA_VALUE,
@@ -306,6 +328,448 @@ def test_guess_legs_token_object_delta_proves_creation(monkeypatch: pytest.Monke
         label="t",
     )
     assert created == (True, False), created
+    assert deltas == (frozenset({200}), frozenset()), deltas
+
+
+def test_inventory_object_set_retains_refusal_rv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: a refused inventory returns (None, rv); validity grades in the judge."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    def _refuse(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        raise CkrAssertionError("inventory refused", 0x80000001)
+
+    monkeypatch.setattr(km, "find_objects_exhaustive", _refuse)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    assert km._inventory_object_set(rs, label="t") == (None, 0x80000001)
+
+
+def test_vendor_inventory_does_not_mask_sibling_leg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: a first-leg vendor inventory RV rides along; the sibling still runs."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    attempts: list[dict[Any, Any]] = []
+    finds: list[Any] = [CkrAssertionError("inventory refused", 0x80000001), [9], [9]]
+
+    def _find(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        item = finds.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return list(item)
+
+    def _refuse(_raw: Any, _sh: int, _handle: int, attrs: Any) -> int:
+        attempts.append(dict(attrs))
+        raise CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)
+
+    monkeypatch.setattr(km, "find_objects_exhaustive", _find)
+    monkeypatch.setattr(km, "copy_object", _refuse)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    out = km._run_guess_legs(
+        rs, 100, CKA_VALUE, (b"c", b"w"), b"base", lambda *a: _use(True), label="t"
+    )
+    _cx, _wx, _cu, _wu, created, inventory_rvs, deltas = out
+    assert [a[CKA_VALUE] for a in attempts] == [b"c", b"w"], attempts
+    assert created == (None, False), created
+    assert inventory_rvs == (0x80000001, None), inventory_rvs
+    assert deltas == (frozenset(), frozenset()), deltas
+
+
+def test_vendor_inventory_rv_xfails_nonspec(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: a vendor inventory RV is the established result (beats unproved void)."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(None, False),
+            inventory_rvs=(0x80000001, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "nonspec_reject", kw
+
+
+def test_undefined_inventory_rv_fails(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: an undefined inventory RV fails the metadata contract in the judge."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(None, False),
+            inventory_rvs=(0x7FFFFFFF, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction", kw
+    assert "undefined" in kw["summary"], kw["summary"]
+
+
+def test_created_beats_undefined_inventory(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: a proved leak fails before an undefined inventory RV (precedence pin)."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(True, False),
+            inventory_rvs=(0x7FFFFFFF, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction", kw
+    assert "created" in kw["summary"], kw["summary"]
+
+
+def test_created_fail_names_delta_handles(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: the creation terminal names the retained delta handles per leg."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(True, False),
+            created_deltas=(frozenset({200}), frozenset()),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction", kw
+    assert kw["detail"]["created_handles"] == {"correct": [200], "wrong": []}, kw["detail"]
+
+
+def test_recycled_handle_leak_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: a refused copy leaking under a recycled number still fails.
+
+    The delta is graded against the leg's own bracketing inventories
+    only: a handle seen in an earlier leg and freed since is a fresh
+    leak when it reappears, never voided by naive cross-leg matching.
+    """
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    finds = iter([set(), set(), {101}])
+    copies = iter([101, CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)])
+
+    def _find(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        return list(next(finds))
+
+    def _copy(_raw: Any, _sh: int, _handle: int, _attrs: Any) -> int:
+        item = next(copies)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "find_objects_exhaustive", _find)
+    monkeypatch.setattr(km, "copy_object", _copy)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    out = km._run_guess_legs(
+        rs, 100, CKA_VALUE, (b"c", b"w"), b"base", lambda *a: _use(True), label="t"
+    )
+    correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs, deltas = out
+    assert created == (False, True), created
+    assert deltas == (frozenset(), frozenset({101})), deltas
+    assert destroyed == [101], destroyed
+    with pytest.raises(Failed, match="created"):
+        cm.judge_guess_confirm(
+            correct_exc=correct_exc,
+            wrong_exc=wrong_exc,
+            correct_use=correct_use,
+            wrong_use=wrong_use,
+            created_on_refusal=created,
+            inventory_rvs=inventory_rvs,
+            created_deltas=deltas,
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+
+
+def test_oracle_pair_with_refused_third_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: a value-sensitive oracle fails; a refused third never voids the pair."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    attempts: list[dict[Any, Any]] = []
+
+    def _oracle(_raw: Any, _sh: int, _handle: int, attrs: Any) -> int:
+        attempts.append(dict(attrs))
+        if attrs.get(CKA_VALUE) == b"correct":
+            return 101
+        raise CkrAssertionError("wrong value refused", CKR_ATTRIBUTE_READ_ONLY)
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", _oracle)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({100}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    out = km._run_guess_legs(
+        rs, 100, CKA_VALUE, (b"correct", b"wrong"), b"base", lambda *a: _use(True), label="t"
+    )
+    correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs, deltas = out
+    third = km._probe_third_value(rs, 100, CKA_VALUE, b"third", label="t")
+    assert [a[CKA_VALUE] for a in attempts] == [b"correct", b"wrong", b"third"], attempts
+    assert third == ("refused", int(CKR_ATTRIBUTE_READ_ONLY)), third
+    with pytest.raises(Failed, match="oracle"):
+        cm.judge_guess_confirm(
+            correct_exc=correct_exc,
+            wrong_exc=wrong_exc,
+            correct_use=correct_use,
+            wrong_use=wrong_use,
+            created_on_refusal=created,
+            inventory_rvs=inventory_rvs,
+            created_deltas=deltas,
+            third_outcome=third,
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+
+
+def test_node_runs_legs_before_third_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: the node judges guess legs first; the third probe qualifies after."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    order: list[str] = []
+    seen_judge: dict[str, Any] = {}
+    monkeypatch.setattr(km, "skip_unless_mechanism", lambda _rs, _m: None)
+    monkeypatch.setattr(km, "_import_copy_mutability_source", lambda _rs, **_kw: 100)
+    monkeypatch.setattr(km, "_sealed_value_unreadable_or_skip", lambda *a, **k: None)
+    monkeypatch.setattr(km, "_encrypt_baseline_or_xfail", lambda *a, **k: b"base")
+    monkeypatch.setattr(km, "_copy_unchanged_control_or_skip", lambda *a, **k: None)
+    monkeypatch.setattr(km, "row_by_key", lambda _k: SimpleNamespace(citation="cite"))
+
+    def _legs(*args: Any, **kwargs: Any) -> Any:
+        order.append("legs")
+        return (
+            None,
+            _refused(CKR_ATTRIBUTE_READ_ONLY),
+            _use(True),
+            None,
+            (False, False),
+            (None, None),
+            (frozenset(), frozenset()),
+        )
+
+    def _probe(*args: Any, **kwargs: Any) -> Any:
+        order.append("probe")
+        return ("refused", int(CKR_ATTRIBUTE_READ_ONLY))
+
+    real_judge = cm.judge_guess_confirm
+
+    def _judge(**kwargs: Any) -> Any:
+        seen_judge.update(kwargs)
+        return real_judge(**kwargs)
+
+    monkeypatch.setattr(km, "_run_guess_legs", _legs)
+    monkeypatch.setattr(km, "_probe_third_value", _probe)
+    monkeypatch.setattr(km, "judge_guess_confirm", _judge)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _m: True)
+    with pytest.raises(Failed, match="oracle"):
+        km.TestCopyForbiddenMutation().test_copy_sealed_value_guess_confirm_identical(rs)
+    assert order == ["legs", "probe"], order
+    assert seen_judge["third_outcome"] == ("refused", int(CKR_ATTRIBUTE_READ_ONLY)), seen_judge
+
+
+def test_identical_refusals_with_accepted_third_notes_selective() -> None:
+    """R3F3: identical refusals beside an accepted third pass as selective."""
+    from pkcs11_check.compliance import clear_notes, get_notes
+
+    clear_notes()
+    assert (
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            third_outcome=("accepted", None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+        is None
+    )
+    assert any("selective" in n.description for n in get_notes()), get_notes()
+
+
+def test_identical_refusals_with_refused_third_notes_uniform() -> None:
+    """R3F3: identical refusals beside a refused third pass as uniform."""
+    from pkcs11_check.compliance import clear_notes, get_notes
+
+    clear_notes()
+    assert (
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            third_outcome=("refused", int(CKR_ATTRIBUTE_READ_ONLY)),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+        is None
+    )
+    assert any("uniform" in n.description for n in get_notes()), get_notes()
+
+
+def test_vendor_third_rv_xfails_nonspec(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: a vendor third-value RV is the established result over a pair pass."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            third_outcome=("refused", 0x80000001),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "nonspec_reject", kw
+
+
+def test_undefined_third_rv_fails(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: an undefined third-value RV fails the metadata contract."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            third_outcome=("refused", 0x7FFFFFFF),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction", kw
+    assert "undefined" in kw["summary"], kw["summary"]
+
+
+def test_mutation_beats_vendor_inventory(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: a proved accepted-pair mutation fails before a vendor inventory xfail."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_use=_use(False),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            inventory_rvs=(0x80000001, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction", kw
+    assert "mutat" in kw["summary"], kw["summary"]
+
+
+def test_vendor_inventory_beats_ignored_pair(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: a vendor inventory alternate beats an ignored-input deviation."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            inventory_rvs=(0x80000001, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "nonspec_reject", kw
+
+
+def test_vendor_inventory_beats_use_void(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F3: a vendor inventory alternate beats an accepted-use void."""
+    with pytest.raises(_SimulatedVerdictError, match="xfail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=None,
+            correct_use=_use(None, int(CKR_DEVICE_ERROR)),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            inventory_rvs=(0x80000001, None),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["xfail"]
+    assert reason == "nonspec_reject", kw
+
+
+def test_unchanged_control_preexisting_fails_without_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3F3: an unchanged control returning a baseline handle fails; source survives."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({55}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="pre-existing"):
+        km._copy_unchanged_control_or_skip(rs, 100, b"baseline", label="t")
+    assert destroyed == [], destroyed
 
 
 def test_created_single_leg_names_leg_and_rv(
@@ -662,8 +1126,8 @@ def test_different_rvs_with_unproved_inventory_still_fails(
     assert "differ" in kw["summary"]
 
 
-def test_value_control_accepts_and_destroys(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2B1: the value control proves value overrides reach handling."""
+def test_third_probe_accepted_reports_and_destroys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: an accepted third value reports accepted; the probe copy is destroyed."""
     import pkcs11_check.testcases.test_keymgmt as km
 
     seen: list[dict[Any, Any]] = []
@@ -674,26 +1138,64 @@ def test_value_control_accepts_and_destroys(monkeypatch: pytest.MonkeyPatch) -> 
         return 55
 
     monkeypatch.setattr(km, "copy_object", _copy)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
     monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
     rs = SimpleNamespace(raw=object(), sh=1)
-    km._copy_value_control_or_skip(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+    assert km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t") == ("accepted", None)
     assert seen == [{CKA_VALUE: b"v" * 16}]
     assert destroyed == [55]
 
 
-def test_value_control_refused_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2B1: wholesale value-override refusal voids the guess legs."""
-    from _pytest.outcomes import Skipped
-
+def test_third_probe_refused_reports_rv_without_skipping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3F3: a refused third value reports its RV; the pair still gets judged."""
     import pkcs11_check.testcases.test_keymgmt as km
 
     def _refuse(_raw: Any, _sh: int, _handle: int, _attrs: Any) -> int:
         raise CkrAssertionError("no value overrides", CKR_ATTRIBUTE_READ_ONLY)
 
     monkeypatch.setattr(km, "copy_object", _refuse)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
     rs = SimpleNamespace(raw=object(), sh=1)
-    with pytest.raises(Skipped, match="never consulted"):
-        km._copy_value_control_or_skip(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+    assert km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t") == (
+        "refused",
+        int(CKR_ATTRIBUTE_READ_ONLY),
+    )
+
+
+def test_third_probe_alias_fails_without_destroy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3F3: a probe copy returning the source fails; the source is left alone."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, h, _a: h)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="source handle"):
+        km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+    assert destroyed == [], destroyed
+
+
+def test_third_probe_preexisting_fails_without_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3F3: a probe copy returning a baseline handle fails; nothing is destroyed."""
+    from _pytest.outcomes import Failed
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, _h, _a: 55)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({55}, None))
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Failed, match="pre-existing"):
+        km._probe_third_value(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+    assert destroyed == [], destroyed
 
 
 def test_control_alias_fails_without_destroy(
@@ -706,6 +1208,7 @@ def test_control_alias_fails_without_destroy(
     _patch_km_verdicts(monkeypatch, captures)
     destroyed: list[int] = []
     monkeypatch.setattr(km, "copy_object", lambda _r, _s, h, _a: h)
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
     monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
     rs = SimpleNamespace(raw=object(), sh=1)
     with pytest.raises(_SimulatedVerdictError, match="fail_as"):

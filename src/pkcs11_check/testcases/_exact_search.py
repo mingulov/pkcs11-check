@@ -303,17 +303,20 @@ def expected_not_among_record(
     if observation.handles is None:
         if expected_handle in observation.partial:
             return C.record_as(
+                # R3F14: state only the proved result -- a partial
+                # search can end by cap or malformed count with all-OK
+                # pages, so no later refusal and no ignored attribute
+                # may be claimed. The delivering page succeeded.
                 "self_contradiction",
                 kind="metadata",
                 label=label,
                 operation="C_FindObjects",
                 inherit_mechanism=False,
                 expected="expected object absent from changed-value search results",
-                actual=f"staged object {expected_handle} matched",
+                actual=int(CKR_OK),
                 summary=(
                     f"{label}: changed-value search returned the staged object "
-                    f"{expected_handle} before a later page refused; the value "
-                    "attribute was ignored in matching"
+                    f"{expected_handle} on a successfully delivered page"
                 ),
                 detail={
                     "expected_handle": expected_handle,
