@@ -243,7 +243,7 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
         raise CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)
 
     monkeypatch.setattr(km, "copy_object", _capture)
-    monkeypatch.setattr(km, "_session_object_set", lambda _rs, **_kw: ({9}, None))
+    monkeypatch.setattr(km, "_inventory_object_set", lambda _rs, **_kw: ({9}, None))
     rs = SimpleNamespace(raw=object(), sh=1)
     correct_exc, wrong_exc, correct_use, wrong_use, created, inventory_rvs = km._run_guess_legs(
         rs,
@@ -550,3 +550,122 @@ def test_rsa_baseline_unverifying_double_sign_voids(
     (reason, kw), *_ = captures["xfail"]
     assert reason == "not_operational"
     assert "does not verify" in kw["summary"], kw["summary"]
+
+
+def test_vendor_first_undefined_second_fails_metadata(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R2B1: collection first; the undefined sibling FAIL wins over vendor order."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(0x80000001),
+            wrong_exc=_refused(0xDEAD),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(False, False),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    assert [(reason, kw["kind"]) for reason, kw in captures["fail"]] == [
+        ("self_contradiction", "metadata")
+    ]
+
+
+def test_mixed_with_unproved_inventory_still_fails_oracle(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R2B1: a proved asymmetry fails; the unproved inventory rides in detail."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=None,
+            wrong_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            correct_use=_use(True),
+            wrong_use=None,
+            created_on_refusal=(False, None),
+            inventory_rvs=(None, int(CKR_DEVICE_ERROR)),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction"
+    assert "oracle" in kw["summary"]
+    assert kw["detail"]["created_on_refusal"] == [False, None]
+
+
+def test_different_rvs_with_unproved_inventory_still_fails(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R2B1: a proved code difference fails before the inventory void."""
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        cm.judge_guess_confirm(
+            correct_exc=_refused(CKR_ATTRIBUTE_READ_ONLY),
+            wrong_exc=_refused(CKR_ATTRIBUTE_SENSITIVE),
+            correct_use=_use(True),
+            wrong_use=_use(True),
+            created_on_refusal=(None, None),
+            inventory_rvs=(int(CKR_DEVICE_ERROR), int(CKR_DEVICE_ERROR)),
+            expected_rvs=EXPECTED,
+            label=LABEL,
+            operation=OPERATION,
+            spec_ref=SPEC_REF,
+        )
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction"
+    assert "differ" in kw["summary"]
+
+
+def test_value_control_accepts_and_destroys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2B1: the value control proves value overrides reach handling."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    seen: list[dict[Any, Any]] = []
+    destroyed: list[int] = []
+
+    def _copy(_raw: Any, _sh: int, _handle: int, attrs: Any) -> int:
+        seen.append(dict(attrs))
+        return 55
+
+    monkeypatch.setattr(km, "copy_object", _copy)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    km._copy_value_control_or_skip(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+    assert seen == [{CKA_VALUE: b"v" * 16}]
+    assert destroyed == [55]
+
+
+def test_value_control_refused_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2B1: wholesale value-override refusal voids the guess legs."""
+    from _pytest.outcomes import Skipped
+
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    def _refuse(_raw: Any, _sh: int, _handle: int, _attrs: Any) -> int:
+        raise CkrAssertionError("no value overrides", CKR_ATTRIBUTE_READ_ONLY)
+
+    monkeypatch.setattr(km, "copy_object", _refuse)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(Skipped, match="never consulted"):
+        km._copy_value_control_or_skip(rs, 100, CKA_VALUE, b"v" * 16, label="t")
+
+
+def test_control_alias_fails_without_destroy(
+    captures: dict[str, list[tuple[str, dict[str, Any]]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2B1: an aliased control duplicate fails; the source is left alone."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    _patch_km_verdicts(monkeypatch, captures)
+    destroyed: list[int] = []
+    monkeypatch.setattr(km, "copy_object", lambda _r, _s, h, _a: h)
+    monkeypatch.setattr(km, "destroy_quietly", lambda _r, _s, h: destroyed.append(h))
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with pytest.raises(_SimulatedVerdictError, match="fail_as"):
+        km._copy_unchanged_control_or_skip(rs, 100, b"baseline", label="t")
+    (reason, kw), *_ = captures["fail"]
+    assert reason == "self_contradiction"
+    assert 100 not in destroyed, destroyed

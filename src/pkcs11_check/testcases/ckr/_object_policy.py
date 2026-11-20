@@ -122,7 +122,10 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
+    CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
+    CKG_MGF1_SHA384,
+    CKG_MGF1_SHA512,
     CKK_AES,
     CKK_EC,
     CKK_GENERIC_SECRET,
@@ -145,12 +148,19 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_X9_31,
     CKM_RSA_X_509,
     CKM_SHA1_RSA_PKCS,
+    CKM_SHA1_RSA_PKCS_PSS,
     CKM_SHA1_RSA_X9_31,
     CKM_SHA224_RSA_PKCS,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS_PSS,
+    CKM_SHA384,
     CKM_SHA384_RSA_PKCS,
+    CKM_SHA384_RSA_PKCS_PSS,
+    CKM_SHA512,
     CKM_SHA512_RSA_PKCS,
+    CKM_SHA512_RSA_PKCS_PSS,
+    CKM_SHA_1,
     CKM_SLH_DSA,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
@@ -160,8 +170,15 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
     CKP_SLH_DSA_SHA2_128S,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
@@ -182,7 +199,9 @@ from pkcs11_check.testcases._ec_export import split_raw_ecdsa
 from pkcs11_check.testcases._local_verify import (
     MalformedSignature,
     ecdsa_der_local,
+    ecdsa_der_local_prehashed,
     ecdsa_local,
+    ecdsa_local_prehashed,
     rsa_pkcs15_local,
 )
 from pkcs11_check.testcases._x931 import x931_sign_input
@@ -1094,6 +1113,46 @@ def _import_constrained_generic(
         return import_secret_key(rs.raw, rs.sh, CKK_GENERIC_SECRET, value, attrs=attrs)
     except CkrAssertionError as exc:
         void_qc4_setup_exc(exc, (), label=label, operation=operation)
+
+
+def _vet_control_handles(
+    handles: Iterable[int | None],
+    *,
+    before: list[int],
+    label: str,
+    operation: str,
+    spec_ref: str,
+) -> None:
+    """Vet legal-control handles before their immediate destruction (R2C1).
+
+    A control that is null or predates the setup is a proved provider
+    defect (CKR_OK with a non-new handle): fail WITHOUT destroying it,
+    or cleanup would destroy a foreign object. Mirrors the attempt-side
+    A1 ownership rule for the setup side.
+    """
+    seen = set(before)
+    bad = [
+        (handle, "null" if not handle else "pre-existing")
+        for handle in handles
+        if not handle or handle in seen
+    ]
+    if not bad:
+        return
+    causes = ", ".join(f"{handle} ({cause})" for handle, cause in bad)
+    fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        spec_ref=spec_ref,
+        summary=(
+            f"{label}: legal control succeeded with non-new handle(s) {causes}; "
+            "refusing to destroy them"
+        ),
+        detail={"handles": [handle for handle, _ in bad]},
+    )
 
 
 def _destroy_all(rs: Any, handles: Iterable[int | None]) -> list[BaseException]:
@@ -2976,9 +3035,11 @@ def _contradicts(use_kind: str, readback: tuple[int, int], pqc_type: int = 0) ->
     """True when a coherent *use_kind* contradicts the readback identity."""
     obj_class, key_type = readback
     if use_kind == "aes":
-        return not (
-            obj_class == int(CKO_SECRET_KEY) and key_type in (int(CKK_AES), int(CKK_GENERIC_SECRET))
-        )
+        # R2C1: AES-ECB requires an AES key (Solaris softEncryptUtil.c and
+        # NSS softoken pkcs11c.c both return CKR_KEY_TYPE_INCONSISTENT for
+        # any non-AES key type). A verified AES use under a reported
+        # CKK_GENERIC_SECRET is a cross-type contradiction, never coherent.
+        return not (obj_class == int(CKO_SECRET_KEY) and key_type == int(CKK_AES))
     if use_kind == "rsa_encrypt":
         return not (
             key_type == int(CKK_RSA) and obj_class in (int(CKO_PUBLIC_KEY), int(CKO_PRIVATE_KEY))
@@ -3122,6 +3183,7 @@ def _adjudicate_uses(
                 "use_rvs": use_rvs,
             },
         )
+    use_attempted = any(outcome.attempted for outcome in outcomes)
     xfail_as(
         "honest_deviation",
         kind="policy",
@@ -3133,13 +3195,16 @@ def _adjudicate_uses(
         summary=(
             f"{label}: accepted malformed template; material inspected and "
             f"unusable under {readback_names[0]}/{readback_names[1]}"
+            if use_attempted
+            else f"{label}: accepted malformed template; material inspected, "
+            "usability unproved (no use attempted)"
         ),
         detail={
-            "disposition": "inspected-unusable",
+            "disposition": "inspected-unusable" if use_attempted else "inspected-unproved",
             "readback_class": readback_names[0],
             "readback_type": readback_names[1],
             "identity_kept": readback == requested,
-            "use_attempted": any(outcome.attempted for outcome in outcomes),
+            "use_attempted": use_attempted,
             "use_rvs": use_rvs,
         },
     )
@@ -3276,6 +3341,24 @@ def _strongest_record(records: list[Any]) -> Any:
         if record.outcome == "fail":
             return record
     return records[0]
+
+
+#: Refusals that attest template judgment (R2C1). Only these sanction
+#: the malformed-template pass: every member says the provider judged
+#: the INPUT (missing/inconsistent template, bad attribute value,
+#: class/type or domain mismatch). Any other standard RV -- an
+#: operational failure (CKR_DEVICE_ERROR), a call-shape error, or an
+#: unrelated mechanism verdict -- leaves the malformation unadjudicated
+#: and xfails with the proved zero delta, never passes.
+_TEMPLATE_REJECTION_RVS = frozenset(
+    {
+        int(CKR_TEMPLATE_INCOMPLETE),
+        int(CKR_TEMPLATE_INCONSISTENT),
+        int(CKR_ATTRIBUTE_VALUE_INVALID),
+        int(CKR_KEY_TYPE_INCONSISTENT),
+        int(CKR_DOMAIN_PARAMS_INVALID),
+    }
+)
 
 
 def _adjudicate_malformed_refusal(
@@ -3423,6 +3506,29 @@ def _adjudicate_malformed_refusal(
                 "refusal_rv": ckr_name(rv),
                 "inventory_delta": len(delta),
                 "unproved_new_handles": unproved,
+                **({"error_output_handles": outputs} if outputs else {}),
+            },
+        )
+    if rv not in _TEMPLATE_REJECTION_RVS:
+        # R2C1: a zero delta proves nothing was created, but a
+        # non-template RV never attests that the provider judged the
+        # malformation (an operational failure is not a rejection).
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: refused with {ckr_name(rv)} (not a template-shaped "
+                "rejection); malformation unadjudicated, zero delta proved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "refusal_rv": ckr_name(rv),
+                "inventory_delta": 0,
                 **({"error_output_handles": outputs} if outputs else {}),
             },
         )
@@ -4624,9 +4730,22 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 control_attrs = _create_pqc_control(attempt_attrs, pqc, ctrl_label)
             rsa_priv = None
         try:
+            ctrl_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(
+                exc, (), label=f"{label} control: inventory", operation="C_FindObjects"
+            )
+        try:
             control = create_object(rs.raw, rs.sh, control_attrs)
         except CkrAssertionError as exc:
             void_qc4_setup_exc(exc, (), label=f"{label} legal control", operation="C_CreateObject")
+        _vet_control_handles(
+            [control],
+            before=ctrl_before,
+            label=f"{label} legal control",
+            operation="C_CreateObject",
+            spec_ref=_QC4B_SPEC,
+        )
         _cleanup_owned(rs, [control])
         try:
             before = _find_all(rs)
@@ -5059,6 +5178,12 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
         attempt_attrs, requested = _unwrap_templates(family_type, malformation, attempt_label)
         control_attrs = _unwrap_control_template(family_type, ctrl_label)
         try:
+            ctrl_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(
+                exc, (), label=f"{label} control: inventory", operation="C_FindObjects"
+            )
+        try:
             control = unwrap_key(rs.raw, rs.sh, kek, blob, CKM_AES_KEY_WRAP, control_attrs)
         except CkrAssertionError as exc:
             void_qc4_setup_exc(
@@ -5068,6 +5193,13 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 operation="C_UnwrapKey",
                 mechanism="CKM_AES_KEY_WRAP",
             )
+        _vet_control_handles(
+            [control],
+            before=ctrl_before,
+            label=f"{label} legal control",
+            operation="C_UnwrapKey",
+            spec_ref=_QC4B_SPEC,
+        )
         _cleanup_owned(rs, [control])
         try:
             before = _find_all(rs)
@@ -5464,6 +5596,10 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
     ctrl_label = control_label("genkey", family, malformation)
     attempt_attrs, requested = _genkey_templates(family_type, attempt_label, malformation)
     try:
+        ctrl_before = _find_all(rs)
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=f"{label} control: inventory", operation="C_FindObjects")
+    try:
         control = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -5472,6 +5608,13 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
         )
     except CkrAssertionError as exc:
         void_qc4_setup_exc(exc, (), label=f"{label} legal control", operation="C_GenerateKey")
+    _vet_control_handles(
+        [control],
+        before=ctrl_before,
+        label=f"{label} legal control",
+        operation="C_GenerateKey",
+        spec_ref=_QC4B_GENKEY_SPEC,
+    )
     _cleanup_owned(rs, [control])
     try:
         before = _find_all(rs)
@@ -5558,7 +5701,18 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
         family, pqc, malformation, attempt_label
     )
     family_type = {"rsa": int(CKK_RSA), "ec": int(CKK_EC)}.get(family, pqc.key_type if pqc else 0)
+    try:
+        ctrl_before = _find_all(rs)
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=f"{label} control: inventory", operation="C_FindObjects")
     ctrl_pub, ctrl_priv = _generate_family_source(rs, family, pqc, label=ctrl_label)
+    _vet_control_handles(
+        [ctrl_pub, ctrl_priv],
+        before=ctrl_before,
+        label=f"{label} legal control",
+        operation="C_GenerateKeyPair",
+        spec_ref=_QC4B_SPEC,
+    )
     _cleanup_owned(rs, [ctrl_pub, ctrl_priv])
     try:
         before = _find_all(rs)
@@ -5601,16 +5755,21 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
         not all(_halves) or _halves[0] == _halves[1] or any(half in set(before) for half in _halves)
     )
     if _halves_bad:
-        # A1: success halves must be nonzero, distinct, and newly live;
-        # a null, aliased, or pre-existing half is a proved
-        # contradiction, failed WITHOUT touching either half.
+        # A1: success halves must be nonzero, distinct, and newly live.
+        # Ownership is per half: proved-owned halves (nonzero, new,
+        # deduped) are destroyed so one invalid output never strands a
+        # proved-new sibling; null and pre-existing halves are refused
+        # untouched. Use is refused for both halves either way.
         if not all(_halves):
             _cause = "null"
         elif _halves[0] == _halves[1]:
             _cause = "aliased"
         else:
             _cause = "pre-existing"
-        fail_as(
+        _owned = sorted({half for half in _halves if half and half not in set(before)})
+        # F14: the halves contradiction is RECORDED BEFORE cleanup runs;
+        # a destroy failure is attached to the terminal, never replaces it.
+        record = record_as(
             "self_contradiction",
             kind="policy",
             label=label,
@@ -5620,10 +5779,17 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             spec_ref=_QC4B_SPEC,
             summary=(
                 f"{label}: C_GenerateKeyPair succeeded with {_cause} halves "
-                f"{list(_halves)}; refusing to use or destroy them"
+                f"{list(_halves)}; refusing to use them"
             ),
-            detail={"halves": list(_halves), "cause": _cause},
+            detail={"halves": list(_halves), "cause": _cause, "destroyed_owned": _owned},
         )
+        errors = _destroy_all(rs, _owned)
+        try:
+            raise_for_record(record)
+        except BaseException as terminal:
+            for error in errors:
+                terminal.add_note(f"cleanup also raised {type(error).__name__}: {error}")
+            raise
     try:
         readback = _inspect_identity(
             rs,
@@ -5990,6 +6156,18 @@ def _run_rsa_sign_downstream(rs: Any, malformation: str) -> None:
         _cleanup_owned(rs, [handle.value])
 
 
+#: SignInit refusals that evidence the Init defense (R2-wording): the
+#: module judged the mismatched key/use. Any other standard refusal is
+#: opaque (an operational failure, not a judgment) and stays unproved.
+_INIT_DEFENSE_RVS = frozenset(
+    {
+        int(CKR_KEY_TYPE_INCONSISTENT),
+        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        int(CKR_MECHANISM_INVALID),
+    }
+)
+
+
 @dataclass(frozen=True)
 class RsaSignMech:
     """One RSA signing mechanism for the wrong-algorithm legs (#56.3)."""
@@ -5997,15 +6175,18 @@ class RsaSignMech:
     name: str
     mech: int
     oracle_hash: hashes.HashAlgorithm | None
-    pss: bool = False
+    pss_params: tuple[int, int, int] | None = None
 
 
 #: RSA signing mechs exercised against the EC-material franken object.
 #: oracle_hash is the ECDSA oracle hash (the operation's hash); None means
 #: UNPROVED-only on CKR_OK (raw RSA_PKCS/X_509 carry no hash to verify
 #: under). X9_31 attempts SHA1 (the X9.31 classic; a miss lands UNPROVED,
-#: never passed). Combined CKM_SHA*_RSA_PKCS_PSS mechs are excluded:
-#: fixed-hash param matching varies by provider; base PSS covers the family.
+#: never passed). pss_params is (hash_mech, mgf, salt_len) for the PSS
+#: family: base PSS signs its named digest; the combined rows hash the
+#: plain probe internally. Each row is capability-gated (a provider
+#: advertising only a combined PSS row still gets PSS coverage); a
+#: param-mismatch refusal lands on the honest init-refused path.
 _RSA_SIGN_MECHS: tuple[RsaSignMech, ...] = (
     RsaSignMech("RSA_PKCS", int(CKM_RSA_PKCS), None),
     RsaSignMech("SHA1_RSA_PKCS", int(CKM_SHA1_RSA_PKCS), hashes.SHA1()),  # nosec B303
@@ -6013,7 +6194,36 @@ _RSA_SIGN_MECHS: tuple[RsaSignMech, ...] = (
     RsaSignMech("SHA256_RSA_PKCS", int(CKM_SHA256_RSA_PKCS), hashes.SHA256()),
     RsaSignMech("SHA384_RSA_PKCS", int(CKM_SHA384_RSA_PKCS), hashes.SHA384()),
     RsaSignMech("SHA512_RSA_PKCS", int(CKM_SHA512_RSA_PKCS), hashes.SHA512()),
-    RsaSignMech("RSA_PKCS_PSS", int(CKM_RSA_PKCS_PSS), hashes.SHA256(), pss=True),
+    RsaSignMech(
+        "RSA_PKCS_PSS",
+        int(CKM_RSA_PKCS_PSS),
+        hashes.SHA256(),
+        (int(CKM_SHA256), int(CKG_MGF1_SHA256), 32),
+    ),
+    RsaSignMech(
+        "SHA1_RSA_PKCS_PSS",
+        int(CKM_SHA1_RSA_PKCS_PSS),
+        hashes.SHA1(),  # nosec B303
+        (int(CKM_SHA_1), int(CKG_MGF1_SHA1), 20),
+    ),
+    RsaSignMech(
+        "SHA256_RSA_PKCS_PSS",
+        int(CKM_SHA256_RSA_PKCS_PSS),
+        hashes.SHA256(),
+        (int(CKM_SHA256), int(CKG_MGF1_SHA256), 32),
+    ),
+    RsaSignMech(
+        "SHA384_RSA_PKCS_PSS",
+        int(CKM_SHA384_RSA_PKCS_PSS),
+        hashes.SHA384(),
+        (int(CKM_SHA384), int(CKG_MGF1_SHA384), 48),
+    ),
+    RsaSignMech(
+        "SHA512_RSA_PKCS_PSS",
+        int(CKM_SHA512_RSA_PKCS_PSS),
+        hashes.SHA512(),
+        (int(CKM_SHA512), int(CKG_MGF1_SHA512), 64),
+    ),
     RsaSignMech("RSA_X9_31", int(CKM_RSA_X9_31), hashes.SHA1()),  # nosec B303
     RsaSignMech("SHA1_RSA_X9_31", int(CKM_SHA1_RSA_X9_31), hashes.SHA1()),  # nosec B303
     RsaSignMech("RSA_X_509", int(CKM_RSA_X_509), None),
@@ -6022,22 +6232,23 @@ _RSA_SIGN_MECHS: tuple[RsaSignMech, ...] = (
 
 def _wrong_algo_mech_param(entry: RsaSignMech) -> Any:
     """Valid mechanism parameters for a wrong-algorithm leg."""
-    if entry.pss:
-        return mech_pss(entry.mech, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256, salt_len=32)
+    if entry.pss_params is not None:
+        hash_mech, mgf, salt_len = entry.pss_params
+        return mech_pss(entry.mech, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
     return mech_simple(entry.mech)
 
 
 def _wrong_algo_message(entry: RsaSignMech) -> bytes:
     """Valid sign input per mechanism (C1).
 
-    Raw mechanisms sign encoded input directly: raw PSS takes the
+    Raw mechanisms sign encoded input directly: base PSS takes the
     SHA-256 digest its parameters name (a 20-byte probe would invite
     input-length refusals misread as held defenses), and raw X9_31
     takes digest || trailer-ID (a bare digest is invalid input per
-    the repo's X9.31 rule). Combined mechanisms and X_509 take the
-    plain probe message.
+    the repo's X9.31 rule). Combined mechanisms hash the plain probe
+    internally, so they (and X_509) take the plain probe message.
     """
-    if entry.pss:
+    if entry.mech == int(CKM_RSA_PKCS_PSS):
         return hashlib.sha256(QC4_SIGN_DATA, usedforsecurity=False).digest()
     if entry.mech == int(CKM_RSA_X9_31):
         return x931_sign_input(QC4_SIGN_DATA, "sha1")
@@ -6086,6 +6297,11 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 kind="policy",
                 mechanism=f"CKM_{mech_name}",
             )
+            # Only a use-shaped refusal evidences the Init defense (the
+            # module judged the mismatched key); an opaque refusal says
+            # nothing about dispatch and stays unproved, mirroring the
+            # Sign-stage rule below.
+            held = rv_init in _INIT_DEFENSE_RVS
             xfail_as(
                 "honest_deviation",
                 kind="policy",
@@ -6095,14 +6311,20 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 inherit_mechanism=False,
                 actual=rv_init,
                 spec_ref=spec_ref,
-                summary=(f"{label}: init refused with {ckr_name(rv_init)}; defense held at init"),
+                summary=(
+                    f"{label}: init refused with {ckr_name(rv_init)}; "
+                    + ("defense held at init" if held else "dispatch unproved at init")
+                ),
             )
         msg = _wrong_algo_message(entry)
         msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
         sig_buf = (ctypes.c_ubyte * 512)()
         sig_len = CK_ULONG(512)
+        # R2B4: the passed Init is evidence before the Sign stage runs, so
+        # the vendor/undefined Sign-RV terminals below retain it.
+        init_detail = {"init_rv": ckr_name(rv_init)}
         rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
-        detail_base = {"init_rv": ckr_name(rv_init), "sign_rv": ckr_name(rv_sign)}
+        detail_base = {**init_detail, "sign_rv": ckr_name(rv_sign)}
         if rv_sign != int(CKR_OK):
             classify_rv_validity_or_none(
                 rv_sign,
@@ -6110,6 +6332,7 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 operation="C_Sign",
                 kind="policy",
                 mechanism=f"CKM_{mech_name}",
+                detail=init_detail,
             )
             # NOTE: an opaque refusal (e.g. GENERAL_ERROR) after a missed
             # Init refusal is suspicious but unproved (no spec hook
@@ -6142,7 +6365,7 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                 mechanism=f"CKM_{mech_name}",
                 inherit_mechanism=False,
                 expected="sign length <= 512",
-                actual=f"sign length {int(sig_len.value)}",
+                actual=int(CKR_OK),
                 spec_ref=spec_ref,
                 summary=(
                     f"{label}: C_Sign claimed CKR_OK with length "
@@ -6203,6 +6426,58 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                     "under the EC counterpart (proved wrong-algorithm dispatch)"
                 ),
                 detail={**detail_base, "sig_len": len(signature), "encoding": "raw"},
+            )
+        # R2B4: the CKM_ECDSA-style arm. A module that signs the supplied
+        # digest directly (no hash step) escapes the hashing oracles above,
+        # which hash the digest a second time. Only digest-sized inputs
+        # qualify; anything else stays with the hashing oracle.
+        if len(msg) == entry.oracle_hash.digest_size and ecdsa_der_local_prehashed(
+            pub, msg, signature, entry.oracle_hash
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {mech_name} returned an ECDSA signature over the "
+                    "supplied digest without hashing (proved wrong-algorithm dispatch)"
+                ),
+                detail={
+                    **detail_base,
+                    "sig_len": len(signature),
+                    "encoding": "der",
+                    "prehashed": True,
+                },
+            )
+        if (
+            len(signature) == 64
+            and len(msg) == entry.oracle_hash.digest_size
+            and ecdsa_local_prehashed(pub, msg, signature, entry.oracle_hash, 32)
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {mech_name} returned a raw ECDSA signature over the "
+                    "supplied digest without hashing (proved wrong-algorithm dispatch)"
+                ),
+                detail={
+                    **detail_base,
+                    "sig_len": len(signature),
+                    "encoding": "raw",
+                    "prehashed": True,
+                },
             )
         xfail_as(
             "honest_deviation",

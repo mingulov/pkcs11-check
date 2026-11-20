@@ -473,6 +473,7 @@ def _judge_capacity_returned(
     own_opens: int,
     verified_closes: int,
     reread_rv: int,
+    recovery_verified: bool,
 ) -> None:
     """Judge capacity restoration after closing saturation sessions (QC11b).
 
@@ -480,19 +481,25 @@ def _judge_capacity_returned(
     the reopen must succeed once a close is verified (a handle was just
     freed) and the ambient total must return to its pre-saturation
     baseline. A refused reopen with zero verified closes voids the leg
-    (nothing was freed, so the refusal is expected). Unknown counts
-    skip the count leg (fail-safe, like the exhaustion judge); a
-    missing reopen attempt breaks the caller contract.
+    (nothing was freed, so the refusal is expected). The baseline
+    comparison requires every relevant close verified: a known
+    remaining session (refused saturation or recovery close) voids the
+    count leg as unproved, never fails it as a leak (the close
+    outcomes ride the deferred records). Unknown counts skip the
+    count leg (fail-safe, like the exhaustion judge); a missing
+    reopen attempt breaks the caller contract.
     """
     label = "QC11b capacity return"
     if reopen_rv is None:
         raise ValueError(f"{label}: reopen attempt missing (caller contract broken)")
+    unverified_closes = (own_opens - verified_closes) + (0 if recovery_verified else 1)
     detail: dict[str, Any] = {
         "baseline_total": baseline_total,
         "observed_total": total_after_close_all,
         "reopen_rv": reopen_rv,
         "own_opens": own_opens,
         "verified_closes": verified_closes,
+        "unverified_closes": unverified_closes,
         "reread_rv": ckr_name(reread_rv),
     }
     if reopen_rv != int(CKR_OK):
@@ -514,6 +521,12 @@ def _judge_capacity_returned(
         )
     if baseline_total is not None and total_after_close_all is not None:
         if total_after_close_all != baseline_total:
+            if unverified_closes:
+                pytest.skip(
+                    f"{label}: ambient total {total_after_close_all} != baseline "
+                    f"{baseline_total} with {unverified_closes} owned close(s) "
+                    "unverified; known remaining, restoration unproved"
+                )
             classification.fail_as(
                 "self_contradiction",
                 kind="metadata",
@@ -767,11 +780,9 @@ class TestAdvertisedSessionLimits:
                         f"({_QC11B_SESSION_SAFETY_CAP} opens) without refusal; "
                         "saturation untestable, reopen leg vacuous"
                     )
-                if own_opens == 0:
-                    pytest.skip(
-                        f"QC11b: first open refused ({ckr_name(refused_rv)}); "
-                        "no saturation to restore from, reopen leg vacuous"
-                    )
+                # R2C5b: validity grades before any skip. A first-open
+                # refusal with an undefined or vendor RV must fail or
+                # xfail, never skip as vacuous.
                 if not (is_standard_ckr(refused_rv) or is_vendor_defined_ckr(refused_rv)):
                     classification.fail_as(
                         "self_contradiction",
@@ -799,6 +810,11 @@ class TestAdvertisedSessionLimits:
                         ),
                         detail={"own_opens": own_opens},
                     )
+                if own_opens == 0:
+                    pytest.skip(
+                        f"QC11b: first open refused ({ckr_name(refused_rv)}); "
+                        "no saturation to restore from, reopen leg vacuous"
+                    )
                 if refused_rv != int(CKR_SESSION_COUNT):
                     pytest.skip(
                         f"QC11b: saturation refused with {ckr_name(refused_rv)}, not "
@@ -806,6 +822,7 @@ class TestAdvertisedSessionLimits:
                     )
                 verified_closes = _close_owned_sessions(rs.raw, owned, deferred, cleanup_errors)
                 owned.clear()
+                recovery_verified = True
                 try:
                     reopened = raw_open_session(
                         rs.raw, rs.slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION
@@ -814,7 +831,15 @@ class TestAdvertisedSessionLimits:
                     reopen_rv = exc.rv
                 else:
                     reopen_rv = int(CKR_OK)
-                    close_session_quietly(rs.raw, reopened)
+                    # R2C5b: the recovery close is a relevant close like
+                    # any other: its outcome is preserved (deferred) and
+                    # its verified bit gates the baseline comparison.
+                    recovery_verified = (
+                        _close_owned_sessions(
+                            rs.raw, [(reopened, "recovery")], deferred, cleanup_errors
+                        )
+                        == 1
+                    )
                 reread, reread_rv = _read_session_policy(rs.raw, rs.slot_id)
                 total_after_close_all = reread.ambient_total if reread is not None else None
                 _judge_capacity_returned(
@@ -824,6 +849,7 @@ class TestAdvertisedSessionLimits:
                     own_opens=own_opens,
                     verified_closes=verified_closes,
                     reread_rv=reread_rv,
+                    recovery_verified=recovery_verified,
                 )
             except BaseException as exc:
                 pending = exc

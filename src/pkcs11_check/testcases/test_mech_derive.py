@@ -1316,7 +1316,7 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
             CKA_KEY_TYPE: CKK_EC,
             CKA_TOKEN: False,
         }
-        derived_pub = derive_key(
+        candidate = derive_key(
             rs.raw,
             rs.sh,
             priv_a,
@@ -1324,7 +1324,9 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
             attrs=derive_attrs,
             mech_param=derive_mech,
         )
-        assert derived_pub != 0, f"{entry.mech_name}: derive returned handle 0"
+        derived_pub = _adopt_derived_pub(
+            candidate, pub_a=pub_a, priv_a=priv_a, label=entry.mech_name
+        )
         # Verify the derived object is a public key
         result = read_attributes(rs.raw, rs.sh, derived_pub, [CKA_CLASS])
         before = len(C.get_records())
@@ -1482,8 +1484,8 @@ class TestMechDerive:
                 return
 
 
-def _fail_on_derive_alias(derived: int, source: int, *, label: str) -> None:
-    """Fail when a derive returns its source handle (C2).
+def _fail_on_derive_alias(derived: int, source: int, *, label: str, role: str = "source") -> None:
+    """Fail when a derive returns an input handle (C2).
 
     An aliased derive would vacuo-pass every membership check and
     double-destroy on cleanup; the success handle must be newly live.
@@ -1499,11 +1501,25 @@ def _fail_on_derive_alias(derived: int, source: int, *, label: str) -> None:
         inherit_mechanism=False,
         actual=int(CKR_OK),
         summary=(
-            f"{label}: derive returned the source handle ({derived}); "
+            f"{label}: derive returned the {role} handle ({derived}); "
             "search membership would vacuo-pass"
         ),
-        detail={"derived": derived, "source": source},
+        detail={"derived": derived, "source": source, "role": role},
     )
+
+
+def _adopt_derived_pub(candidate: int, *, pub_a: int, priv_a: int, label: str) -> int:
+    """Adopt a derived public handle after alias validation (R2B5).
+
+    The candidate is checked against BOTH the comparison public handle
+    and the derive input handle BEFORE adoption: adopting first would
+    double-destroy the aliased handle in the ``finally`` cleanup when
+    the guard fires.
+    """
+    assert candidate != 0, f"{label}: derive returned handle 0"
+    _fail_on_derive_alias(candidate, pub_a, label=label, role="comparison public")
+    _fail_on_derive_alias(candidate, priv_a, label=label, role="derive input")
+    return candidate
 
 
 def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str) -> NoReturn:
@@ -1632,7 +1648,7 @@ class TestDerivedECPublicSearch:
                 CKA_LABEL: search_label,
             }
             try:
-                derived_pub = derive_key(
+                candidate = derive_key(
                     rs.raw,
                     rs.sh,
                     priv_a,
@@ -1642,8 +1658,7 @@ class TestDerivedECPublicSearch:
                 )
             except CkrAssertionError as exc:
                 _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
-            assert derived_pub != 0, f"{label}: derive returned handle 0"
-            _fail_on_derive_alias(derived_pub, pub_a, label=label)
+            derived_pub = _adopt_derived_pub(candidate, pub_a=pub_a, priv_a=priv_a, label=label)
 
             derived_point = read_conventional_ec_point_or_xfail(
                 rs,
@@ -1744,7 +1759,7 @@ class TestDerivedECPublicSearch:
                 CKA_LABEL: search_label,
             }
             try:
-                derived_pub = derive_key(
+                candidate = derive_key(
                     rs.raw,
                     rs.sh,
                     priv_a,
@@ -1754,8 +1769,7 @@ class TestDerivedECPublicSearch:
                 )
             except CkrAssertionError as exc:
                 _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
-            assert derived_pub != 0, f"{label}: derive returned handle 0"
-            _fail_on_derive_alias(derived_pub, pub_a, label=label)
+            derived_pub = _adopt_derived_pub(candidate, pub_a=pub_a, priv_a=priv_a, label=label)
 
             derived_point = read_conventional_ec_point_or_xfail(
                 rs,

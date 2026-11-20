@@ -5093,3 +5093,30 @@ def test_compare_mixed_int_equal_xfails_compat(
     assert reason == "honest_deviation"
     assert "compat" in kw["summary"], kw["summary"]
     assert _compare_captures["fail"] == []
+
+
+def test_compare_changed_value_beats_vendor_sibling(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R2B2: a proved mutation fails; a vendor alternate never hides it."""
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(empty=("ok", b"mutated-value!"), restated=("refused", 0x80000001))
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("wrong_result", "crypto")
+    ]
+
+
+def test_compare_void_names_readback_rvs(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R2B2: the void record retains sibling readback RVs, never drops them."""
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(
+            empty=("ok", _COMPARE_SOURCE),
+            restated=("readback-refused", _DEVICE_ERROR),
+        )
+    (reason, kw), *_ = _compare_captures["xfail"]
+    assert reason == "not_operational"
+    assert "CKR_DEVICE_ERROR" in kw["summary"], kw["summary"]
+    assert kw["detail"]["restated_readback_rv"] == "CKR_DEVICE_ERROR", kw["detail"]
+    assert kw["detail"]["empty_readback_rv"] is None, kw["detail"]

@@ -62,7 +62,12 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases import test_session_state_machine as tssm
-from pkcs11_check.testcases._probes.token_admin import AdminStep, AdminTrace
+from pkcs11_check.testcases._probes.token_admin import (
+    AdminStep,
+    AdminTrace,
+    AdminUseCheck,
+    qc9b_witness_digest,
+)
 from pkcs11_check.testcases.security import test_cve_regression
 
 _BOOL_ATTRS = frozenset(
@@ -1253,6 +1258,15 @@ def test_token_label_unique_across_runs_p1() -> None:
     assert labels[0] != labels[1], labels
 
 
+def _control_use_check(*, length: int | None = None, sha256: str | None = None) -> AdminUseCheck:
+    expected_len, expected_hash = qc9b_witness_digest()
+    return AdminUseCheck(
+        "control",
+        expected_len if length is None else length,
+        expected_hash if sha256 is None else sha256,
+    )
+
+
 def _cross_token_trace(
     *,
     logout_rv: int = int(CKR_OK),
@@ -1261,6 +1275,7 @@ def _cross_token_trace(
     stale_use_rv: int = int(CKR_OBJECT_HANDLE_INVALID),
     target_find_rv: int = int(CKR_OK),
     control_find_rv: int = int(CKR_OK),
+    use_checks: tuple[AdminUseCheck, ...] | None = None,
 ) -> AdminTrace:
     steps = (
         AdminStep("target_logout", logout_rv),
@@ -1269,6 +1284,8 @@ def _cross_token_trace(
         AdminStep("control_use", control_use_rv),
         AdminStep("target_stale_use", stale_use_rv),
     )
+    if use_checks is None:
+        use_checks = (_control_use_check(),) if control_use_rv == int(CKR_OK) else ()
     return AdminTrace(
         steps=steps,
         flags=(),
@@ -1277,6 +1294,7 @@ def _cross_token_trace(
         ok=True,
         no_slots=False,
         assumption_failed=None,
+        use_checks=use_checks,
     )
 
 
@@ -1338,6 +1356,7 @@ def test_cross_token_stale_usable_beats_find_skip() -> None:
             _cross_token_trace(
                 stale_use_rv=int(CKR_OK),
                 target_find_rv=int(CKR_DEVICE_ERROR),
+                inv=(1,),
             )
         )
     assert type(excinfo.value) is Failed
@@ -1352,6 +1371,7 @@ def test_cross_token_control_unusable_beats_find_skip() -> None:
             _cross_token_trace(
                 control_use_rv=int(CKR_KEY_HANDLE_INVALID),
                 control_find_rv=int(CKR_DEVICE_ERROR),
+                inv=(0,),
             )
         )
     assert type(excinfo.value) is Failed
@@ -1372,9 +1392,94 @@ def test_cross_token_short_inv_breaks_contract() -> None:
 
 def test_cross_token_target_find_failed_skips() -> None:
     with pytest.raises(Skipped):
-        tssm._judge_cross_token_trace(_cross_token_trace(target_find_rv=int(CKR_DEVICE_ERROR)))
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(target_find_rv=int(CKR_DEVICE_ERROR), inv=(1,))
+        )
 
 
 def test_cross_token_control_find_failed_skips() -> None:
     with pytest.raises(Skipped):
-        tssm._judge_cross_token_trace(_cross_token_trace(control_find_rv=int(CKR_DEVICE_ERROR)))
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(control_find_rv=int(CKR_DEVICE_ERROR), inv=(0,))
+        )
+
+
+def test_cross_token_surviving_witness_beats_stale_xfail() -> None:
+    """R2C4: a proved surviving witness outranks an alternate stale-use xfail."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(
+                stale_use_rv=int(CKR_FUNCTION_FAILED),
+                inv=(1, 1),
+            )
+        )
+    assert type(excinfo.value) is Failed
+    fails = [rec for rec in C.get_records() if rec.outcome == "fail"]
+    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert "still found" in (fails[0].summary or ""), fails[0].summary
+
+
+def test_cross_token_control_lost_beats_target_skip() -> None:
+    """R2C4: a refused target find never hides the sibling control-lost FAIL."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(
+                target_find_rv=int(CKR_DEVICE_ERROR),
+                inv=(0,),
+            )
+        )
+    assert type(excinfo.value) is Failed
+    fails = [rec for rec in C.get_records() if rec.outcome == "fail"]
+    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert "lost without relogin" in (fails[0].summary or ""), fails[0].summary
+    assert fails[0].detail is not None and fails[0].detail["target_found"] is None
+
+
+def test_cross_token_target_survived_beats_control_skip() -> None:
+    """R2C4: a refused control find never hides the sibling surviving-witness FAIL."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(
+                control_find_rv=int(CKR_DEVICE_ERROR),
+                inv=(2,),
+            )
+        )
+    assert type(excinfo.value) is Failed
+    fails = [rec for rec in C.get_records() if rec.outcome == "fail"]
+    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert "still found" in (fails[0].summary or ""), fails[0].summary
+
+
+def test_cross_token_control_bytes_changed_fails() -> None:
+    """R2C4: CKR_OK with changed control bytes fails, never passes."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(use_checks=(_control_use_check(length=15),))
+        )
+    assert type(excinfo.value) is Failed
+    fails = [rec for rec in C.get_records() if rec.outcome == "fail"]
+    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert "bytes changed after logout" in (fails[0].summary or ""), fails[0].summary
+    assert fails[0].actual_ckr == "CKR_OK", fails[0].summary
+
+
+def test_cross_token_missing_use_line_breaks_contract() -> None:
+    with pytest.raises(AssertionError, match="USE line"):
+        tssm._judge_cross_token_trace(_cross_token_trace(use_checks=()))
+
+
+def test_cross_token_surplus_inv_breaks_contract() -> None:
+    with pytest.raises(AssertionError, match="surplus INV"):
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(target_find_rv=int(CKR_DEVICE_ERROR), inv=(0, 1))
+        )
+
+
+def test_cross_token_stale_undefined_fails_metadata() -> None:
+    """R2C4: deferral preserves the stale-use validity grading."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(_cross_token_trace(stale_use_rv=0xDEAD))
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.kind == "metadata", record.summary

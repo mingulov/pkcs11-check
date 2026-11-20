@@ -26,6 +26,7 @@ from pkcs11_check.classification import (
     fail_as,
     raise_for_record,
     record_as,
+    xfail_as,
 )
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -827,18 +828,30 @@ def _run_qc11c_journey_node(
         _raise_strongest_qc11c(records1 + records2)
 
 
-def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
+def _prescan_concurrent_pin_fails(trace: token_admin.AdminTrace) -> None:
+    """FAIL-grade half of the concurrent-PIN judge (R2C5c, R19-02).
+
+    Runs before the trace gate so observed writes and logins grade
+    before any final setup refusal can hide them; xfail tiers and
+    skips stay suppressed, never raised.
+    """
+    _judge_concurrent_pin_trace(trace, fails_only=True)
+
+
+def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bool = False) -> None:
     """Judge concurrent SetPIN linearization (#52.8 threaded leg).
 
     Threads race user-PIN changes from the same old PIN; each tags
     its final PIN P1..P4 (P0 is the pre-race PIN). At most one write
     may succeed (a second success accepted a stale old PIN); exactly
     one candidate may work at the end, and a successful write must
-    retire P0. Zero workers means corruption (unless lockout blocked
-    the tail: then the winner may sit behind the lock and the leg
-    skips), several workers (or a failed write working) means an
-    invalid credential was accepted. Undefined RVs fail loud; with
-    no successful write the race is untestable (skip).
+    retire P0. Zero workers means corruption (unless blocked checks
+    left the tail unproved: then the winner may sit behind them and
+    the leg skips), several workers (or a failed write working) means
+    an invalid credential was accepted. A sole winner with blocked
+    alternatives xfails (uniqueness unproved, never passed). Undefined
+    RVs fail loud; with no successful write the race is untestable
+    (skip). With fails_only, only FAIL grades raise (prescan).
     """
     label = "QC11c concurrent PIN"
     thread_rvs = {step.name: step.rv for step in trace.steps if step.name.startswith("thread:")}
@@ -894,7 +907,7 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
                 summary=f"{label}: final login returned undefined CK_RV {ckr_name(rv)}",
             )
     successful = {f"P{int(i) + 1}" for i, rv in setpin.items() if rv == int(CKR_OK)}
-    if not successful:
+    if not successful and not fails_only:
         pytest.skip(f"{label}: no SetPIN succeeded; races untestable")
     if len(successful) > 1:
         fail_as(
@@ -911,28 +924,37 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
         )
     working = {tag for tag, rv in final.items() if rv == int(CKR_OK)}
     locked = {tag for tag, rv in final.items() if rv == int(CKR_PIN_LOCKED)}
+    # Blocked alternatives: neither working nor proved-negative
+    # (CKR_PIN_INCORRECT). A winner may sit behind them, so any
+    # uniqueness claim stays unproved while they stand.
+    unproved = {
+        tag for tag, rv in final.items() if rv != int(CKR_OK) and rv != int(CKR_PIN_INCORRECT)
+    }
     detail = {
         "successful": sorted(successful),
         "working": sorted(working),
         "locked": sorted(locked),
+        "unproved": sorted(unproved),
         "final": {tag: ckr_name(rv) for tag, rv in sorted(final.items())},
     }
     if not working:
-        if locked:
+        if unproved and not fails_only:
             pytest.skip(
-                f"{label}: no PIN works and {len(locked)} final checks hit "
-                "CKR_PIN_LOCKED; the winner may sit behind the lockout"
+                f"{label}: no PIN works and {len(unproved)} final checks are "
+                f"unproved ({', '.join(sorted(unproved))}); "
+                "the winner may sit behind them"
             )
-        fail_as(
-            "self_contradiction",
-            label=label,
-            operation="C_Login",
-            mechanism=None,
-            inherit_mechanism=False,
-            summary=f"{label}: 0 PINs work after the race (none); exactly one must",
-            detail=detail,
-        )
-    if len(working) != 1:
+        elif not unproved:
+            fail_as(
+                "self_contradiction",
+                label=label,
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: 0 PINs work after the race (none); exactly one must",
+                detail=detail,
+            )
+    if len(working) > 1:
         fail_as(
             "accepted_invalid",
             label=label,
@@ -945,6 +967,10 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
             ),
             detail=detail,
         )
+    if not working:
+        # Prescan fall-through (fails_only with unproved alternatives):
+        # nothing fail-grade observed, verdict left to the gate + judge.
+        return
     sole = next(iter(working))
     if sole == "P0":
         fail_as(
@@ -969,6 +995,20 @@ def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace) -> None:
             summary=f"{label}: failed-write PIN {sole} works after the race",
             detail=detail,
         )
+    blocked = {tag for tag in unproved if tag != sole}
+    if blocked and not fails_only:
+        xfail_as(
+            "honest_deviation",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: winner {sole} works but {len(blocked)} alternatives "
+                f"are unproved ({', '.join(sorted(blocked))}); uniqueness unproved"
+            ),
+            detail=detail,
+        )
 
 
 def _run_qc11c_concurrent_node(
@@ -982,7 +1022,12 @@ def _run_qc11c_concurrent_node(
         rc, out, err = _launch(
             minted, "qc11c_concurrent_pin", {}, p11_config=p11_config, timeout=60
         )
-        trace = token_admin.check_child_output(rc, out, err, label="QC11c concurrent PIN")
+        # R19-02 collect-then-judge: observed writes and logins grade
+        # before the gate, so a final setup refusal can never hide a
+        # proved double write or login contradiction behind a skip.
+        raw = token_admin.parse_child_output(rc, out, err, label="QC11c concurrent PIN")
+        _prescan_concurrent_pin_fails(raw)
+        trace = token_admin.gate_child_trace(raw, label="QC11c concurrent PIN")
         _judge_concurrent_pin_trace(trace)
 
 
