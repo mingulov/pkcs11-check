@@ -496,6 +496,18 @@ def _rediscover_burn_slot(
     return tuple(matches), int(CKR_OK), tuple(info_refusals)
 
 
+def _emit_phase2_snapshot_refusals(info_refusals: tuple[tuple[int, int], ...]) -> None:
+    """Emit preserved per-slot token-info RVs (R3F12: snapshot vocabulary).
+
+    ``snapshot:*`` steps (not ``setup:*``): preserved per-slot RVs
+    that document the scan without tripping the setup-failure skip,
+    while joining the undefined-RV scan (an ``info:`` name would hide
+    an undefined RV in the assumption skip).
+    """
+    for slot, irv in info_refusals:
+        _step(f"snapshot:phase2_tokeninfo_{slot}", irv)
+
+
 def _phase2_rediscovery_outcome(
     matches: tuple[int, ...], info_refusals: tuple[tuple[int, int], ...]
 ) -> tuple[str, str | int]:
@@ -558,7 +570,13 @@ def _quiet_close(ctx: ProbeContext, sh: int) -> None:
         print(f"CLEANUP_IGNORED:C_CloseSession:{type(exc).__name__}")
 
 
-def _count_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
+def _find_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, list[int], int]:
+    """Find every handle carrying label; (rv, [], 0) unless clean (R3F11).
+
+    Returns (RV, handles, phantom): ``phantom`` counts reported-but-
+    undelivered handles (over-capacity pages), so callers can void
+    honestly instead of crashing on the index or silently truncating.
+    """
     label_buf = _buf(label)
     tmpl = (CK_ATTRIBUTE * 1)()
     tmpl[0].type = CKA_LABEL
@@ -566,8 +584,9 @@ def _count_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
     tmpl[0].ulValueLen = len(label)
     rv = int(ctx.raw.C_FindObjectsInit(sh, tmpl, 1))
     if rv != int(CKR_OK):
-        return rv, -1
-    total = 0
+        return rv, [], 0
+    out: list[int] = []
+    phantom = 0
     buf = (ctypes.c_ulong * 16)()
     while True:
         found = ctypes.c_ulong(0)
@@ -577,15 +596,26 @@ def _count_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
                 ctx.raw.C_FindObjectsFinal(sh)
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
                 print(f"CLEANUP_IGNORED:C_FindObjectsFinal:{type(exc).__name__}")
-            return rv, -1
-        total += int(found.value)
+            return rv, [], 0
+        reported = int(found.value)
+        if reported > len(buf):
+            phantom += reported - len(buf)
+            reported = len(buf)
+        out.extend(int(buf[i]) for i in range(reported))
         if int(found.value) < len(buf):
             break
     try:
         ctx.raw.C_FindObjectsFinal(sh)
     except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
         print(f"CLEANUP_IGNORED:C_FindObjectsFinal:{type(exc).__name__}")
-    return int(CKR_OK), total
+    return int(CKR_OK), out, phantom
+
+
+def _count_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
+    rv, found, phantom = _find_labeled(ctx, sh, label)
+    if rv != int(CKR_OK):
+        return rv, -1
+    return int(CKR_OK), len(found) + phantom
 
 
 def _setup_burn_session(ctx: ProbeContext, role: str, then_other: bool) -> tuple[int, int] | None:
@@ -1147,9 +1177,15 @@ def _read_witness_bytes(ctx: ProbeContext, sh: int, handle: int) -> tuple[int, b
 def _read_witness_flags(
     ctx: ProbeContext, sh: int, handle: int
 ) -> tuple[int, bool | None, bool | None]:
-    """Read CKA_PRIVATE/CKA_TOKEN off a witness; (rv, None, None) unless OK."""
-    priv = ctypes.c_ubyte(0)
-    tok = ctypes.c_ubyte(0)
+    """Read CKA_PRIVATE/CKA_TOKEN off a witness; (rv, None, None) unless clean OK.
+
+    Buffers preset to nonzero poison (R3F11): an untouched slot reads
+    True, so stale False can never bind -- only a provider-written
+    False clears. Post-call lengths must be exactly 1 (a short or
+    garbage length voids as malformed, never reads as False).
+    """
+    priv = ctypes.c_ubyte(0xFF)
+    tok = ctypes.c_ubyte(0xFF)
     tmpl = (CK_ATTRIBUTE * 2)()
     tmpl[0].type = CKA_PRIVATE
     tmpl[0].pValue = ctypes.cast(ctypes.pointer(priv), ctypes.c_void_p)
@@ -1159,6 +1195,8 @@ def _read_witness_flags(
     tmpl[1].ulValueLen = 1
     rv = int(ctx.raw.C_GetAttributeValue(sh, handle, tmpl, 2))
     if rv != int(CKR_OK):
+        return rv, None, None
+    if int(tmpl[0].ulValueLen) != 1 or int(tmpl[1].ulValueLen) != 1:
         return rv, None, None
     return rv, bool(priv.value), bool(tok.value)
 
@@ -1179,28 +1217,35 @@ def qc9b_witness_digest() -> tuple[int, str]:
 def _verify_witness_binding(
     ctx: ProbeContext, sh: int, handle: int, label: bytes, name: str
 ) -> str | None:
-    """Prove a witness is a findable private session object (D1, R2C4).
+    """Prove a witness is a findable private session object (D1, R2C4, R3F11).
 
     Emits ``setup:{name}_witness_flags`` (the CKA_PRIVATE/CKA_TOKEN
     readback RV) and ``setup:{name}_prefind`` (the pre-logout label
     search RV). Returns an ASSUMPTION_FAILED reason when the binding
-    is unproved (wrong flags or not uniquely visible) so the caller
-    voids the fixture; None when bound. A non-OK step RV also returns
-    None (the failed setup step skips via the gate); only a
-    successful-but-wrong observation voids explicitly.
+    is unproved (wrong or malformed flags, over-capacity search, not
+    uniquely visible, or the singleton is not the staged handle) so
+    the caller voids the fixture; None when bound. A non-OK step RV
+    also returns None (the failed setup step skips via the gate);
+    only a successful-but-wrong observation voids explicitly.
     """
     frv, is_private, is_token = _read_witness_flags(ctx, sh, handle)
     _step(f"setup:{name}_witness_flags", frv)
     if frv != int(CKR_OK):
         return None
+    if is_private is None or is_token is None:
+        return f"{name} witness flags malformed"
     if is_private is not True or is_token is not False:
         return f"{name} witness not a private session object"
-    prv, pcount = _count_labeled(ctx, sh, label)
+    prv, found, phantom = _find_labeled(ctx, sh, label)
     _step(f"setup:{name}_prefind", prv)
     if prv != int(CKR_OK):
         return None
-    if pcount != 1:
+    if phantom:
+        return f"{name} witness search over capacity"
+    if len(found) != 1:
         return f"{name} witness not uniquely visible pre-logout"
+    if found[0] != handle:
+        return f"{name} witness find missed the staged handle"
     return None
 
 
@@ -1366,10 +1411,7 @@ def _qc11a_same_process(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         return
     matches, enum_rv, info_refusals = _rediscover_burn_slot(ctx)
     _step("setup:phase2_enumerate", enum_rv)
-    for slot, irv in info_refusals:
-        # Plain info steps (not setup:*): preserved per-slot RVs that
-        # document the scan without tripping the setup-failure skip.
-        _step(f"info:phase2_tokeninfo_{slot}", irv)
+    _emit_phase2_snapshot_refusals(info_refusals)
     if enum_rv != int(CKR_OK):
         print("OK")
         return

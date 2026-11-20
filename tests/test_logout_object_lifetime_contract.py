@@ -1340,6 +1340,37 @@ def test_cross_token_control_unusable_fails() -> None:
     assert record.actual_ckr == "CKR_KEY_HANDLE_INVALID", record.summary
 
 
+def test_cross_token_control_use_undefined_fails_metadata() -> None:
+    """R3F11: an undefined control-use RV fails the metadata contract."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(_cross_token_trace(control_use_rv=0x7FFFFFFF))
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.kind == "metadata", record.summary
+    assert "undefined" in (record.summary or ""), record.summary
+
+
+def test_cross_token_control_use_vendor_xfails_nonspec() -> None:
+    """R3F11: a vendor control-use RV xfails as the visible alternate."""
+    with pytest.raises(XFailed) as excinfo:
+        tssm._judge_cross_token_trace(_cross_token_trace(control_use_rv=0x80000001))
+    assert type(excinfo.value) is XFailed
+    (record,) = C.get_records()
+    assert record.reason == "nonspec_reject", record.summary
+
+
+def test_cross_token_undefined_find_fails_metadata() -> None:
+    """R3F11: an undefined refused-find RV fails loud, never voids into a skip."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(_cross_token_trace(target_find_rv=0x7FFFFFFF, inv=(1,)))
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.kind == "metadata", record.summary
+    assert "undefined" in (record.summary or ""), record.summary
+
+
 def test_cross_token_stale_usable_fails() -> None:
     with pytest.raises(Failed) as excinfo:
         tssm._judge_cross_token_trace(_cross_token_trace(stale_use_rv=int(CKR_OK)))

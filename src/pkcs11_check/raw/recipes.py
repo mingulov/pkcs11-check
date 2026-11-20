@@ -98,6 +98,7 @@ from .types_std import (
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
+    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
@@ -915,15 +916,21 @@ def create_object(
     return handle.value
 
 
-def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> None:
-    """Destroy an object, ignoring clean teardown errors but surfacing provider faults."""
+def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> int:
+    """Destroy an object, returning the raw CK_RV (R3F2).
+
+    Still ignores clean teardown errors and surfaces provider faults;
+    returning the RV (instead of discarding it) lets owned-handle
+    cleanup observe a refused destroy rather than leak silently.
+    """
     try:
-        raw.C_DestroyObject(session, handle)
+        return int(raw.C_DestroyObject(session, handle))
     except OSError as exc:
         if ctypes_access_violation_code(exc) is not None:
             raise
+        return int(CKR_FUNCTION_FAILED)
     except (AttributeError, ctypes.ArgumentError):
-        pass
+        return int(CKR_FUNCTION_FAILED)
 
 
 def encrypt_single(

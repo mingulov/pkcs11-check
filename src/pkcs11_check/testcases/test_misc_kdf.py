@@ -3046,42 +3046,154 @@ class _DigestStageRefusedError(Exception):
         self.rv = rv
 
 
+class _DigestUnsupportedError(NotImplementedError):
+    """C_DigestKey unsupported; carries the stage and raw RV (R3F5)."""
+
+    def __init__(self, operation: str, rv: int) -> None:
+        super().__init__(f"{operation} not supported by this module ({ckr_name(rv)})")
+        self.operation = operation
+        self.rv = rv
+
+
+class _DigestLengthDefectError(Exception):
+    """A digest stage returned CKR_OK with an impossible length (R3F5).
+
+    SHA-256 output is definitionally 32 bytes; anything else on
+    success is a provider metadata contradiction. Carries the stage
+    and both lengths for the caller's terminal.
+    """
+
+    def __init__(self, *, query_len: int, observed_len: int | None) -> None:
+        super().__init__(
+            f"C_DigestFinal length defect (size query {query_len}, read {observed_len})"
+        )
+        self.operation = "C_DigestFinal"
+        self.query_len = query_len
+        self.observed_len = observed_len
+
+
+#: SHA-256 digest width in bytes (FIPS 180-4): exact on every call.
+_SHA256_DIGEST_LEN = 32
+
+
 def _digest_child_staged(rs: Any, child: int) -> bytes:
     """Digest a child key, attributing a refusal to its Init/Key/Final stage.
 
-    Raises NotImplementedError when C_DigestKey is unsupported and
-    _DigestStageRefusedError (operation + RV) for any refused stage.
+    Raises _DigestUnsupportedError when C_DigestKey is unsupported,
+    _DigestStageRefusedError (operation + RV) for any refused stage,
+    and _DigestLengthDefectError when a successful Final reports a
+    non-32 length at either call (R3F5: the first call must not size
+    an unbounded buffer and the second must not silently truncate).
     """
     init_rv = int(rs.raw.C_DigestInit(rs.sh, mech_simple(CKM_SHA256).byref()))
     if init_rv != int(CKR_OK):
         raise _DigestStageRefusedError("C_DigestInit", init_rv)
     key_rv = int(rs.raw.C_DigestKey(rs.sh, child))
     if key_rv == int(CKR_FUNCTION_NOT_SUPPORTED):
-        raise NotImplementedError("C_DigestKey not supported by this module")
+        raise _DigestUnsupportedError("C_DigestKey", key_rv)
     if key_rv != int(CKR_OK):
         raise _DigestStageRefusedError("C_DigestKey", key_rv)
     out_len = CK_ULONG(0)
     final_rv = int(rs.raw.C_DigestFinal(rs.sh, None, byref(out_len)))
     if final_rv != int(CKR_OK):
         raise _DigestStageRefusedError("C_DigestFinal", final_rv)
-    buf = (ctypes.c_ubyte * int(out_len.value))()
+    query_len = int(out_len.value)
+    if query_len != _SHA256_DIGEST_LEN:
+        raise _DigestLengthDefectError(query_len=query_len, observed_len=None)
+    buf = (ctypes.c_ubyte * query_len)()
     final_rv = int(rs.raw.C_DigestFinal(rs.sh, buf, byref(out_len)))
     if final_rv != int(CKR_OK):
         raise _DigestStageRefusedError("C_DigestFinal", final_rv)
-    return bytes(buf[: int(out_len.value)])
+    read_len = int(out_len.value)
+    if read_len != _SHA256_DIGEST_LEN:
+        raise _DigestLengthDefectError(query_len=query_len, observed_len=read_len)
+    return bytes(buf[:read_len])
 
 
 def _recover_byte_via_digest(rs: Any, child: int) -> bytes | None:
     """Brute-force a 1-byte child via DigestKey; None when no match.
 
-    Raises NotImplementedError when DigestKey is unsupported and
-    _DigestStageRefusedError (operation + RV) for refused digest stages.
+    Raises _DigestUnsupportedError when DigestKey is unsupported,
+    _DigestStageRefusedError (operation + RV) for refused digest
+    stages, and _DigestLengthDefectError for impossible lengths.
     """
     observed = _digest_child_staged(rs, child)
     for candidate in range(256):
         if hashlib.sha256(bytes([candidate])).digest() == observed:
             return bytes([candidate])
     return None
+
+
+def _attempt_sealed_recovery(
+    rs: Any, child: int, *, label: str
+) -> tuple[bytes | None, str | None, int | None]:
+    """Run the sealed recovery oracle; capture blocked stages (R3F5).
+
+    Returns (found bytes or None, digest op or None, digest RV or
+    None): an unsupported or refused stage rides as (None, op, RV)
+    for the judge instead of losing its attribution.
+    """
+    try:
+        return _recover_byte_via_digest(rs, child), None, None
+    except _DigestUnsupportedError as exc:
+        return None, exc.operation, exc.rv
+    except _DigestStageRefusedError as exc:
+        _fail_undefined_setup_rv(exc.rv, label=label, operation=exc.operation)
+        return None, exc.operation, exc.rv
+
+
+def _fail_digest_length_defect(exc: _DigestLengthDefectError, *, label: str, leg: str) -> NoReturn:
+    """Fail loud on a successful digest with an impossible length (R3F5)."""
+    fail_as(
+        "self_contradiction",
+        kind="metadata",
+        label=f"{label}: {leg} digest",
+        operation=exc.operation,
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        summary=(
+            f"{label}: {leg} digest succeeded with a non-32 length "
+            f"(size query {exc.query_len}, read {exc.observed_len}); refusing to trust it"
+        ),
+        detail={"query_len": exc.query_len, "observed_len": exc.observed_len},
+    )
+
+
+def _skip_unless_single_byte_child(
+    rs: Any, child: int, *, label: str, leg: str, shape: str
+) -> None:
+    """Require a 1-byte recovery child; otherwise the oracle cannot calibrate (R3F5).
+
+    Explicit-length shapes pin CKA_VALUE_LEN=1; the default shape lets
+    the provider choose. Either way a non-1-byte child voids the
+    comparison (skip, never fail: length semantics belong to the
+    mechanism, and an uncalibrated oracle proves nothing).
+    """
+    try:
+        read = read_attributes(rs.raw, rs.sh, child, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        _fail_undefined_setup_rv(exc.rv, label=label, operation="C_GetAttributeValue")
+        pytest.skip(
+            f"{label}: {leg} child length unreadable ({ckr_name(exc.rv)}); oracle untestable"
+        )
+    value = attr_or_record(
+        read,
+        CKA_VALUE,
+        label=f"{label}: {leg} length readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    if value is MISSING_ATTRIBUTE or not isinstance(value, bytes):
+        child_len = -1
+    else:
+        child_len = len(value)
+    if child_len != 1:
+        if shape == "xor_short_default":
+            why = f"provider default child length is {child_len}, want 1"
+        else:
+            why = f"child length is {child_len} (template asked 1)"
+        pytest.skip(f"{label}: {leg} 1-byte oracle untestable ({why})")
 
 
 #: Definitive sealed-derive refusals: the shape/operation is rejected,
@@ -3102,6 +3214,82 @@ _RECOVERY_CLEAN_REFUSALS: frozenset[int] = frozenset(
 )
 
 
+def _adopt_recovery_child(rs: Any, child: int, base: int, *, label: str, leg: str) -> int:
+    """Adopt a derived recovery child only with proved ownership (R3F2).
+
+    A null handle or the base handle back is a proved contradiction
+    (fail WITHOUT destroying: the handle is nothing or the live
+    base). Otherwise the child's CKA_LABEL must read back the attempt
+    label the template requested: a mismatch fails (the provider
+    accepted the label and returned something else), an unreadable
+    label voids the leg (ownership unproved: skip, never use, never
+    destroy), with undefined RVs failing and vendor RVs xfailing loud.
+    Returns the adopted child; never returns an unproved handle.
+    """
+    if not child or child == base:
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=f"{label}: {leg} derive",
+            operation="C_DeriveKey",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(
+                f"{label}: {leg} derive returned "
+                f"{'a null handle' if not child else 'the base handle (alias)'} "
+                f"({child}); refusing to use or destroy it"
+            ),
+            detail={"base": base, "child": child},
+        )
+    try:
+        read = read_attributes(rs.raw, rs.sh, child, [CKA_LABEL])
+    except CkrAssertionError as exc:
+        _fail_undefined_setup_rv(exc.rv, label=label, operation="C_GetAttributeValue")
+        if is_vendor_defined_ckr(exc.rv):
+            xfail_as(
+                "nonspec_reject",
+                kind="metadata",
+                label=f"{label}: {leg} derive",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: {leg} child label unreadable "
+                    f"({ckr_name(exc.rv)}); ownership unproved"
+                ),
+            )
+        pytest.skip(
+            f"{label}: {leg} child label unreadable ({ckr_name(exc.rv)}); ownership unproved"
+        )
+    claimed = attr_or_record(
+        read,
+        CKA_LABEL,
+        label=f"{label}: {leg} adoption readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    if claimed is MISSING_ATTRIBUTE:
+        mismatch = True
+    else:
+        mismatch = claimed != label and claimed != label.encode()
+    if mismatch:
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=f"{label}: {leg} derive",
+            operation="C_DeriveKey",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(
+                f"{label}: {leg} child label is not the attempt label; "
+                "refusing to use or destroy it"
+            ),
+            detail={"base": base, "child": child},
+        )
+    return child
+
+
 def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     """Run one sealed-vs-control 1-byte recovery comparison (#54.3)."""
     if shape == "extract":
@@ -3110,7 +3298,7 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         expected = _RECOVERY_BASE[:1]
     elif shape == "xor_full":
         expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_FULL_DATA[0]])
-    elif shape == "xor_short":
+    elif shape in ("xor_short", "xor_short_default"):
         expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_SHORT_DATA[0]])
     else:
         raise ValueError(f"unknown recovery shape {shape!r}")
@@ -3121,8 +3309,12 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
             CKA_KEY_TYPE: CKK_GENERIC_SECRET,
             CKA_TOKEN: False,
             CKA_LABEL: label,
-            CKA_VALUE_LEN: _SHORT_CHILD_LEN,
         }
+        if shape != "xor_short_default":
+            child_attrs[CKA_VALUE_LEN] = _SHORT_CHILD_LEN
+        # R3F5: xor_short_default omits CKA_VALUE_LEN (provider default
+        # length on short input); the control length gate skips unless
+        # the default is 1 byte.
         if shape == "extract":
             return _derive_byte_child(rs, _EXTRACT_NAME, [base], child_attrs)
         # NOTE: 32 zero bytes (not 1) so length-strict tokens accept the
@@ -3132,7 +3324,7 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         # ones run the recovery comparison on short input.
         if shape == "xor_zeros":
             data = b"\x00" * 32
-        elif shape == "xor_short":
+        elif shape in ("xor_short", "xor_short_default"):
             data = _RECOVERY_XOR_SHORT_DATA
         else:
             data = _RECOVERY_XOR_FULL_DATA
@@ -3162,20 +3354,24 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     control_ok = False
     crv, cchild = -1, 0
     try:
-        crv, cchild = derive(cbase)
+        crv, _raw_child = derive(cbase)
         if crv != int(CKR_OK):
             _fail_undefined_setup_rv(crv, label=label, operation="C_DeriveKey")
             pytest.skip(f"{label}: control derive refused ({ckr_name(crv)}); fixture unbuildable")
+        cchild = _adopt_recovery_child(rs, _raw_child, cbase, label=label, leg="control")
+        _skip_unless_single_byte_child(rs, cchild, label=label, leg="control", shape=shape)
         try:
             cfound = _recover_byte_via_digest(rs, cchild)
-        except NotImplementedError:
-            pytest.skip(f"{label}: C_DigestKey unsupported; oracle untestable")
+        except _DigestUnsupportedError as exc:
+            pytest.skip(f"{label}: C_DigestKey unsupported ({ckr_name(exc.rv)}); oracle untestable")
         except _DigestStageRefusedError as exc:
             _fail_undefined_setup_rv(exc.rv, label=label, operation=exc.operation)
             pytest.skip(
                 f"{label}: control digest refused ({exc.operation} "
                 f"{ckr_name(exc.rv)}); oracle untestable"
             )
+        except _DigestLengthDefectError as exc:
+            _fail_digest_length_defect(exc, label=label, leg="control")
         assert_correct(
             actual=cfound,
             expected=expected,
@@ -3185,8 +3381,8 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         )
         control_ok = True
     finally:
-        # R2A1: only a successful derive adopts its output handle; a
-        # refused derive must never donate a handle to cleanup.
+        # R2A1/R3F2: only an ADOPTED derive output is destroyed; a
+        # refused or unadopted derive never donates a handle to cleanup.
         if crv == int(CKR_OK) and cchild:
             destroy_quietly(rs.raw, rs.sh, cchild)
         destroy_quietly(rs.raw, rs.sh, cbase)
@@ -3209,24 +3405,23 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     srv, schild = -1, 0
     try:
         _assert_recovery_sealed_or_skip(rs, sbase, label=label)
-        srv, schild = derive(sbase)
+        srv, _raw_child = derive(sbase)
         recovered: bool | None = False
         digest_op: str | None = None
         digest_rv: int | None = None
         if srv == int(CKR_OK):
+            schild = _adopt_recovery_child(rs, _raw_child, sbase, label=label, leg="sealed")
             try:
-                sfound = _recover_byte_via_digest(rs, schild)
-            except NotImplementedError:
-                recovered = None
-            except _DigestStageRefusedError as exc:
-                _fail_undefined_setup_rv(exc.rv, label=label, operation=exc.operation)
-                digest_op, digest_rv = exc.operation, exc.rv
-                recovered = None
-            else:
+                sfound, digest_op, digest_rv = _attempt_sealed_recovery(rs, schild, label=label)
+            except _DigestLengthDefectError as exc:
+                _fail_digest_length_defect(exc, label=label, leg="sealed")
+            if digest_op is None:
                 # Only the independently expected byte counts as a
                 # recovery; any other derived byte is not the sealed
                 # base coming out.
                 recovered = sfound == expected
+            else:
+                recovered = None
         _judge_byte_recovery(
             derive_rv=srv,
             recovered=recovered,
@@ -3306,6 +3501,14 @@ class TestByteRecoveryOracle:
         if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
             pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
         _run_byte_recovery_case(p11_raw_session, shape="xor_short", label="qc12b-rec-xorshort")
+
+    def test_xor_short_default_1byte_recovery(self, p11_raw_session: Any) -> None:
+        """Short input with omitted CKA_VALUE_LEN (R3F5 provider-default route)."""
+        if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
+            pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
+        _run_byte_recovery_case(
+            p11_raw_session, shape="xor_short_default", label="qc12b-rec-xorshortdef"
+        )
 
     def test_xor_zeros_1byte_recovery(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
