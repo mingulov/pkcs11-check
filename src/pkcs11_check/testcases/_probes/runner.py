@@ -62,7 +62,7 @@ from pkcs11_check.core.call_counters import (
     note_lost_probe,
     registration_info,
 )
-from pkcs11_check.core.counters_schema import mint_filename_nonce
+from pkcs11_check.core.counters_schema import is_worker_uuid, mint_filename_nonce
 from pkcs11_check.core.loader import SUPPORTED_INTERFACES
 from pkcs11_check.core.process_observation import (
     SUBPROCESS_ABRUPT_EXIT_MARKER,
@@ -239,17 +239,20 @@ def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool
     return True
 
 
-def _commit_sidecar_owned(path: str) -> bool:
-    """Whether the sidecar at commit time is provably the launcher's (#88R8-3).
+def _commit_sidecar_owned(path: str, expected: tuple[str, int] | None) -> bool:
+    """Whether the sidecar at commit time is provably this execution's (#88R8-3).
 
-    A stale or foreign sidecar can reach the commit (the coverage path
-    never validated it): deleting it would destroy foreign evidence
-    and marking it would mint an unclaimable marker (launcher name,
-    foreign body). A contradiction -- or an unreadable body, which
-    proves nothing -- retains the file loudly instead; the ingest
-    stands (coverage counts are already checkpointed) and file
-    collection routes the sidecar by content. Missing or torn files
-    proceed (nothing attributable to protect).
+    A stale or foreign sidecar can reach the commit: deleting it would
+    destroy foreign evidence and marking it would mint an unclaimable
+    marker. Launcher stamps must agree when stated (both-sides rule);
+    the child receipt must validate against the receipt the ingest
+    just absorbed: an exact match proceeds, a mismatch/partial/garbage
+    receipt retains, and version-incoherent shapes (evidence-bearing
+    but unstamped bodies beside stamped coverage, or stamped bodies
+    beside legacy-quiet coverage) retain for file collection to
+    adjudicate -- only fully-quiet legacy pairs proceed by slot
+    freshness. Missing, torn, or payload-free files proceed (nothing
+    attributable to protect); unreadable bodies retain loudly.
     """
     fallback = _read_probe_json(path)
     if fallback is None:
@@ -269,10 +272,53 @@ def _commit_sidecar_owned(path: str) -> bool:
             stacklevel=2,
         )
         return False
+    counters = fallback.get("counters")
+    if not isinstance(counters, (list, tuple)) or not counters:
+        return True
+    worker = fallback.get("worker_uuid")
+    pseq = fallback.get("probe_seq")
+    if worker is None and pseq is None:
+        if expected is None:
+            return True
+        warnings.warn(
+            f"probe sidecar {path} carries counters but no receipt under stamped "
+            "coverage; evidence retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    if expected is None:
+        warnings.warn(
+            f"probe sidecar {path} states a receipt under legacy-quiet coverage; "
+            "evidence retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    if not is_worker_uuid(worker) or type(pseq) is not int:
+        warnings.warn(
+            f"probe sidecar {path} states a malformed receipt; evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    if (worker, pseq) != expected:
+        warnings.warn(
+            f"probe sidecar {path} contradicts the absorbed receipt "
+            f"({worker!r}, {pseq!r} != {expected!r}); evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
     return True
 
 
-def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None:
+def _commit_probe_sidecar(
+    path: str | None,
+    *,
+    force_tmps: bool = False,
+    expected: tuple[str, int] | None = None,
+) -> None:
     """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
 
     The parent checkpoint must be durable before the probe's own evidence
@@ -284,7 +330,9 @@ def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None
     consumed marker instead: the parent checkpoint already holds the
     counts, and the marker tells orphan adoption to suppress rather than
     fold them a second time. Delete and mark both require validated
-    ownership first (a foreign or unreadable body is retained loudly).
+    ownership first (a foreign, unreadable, or receipt-contradictory
+    body is retained loudly); ``expected`` is the receipt the ingest
+    just absorbed (None for legacy-quiet coverage).
 
     Raises:
         CounterPersistenceError: When the parent checkpoint cannot be
@@ -296,7 +344,7 @@ def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None
     flush_counters()
     if path is None:
         return
-    if not _commit_sidecar_owned(path):
+    if not _commit_sidecar_owned(path, expected):
         return
     if _delete_probe_sidecar(path, force_tmps=force_tmps):
         return
@@ -394,7 +442,7 @@ def ingest_probe_payload(
                     source=source,
                 )
                 # Exit coverage subsumes every mid-run tmp (#88R3).
-                _commit_probe_sidecar(sidecar, force_tmps=True)
+                _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
                 return "folded"
     fallback = _read_probe_json(sidecar)
     if isinstance(fallback, _UnreadableEvidence):
@@ -462,7 +510,7 @@ def ingest_probe_payload(
                 source=source,
                 consumed_probe=validated_fallback,
             )
-            _commit_probe_sidecar(sidecar)
+            _commit_probe_sidecar(sidecar, expected=validated_fallback)
             return "partial"
     _delete_probe_sidecar(sidecar)
     return "lost"

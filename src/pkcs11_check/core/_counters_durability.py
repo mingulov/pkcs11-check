@@ -50,7 +50,7 @@ import signal
 import sys
 import time
 import warnings
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -1598,13 +1598,51 @@ def _probe_rows_groups(rows: list[Any]) -> dict[tuple[str, str], dict[str, Any]]
     return groups
 
 
-def _rows_covered_by(orphan_rows: list[Any], marker_rows: list[Any]) -> bool:
-    """Whether a marker snapshot covers every countable orphan row (#88R8-1).
+def _snapshots_equal(first: Any, second: Any) -> bool:
+    """Type-sensitive deep equality for evidence snapshots (#88R9-1b).
 
-    Per (module, fn) key the orphan's entries must not exceed the
-    marker's and every orphan exit count must sit inside the marker's;
-    a newer rewrite (or a mid-fence replacement the reread caught)
-    fails the subset and defers instead of dropping or doubling.
+    Plain ``==`` is blind to bool/int swaps (``True == 1``) that flip
+    a row from garbage to valid across a fence race. Iterative (never
+    recurses no matter how deep a hostile payload nests); NaN compares
+    stable so identical payloads never read as changed.
+    """
+    stack: list[tuple[Any, Any]] = [(first, second)]
+    while stack:
+        left, right = stack.pop()
+        if left is right:
+            continue
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            if left.keys() != right.keys():
+                return False
+            stack.extend((left[key], right[key]) for key in left)
+        elif isinstance(left, (list, tuple)):
+            if len(left) != len(right):
+                return False
+            stack.extend(zip(left, right))
+        elif isinstance(left, float) and left != left and right != right:
+            continue
+        elif left != right:
+            return False
+    return True
+
+
+def _snapshot_covered_by(
+    orphan_rows: list[Any],
+    orphan_keys: frozenset[tuple[str, int]],
+    orphan_adopted: int,
+    marker_rows: list[Any],
+    marker_keys: frozenset[tuple[str, int]],
+    marker_adopted: int,
+) -> bool:
+    """Whether a marker snapshot covers an orphan's rows and losses (#88R8-1).
+
+    Rows compare per (module, fn) key (entries and every exit count
+    inside the marker's); loss keys subset and the unkeyed remainder
+    must not exceed the marker's -- a newer rewrite, a new loss key,
+    or a larger unkeyed remainder fails the subset and defers instead
+    of dropping or doubling (#88R9-2).
     """
     own = _probe_rows_groups(orphan_rows)
     covered = _probe_rows_groups(marker_rows)
@@ -1617,7 +1655,9 @@ def _rows_covered_by(orphan_rows: list[Any], marker_rows: list[Any]) -> bool:
         for rv, count in group["exits"].items():
             if other["exits"].get(rv, 0) < count:
                 return False
-    return True
+    if not orphan_keys <= marker_keys:
+        return False
+    return orphan_adopted <= marker_adopted
 
 
 def _merge_probe_tmp_rows(own: list[Any], tmp: list[Any]) -> list[list[Any]]:
@@ -1877,6 +1917,8 @@ class _DeferProducerError(Exception):
     def detail(self) -> str:
         """Human-readable deferral cause for the warning."""
         if self.pid is not None:
+            if self.reason == "live":
+                return f"live probe writer (pid {self.pid}) still running"
             return f"live probe writer (pid {self.pid}) unfenceable"
         if self.reason == "rewrite":
             return f"rewrite newer than marker coverage ({self.source or 'unknown file'})"
@@ -1971,7 +2013,9 @@ def _adopt_probe_orphans(
     colliders = sorted(uuid for uuid in known_uuids if uuid.startswith(prefix))
     unambiguous = colliders == [worker_uuid]
     coverage = _durable_receipts(sidecar, journal_lines) | claims.get(worker_uuid, set())
-    coverage_rows: dict[tuple[str, int], list[Any]] = {}
+    coverage_snapshots: dict[
+        tuple[str, int], tuple[list[Any], frozenset[tuple[str, int]], int]
+    ] = {}
     merged: dict[str, Any] = {"total_calls": 0, "by_module": {}}
     claimed: list[dict[str, Any]] = []
     consumed: list[Path] = []
@@ -1998,13 +2042,16 @@ def _adopt_probe_orphans(
                 # under coverage: the baseline, marker, and loss claim
                 # stay associated for forensic resolution (#88R8-2).
                 raise _DeferProducerError(worker_uuid, None, source=path.name, reason="divergent")
-            marker_rows = coverage_rows.get((child_uuid, seq))
-            if marker_rows is not None:
+            marker_snapshot = coverage_snapshots.get((child_uuid, seq))
+            if marker_snapshot is not None:
                 # Marker coverage proves exactly the marker snapshot:
                 # anything beyond it is a newer rewrite the marker
                 # never saw (or a mid-fence replacement the reread
                 # caught) and defers instead of dropping (#88R8-1).
-                if not _rows_covered_by(counters, marker_rows):
+                marker_rows, marker_keys, marker_adopted = marker_snapshot
+                if not _snapshot_covered_by(
+                    counters, keys, adopted, marker_rows, marker_keys, marker_adopted
+                ):
                     raise _DeferProducerError(worker_uuid, None, source=path.name, reason="rewrite")
             elif replayed_adopted:
                 # Durable (session/checkpoint) coverage carries no
@@ -2111,7 +2158,7 @@ def _adopt_probe_orphans(
             marker_keys,
             marker_identity,
             marker_finalized,
-            _,
+            marker_adopted,
             _,
             _,
             _,
@@ -2149,7 +2196,11 @@ def _adopt_probe_orphans(
             )
             continue
         coverage.add((marker_child, marker_seq))
-        coverage_rows[(marker_child, marker_seq)] = marker_counters
+        coverage_snapshots[(marker_child, marker_seq)] = (
+            marker_counters,
+            marker_keys,
+            marker_adopted,
+        )
         orphan_keys |= marker_keys
         if marker_finalized and marker_seq == filename_seq:
             recovered.append((worker_uuid, marker_seq))
@@ -2245,16 +2296,40 @@ def _adopt_probe_orphans(
                     raise _DeferProducerError(worker_uuid, orphan_pid)
             elif not _terminate_verified(orphan_pid, orphan_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, orphan_pid)
+        # A covered orphan with a live writer must not suppress: the
+        # writer may replace the file after our reads (the committed
+        # path never fences, so detection is the only guard). Defer for
+        # a post-exit pass instead of deleting a live return (#88R9-1a).
+        if (child_uuid, seq) in coverage and orphan_pid is not None and _pid_exists(orphan_pid):
+            raise _DeferProducerError(worker_uuid, orphan_pid, reason="live")
         # Re-read after quiescence (#88R8-1): a writer that replaced
         # the file during the fence invalidates the pre-fence rows. Any
-        # change (or a new read fault) defers; a vanished file was
-        # absorbed live and needs nothing.
+        # change (type-strict: True is not 1) or new read fault defers;
+        # a vanished file was absorbed live -- unless a rewrite tmp
+        # survives it, which no later pass could rediscover: that tmp
+        # stays loudly forensic while the parent proceeds (#88R9-1c).
         fresh_status, fresh_raw = _read_json_evidence(path)
         if fresh_status == "gone":
+            survivors = _list_tmp_paths(path.parent, f"{path.name}.tmp-")
+            if survivors:
+                names = ", ".join(sorted(p.name for p in survivors))
+                warnings.warn(
+                    f"probe baseline {path.name} vanished with surviving rewrite tmps "
+                    f"({names}); tmps retained for forensics",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            elif survivors is None:
+                warnings.warn(
+                    f"probe baseline {path.name} vanished and its rewrite tmps "
+                    "cannot be listed (I/O fault); proceeding without them",
+                    UserWarning,
+                    stacklevel=2,
+                )
             continue
         if fresh_status == "unreadable":
             raise _DeferProducerError(worker_uuid, None, source=path.name)
-        if fresh_raw != raw:
+        if not _snapshots_equal(fresh_raw, raw):
             raise _DeferProducerError(worker_uuid, None, source=path.name, reason="changed")
         # #88: a same-probe rewrite tmp replays its returns onto the
         # orphan's rows before the reunion fold.
@@ -4270,14 +4345,28 @@ def sweep_orphans(
 
 
 def _write_barrier_staging(
-    root: Path, cache_records: dict[str, list[dict[str, Any]]], consumed: int
+    root: Path,
+    cache_records: dict[str, list[dict[str, Any]]],
+    consumed: int,
+    collected: Collection[str],
 ) -> bool:
-    """Persist the collected barrier plan atomically (never raises)."""
+    """Persist the collected barrier plan atomically (never raises).
+
+    ``collected`` carries the worker uuids whose evidence this barrier
+    took into consumption: a retry finishes their cleanup without
+    adjudicating (and re-emitting) the evidence again (#88R9-4).
+    """
     path = root / BARRIER_STAGING_FILENAME
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
     try:
         tmp.write_text(
-            json.dumps({"cache_records": cache_records, "consumed": consumed}),
+            json.dumps(
+                {
+                    "cache_records": cache_records,
+                    "consumed": consumed,
+                    "collected_uuids": sorted(set(collected)),
+                }
+            ),
             encoding="utf-8",
         )
         os.replace(tmp, path)
@@ -4295,16 +4384,20 @@ def _write_barrier_staging(
     return True
 
 
-def _load_barrier_staging(root: Path) -> tuple[dict[str, list[dict[str, Any]]], int]:
-    """Load retained staging ``(cache_records, consumed)``; absent reads empty.
+def _load_barrier_staging(
+    root: Path,
+) -> tuple[dict[str, list[dict[str, Any]]], int, frozenset[str]]:
+    """Load retained staging ``(cache_records, consumed, collected)``.
 
-    Torn or misshapen staging warns loudly (staged recovery evidence may
-    be lost: atomic writes make this corruption-only) and the debris is
-    discarded. Never raises.
+    Absent reads empty. Torn or misshapen staging warns loudly (staged
+    recovery evidence may be lost: atomic writes make this
+    corruption-only) and the debris is discarded. A malformed
+    ``collected_uuids`` list degrades leniently to empty (pre-key
+    staging behaves exactly as before). Never raises.
     """
     path = root / BARRIER_STAGING_FILENAME
     if not path.exists():
-        return {}, 0
+        return {}, 0, frozenset()
     try:
         raw = _json_loads_evidence(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -4325,8 +4418,21 @@ def _load_barrier_staging(root: Path) -> tuple[dict[str, list[dict[str, Any]]], 
             path.unlink(missing_ok=True)
         except OSError:
             pass
-        return {}, 0
-    return records, consumed
+        return {}, 0, frozenset()
+    collected: frozenset[str] = frozenset()
+    if isinstance(raw, dict):
+        claimed = raw.get("collected_uuids", [])
+        if isinstance(claimed, list) and all(isinstance(uuid, str) for uuid in claimed):
+            collected = frozenset(claimed)
+        elif claimed:
+            warnings.warn(
+                f"counter barrier staging {path} has a malformed collected_uuids list; "
+                "retried producers may re-emit already-staged records",
+                UserWarning,
+                stacklevel=2,
+            )
+    assert isinstance(records, dict) and isinstance(consumed, int)
+    return records, consumed, collected
 
 
 def discard_barrier_staging(root: Path | str) -> bool:
@@ -4389,10 +4495,11 @@ def prepare_resume(
         warnings.warn(f"counter resume barrier unavailable ({exc})", UserWarning, stacklevel=2)
         plan["barrier_ok"] = False
         return plan
-    staged_records, staged_consumed = _load_barrier_staging(root)
+    staged_records, staged_consumed, staged_collected = _load_barrier_staging(root)
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
+    collected_now: set[str] = set()
     to_consume: list[Path] = []
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
     prior_arg = prior if prior and prior.exists() else None
@@ -4414,6 +4521,17 @@ def prepare_resume(
     def _emit(unit: str, records: list[dict[str, Any]]) -> None:
         if records:
             plan["cache_records"].setdefault(unit, []).extend(records)
+
+    def _note_collected(uuid: str) -> bool:
+        """Record uuid as collected; False when already staged (#88R9-4).
+
+        A retry re-collects staged evidence to finish its cleanup
+        (held files) but must not adjudicate or re-emit it: the staged
+        records already stand. Callers still extend to_consume either
+        way; only emission is gated.
+        """
+        collected_now.add(uuid)
+        return uuid not in staged_collected
 
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
@@ -4477,7 +4595,8 @@ def prepare_resume(
                 if exc.pid is not None:
                     skipped_live_units.add(content["unit"])
                 continue
-            _emit(content["unit"], claim_records)
+            if _note_collected(uuid):
+                _emit(content["unit"], claim_records)
             to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
             plan["consumed"] += 1
@@ -4506,7 +4625,8 @@ def prepare_resume(
                 if exc.pid is not None:
                     skipped_live_units.add(content["unit"])
                 continue
-            _emit(content["unit"], records)
+            if _note_collected(uuid):
+                _emit(content["unit"], records)
             to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
             plan["consumed"] += 1
@@ -4535,7 +4655,8 @@ def prepare_resume(
                 if exc.pid is not None:
                     skipped_live_units.add(content["unit"])
                 continue
-            _emit(content["unit"], records)
+            if _note_collected(uuid):
+                _emit(content["unit"], records)
             to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
             plan["consumed"] += 1
@@ -4630,7 +4751,8 @@ def prepare_resume(
                         isolation=barrier_stamp_isolation,
                     )
                 )
-            _emit(str(sidecar.get("unit", "")), claim_records)
+            if _note_collected(uuid):
+                _emit(str(sidecar.get("unit", "")), claim_records)
             to_consume.extend([sidecar_path, journal_path])
             to_consume.extend(consumed)
             plan["consumed"] += 1
@@ -4670,7 +4792,8 @@ def prepare_resume(
         )
         if lost is not None:
             records.append(lost)
-        _emit(str(sidecar.get("unit", "")), records)
+        if _note_collected(uuid):
+            _emit(str(sidecar.get("unit", "")), records)
         to_consume.extend([sidecar_path, _journal_for_sidecar(sidecar_path)])
         to_consume.extend(consumed)
         plan["consumed"] += 1
@@ -4699,7 +4822,9 @@ def prepare_resume(
     # run-match branches dead code there.
     plan["collected_runs"] = sorted(seen_runs - retained_runs)
     if plan["cache_records"]:
-        if not _write_barrier_staging(root, plan["cache_records"], plan["consumed"]):
+        if not _write_barrier_staging(
+            root, plan["cache_records"], plan["consumed"], collected_now | set(staged_collected)
+        ):
             warnings.warn(
                 f"counter resume barrier cannot stage recovery evidence in {root}; "
                 "sources left unconsumed for retry",
