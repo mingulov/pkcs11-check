@@ -29,6 +29,19 @@ def _refusal_for(attrs: Mapping[Any, Any], attr: Any) -> AttrRefusal | None:
     return result if isinstance(result, AttrRefusal) else None
 
 
+def refusal_for(attrs: Mapping[Any, Any], attr: Any) -> AttrRefusal | None:
+    """Return the :class:`AttrRefusal` for ``attr`` (grading use only).
+
+    Same channel read as :func:`_refusal_for`, exposed for oracles that
+    must GRADE an already-recorded refusal shape themselves (terminate
+    vs skip) after routing the value through :func:`attr_or_record`
+    (which records refusal-with-data as a self-contradiction). Never
+    use to downgrade: a ``leaked_len`` refusal stays a contradiction,
+    and a plain ``Mapping`` with no channel still reports ``None``.
+    """
+    return _refusal_for(attrs, attr)
+
+
 def refusal_rv_for(attrs: Mapping[Any, Any], attr: Any) -> int | None:
     """Return the clean-refusal CKR recorded for ``attr``, or ``None``.
 
