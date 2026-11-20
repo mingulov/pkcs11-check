@@ -58,6 +58,7 @@ from pkcs11_check._plugin_report_attach import _apply_recorded_outcome
 from pkcs11_check.compliance import clear_notes, get_notes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
     CKA_ALLOWED_MECHANISMS,
     CKA_CLASS,
@@ -1111,6 +1112,9 @@ class _PolicyFake:
         self.derive_calls.append((base, raw_param))
         scripted = self._pop(self._derive_script)
         if scripted is not None:
+            # R4-F1: a refused derive can still leak (mirrors the
+            # create/genkey/keypair leak hooks).
+            self._maybe_leak(self._template_attrs(_decode_template(tmpl, count)), role="derive")
             return scripted
         scripted_handle = self._pop(self._derive_concat_handles)
         if scripted_handle is not None:
@@ -2432,7 +2436,202 @@ def test_qc4a_derive_aux_excluded_policy_refusal_passes(rv: int) -> None:
     assert record.reason == "sanctioned_refusal", record.summary
     assert record.actual_ckr == ckr_name(rv), record.summary
     assert fake.find_pages, "excluded refusal must inventory for created objects"
+    # R4-F1: baselines alone satisfy find_pages; the post-attempt
+    # inventory is the third find sequence (mutation-proved).
+    assert fake._find_seq >= 3, "excluded refusal must run the post-attempt inventory"
     _assert_cleaned_up(fake)
+
+
+def test_qc4a_derive_aux_refused_target_leak_fails_through_node() -> None:
+    """R4-F1: a refused aux derive that leaks is proved through the production node."""
+    fake = _PolicyFake(
+        derive_script=[None, _KEY_NOT_PERMITTED],
+        leak_labeled=b"qc4a-derive-aux-excluded-derived",
+    )
+    _run_must_fail(_qc4a_derive_aux, _rs_aux(fake), "excluded")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "created" in (record.summary or ""), record.summary
+    leaked = _handle_for_label(fake, b"qc4a-derive-aux-excluded-derived")
+    assert leaked in fake.destroyed, fake.destroyed
+    assert fake._find_seq >= 3, "post-attempt inventory must run"
+
+
+class _PartialRaw:
+    """Scripted Init/Find-pages/Final plus identity reads (R4-F1)."""
+
+    def __init__(
+        self,
+        *,
+        init_rv: int = _OK,
+        pages: list[tuple[int, ...] | tuple[str, int]] | None = None,
+        find_terminal: int | None = None,
+        final_rv: int = _OK,
+        identities: dict[int, dict[int, Any]] | None = None,
+    ) -> None:
+        self._init_rv = init_rv
+        self._pages = list(pages or [])
+        self._find_terminal = find_terminal
+        self._final_rv = final_rv
+        self._identities = identities or {}
+        self.destroyed: list[int] = []
+        self.final_calls = 0
+
+    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
+        return self._init_rv
+
+    def C_FindObjects(self, _sh: int, handles: Any, max_count: int, found_ptr: Any) -> int:  # noqa: N802
+        out = ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents
+        if self._pages:
+            page = self._pages.pop(0)
+            if isinstance(page[0], str):
+                assert page[0] == "oversize", page
+                out.value = int(page[1])
+                return _OK
+            for i, handle in enumerate(page[:max_count]):
+                handles[i] = handle
+            out.value = len(page)
+            return _OK
+        if self._find_terminal is not None:
+            out.value = 0
+            return self._find_terminal
+        out.value = 0
+        return _OK
+
+    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
+        self.final_calls += 1
+        return self._final_rv
+
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        obj = self._identities.get(int(handle))
+        if obj is None:
+            return int(CKR_OBJECT_HANDLE_INVALID)
+        for i in range(int(count)):
+            blob = obj.get(int(tmpl[i].type))
+            if blob is None:
+                tmpl[i].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
+                return int(CKR_ATTRIBUTE_TYPE_INVALID)
+            if tmpl[i].pValue is None:
+                tmpl[i].ulValueLen = len(blob)
+            else:
+                ctypes.memmove(tmpl[i].pValue, blob, len(blob))
+                tmpl[i].ulValueLen = len(blob)
+        return _OK
+
+    def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
+        self.destroyed.append(int(handle))
+        return _OK
+
+
+def _partial_rs(raw: _PartialRaw) -> Any:
+    return SimpleNamespace(raw=raw, sh=1)
+
+
+def _partial_identities(handle: int, tag: bytes) -> dict[int, dict[int, Any]]:
+    import sys
+
+    def _u32(value: int) -> bytes:
+        return int(value).to_bytes(ctypes.sizeof(CK_ULONG), sys.byteorder)
+
+    return {
+        handle: {
+            int(CKA_LABEL): tag,
+            int(CKA_TOKEN): b"\x00",
+            int(CKA_CLASS): _u32(int(CKO_SECRET_KEY)),
+            int(CKA_KEY_TYPE): _u32(int(CKK_GENERIC_SECRET)),
+        }
+    }
+
+
+def _assert_no_labeled(*args: Any, **kwargs: Any) -> None:
+    mod = _policy_module()
+    return mod._assert_no_labeled_objects(*args, **kwargs)
+
+
+def test_partial_inventory_undefined_final_behind_refused_page_fails() -> None:
+    """R4-F1: a standard page refusal followed by an undefined Final fails loud."""
+    raw = _PartialRaw(find_terminal=int(CKR_DEVICE_ERROR), final_rv=0x7FFFFFFF)
+    _run_must_fail(
+        _assert_no_labeled,
+        _partial_rs(raw),
+        "tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="spec",
+        rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        before=[],
+        expect_class=int(CKO_SECRET_KEY),
+        expect_key_type=int(CKK_GENERIC_SECRET),
+        expect_token=False,
+    )
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjectsFinal", record.operation
+    assert "Final" in (record.summary or ""), record.summary
+    assert raw.final_calls == 1, "Final still runs after a refused page"
+
+
+def test_partial_inventory_init_refusal_names_init_operation() -> None:
+    """R4-F1: a refused inventory Init carries C_FindObjectsInit (never collapsed)."""
+    raw = _PartialRaw(init_rv=int(CKR_DEVICE_ERROR))
+    assert_xfails(
+        _assert_no_labeled,
+        _partial_rs(raw),
+        "tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="spec",
+        rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        before=[],
+        expect_class=int(CKO_SECRET_KEY),
+        expect_key_type=int(CKK_GENERIC_SECRET),
+        expect_token=False,
+    )
+    record = _assert_xfail_record("honest_deviation")
+    assert "Init" in (record.summary or ""), record.summary
+
+
+def test_partial_inventory_oversize_with_leak_fails_leak() -> None:
+    """R4-F1: earlier-page leak evidence grades before an oversize page defect."""
+    raw = _PartialRaw(
+        pages=[(201,), ("oversize", 300)],
+        identities=_partial_identities(201, b"tag"),
+    )
+    _run_must_fail(
+        _assert_no_labeled,
+        _partial_rs(raw),
+        "tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="spec",
+        rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        before=[],
+        expect_class=int(CKO_SECRET_KEY),
+        expect_key_type=int(CKK_GENERIC_SECRET),
+        expect_token=False,
+    )
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "created" in (record.summary or ""), record.summary
+    assert 201 in raw.destroyed, raw.destroyed
+    assert raw.final_calls == 1, "Final still runs after the oversize page"
+
+
+def test_partial_inventory_oversize_without_leak_fails_metadata() -> None:
+    """R4-F1: an oversize page with no leak fails the metadata contract."""
+    raw = _PartialRaw(pages=[("oversize", 300)])
+    _run_must_fail(
+        _assert_no_labeled,
+        _partial_rs(raw),
+        "tag",
+        label="L",
+        operation="C_DeriveKey",
+        spec_ref="spec",
+        rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        before=[],
+        expect_class=int(CKO_SECRET_KEY),
+        expect_key_type=int(CKK_GENERIC_SECRET),
+        expect_token=False,
+    )
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert "count" in (record.summary or ""), record.summary
 
 
 def test_qc4a_derive_aux_refused_preexisting_labeled_left_alive() -> None:
