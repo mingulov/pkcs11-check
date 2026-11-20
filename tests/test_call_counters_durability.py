@@ -8620,6 +8620,7 @@ def test_sigsegv_in_rewrite_replays_return(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     if sys.platform == "win32":
@@ -8712,6 +8713,7 @@ def test_sigkill_after_entry_names_unknown_module_row(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     if sys.platform == "win32":
