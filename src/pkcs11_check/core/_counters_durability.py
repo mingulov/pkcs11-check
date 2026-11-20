@@ -2073,6 +2073,38 @@ class _DeferProducerError(Exception):
         return "unreadable evidence"
 
 
+def _marker_identity_verdict(
+    owner: str,
+    identity: Mapping[str, Any],
+    *,
+    worker_uuid: str,
+    unambiguous: bool,
+    producer_run: str | None,
+    producer_unit: str | None,
+) -> str | None:
+    """Admission verdict for a parsed consumed marker (#88R19-4).
+
+    None when the marker's identity admits it to this producer's
+    reunion; else ``"foreign"`` (another producer's content),
+    ``"ambiguous"`` (parentless legacy under a prefix collision),
+    ``"cross_run"``, or ``"cross_unit"``. Shared by the main loop
+    (which warns) and the receipt-level pre-scan (which stays
+    silent): only valid, owned evidence may affect a verdict.
+    """
+    parent_claim = identity.get("parent_uuid")
+    if parent_claim is not None and parent_claim != worker_uuid:
+        return "foreign"
+    if parent_claim is None and len(owner) != 32 and not unambiguous:
+        return "ambiguous"
+    marker_run = identity.get("run_id")
+    if marker_run is not None and producer_run is not None and marker_run != producer_run:
+        return "cross_run"
+    marker_unit = identity.get("unit")
+    if marker_unit is not None and producer_unit is not None and marker_unit != producer_unit:
+        return "cross_unit"
+    return None
+
+
 def _adopt_probe_orphans(
     root: Path,
     *,
@@ -2172,6 +2204,8 @@ def _adopt_probe_orphans(
     skipped_slots: set[str] = set()
     marker_paths: dict[tuple[str, int], list[Path]] = {}
     withheld: list[tuple[str, int, Path, int, bool]] = []
+    held_receipts: set[tuple[str, int]] = set()
+    marker_covered_slots: dict[str, tuple[str, int]] = {}
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
     adopted_lost: list[int] = []
@@ -2183,7 +2217,10 @@ def _adopt_probe_orphans(
         marker file and the heal wait for the retry: consuming the
         marker now would strand an advanced orphan uncovered, and
         healing now would resolve a loss whose tail is outstanding.
+        The receipt pins for the pass so the reconcile cannot restore
+        the withdrawn heal through another slot (#88R19-5).
         """
+        held_receipts.add((child_uuid, seq))
         skipped.append(path)
         for marker_path in marker_paths.pop((child_uuid, seq), []):
             if marker_path in consumed:
@@ -2194,6 +2231,33 @@ def _adopt_probe_orphans(
             UserWarning,
             stacklevel=3,
         )
+
+    def _rollback_receipt_group(child_uuid: str, seq: int) -> None:
+        """Withdraw a receipt's published recovery so its copies resolve together (#88R19-3).
+
+        A marker that withholds after a copy already healed (a rewrite
+        landing mid-pass, a live stamp arriving late) rolls the group
+        back: consumed copies un-consume, the heal strips,
+        same-pass withholds un-withhold, and the receipt pins so the
+        reconcile cannot restore it (#88R19-5). Coverage and keys
+        stand (absorbed facts). Rewrite withholds never call this:
+        their own reconcile is the convergence path, and a second
+        slot's growth aborts the pass loudly through the subset
+        defer instead.
+        """
+        held_receipts.add((child_uuid, seq))
+        for marker_path in marker_paths.pop((child_uuid, seq), []):
+            if marker_path in consumed:
+                consumed.remove(marker_path)
+            skipped.append(marker_path)
+        recovered[:] = [entry for entry in recovered if entry != (worker_uuid, seq)]
+        kept: list[tuple[str, int, Path, int, bool]] = []
+        for entry in withheld:
+            if (entry[0], entry[1]) == (child_uuid, seq):
+                skipped.append(entry[2])
+            else:
+                kept.append(entry)
+        withheld[:] = kept
 
     def _fold(
         path: Path,
@@ -2255,6 +2319,17 @@ def _adopt_probe_orphans(
             # (a loss that landed between absorb and commit) -- keys
             # union safely either way. The unkeyed scalar stays
             # dropped (no baseline compares it).
+            if marker_snapshot is not None:
+                # Explicit replay verdict (#88R19-1): this slot's
+                # baseline suppressed under marker coverage for this
+                # receipt, so a withheld marker may reconcile against
+                # it. Durable suppressions record nothing (no receipt
+                # proof), and neither do debris, foreign, or
+                # uncovered folds. No snapshot comparison: duplicate
+                # marks of one absorb always agree numerically, so a
+                # divergent copy is corrupt input the direct path
+                # treats as a loud delay, not a heal decision.
+                marker_covered_slots[path.name] = (child_uuid, seq)
             orphan_keys.update(keys)
             consumed.append(path)
             return
@@ -2339,12 +2414,29 @@ def _adopt_probe_orphans(
         scan_status, scan_raw = _read_json_evidence(scan_path)
         if scan_status != "ok" or not isinstance(scan_raw, dict):
             continue
-        scan_child = scan_raw.get("worker_uuid")
-        scan_seq = scan_raw.get("probe_seq")
+        # Admission mirrors the main loop exactly (#88R19-4): parse
+        # validity plus the full identity verdict, so foreign,
+        # ambiguous, cross-run/unit, and invalid markers register
+        # nothing. The liveness check itself mirrors the main loop's
+        # raw-stamp gate bit for bit.
+        scan_parsed_payload = _parse_probe_orphan_payload(scan_raw)
+        if scan_parsed_payload is None:
+            continue
+        scan_child, scan_seq = scan_parsed_payload[0], scan_parsed_payload[1]
+        if (
+            _marker_identity_verdict(
+                scan_owner,
+                scan_parsed_payload[4],
+                worker_uuid=worker_uuid,
+                unambiguous=unambiguous,
+                producer_run=producer_run,
+                producer_unit=producer_unit,
+            )
+            is not None
+        ):
+            continue
         scan_pid = scan_raw.get("pid")
         scan_birth = scan_raw.get("birth_token")
-        if not isinstance(scan_child, str) or type(scan_seq) is not int:
-            continue
         if (
             type(scan_pid) is int
             and scan_pid > 0
@@ -2403,10 +2495,17 @@ def _adopt_probe_orphans(
             _,
             _,
         ) = orphan
-        parent_claim = marker_identity.get("parent_uuid")
-        if parent_claim is not None and parent_claim != worker_uuid:
+        verdict = _marker_identity_verdict(
+            owner,
+            marker_identity,
+            worker_uuid=worker_uuid,
+            unambiguous=unambiguous,
+            producer_run=producer_run,
+            producer_unit=producer_unit,
+        )
+        if verdict == "foreign":
             continue  # Another producer's marker (content-exact).
-        if parent_claim is None and len(owner) != 32 and not unambiguous:
+        if verdict == "ambiguous":
             if ambiguous_reporter:
                 warnings.warn(
                     f"ambiguous consumed marker {path.name} retained "
@@ -2417,8 +2516,8 @@ def _adopt_probe_orphans(
             continue
         # Run/unit agreement holds for stamped and legacy-routed alike:
         # any stated stamp contradicting the producer retains loudly.
-        marker_run = marker_identity.get("run_id")
-        if marker_run is not None and producer_run is not None and marker_run != producer_run:
+        if verdict == "cross_run":
+            marker_run = marker_identity.get("run_id")
             warnings.warn(
                 f"cross-run consumed marker {path.name} retained "
                 f"(marker run {marker_run!r} != producer run {producer_run!r})",
@@ -2426,8 +2525,8 @@ def _adopt_probe_orphans(
                 stacklevel=2,
             )
             continue
-        marker_unit = marker_identity.get("unit")
-        if marker_unit is not None and producer_unit is not None and marker_unit != producer_unit:
+        if verdict == "cross_unit":
+            marker_unit = marker_identity.get("unit")
             warnings.warn(
                 f"cross-unit consumed marker {path.name} retained "
                 f"(marker unit {marker_unit!r} != producer unit {producer_unit!r})",
@@ -2458,6 +2557,7 @@ def _adopt_probe_orphans(
             and _incarnation_alive(marker_pid, validated_birth)
         ):
             if not fence_live:
+                _rollback_receipt_group(marker_child, marker_seq)
                 skipped.append(path)
                 held_slot_name = _marker_slot_name(path.name)
                 if held_slot_name is not None:
@@ -2484,6 +2584,7 @@ def _adopt_probe_orphans(
             # complete (#88R18-3). Reaching here means this copy is
             # not itself live (its own gate above would have
             # continued).
+            _rollback_receipt_group(marker_child, marker_seq)
             skipped.append(path)
             warnings.warn(
                 f"consumed marker {path.name} shares its receipt with a live writer; "
@@ -2531,6 +2632,20 @@ def _adopt_probe_orphans(
             raise _DeferProducerError(worker_uuid, None, source=path.name)
         orphan = _parse_probe_orphan_payload(raw)
         if orphan is None:
+            if path.name in skipped_slots:
+                # A live marker's hold covers debris too (#88R19-2): a
+                # torn baseline at a held slot waits with the marker
+                # instead of deleting around a writer that may still
+                # publish. No rollback: a skipped-live marker never
+                # published a heal or consume.
+                skipped.append(path)
+                warnings.warn(
+                    f"probe baseline {path.name} shares its slot with a live marker "
+                    "writer; retained for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
@@ -2701,19 +2816,29 @@ def _adopt_probe_orphans(
             raw,
         )
     # Reconcile withheld markers with the replay result (#88R18-1): a
-    # slot whose baseline the orphan loop consumed proved absorbed
-    # (replayed at or under the marker snapshot), so its marker heals
-    # now instead of stranding past its parent's consumption. Anything
-    # else keeps the parent association for retry.
-    consumed_set = {str(path) for path in consumed}
+    # slot whose baseline suppressed under this receipt's marker
+    # snapshot proved absorbed, so its marker heals now instead of
+    # stranding past its parent's consumption. The verdict is
+    # explicit (#88R19-1): slot-file consumption alone proves nothing
+    # (debris, foreign, and uncovered folds all consume), so the heal
+    # needs the recorded marker-covered verdict for this receipt and
+    # every surviving rewrite adjudicated stable (an unattributable
+    # tmp may be ours with corrupt stamps: fail closed); anything
+    # else -- or a receipt another slot holds (#88R19-5) -- keeps the
+    # parent association for retry.
     for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
         held_slot = _marker_slot_name(held_path.name)
-        if held_slot is not None and str(root / held_slot) in consumed_set:
+        covered = marker_covered_slots.get(held_slot) if held_slot is not None else None
+        if (
+            held_slot is not None
+            and (held_child, held_seq) not in held_receipts
+            and covered == (held_child, held_seq)
+            and _slot_tmps_adjudicated(root, held_slot, digests)
+        ):
             if held_finalized and held_seq == held_filename_seq:
                 recovered.append((worker_uuid, held_seq))
             marker_paths.setdefault((held_child, held_seq), []).append(held_path)
             consumed.append(held_path)
-            consumed_set.add(str(held_path))
         else:
             skipped.append(held_path)
     adopted = sum(adopted_lost)
@@ -2927,6 +3052,29 @@ def _slot_rewrite_unresolved(
         if digest is not None and digests is not None:
             digests.setdefault(str(tmp), digest)
     return False
+
+
+def _slot_tmps_adjudicated(root: Path, slot_name: str, digests: dict[str, str] | None) -> bool:
+    """Whether every surviving rewrite tmp at a slot was adjudicated stable (#88R19-1).
+
+    A withheld marker reconciles only when the slot's latest word is
+    fully accounted: each surviving tmp must be digest-listed (replayed
+    or debris-ruled this pass -- a refused replacement is never listed)
+    and byte-identical to its adjudication. Vanished tmps, listing
+    faults, and untracked passes (no digest map) fail closed. Never raises.
+    """
+    if digests is None:
+        return False
+    tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
+    if tmps is None:
+        return False
+    for tmp in tmps:
+        listed = digests.get(str(tmp))
+        if listed is None:
+            return False
+        if _sha256_file_hex(tmp) != listed:
+            return False
+    return True
 
 
 def _replay_baseline_usable(path: Path) -> bool:
@@ -3469,7 +3617,7 @@ def collect_unit(
         if verify_producer(content) != "dead":
             continue
         try:
-            records, consumed = _collect_dead_producer(
+            records, consumed, skipped_live = _collect_dead_producer(
                 content,
                 entries,
                 uuid,
@@ -3492,7 +3640,8 @@ def collect_unit(
             continue
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files(_producer_files(content, registry_path), read_digests)
+            if not skipped_live:
+                _consume_producer_files(_producer_files(content, registry_path), read_digests)
             _consume_producer_files(consumed, read_digests)
     for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids)
@@ -4452,11 +4601,14 @@ def _collect_dead_producer(
     claims: dict[str, set[tuple[str, int]]],
     heal_orphans: bool = True,
     digests: dict[str, str] | None = None,
-) -> tuple[list[dict[str, Any]], list[Path]]:
+) -> tuple[list[dict[str, Any]], list[Path], bool]:
     """Build the partial+lost records for one dead producer (reads orphans only).
 
-    Returns ``(records, consumed_orphans)``: the caller's append-then-delete
-    consumes the orphan files only after the records land in the JSONL.
+    Returns ``(records, consumed_orphans, skipped_live)``: the caller's
+    append-then-delete consumes the orphan files only after the records
+    land in the JSONL, and retains the parent files while any probe
+    evidence waits for a later pass (mirroring the committed route:
+    unresolved evidence keeps its retry route) (#88R19-6).
     """
     sidecar_raw = str(content.get("sidecar", ""))
     sidecar_path = Path(sidecar_raw)
@@ -4512,7 +4664,7 @@ def _collect_dead_producer(
         recovered,
         orphan_keys,
         adopted_lost,
-        _skipped_live,
+        skipped_live,
     ) = _adopt_probe_orphans(
         root,
         worker_uuid=uuid,
@@ -4567,7 +4719,7 @@ def _collect_dead_producer(
     )
     if lost is not None:
         records.append(lost)
-    return records, consumed
+    return records, consumed, skipped_live
 
 
 def _committed_claim_records(
@@ -5614,7 +5766,7 @@ def prepare_resume(
         verdict = verify_producer(content)
         if verdict == "dead":
             try:
-                records, consumed = _collect_dead_producer(
+                records, consumed, skipped_live = _collect_dead_producer(
                     content,
                     entries,
                     uuid,
@@ -5639,13 +5791,21 @@ def prepare_resume(
             if _note_collected(uuid):
                 _emit(content["unit"], records)
                 plan["consumed"] += 1
-            to_consume.extend(_producer_files(content, registry_path))
+            if skipped_live:
+                # Unresolved probe evidence keeps its retry route on
+                # the dead path too: retain the parent association
+                # exactly like the committed branch (#88R19-6).
+                skip_retained.extend(_producer_files(content, registry_path))
+                plan["retained_uuids"].append(uuid)
+                skip_held_now.add(uuid)
+            else:
+                to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
             plan["fenced"].append(uuid)
             continue
         if verdict == "alive" and fence_producer(content) == "fenced":
             try:
-                records, consumed = _collect_dead_producer(
+                records, consumed, skipped_live = _collect_dead_producer(
                     content,
                     entries,
                     uuid,
@@ -5670,7 +5830,15 @@ def prepare_resume(
             if _note_collected(uuid):
                 _emit(content["unit"], records)
                 plan["consumed"] += 1
-            to_consume.extend(_producer_files(content, registry_path))
+            if skipped_live:
+                # Unresolved probe evidence keeps its retry route on
+                # the fenced path too: retain the parent association
+                # exactly like the committed branch (#88R19-6).
+                skip_retained.extend(_producer_files(content, registry_path))
+                plan["retained_uuids"].append(uuid)
+                skip_held_now.add(uuid)
+            else:
+                to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
             plan["fenced"].append(uuid)
             continue
