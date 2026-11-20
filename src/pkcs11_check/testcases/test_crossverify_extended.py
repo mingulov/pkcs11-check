@@ -273,6 +273,22 @@ class TestRSAPSSCrossVerify:
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
+def _flag_detail(value: Any) -> bool | str:
+    """Render a protection-flag readback for structured detail (R2C3).
+
+    Only Boolean values, presence, and shape are recorded: raw bytes
+    and the missing sentinel never enter the detail mapping, so it
+    always serializes.
+    """
+    if value is MISSING_ATTRIBUTE:
+        return "missing"
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, bytes):
+        return f"bytes:{len(value)}"
+    return type(value).__name__
+
+
 def _gen_readable_rsa_or_xfail(rs: Any, bits: int, *, label: str) -> tuple[int, int]:
     """Generate an RSA pair with a readable private half, or void honestly.
 
@@ -315,60 +331,73 @@ def _gen_readable_rsa_or_xfail(rs: Any, bits: int, *, label: str) -> tuple[int, 
                 ),
             )
         raise
+    # R2C3: the pair is owned here until vetted return. Every terminal
+    # below destroys both halves first: exiting before the caller
+    # receives the handles would otherwise strand them (the caller's
+    # finally never runs).
     try:
-        read = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE, CKA_EXTRACTABLE])
-    except CkrAssertionError as exc:
-        classify_rv_validity_or_none(
-            exc.rv,
+        try:
+            read = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+        except CkrAssertionError as exc:
+            classify_rv_validity_or_none(
+                exc.rv,
+                label=f"{label}: protection flags",
+                operation="C_GetAttributeValue",
+                kind="policy",
+            )
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: protection flags",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: stored protection flags unreadable ({ckr_name(exc.rv)}); "
+                    "readability unproved, export void"
+                ),
+            )
+        sensitive = attr_or_record(
+            read,
+            CKA_SENSITIVE,
             label=f"{label}: protection flags",
-            operation="C_GetAttributeValue",
+            reason="not_operational",
             kind="policy",
-        )
-        xfail_as(
-            "not_operational",
-            kind="policy",
-            label=f"{label}: protection flags",
-            operation="C_GetAttributeValue",
             inherit_mechanism=False,
-            actual=exc.rv,
-            summary=(
-                f"{label}: stored protection flags unreadable ({ckr_name(exc.rv)}); "
-                "readability unproved, export void"
-            ),
         )
-    sensitive = attr_or_record(
-        read,
-        CKA_SENSITIVE,
-        label=f"{label}: protection flags",
-        reason="not_operational",
-        kind="policy",
-        inherit_mechanism=False,
-    )
-    extractable = attr_or_record(
-        read,
-        CKA_EXTRACTABLE,
-        label=f"{label}: protection flags",
-        reason="not_operational",
-        kind="policy",
-        inherit_mechanism=False,
-    )
-    if (
-        sensitive is MISSING_ATTRIBUTE
-        or extractable is MISSING_ATTRIBUTE
-        or sensitive is not False
-        or extractable is not True
-    ):
-        xfail_as(
-            "not_operational",
-            kind="policy",
+        extractable = attr_or_record(
+            read,
+            CKA_EXTRACTABLE,
             label=f"{label}: protection flags",
-            operation="C_GetAttributeValue",
+            reason="not_operational",
+            kind="policy",
             inherit_mechanism=False,
-            summary=(
-                f"{label}: stored protection flags differ from the readable request; export void"
-            ),
-            detail={"sensitive": sensitive, "extractable": extractable},
         )
+        if (
+            sensitive is MISSING_ATTRIBUTE
+            or extractable is MISSING_ATTRIBUTE
+            or sensitive is not False
+            or extractable is not True
+        ):
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: protection flags",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: stored protection flags differ from the readable request; "
+                    "export void"
+                ),
+                detail={
+                    "sensitive": _flag_detail(sensitive),
+                    "extractable": _flag_detail(extractable),
+                },
+            )
+    except BaseException:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+        raise
     return pub, priv
 
 

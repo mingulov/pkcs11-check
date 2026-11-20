@@ -10,7 +10,9 @@ the run to fit the observer.
 The default (`--isolation auto`) runs each test file in a fresh
 `python -m pytest` subprocess. Files that crash repeatedly are
 promoted to per-test subprocesses instead, so one crashing file
-fans out further. Short-lived helper subprocesses also
+fans out further. Files marked `subprocess_per_test` start at
+per-test subprocesses immediately, with no prior crashes needed.
+Short-lived helper subprocesses also
 load the module, for collection and the capability probe. See
 `docs/file-isolation.md` for the runner design.
 
@@ -51,7 +53,12 @@ with `pkcs11-check test -m <softhsm>`: the smoke selection
 Other providers differ considerably; HSM-class modules can take
 several times longer.
 
-To time your own setup, run each profile once with `time` and the
-exact selection you intend to keep; provider, machine, and vector
-inventory dominate the result, so do not extrapolate these rough
-magnitudes across setups.
+To time your own setup, record a receipt, not just a duration:
+run each profile once with `time` and the exact selection you
+intend to keep, and capture alongside it the provider module path
+and version, the host details (`uname -a`, CPU count), and the
+vector inventory (the collected test count for that selection, via
+`--collect-only -q`). Provider, machine, and vector inventory
+dominate the result, so a duration without them is not
+reproducible, and do not extrapolate these rough magnitudes across
+setups.

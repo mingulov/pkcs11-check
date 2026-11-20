@@ -18,8 +18,17 @@ from ctypes import byref, c_ubyte
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import (
+    Classification,
+    classify,
+    fail_as,
+    get_records,
+    raise_for_record,
+    record_as,
+    xfail_as,
+)
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -953,16 +962,42 @@ def _abandon_held_open_operations(
 # ---------------------------------------------------------------------------
 
 
+def _deferred_stale_use_record(by_name: dict[str, int], *, label: str) -> Classification | None:
+    """Grade the stale target-handle use without raising (R2C4).
+
+    Runs the original reject_or_classify verdict but DEFERS its
+    outcome: the record is retained and returned so the searches'
+    evidence joins the strongest-verdict selection. A proved
+    surviving witness (find FAIL) thus outranks an alternate stale-use
+    xfail, while a proved stale-handle effect still outranks a
+    find-refusal skip. Only pytest outcomes are deferred; any other
+    exception propagates unchanged.
+    """
+    before = len(get_records())
+    try:
+        _judge_cross_token_stale_use(by_name, label=label)
+    except (Failed, XFailed):
+        pass
+    fresh = get_records()[before:]
+    assert len(fresh) <= 1, f"{label}: stale-use judge recorded {len(fresh)} records"
+    return fresh[0] if fresh else None
+
+
 def _judge_cross_token_trace(trace: Any) -> None:
     """Judge the qc9b_cross_token child trace (#52.3 cross-token leg).
 
     The probe inits two tokens on the throwaway conf, logs into both,
-    creates a private session witness on each, logs out on the target,
-    then reports: INV lines in order (target find, control find),
+    creates a private session witness on each, proves both witnesses
+    are findable private session objects, logs out on the target,
+    then reports: INV lines for the successful finds (in leg order),
     ``control_use`` (attribute read on the control witness WITHOUT
-    relogin) and ``target_stale_use`` (attribute read on the target
-    witness handle). The gate (NO_SLOTS / ASSUMPTION_FAILED /
-    setup-failure skips) is applied by the caller.
+    relogin) with a USE integrity line, and ``target_stale_use``
+    (attribute read on the target witness handle). The gate (NO_SLOTS
+    / ASSUMPTION_FAILED / setup-failure skips) is applied by the
+    caller. Every observation is collected before any terminal: the
+    strongest record wins (any fail beats any xfail beats a skip), so
+    neither a use xfail nor one leg's refusal can hide the other
+    leg's proved finding.
     """
     label = "QC9b cross-token logout"
     by_name = {step.name: step.rv for step in trace.steps}
@@ -980,57 +1015,124 @@ def _judge_cross_token_trace(trace: Any) -> None:
             f"({ckr_name(by_name['target_logout'])}); cross-token leg untestable "
             "(see same-slot QC9b logout tests)"
         )
-    # D1: the use observations are independent of the searches (direct
-    # attribute reads, not find results), so their verdicts grade BEFORE
-    # any find-refusal skip: a proved stale-handle or control-use effect
-    # is never hidden behind an unobservable search.
+    candidates: list[Classification] = []
+    # Use observations are independent direct reads: a broken control
+    # fails, and CKR_OK with changed bytes fails (the USE line carries
+    # length + hash for independent verification).
     if by_name["control_use"] != int(CKR_OK):
-        fail_as(
-            "self_contradiction",
-            kind="lifecycle",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=None,
-            inherit_mechanism=False,
-            actual=by_name["control_use"],
-            summary=(
-                f"{label}: control witness unusable without relogin "
-                f"({ckr_name(by_name['control_use'])})"
-            ),
-        )
-    _judge_cross_token_stale_use(by_name, label=label)
-    for leg in ("target_find", "control_find"):
-        if by_name[leg] != int(CKR_OK):
-            pytest.skip(
-                f"{label}: post-logout {leg} unobservable "
-                f"({ckr_name(by_name[leg])}); find-count leg untestable"
+        candidates.append(
+            record_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_GetAttributeValue",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=by_name["control_use"],
+                summary=(
+                    f"{label}: control witness unusable without relogin "
+                    f"({ckr_name(by_name['control_use'])})"
+                ),
             )
-    inv = list(trace.inv_objects)
-    assert len(inv) == 2, f"{label}: probe contract broken (need 2 INV lines, got {len(inv)})"
-    target_found, control_found = inv
-    if target_found != 0:
-        fail_as(
-            "self_contradiction",
-            kind="lifecycle",
-            label=label,
-            operation="C_Logout",
-            mechanism=None,
-            inherit_mechanism=False,
-            summary=(
-                f"{label}: target private witness still found after logout (count {target_found})"
-            ),
-            detail={"target_found": target_found, "control_found": control_found},
         )
-    if control_found != 1:
-        fail_as(
-            "self_contradiction",
-            kind="lifecycle",
-            label=label,
-            operation="C_Logout",
-            mechanism=None,
-            inherit_mechanism=False,
-            summary=(f"{label}: control witness lost without relogin (count {control_found})"),
-            detail={"target_found": target_found, "control_found": control_found},
+    else:
+        expected_len, expected_hash = token_admin.qc9b_witness_digest()
+        controls = [use for use in trace.use_checks if use.name == "control"]
+        assert len(controls) == 1, (
+            f"{label}: probe contract broken (need 1 control USE line, got {len(controls)})"
+        )
+        (check,) = controls
+        if (check.length, check.sha256) != (expected_len, expected_hash):
+            candidates.append(
+                record_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=int(CKR_OK),
+                    summary=(
+                        f"{label}: control witness bytes changed after logout "
+                        f"(len {check.length}, expected {expected_len})"
+                    ),
+                    detail={
+                        "observed_len": check.length,
+                        "expected_len": expected_len,
+                        "observed_sha256": check.sha256,
+                        "expected_sha256": expected_hash,
+                    },
+                )
+            )
+    stale_record = _deferred_stale_use_record(by_name, label=label)
+    if stale_record is not None:
+        candidates.append(stale_record)
+    # Find legs evaluate independently: the probe emits INV lines only
+    # for successful finds (in leg order), so a refused leg consumes no
+    # line and never hides its sibling's evidence.
+    inv_iter = iter(trace.inv_objects)
+    refused: list[str] = []
+    target_found: int | None = None
+    control_found: int | None = None
+    if by_name["target_find"] != int(CKR_OK):
+        refused.append("target_find")
+    else:
+        try:
+            target_found = next(inv_iter)
+        except StopIteration:
+            raise AssertionError(
+                f"{label}: probe contract broken (target_find OK without an INV line)"
+            ) from None
+    if by_name["control_find"] != int(CKR_OK):
+        refused.append("control_find")
+    else:
+        try:
+            control_found = next(inv_iter)
+        except StopIteration:
+            raise AssertionError(
+                f"{label}: probe contract broken (control_find OK without an INV line)"
+            ) from None
+    surplus = list(inv_iter)
+    assert not surplus, f"{label}: probe contract broken ({len(surplus)} surplus INV lines)"
+    if target_found is not None and target_found != 0:
+        candidates.append(
+            record_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_Logout",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: target private witness still found after logout "
+                    f"(count {target_found})"
+                ),
+                detail={"target_found": target_found, "control_found": control_found},
+            )
+        )
+    if control_found is not None and control_found != 1:
+        candidates.append(
+            record_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_Logout",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=(f"{label}: control witness lost without relogin (count {control_found})"),
+                detail={"target_found": target_found, "control_found": control_found},
+            )
+        )
+    fails = [record for record in candidates if record.outcome == "fail"]
+    if fails:
+        raise_for_record(fails[0])
+    xfails = [record for record in candidates if record.outcome == "xfail"]
+    if xfails:
+        raise_for_record(xfails[0])
+    if refused:
+        unobservable = "; ".join(f"{leg} ({ckr_name(by_name[leg])})" for leg in refused)
+        pytest.skip(
+            f"{label}: post-logout finds unobservable ({unobservable}); find-count leg untestable"
         )
 
 

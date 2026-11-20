@@ -134,3 +134,56 @@ def test_refusal_unreadable_voids_no_change() -> None:
     (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
     assert record.operation == "C_GetAttributeValue", record.operation
+
+
+def test_r2b3_empty_original_rejected() -> None:
+    """R2B3: the integer-identity proof needs a nonempty original."""
+    with pytest.raises(AssertionError, match="nonempty original"):
+        sec._verify_private_exponent_accept(
+            _rs(ORIGINAL), 100, b"", spec_ref=SPEC, label=LABEL, operation="C_CopyObject"
+        )
+    with pytest.raises(AssertionError, match="nonempty original"):
+        sec._verify_exponent_unchanged_after_refusal(
+            _rs(ORIGINAL),
+            100,
+            b"",
+            spec_ref=SPEC,
+            label=LABEL,
+            operation="C_CopyObject",
+            refusal_rv=int(CKR_ATTRIBUTE_READ_ONLY),
+        )
+
+
+def test_r2b3_copy_runner_proved_change_beats_vendor_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2B3: the copy runner reads before classifying.
+
+    A vendor refusal with a proved post-refusal change fails as
+    refusal-after-mutation; the vendor xfail never masks it.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKA_PRIVATE_EXPONENT, CKR_VENDOR_DEFINED
+
+    changed = bytes([0x02]) + bytes(127)
+    reads = [{CKA_PRIVATE_EXPONENT: ORIGINAL}, {CKA_PRIVATE_EXPONENT: changed}]
+
+    def _scripted_read(*_args: Any, **_kwargs: Any) -> dict[int, bytes]:
+        assert reads, "unexpected extra attribute read"
+        return reads.pop(0)
+
+    def _vendor_copy(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError("C_CopyObject", int(CKR_VENDOR_DEFINED))
+
+    monkeypatch.setattr(sec, "read_attributes", _scripted_read)
+    monkeypatch.setattr(sec, "copy_object", _vendor_copy)
+    monkeypatch.setattr(sec, "_skip_unless_mechanism", lambda *_a: None)
+    monkeypatch.setattr(sec, "_import_exponent_source", lambda *_a, **_k: (0, 100))
+    monkeypatch.setattr(sec, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(Failed):
+        sec._run_copy_table_probe(SimpleNamespace(raw=object(), sh=7), "private_exponent", None)
+    assert reads == [], "premise + post-refusal reads both consumed"
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "fail"]
+    assert "refusal-after-mutation" in (record.summary or ""), record.summary
+    assert record.actual_ckr == "CKR_VENDOR_DEFINED", record.summary

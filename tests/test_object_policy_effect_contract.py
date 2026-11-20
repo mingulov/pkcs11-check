@@ -88,6 +88,7 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP,
     CKK_AES,
     CKK_EC,
+    CKK_GENERIC_SECRET,
     CKK_ML_DSA,
     CKK_ML_KEM,
     CKK_RSA,
@@ -104,7 +105,12 @@ from pkcs11_check.raw.types_std import (
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_RSA_PKCS_PSS,
+    CKM_SHA1_RSA_PKCS_PSS,
     CKM_SHA256_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS_PSS,
+    CKM_SHA384_RSA_PKCS_PSS,
+    CKM_SHA512_RSA_PKCS_PSS,
     CKM_SLH_DSA,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
@@ -173,6 +179,15 @@ _AES_KW = int(CKM_AES_KEY_WRAP)
 _CONCAT_KEY = int(CKM_CONCATENATE_BASE_AND_KEY)
 _RSA_PKCS = int(CKM_RSA_PKCS)
 _RSA_PKCS_SIGN = int(CKM_SHA256_RSA_PKCS)
+_RSA_PSS_FAMILY = frozenset(
+    {
+        int(CKM_RSA_PKCS_PSS),
+        int(CKM_SHA1_RSA_PKCS_PSS),
+        int(CKM_SHA256_RSA_PKCS_PSS),
+        int(CKM_SHA384_RSA_PKCS_PSS),
+        int(CKM_SHA512_RSA_PKCS_PSS),
+    }
+)
 _ECDSA = int(CKM_ECDSA)
 _ML_KEM = int(CKM_ML_KEM)
 _ML_DSA = int(CKM_ML_DSA)
@@ -360,6 +375,7 @@ class _PolicyFake:
         plant: list[dict[int, Any]] | None = None,
         genkey_success_handle: int | None = None,
         keypair_success_handles: tuple[int, int] | None = None,
+        control_handles: dict[str, Any] | None = None,
         extra_for_label: bytes | None = None,
         extra_attrs: dict[int, Any] | None = None,
         keypair_pub_extra: dict[int, Any] | None = None,
@@ -403,6 +419,7 @@ class _PolicyFake:
         sign_init_script: list[int | None] | None = None,
         sign_script: list[int | None] | None = None,
         ecdsa_confuse: bool = False,
+        confused_raw: bool = False,
         sign_output: bytes | None = None,
         sign_raise: BaseException | None = None,
         sign_key: str | None = None,
@@ -424,6 +441,7 @@ class _PolicyFake:
         self._refusal_out_handle = refusal_out_handle
         self._genkey_success_handle = genkey_success_handle
         self._keypair_success_handles = keypair_success_handles
+        self._control_handles = dict(control_handles or {})
         self._extra_for_label = extra_for_label
         self._extra_attrs = dict(extra_attrs or {})
         self._keypair_pub_extra = dict(keypair_pub_extra or {})
@@ -470,6 +488,7 @@ class _PolicyFake:
         self._sign_init_script = list(sign_init_script or [])
         self._sign_script = list(sign_script or [])
         self._ecdsa_confuse = ecdsa_confuse
+        self._confused_raw = confused_raw
         self._pqc_issued: set[tuple[int, bytes, bytes]] = set()
         self._sign_output = sign_output
         self._sign_raise = sign_raise
@@ -682,6 +701,9 @@ class _PolicyFake:
             if raw_attrs.get(bool_attr) == b"\x01":
                 return bool_rv
         self._apply_extra(attrs)
+        if len(self.create_templates) == 1 and "create" in self._control_handles:
+            _fill_ulong(out, int(self._control_handles.pop("create")))
+            return _OK
         handle = self._store(attrs, role="create")
         _fill_ulong(out, handle)
         return _OK
@@ -706,6 +728,9 @@ class _PolicyFake:
             return scripted
         if self._genkey_success_handle is not None and len(self.genkey_templates) > 1:
             _fill_ulong(out, self._genkey_success_handle)
+            return _OK
+        if len(self.genkey_templates) == 1 and "genkey" in self._control_handles:
+            _fill_ulong(out, int(self._control_handles.pop("genkey")))
             return _OK
         value_len = attrs.get(int(CKA_VALUE_LEN), 16)
         assert isinstance(value_len, int), value_len
@@ -850,6 +875,11 @@ class _PolicyFake:
         if self._keypair_success_handles is not None and len(self.keypair_calls) > 1:
             _fill_ulong(pub_out, self._keypair_success_handles[0])
             _fill_ulong(priv_out, self._keypair_success_handles[1])
+            return _OK
+        if len(self.keypair_calls) == 1 and "keypair" in self._control_handles:
+            override = self._control_handles.pop("keypair")
+            _fill_ulong(pub_out, int(override[0]))
+            _fill_ulong(priv_out, int(override[1]))
             return _OK
         pub_handle = self._store(pub_attrs, role="keypair")
         priv_handle = self._store(priv_attrs, role="keypair")
@@ -1120,6 +1150,9 @@ class _PolicyFake:
             assert isinstance(kek, bytes), kek
             attrs[int(CKA_VALUE)] = aes_key_unwrap(kek, blob)
         self._apply_extra(attrs)
+        if len(self.unwrap_calls) == 1 and "unwrap" in self._control_handles:
+            _fill_ulong(out, int(self._control_handles.pop("unwrap")))
+            return _OK
         handle = self._store(attrs, role="unwrap")
         _fill_ulong(out, handle)
         return _OK
@@ -1477,15 +1510,24 @@ class _PolicyFake:
         return _OK
 
     def _confused_ecdsa_sign(self, handle: int, data: bytes, mech_id: int) -> bytes:
-        """Emulate wrong-algorithm dispatch: ECDSA/SHA256 with the franken key's EC material."""
-        assert mech_id == _RSA_PKCS_SIGN, mech_id
+        """Emulate wrong-algorithm dispatch: ECDSA/SHA256 with the franken key's EC material.
+
+        ``confused_raw`` emulates the CKM_ECDSA-style variant: the digest
+        bytes are signed directly with no hash step.
+        """
+        assert mech_id == _RSA_PKCS_SIGN or mech_id in _RSA_PSS_FAMILY, mech_id
         stored = self.objects.get(int(handle))
         assert stored is not None, f"sign with unknown handle {handle}"
         value = stored.attrs.get(int(CKA_VALUE))
         assert isinstance(value, bytes), value
         priv = serialization.load_der_private_key(value, password=None)
         assert isinstance(priv, ec.EllipticCurvePrivateKey), type(priv)
-        der = priv.sign(data, ec.ECDSA(hashes.SHA256()))
+        if self._confused_raw:
+            prehash = {20: hashes.SHA1(), 32: hashes.SHA256()}.get(len(data))  # nosec B303
+            assert prehash is not None, len(data)
+            der = priv.sign(data, ec.ECDSA(utils.Prehashed(prehash)))
+        else:
+            der = priv.sign(data, ec.ECDSA(hashes.SHA256()))
         _register_minted_blob(der)
         return der
 
@@ -1626,6 +1668,10 @@ _WRONG_ALGO_MECHS = _ALL_MECHS | {
     "SHA384_RSA_PKCS",
     "SHA512_RSA_PKCS",
     "RSA_PKCS_PSS",
+    "SHA1_RSA_PKCS_PSS",
+    "SHA256_RSA_PKCS_PSS",
+    "SHA384_RSA_PKCS_PSS",
+    "SHA512_RSA_PKCS_PSS",
     "RSA_X9_31",
     "SHA1_RSA_X9_31",
     "RSA_X_509",
@@ -3610,6 +3656,31 @@ def test_qc4b_create_refuse_zero_delta_passes(family: str, malformation: str) ->
     _assert_no_secret_bytes()
 
 
+def test_qc4b_create_device_error_zero_delta_xfails_unadjudicated() -> None:
+    """R2C1: an operational refusal never sanctions the malformed pass."""
+    fake = _PolicyFake(create_script=[None, _DEVICE_ERROR])
+    assert_xfails(_qc4b_create, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    assert record.actual_ckr == ckr_name(_DEVICE_ERROR), record.summary
+    assert (record.detail or {}).get("inventory_delta") == 0, record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_create_stale_control_fails_untouched() -> None:
+    """R2C1: a stale legal control fails before destruction; the attempt never runs."""
+    fake = _PolicyFake(
+        plant=[{int(CKA_LABEL): "plant-a", int(CKA_CLASS): int(CKO_SECRET_KEY)}],
+        control_handles={"create": 100},
+    )
+    _run_must_fail(_qc4b_create, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "non-new" in (record.summary or ""), record.summary
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+    assert len(fake.create_templates) == 1, "vet must precede the malformed attempt"
+
+
 @pytest.mark.parametrize("litter", [0, 10, 300])
 def test_qc4b_create_refusal_with_litter_baseline_passes(litter: int) -> None:
     """F12: pre-existing inventory is subtracted (multi-page included); no leak passes."""
@@ -3695,6 +3766,24 @@ def test_qc4b_create_ec_unwitnessed_verify_is_unproved_not_unusable() -> None:
     record = _assert_xfail_record("honest_deviation")
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
     _assert_cleaned_up(fake)
+
+
+def test_adjudicate_uses_without_attempt_is_unproved_not_unusable() -> None:
+    """R2-wording: no use attempted means usability unproved, never 'unusable'."""
+    mod = _policy_module()
+    with pytest.raises(XFailed):
+        mod._adjudicate_uses(
+            [],
+            readback=(int(CKO_SECRET_KEY), int(CKK_AES)),
+            requested=(int(CKO_SECRET_KEY), int(CKK_RSA)),
+            pqc_type=0,
+            label="t",
+            operation="C_CreateObject",
+            spec_ref="s",
+        )
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "inspected-unproved", record.detail
+    assert "usability unproved" in (record.summary or ""), record.summary
 
 
 def test_qc4b_create_ec_sign_unverifiable_without_point_is_unproved() -> None:
@@ -3791,6 +3880,90 @@ def test_qc4b_genkey_swap_normalized_coherent_xfails() -> None:
     assert (record.detail or {}).get("disposition") == "accepted-coherent", record.detail
     assert (record.detail or {}).get("identity_kept") is False, record.detail
     _assert_cleaned_up(fake)
+
+
+def test_vet_control_handles_clean_returns_silently() -> None:
+    """R2C1: fresh control handles vet clean with no records."""
+    mod = _policy_module()
+    mod._vet_control_handles([101, 102], before=[100], label="t", operation="op", spec_ref="s")
+    assert C.get_records() == []
+
+
+def test_vet_control_handles_null_fails_without_touching() -> None:
+    """R2C1: a null control handle fails; the helper itself destroys nothing."""
+    from _pytest.outcomes import Failed
+
+    mod = _policy_module()
+    with pytest.raises(Failed, match="non-new"):
+        mod._vet_control_handles([0], before=[], label="t", operation="op", spec_ref="s")
+    (record,) = [rec for rec in C.get_records() if rec.outcome == "fail"]
+    assert "null" in (record.summary or ""), record.summary
+
+
+def test_vet_control_handles_preexisting_fails() -> None:
+    """R2C1: a pre-existing control handle fails as a proved defect."""
+    from _pytest.outcomes import Failed
+
+    mod = _policy_module()
+    with pytest.raises(Failed, match="non-new"):
+        mod._vet_control_handles([100, 102], before=[100], label="t", operation="op", spec_ref="s")
+    (record,) = [rec for rec in C.get_records() if rec.outcome == "fail"]
+    assert "pre-existing" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("handles") == [100], record.detail
+
+
+@pytest.mark.parametrize(("family", "malformation"), _GENKEY_CELLS)
+def test_qc4b_genkey_device_error_zero_delta_xfails_unadjudicated(
+    family: str, malformation: str
+) -> None:
+    """R2C1: an operational refusal never sanctions the malformed pass."""
+    fake = _PolicyFake(genkey_script=[None, _DEVICE_ERROR])
+    assert_xfails(_qc4b_genkey, _rs_genkey(fake), family, malformation)
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    assert record.actual_ckr == ckr_name(_DEVICE_ERROR), record.summary
+    assert (record.detail or {}).get("inventory_delta") == 0, record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_genkey_generic_secret_verified_aes_use_fails() -> None:
+    """R2C1: verified AES-ECB use under CKK_GENERIC_SECRET is cross-type."""
+    label = _attempt_label("genkey", "rsa", "swap_secret_class_asym_type")
+    fake = _PolicyFake(
+        extra_for_label=label,
+        extra_attrs={
+            int(CKA_CLASS): int(CKO_SECRET_KEY),
+            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+        },
+    )
+    _run_must_fail(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "cross-type aes use" in (record.summary or ""), record.summary
+    _assert_cleaned_up(fake)
+    _assert_no_secret_bytes()
+
+
+def test_qc4b_genkey_stale_control_fails_untouched() -> None:
+    """R2C1: a stale legal control fails before destruction; the attempt never runs."""
+    fake = _PolicyFake(
+        plant=[{int(CKA_LABEL): "plant-a", int(CKA_CLASS): int(CKO_SECRET_KEY)}],
+        control_handles={"genkey": 100},
+    )
+    _run_must_fail(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "non-new" in (record.summary or ""), record.summary
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+    assert len(fake.genkey_templates) == 1, "vet must precede the malformed attempt"
+
+
+def test_qc4b_genkey_null_control_fails() -> None:
+    """R2C1: a null legal control fails as a proved defect."""
+    fake = _PolicyFake(control_handles={"genkey": 0})
+    _run_must_fail(_qc4b_genkey, _rs_genkey(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "null" in (record.summary or ""), record.summary
+    assert len(fake.genkey_templates) == 1, "vet must precede the malformed attempt"
 
 
 def test_qc4b_genkey_aes_oracle_mismatch_fails_crypto() -> None:
@@ -3941,7 +4114,7 @@ def test_qc4b_create_vendor_refusal_xfails() -> None:
     assert detail.get("refusal_rv") == ckr_name(_VENDOR_RV), detail
     assert detail.get("inventory_delta") == 0, detail
     assert _reported_outcome() == "xfail", [rec.reason for rec in C.get_records()]
-    assert fake._find_seq == 2, "post-refusal inventory must run (N7)"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run (N7)"
     _assert_cleaned_up(fake)
 
 
@@ -4448,6 +4621,31 @@ def test_qc4b_unwrap_refuse_zero_delta_passes(family: str, malformation: str) ->
     _assert_no_secret_bytes()
 
 
+def test_qc4b_unwrap_device_error_zero_delta_xfails_unadjudicated() -> None:
+    """R2C1: an operational refusal never sanctions the malformed pass."""
+    fake = _PolicyFake(unwrap_script=[None, _DEVICE_ERROR])
+    assert_xfails(_qc4b_unwrap, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    assert record.actual_ckr == ckr_name(_DEVICE_ERROR), record.summary
+    assert (record.detail or {}).get("inventory_delta") == 0, record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_unwrap_stale_control_fails_untouched() -> None:
+    """R2C1: a stale legal control fails before destruction; the attempt never runs."""
+    fake = _PolicyFake(
+        plant=[{int(CKA_LABEL): "plant-a", int(CKA_CLASS): int(CKO_SECRET_KEY)}],
+        control_handles={"unwrap": 100},
+    )
+    _run_must_fail(_qc4b_unwrap, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "non-new" in (record.summary or ""), record.summary
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+    assert len(fake.unwrap_calls) == 1, "vet must precede the malformed attempt"
+
+
 @pytest.mark.parametrize(("family", "malformation"), _UNWRAP_CELLS)
 def test_qc4b_unwrap_refuse_leak_fails(family: str, malformation: str) -> None:
     """An unwrap refusal that still creates the labeled object fails as leaked."""
@@ -4494,7 +4692,7 @@ def test_qc4b_unwrap_vendor_refusal_xfails() -> None:
     detail = record.detail or {}
     assert detail.get("refusal_rv") == ckr_name(_VENDOR_RV), detail
     assert detail.get("inventory_delta") == 0, detail
-    assert fake._find_seq == 2, "post-refusal inventory must run (N7)"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run (N7)"
     _assert_cleaned_up(fake)
 
 
@@ -4749,7 +4947,7 @@ def test_qc4b_generate_vendor_refusal_xfails() -> None:
     detail = record.detail or {}
     assert detail.get("refusal_rv") == ckr_name(_VENDOR_RV), detail
     assert detail.get("inventory_delta") == 0, detail
-    assert fake._find_seq == 2, "post-refusal inventory must run (N7)"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run (N7)"
     _assert_cleaned_up(fake)
 
 
@@ -4798,8 +4996,8 @@ def test_qc4b_generate_success_stale_halves_fail_without_destroy() -> None:
     assert fake.objects[101].destroyed is False
 
 
-def test_qc4b_generate_success_aliased_halves_fail_without_destroy() -> None:
-    """R2A5: success halves aliasing each other fail; neither is touched."""
+def test_qc4b_generate_success_aliased_halves_fail_destroy_owned_once() -> None:
+    """R2C1: aliased-new halves fail; the single owned object is destroyed once."""
     fake = _PolicyFake(
         keypair_script=[None, None],
         keypair_success_handles=(200, 200),
@@ -4807,7 +5005,55 @@ def test_qc4b_generate_success_aliased_halves_fail_without_destroy() -> None:
     _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
     record = _assert_fail_record("self_contradiction", "policy")
     assert "aliased halves" in (record.summary or ""), record.summary
-    assert 200 not in fake.destroyed, fake.destroyed
+    assert (record.detail or {}).get("destroyed_owned") == [200], record.detail
+    assert fake.destroyed.count(200) == 1, fake.destroyed
+
+
+def test_qc4b_generate_success_mixed_halves_fail_keep_stale() -> None:
+    """R2C1: one invalid output never strands a proved-new sibling half."""
+    fake = _PolicyFake(
+        keypair_script=[None, None],
+        plant=[
+            {int(CKA_LABEL): "plant-a", int(CKA_CLASS): int(CKO_PUBLIC_KEY)},
+        ],
+        keypair_success_handles=(100, 201),
+    )
+    _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "pre-existing halves" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("destroyed_owned") == [201], record.detail
+    assert 201 in fake.destroyed, fake.destroyed
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+
+
+def test_qc4b_generate_device_error_zero_delta_xfails_unadjudicated() -> None:
+    """R2C1: an operational refusal never sanctions the malformed pass."""
+    fake = _PolicyFake(keypair_script=[None, _DEVICE_ERROR])
+    assert_xfails(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    assert record.actual_ckr == ckr_name(_DEVICE_ERROR), record.summary
+    assert (record.detail or {}).get("inventory_delta") == 0, record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_generate_stale_control_fails_untouched() -> None:
+    """R2C1: a stale legal control pair fails before destruction."""
+    fake = _PolicyFake(
+        plant=[
+            {int(CKA_LABEL): "plant-a", int(CKA_CLASS): int(CKO_PUBLIC_KEY)},
+            {int(CKA_LABEL): "plant-b", int(CKA_CLASS): int(CKO_PRIVATE_KEY)},
+        ],
+        control_handles={"keypair": (100, 101)},
+    )
+    _run_must_fail(_qc4b_generate, _rs(fake), "rsa", "swap_secret_class_asym_type")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "non-new" in (record.summary or ""), record.summary
+    assert 100 not in fake.destroyed and 101 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+    assert fake.objects[101].destroyed is False
+    assert len(fake.keypair_calls) == 1, "vet must precede the malformed attempt"
 
 
 def test_qc4b_generate_malformed_pub_proper_priv_no_cross_type() -> None:
@@ -4958,18 +5204,31 @@ def test_qc4b_create_unsupported_skips() -> None:
 def test_qc4b_create_before_inventory_failed_voids() -> None:
     fake = _PolicyFake(
         create_script=[None, _TEMPLATE_INCONSISTENT],
-        find_fail={1: ("init", _FUNCTION_FAILED)},
+        find_fail={2: ("init", _FUNCTION_FAILED)},
     )
     assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
     _assert_xfail_record("not_operational")
     _assert_cleaned_up(fake)
 
 
+def test_qc4b_create_control_inventory_failed_voids() -> None:
+    """R2C1: a refused control inventory voids setup before the control runs."""
+    fake = _PolicyFake(
+        create_script=[None, _TEMPLATE_INCONSISTENT],
+        find_fail={1: ("init", _FUNCTION_FAILED)},
+    )
+    assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
+    record = _assert_xfail_record("not_operational")
+    assert "control: inventory" in (record.label or ""), record.label
+    assert fake.create_templates == [], "control must not run without its baseline"
+    _assert_nothing_leaked(fake)
+
+
 def test_qc4b_create_after_inventory_failed_is_unproved() -> None:
     """A refusal with unprovable inventory never passes; it stays unproved."""
     fake = _PolicyFake(
         create_script=[None, _TEMPLATE_INCONSISTENT],
-        find_fail={2: ("find", _FUNCTION_FAILED)},
+        find_fail={3: ("find", _FUNCTION_FAILED)},
     )
     assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
     record = _assert_xfail_record("honest_deviation")
@@ -4980,13 +5239,13 @@ def test_qc4b_create_after_inventory_failed_is_unproved() -> None:
 def test_qc4b_create_undefined_refusal_beats_failed_inventory() -> None:
     """F13/F9 + N7: undefined defect recorded first, retained past inventory failure.
 
-    Inventory must actually run (Find sequence 2) and its RV rides in the
+    Inventory must actually run (Find sequence 3) and its RV rides in the
     retained record's detail; the shortcut of terminating on validity
     before inventory cannot re-enter.
     """
     fake = _PolicyFake(
         create_script=[None, _UNDEFINED_RV],
-        find_fail={2: ("find", _FUNCTION_FAILED)},
+        find_fail={3: ("find", _FUNCTION_FAILED)},
     )
     _run_must_fail(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
     record = _assert_fail_record("self_contradiction", "metadata")
@@ -4997,19 +5256,19 @@ def test_qc4b_create_undefined_refusal_beats_failed_inventory() -> None:
     assert detail.get("refusal_rv") == ckr_name(_UNDEFINED_RV), detail
     assert detail.get("inventory_rv") == ckr_name(_FUNCTION_FAILED), detail
     assert _reported_outcome() == "fail", [rec.reason for rec in C.get_records()]
-    assert fake._find_seq == 2, "post-refusal inventory must run"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run"
     _assert_cleaned_up(fake)
 
 
 def test_qc4b_create_vendor_refusal_beats_failed_inventory() -> None:
     """F13/F9 + N7: vendor alternate recorded first; inventory still runs.
 
-    The Find sequence must reach the post-refusal inventory (sequence 2)
+    The Find sequence must reach the post-refusal inventory (sequence 3)
     and the inventory RV rides in the retained record's detail.
     """
     fake = _PolicyFake(
         create_script=[None, _VENDOR_RV],
-        find_fail={2: ("find", _FUNCTION_FAILED)},
+        find_fail={3: ("find", _FUNCTION_FAILED)},
     )
     assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
     record = _assert_xfail_record("nonspec_reject")
@@ -5020,7 +5279,7 @@ def test_qc4b_create_vendor_refusal_beats_failed_inventory() -> None:
     assert detail.get("refusal_rv") == ckr_name(_VENDOR_RV), detail
     assert detail.get("inventory_rv") == ckr_name(_FUNCTION_FAILED), detail
     assert _reported_outcome() == "xfail", [rec.reason for rec in C.get_records()]
-    assert fake._find_seq == 2, "post-refusal inventory must run"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run"
     _assert_cleaned_up(fake)
 
 
@@ -5235,11 +5494,22 @@ def test_qc4c_wrong_algo_missing_mechanism_skips() -> None:
 
 
 def test_qc4c_wrong_algo_init_refused_xfails_held() -> None:
+    fake = _PolicyFake(sign_init_script=[_KEY_TYPE_INCONSISTENT])
+    assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
+    record = _assert_xfail_record("honest_deviation")
+    assert record.actual_ckr == ckr_name(_KEY_TYPE_INCONSISTENT), record.summary
+    assert "held at init" in (record.summary or ""), record.summary
+    _assert_cleaned_up(fake)
+
+
+def test_qc4c_wrong_algo_init_opaque_refused_xfails_unproved() -> None:
+    """R2-wording: an opaque Init refusal stays unproved, never 'defense held'."""
     fake = _PolicyFake(sign_init_script=[_FUNCTION_FAILED])
     assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
     record = _assert_xfail_record("honest_deviation")
     assert record.actual_ckr == ckr_name(_FUNCTION_FAILED), record.summary
-    assert "held at init" in (record.summary or ""), record.summary
+    assert "dispatch unproved at init" in (record.summary or ""), record.summary
+    assert "defense held" not in (record.summary or ""), record.summary
     _assert_cleaned_up(fake)
 
 
@@ -5298,7 +5568,46 @@ def test_qc4c_wrong_algo_over_capacity_length_fails() -> None:
     _run_must_fail(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
     record = _assert_fail_record("self_contradiction", "metadata")
     assert "512-byte buffer" in (record.summary or ""), record.summary
+    # R2B4: the observed RV was CKR_OK; the violation is the length in detail.
+    assert record.actual_ckr == "CKR_OK", record.summary
+    assert (record.detail or {}).get("sig_len") == 600, record.detail
     _assert_cleaned_up(fake)
+
+
+def test_qc4c_wrong_algo_vendor_sign_retains_init_evidence() -> None:
+    """R2B4: a vendor Sign RV terminates with the passed Init retained."""
+    fake = _PolicyFake(sign_init_script=[None], sign_script=[_VENDOR_RV])
+    assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS")
+    record = _assert_xfail_record("nonspec_reject")
+    assert record.actual_ckr == ckr_name(_VENDOR_RV), record.summary
+    assert (record.detail or {}).get("init_rv") == "CKR_OK", record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4c_wrong_algo_direct_digest_signature_fails_proved() -> None:
+    """R2B4: a CKM_ECDSA-style direct digest signature cannot escape.
+
+    The hashing oracles hash the PSS-row digest a second time and miss
+    it; the prehashed arm proves the dispatch.
+    """
+    fake = _PolicyFake(ecdsa_confuse=True, confused_raw=True)
+    _run_must_fail(_qc4c_wrong_algo, _rs_wrong_algo(fake), "RSA_PKCS_PSS")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "without hashing" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("prehashed") is True, record.detail
+    _assert_cleaned_up(fake)
+    _assert_no_secret_bytes()
+
+
+def test_qc4c_wrong_algo_combined_pss_row_runs_oracle() -> None:
+    """R2B4: combined PSS rows hash the probe and run the full oracle."""
+    fake = _PolicyFake(ecdsa_confuse=True)
+    _run_must_fail(_qc4c_wrong_algo, _rs_wrong_algo(fake), "SHA256_RSA_PKCS_PSS")
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "wrong-algorithm" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("encoding") == "der", record.detail
+    _assert_cleaned_up(fake)
+    _assert_no_secret_bytes()
 
 
 def test_qc4c_wrong_algo_message_per_mech() -> None:
@@ -5321,10 +5630,35 @@ def test_qc4c_wrong_algo_message_per_mech() -> None:
         "SHA256_RSA_PKCS",
         "SHA384_RSA_PKCS",
         "SHA512_RSA_PKCS",
+        "SHA1_RSA_PKCS_PSS",
+        "SHA256_RSA_PKCS_PSS",
+        "SHA384_RSA_PKCS_PSS",
+        "SHA512_RSA_PKCS_PSS",
         "SHA1_RSA_X9_31",
         "RSA_X_509",
     ):
         assert mod._wrong_algo_message(rows[name]) == mod.QC4_SIGN_DATA, name
+
+
+def test_qc4c_wrong_algo_pss_params_per_row() -> None:
+    """R2B4: every PSS row carries hash-matched params for its mechanism."""
+    mod = _policy_module()
+    rows = {entry.name: entry for entry in mod._RSA_SIGN_MECHS}
+    assert rows["RSA_PKCS_PSS"].pss_params is not None
+    for name in (
+        "SHA1_RSA_PKCS_PSS",
+        "SHA256_RSA_PKCS_PSS",
+        "SHA384_RSA_PKCS_PSS",
+        "SHA512_RSA_PKCS_PSS",
+    ):
+        assert rows[name].pss_params is not None, name
+        packed = mod._wrong_algo_mech_param(rows[name])
+        assert int(packed.ck.mechanism) == rows[name].mech, name
+        want_hash, want_mgf, want_salt = rows[name].pss_params
+        assert int(packed.params.hashAlg) == want_hash, name
+        assert int(packed.params.mgf) == want_mgf, name
+        assert int(packed.params.sLen) == want_salt, name
+    assert rows["SHA256_RSA_PKCS"].pss_params is None
 
 
 def test_qc4c_unsupported_create_skips() -> None:
@@ -5497,7 +5831,7 @@ def test_qc4b_create_vendor_refusal_leak_fails_n7() -> None:
     assert len(vendor) == 1, [(rec.reason, rec.actual_ckr) for rec in C.get_records()]
     assert vendor[0].actual_ckr == ckr_name(_VENDOR_RV), vendor[0].summary
     assert _reported_outcome() == "fail", [rec.reason for rec in C.get_records()]
-    assert fake._find_seq == 2, "post-refusal inventory must run"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run"
     _assert_cleaned_up(fake)
     _assert_no_secret_bytes()
 
@@ -5516,7 +5850,7 @@ def test_qc4b_create_undefined_refusal_leak_fails_n7() -> None:
     assert len(metadata) == 1, [(rec.reason, rec.kind) for rec in C.get_records()]
     assert metadata[0].actual_ckr == ckr_name(_UNDEFINED_RV), metadata[0].summary
     assert _reported_outcome() == "fail", [rec.reason for rec in C.get_records()]
-    assert fake._find_seq == 2, "post-refusal inventory must run"
+    assert fake._find_seq == 3, "control + pre/post-refusal inventories must run"
     _assert_cleaned_up(fake)
     _assert_no_secret_bytes()
 
@@ -5837,7 +6171,7 @@ def test_qc4b_create_short_find_page_still_catches_leak_n6() -> None:
     detail = record.detail or {}
     assert detail.get("leaked_count") == 1, detail
     assert detail.get("refusal_rv") == ckr_name(_TEMPLATE_INCONSISTENT), detail
-    assert fake.find_pages == [1, 0, 1, 1, 0], fake.find_pages
+    assert fake.find_pages == [1, 0, 1, 0, 1, 1, 0], fake.find_pages
     assert _reported_outcome() == "fail", [rec.reason for rec in C.get_records()]
     assert set(fake.destroyed) >= (set(fake.created) - preexisting)
     _assert_no_secret_bytes()
@@ -5852,7 +6186,7 @@ def test_qc4b_create_short_find_page_no_leak_passes_n6() -> None:
     _assert_terminal_pass()
     record = _terminal_record()
     assert (record.detail or {}).get("inventory_delta") == 0, record.detail
-    assert fake.find_pages == [1, 0, 1, 0], fake.find_pages
+    assert fake.find_pages == [1, 0, 1, 0, 1, 0], fake.find_pages
     _assert_no_secret_bytes()
 
 

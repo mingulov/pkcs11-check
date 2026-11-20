@@ -498,6 +498,48 @@ def test_cross_creator_undefined_staging_rv_fails() -> None:
         identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
 
 
+def test_cross_creator_undefined_second_derive_checks_then_fails() -> None:
+    """R2C2: an undefined 2nd derive still checks + cleans the 1st output."""
+    from _pytest.outcomes import Failed
+
+    fake = _IdentityRaw()
+    fake.derive_script = [None, 0xDEAD]
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert len(fake.derived_handles) == 1, fake.derived_handles
+    assert fake.derived_handles[0] in fake.attr_reads, fake.attr_reads
+    _assert_cleanup(fake)
+
+
+def test_cross_creator_undefined_second_unwrap_checks_then_fails() -> None:
+    """R2C2: an undefined 2nd unwrap still checks + cleans the 1st output."""
+    from _pytest.outcomes import Failed
+
+    fake = _IdentityRaw()
+    fake.unwrap_script = [None, 0xDEAD]
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert len(fake.unwrapped_handles) == 1, fake.unwrapped_handles
+    assert fake.unwrapped_handles[0] in fake.attr_reads, fake.attr_reads
+    _assert_cleanup(fake)
+
+
+def test_cross_creator_vendor_derive_refusal_xfails_visible() -> None:
+    """R2C2: a vendor staging refusal surfaces as xfail, never green."""
+    fake = _IdentityRaw()
+    fake.derive_script = [None, 0x80000001]
+    assert_xfails(
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators,
+        _rs(fake),
+    )
+    assert any(rec.reason == "nonspec_reject" for rec in C.get_records()), [
+        (rec.reason, rec.outcome) for rec in C.get_records()
+    ]
+    assert len(fake.derived_handles) == 1, fake.derived_handles
+    assert fake.derived_handles[0] in fake.attr_reads, fake.attr_reads
+    _assert_cleanup(fake)
+
+
 def test_kem_outputs_have_unique_ids_pass() -> None:
     fake = _IdentityRaw()
     identity_case.TestUniqueIdGeneration().test_kem_outputs_have_unique_ids(_rs(fake))

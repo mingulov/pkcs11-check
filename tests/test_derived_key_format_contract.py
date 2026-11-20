@@ -305,10 +305,21 @@ def test_des2_cdmf_parity_adjusted_passes(monkeypatch: pytest.MonkeyPatch, type_
     _cleaned(fake)
 
 
-def test_sha1_des_parity_adjusted_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("type_name", ["DES", "DES2", "CDMF"])
+def test_sha1_des_parity_adjusted_passes(monkeypatch: pytest.MonkeyPatch, type_name: str) -> None:
+    """R2-gap: every SHA-1 row drives its exact typed + twin derives."""
     fake = _Fake()
-    _run_sha1(monkeypatch, fake)
-    assert classification.get_records() == []
+    _run_sha1(monkeypatch, fake, type_name)
+    assert classification.get_records() == [], type_name
+    key_type, out_len = tmisc._DES_PARITY_TYPES[type_name]
+    assert fake.derive_calls == [
+        {"mech": int(CKM_SHA1_KEY_DERIVATION), "key_type": key_type, "len": out_len},
+        {
+            "mech": int(CKM_SHA1_KEY_DERIVATION),
+            "key_type": int(CKK_GENERIC_SECRET),
+            "len": out_len,
+        },
+    ], (type_name, fake.derive_calls)
     _cleaned(fake)
 
 
@@ -404,6 +415,14 @@ def test_digest_healthy_rows_pass(
     """Hash, XOF and BLAKE2b rows pass on conformant derive output."""
     fake = _Fake()
     _run_digest(monkeypatch, fake, mech, type_name)
+    # R2-gap: the cleanup assertion alone goes green on empty call
+    # lists; pin the exact twin + typed derives for every row.
+    key_type, out_len = tmisc._DES_PARITY_TYPES[type_name]
+    mech_id = tmisc._DIGEST_PARITY_MECHS[mech][0]
+    assert fake.derive_calls == [
+        {"mech": mech_id, "key_type": int(CKK_GENERIC_SECRET), "len": out_len},
+        {"mech": mech_id, "key_type": key_type, "len": out_len},
+    ], (mech, type_name, fake.derive_calls)
     _cleaned(fake)
 
 
