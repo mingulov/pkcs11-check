@@ -116,7 +116,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_TYPE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._attribute_values import (
+    MISSING_ATTRIBUTE,
+    attr_or_record,
+    refusal_for,
+)
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     EC_CURVE_UNSUPPORTED_RVS,
@@ -4584,7 +4588,7 @@ def _skip_unless_sealed_unreadable(
     )
     if value is not MISSING_ATTRIBUTE:
         pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
-    refusal = read.refusals.get(int(attr))
+    refusal = refusal_for(read, attr)
     if refusal is not None and refusal.leaked_len is not None:
         record = classification.record_as(
             "self_contradiction",

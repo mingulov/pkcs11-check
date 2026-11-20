@@ -3064,7 +3064,10 @@ class _Analyzer:
                     elif module == _ATTRIBUTE_HELPER_MODULE:
                         if alias.name == "attr_or_record":
                             bindings[bound] = "helper"
-                        elif alias.name == "refusal_rv_for":
+                        elif alias.name in {"refusal_rv_for", "refusal_for"}:
+                            # refusal_for() surfaces the same channel
+                            # as refusal_rv_for() plus leaked_len (an
+                            # int): no provider bytes, untainted result.
                             bindings[bound] = "refusal-rv"
                         elif alias.name == "MISSING_ATTRIBUTE":
                             bindings[bound] = "sentinel"
@@ -4556,7 +4559,7 @@ class _Analyzer:
                 elif module == _ATTRIBUTE_HELPER_MODULE:
                     if alias.name == "attr_or_record":
                         state.bindings[bound] = "helper"
-                    elif alias.name == "refusal_rv_for":
+                    elif alias.name in {"refusal_rv_for", "refusal_for"}:
                         state.bindings[bound] = "refusal-rv"
                     elif alias.name == "MISSING_ATTRIBUTE":
                         state.bindings[bound] = "sentinel"
@@ -4694,7 +4697,10 @@ class _Analyzer:
                 return _Value(callable_kind="direct")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "attr_or_record":
                 return _Value(callable_kind="helper")
-            if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "refusal_rv_for":
+            if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr in {
+                "refusal_rv_for",
+                "refusal_for",
+            }:
                 return _Value(callable_kind="refusal-rv")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "MISSING_ATTRIBUTE":
                 return _Value(callable_kind="sentinel")
