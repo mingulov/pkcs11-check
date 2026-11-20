@@ -44,6 +44,7 @@ from pkcs11_check.core._counters_durability import (
     PROBE_SIDECAR_ENV,
     PROBE_UNIT_ENV,
     CounterPersistenceError,
+    _DeferProducerError,
     _prune_sidecar_tmps,
     _replay_probe_tmp_rows,
     durability_dir,
@@ -284,7 +285,9 @@ def ingest_probe_payload(
     sidecar is retained and the persistence error propagates loud. A
     definitive miss still deletes the sidecar (validated-unusable, torn, or
     missing: nothing recoverable remains); an unreadable sidecar (I/O
-    failure) is retained for collection to retry. This function never
+    failure) is retained for collection to retry, as is an unreadable
+    rewrite tmp (replay defers to file collection instead of ingesting
+    a return-less prefix). This function never
     accounts loss itself: the caller owns ``note_lost_probe`` for
     ``"partial"`` and ``"lost"`` alike (the single accounting site).
 
@@ -352,18 +355,25 @@ def ingest_probe_payload(
             # a per-spawn nonce), so no producer stamps are needed.
             assert sidecar is not None  # fallback read implies a path
             info = registration_info()
-            fallback_counters = _replay_probe_tmp_rows(
-                Path(sidecar),
-                validated_fallback[0],
-                validated_fallback[1],
-                fallback,
-                list(fallback_counters),
-                producer_run=info["run_id"] if info else None,
-                producer_unit=info["unit"] if info else None,
-                orphan_pid=fallback.get("pid"),
-                orphan_birth=fallback.get("birth_token"),
-                producer_uuid=get_worker_uuid(),
-            )
+            try:
+                fallback_counters = _replay_probe_tmp_rows(
+                    Path(sidecar),
+                    validated_fallback[0],
+                    validated_fallback[1],
+                    fallback,
+                    list(fallback_counters),
+                    producer_run=info["run_id"] if info else None,
+                    producer_unit=info["unit"] if info else None,
+                    orphan_pid=fallback.get("pid"),
+                    orphan_birth=fallback.get("birth_token"),
+                    producer_uuid=get_worker_uuid(),
+                )
+            except _DeferProducerError:
+                # An unreadable rewrite tmp is not a definitive miss:
+                # retain everything for file collection to retry (the
+                # caller still accounts the loss, so the outcome stays
+                # fail-visible).
+                return "lost"
             # The consumed identity rides inside the ingest transaction:
             # no checkpoint ever carries absorbed counts without their
             # anti-double-fold proof (codex RC4-R1-2; a post-ingest

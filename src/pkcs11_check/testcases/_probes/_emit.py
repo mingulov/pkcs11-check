@@ -184,7 +184,7 @@ def parse_provider_finding(
             raw_payload,
             object_pairs_hook=_object_pairs_without_duplicates,
         )
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError, RecursionError):
         return None, "provider-finding marker is not valid JSON"
     return _validate_provider_finding(payload)
 
@@ -230,7 +230,7 @@ def mark_python_finalized() -> None:
         with open(path, encoding="utf-8") as fh:
             if isinstance(json.load(fh), dict):
                 return
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         pass
     try:
         with open(path, "w", encoding="utf-8") as fh:
