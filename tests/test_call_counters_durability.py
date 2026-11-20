@@ -7692,3 +7692,367 @@ class TestCommittedRecoveryOnlyClaim:
         assert payload["total_calls"] == 5
         assert payload["complete"] is True
         assert payload["probes_lost"] == 0
+
+
+# --------------------------------------------------------------------------
+# Issue #88: orphan-tmp adoption + named in-flight rows
+# --------------------------------------------------------------------------
+
+
+def _entry_only_block(
+    n: int, *, fn: str = "C_Digest", module: str = "m", bucket: str = "test"
+) -> dict[str, Any]:
+    """A minimal valid block with ``n`` entries and no returns."""
+    return {
+        "total_calls": n,
+        "by_module": {
+            module: {
+                "calls": n,
+                "buckets": {bucket: {"calls": n, "by_fn": {fn: {"calls": n, "by_rv": {}}}}},
+            }
+        },
+    }
+
+
+def _fn_leaf(partial: dict[str, Any], fn: str) -> dict[str, Any]:
+    """Find one fn leaf across all module/bucket blocks (bucket-agnostic)."""
+    for module_block in partial["by_module"].values():
+        for bucket_block in module_block["buckets"].values():
+            if fn in bucket_block["by_fn"]:
+                return bucket_block["by_fn"][fn]
+    raise AssertionError(f"fn {fn} missing from partial")
+
+
+def _lost_returns(partial: dict[str, Any]) -> int:
+    """Entries minus summed RV counts over the whole partial block."""
+    missing = 0
+    for module_block in partial["by_module"].values():
+        for bucket_block in module_block["buckets"].values():
+            for leaf in bucket_block["by_fn"].values():
+                missing += leaf["calls"] - sum(item["count"] for item in leaf["by_rv"].values())
+    return missing
+
+
+def _plant_tmp(
+    sidecar: Path, payload: dict[str, Any] | None, *, nonce: str = "abc", raw: str | None = None
+) -> Path:
+    """Plant an orphan rewrite tmp next to a sidecar (complete or torn)."""
+    tmp = sidecar.with_name(f"{sidecar.name}.tmp-999-{nonce}")
+    if raw is not None:
+        tmp.write_text(raw, encoding="utf-8")
+    else:
+        assert payload is not None
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+    return tmp
+
+
+def _tmp_payload(
+    uuid: str, block: dict[str, Any], *, pid: int = 999, journal_seq: int = 0
+) -> dict[str, Any]:
+    """A complete rewrite-tmp payload carrying one in-progress snapshot."""
+    return {
+        "worker_uuid": uuid,
+        "run_id": _RUN,
+        "unit": "a.py",
+        "attempt": 0,
+        "pid": pid,
+        "in_progress": block,
+        "receipts": [],
+        "journal_seq": journal_seq,
+    }
+
+
+def _collect_crashed88(
+    root: Path, child: Path, *, status: str = "crashed", returncode: int | None = -11
+) -> list[dict[str, Any]]:
+    _write_jsonl(child, [{"$report_type": "SessionStart"}, _marker("a.py", 0)])
+    return durability.collect_unit(
+        root, unit="a.py", child_jsonl=child, status=status, returncode=returncode
+    )
+
+
+def test_in_flight_rows_name_missing_returns() -> None:
+    """#88: entries without RVs become sorted named rows."""
+    block = {
+        "total_calls": 3,
+        "by_module": {
+            "m": {
+                "calls": 3,
+                "buckets": {
+                    "test": {
+                        "calls": 3,
+                        "by_fn": {
+                            "C_Digest": {"calls": 2, "by_rv": {}},
+                            "C_Login": {
+                                "calls": 1,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                            },
+                        },
+                    }
+                },
+            }
+        },
+    }
+    assert durability._in_flight_rows(block) == [
+        {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 2}
+    ]
+
+
+def test_in_flight_rows_empty_when_complete() -> None:
+    """#88: fully returned calls produce no rows (field stays omitted)."""
+    assert durability._in_flight_rows(_counts_block(3)) == []
+    assert durability._in_flight_rows({"total_calls": 0, "by_module": {}}) == []
+
+
+def test_orphan_tmp_superset_adopted(tmp_path: Path) -> None:
+    """#88: a complete orphan tmp replays its returns (lost_returns=0)."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    _plant_tmp(planted["sidecar"], _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest")))
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    leaf = _fn_leaf(partials[0], "C_Digest")
+    assert leaf["by_rv"] == {"0": {"name": "CKR_OK", "count": 1}}, leaf
+    assert _lost_returns(partials[0]) == 0
+    assert "in_flight" not in partials[0]
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_orphan_tmp_stale_ignored(tmp_path: Path) -> None:
+    """#88: a tmp older than the committed sidecar never rewinds it."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+    )
+    _plant_tmp(planted["sidecar"], _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest")))
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["calls"] == 2
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_orphan_tmp_wrong_uuid_ignored(tmp_path: Path) -> None:
+    """#88: a tmp from another producer is never adopted."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    _plant_tmp(planted["sidecar"], _tmp_payload(_UUID_B, _counts_block(5, fn="C_Digest")))
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["total_calls"] == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_orphan_tmp_torn_ignored(tmp_path: Path) -> None:
+    """#88: an unparseable tmp reads as absent (committed sidecar wins)."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    _plant_tmp(planted["sidecar"], None, raw='{"in_progress": {"total_calls": 1,')
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["total_calls"] == 1
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_orphan_tmp_newest_wins(tmp_path: Path) -> None:
+    """#88: among complete tmps the largest snapshot is adopted."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    _plant_tmp(
+        planted["sidecar"],
+        _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest")),
+        nonce="aaa",
+    )
+    _plant_tmp(
+        planted["sidecar"],
+        _tmp_payload(_UUID_A, _counts_block(3, fn="C_Digest")),
+        nonce="bbb",
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["calls"] == 3
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_torn_tmp_names_in_flight_row(tmp_path: Path) -> None:
+    """#88: a torn rewrite names its lost return (never silent)."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    _plant_tmp(planted["sidecar"], None, raw="torn-bytes")
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["in_flight"] == [
+        {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 1}
+    ]
+    assert _lost_returns(partials[0]) == 1
+    lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
+    assert len(lost) == 1
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_dead_producer_missing_returns_named(tmp_path: Path) -> None:
+    """#88/#87-item-6: died-inside-the-call names the in-flight fn."""
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["in_flight"] == [
+        {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 1}
+    ]
+
+
+def test_complete_returns_omit_in_flight(tmp_path: Path) -> None:
+    """#88: no missing return means no in_flight field at all."""
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert "in_flight" not in partials[0]
+
+
+_ISSUE88_VICTIM = '''"""Die inside record_return's sidecar rewrite (#88 durable repro)."""
+
+import ctypes
+import os
+import sys
+
+try:
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+except (ImportError, OSError, ValueError):
+    pass
+
+from pkcs11_check.core import _counters_durability as durability
+from pkcs11_check.core import call_counters
+
+
+def _die():
+    if sys.platform == "win32":
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel.TerminateProcess(kernel.GetCurrentProcess(), 0xC0000005)
+    else:
+        ctypes.string_at(0)
+
+
+def _die_on_replace(src, dst):
+    sys.stderr.write(f"HOOK: inside sidecar rewrite tmp_exists={os.path.exists(src)}\\n")
+    sys.stderr.flush()
+    _die()
+    raise AssertionError("unreachable: survived the fatal hook")
+
+
+call_counters.record_call("C_Digest", module="m")
+info = call_counters.registration_info()
+assert info is not None
+sys.stderr.write(f"ENTRY-DURABLE sidecar={info['sidecar_path']}\\n")
+sys.stderr.flush()
+durability.os.replace = _die_on_replace
+call_counters.record_return("C_Digest", 0, module="m")
+sys.stderr.write("UNREACHABLE: survived record_return\\n")
+'''
+
+
+def test_sigsegv_in_rewrite_replays_return(tmp_path: Path) -> None:
+    """#88 durable: death inside the rewrite still replays the return.
+
+    A real subprocess records one call, then dies inside the return
+    flush's os.replace (genuine SIGSEGV / access violation, no Python
+    teardown). The committed sidecar stays pre-return while the orphan
+    tmp holds the return; collection must adopt it: by_rv shows the
+    CKR_OK, nothing is named in-flight, and no tmp survives.
+    """
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    victim = tmp_path / "victim88.py"
+    victim.write_text(_ISSUE88_VICTIM, encoding="utf-8")
+    src_root = str(Path(durability.__file__).resolve().parents[2])
+    env = dict(
+        os.environ,
+        PYTHONPATH=src_root + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        PKCS11_CHECK_COUNTERS_DIR=str(counters),
+        PKCS11_CHECK_COUNTERS_UNIT="a.py",
+        PKCS11_CHECK_COUNTERS_ATTEMPT="0",
+        PKCS11_CHECK_COUNTERS_ROLE="unit",
+        PKCS11_CHECK_RUN_ID="R1",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(victim)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode != 0, proc
+    assert "ENTRY-DURABLE" in proc.stderr, proc.stderr
+    assert "HOOK: inside sidecar rewrite" in proc.stderr, proc.stderr
+    assert "UNREACHABLE" not in proc.stderr, proc.stderr
+    records = _collect_crashed88(counters, tmp_path / "child.jsonl", returncode=proc.returncode)
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["total_calls"] == 1
+    leaf = _fn_leaf(partials[0], "C_Digest")
+    assert leaf["calls"] == 1, leaf
+    assert leaf["by_rv"] == {"0": {"name": "CKR_OK", "count": 1}}, leaf
+    assert _lost_returns(partials[0]) == 0
+    assert "in_flight" not in partials[0]
+    lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
+    assert len(lost) == 1
+    assert list(counters.glob("*.tmp-*")) == []
+    assert schema.is_sidecar_partial(partials[0]) is True

@@ -1823,12 +1823,14 @@ def _partial_record(
     lost_keys: list[dict[str, Any]] | None = None,
     orphan_keys: list[dict[str, Any]] | None = None,
     recovered_keys: list[dict[str, Any]] | None = None,
+    in_flight: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a ``CallCountersPartial`` record (schema-valid).
 
     Gap-only for dead producers, zero-call loss-only when only a loss
     scalar/keys survive, claim-only when only adopted-orphan evidence
-    rides along.
+    rides along. ``in_flight`` names entries without returns (#88);
+    omitted when empty.
     """
     record: dict[str, Any] = {
         "$report_type": "CallCountersPartial",
@@ -1860,6 +1862,8 @@ def _partial_record(
         record["orphan_keys"] = orphan_keys
     if recovered_keys:
         record["recovered_keys"] = recovered_keys
+    if in_flight:
+        record["in_flight"] = in_flight
     return record
 
 
@@ -2166,6 +2170,7 @@ def collect_unit(
                     lost_keys=_keys_to_wire(gap_keys),
                     orphan_keys=_keys_to_wire(orphan_keys),
                     recovered_keys=_keys_to_wire(set(recovered)),
+                    in_flight=_in_flight_rows(block),
                 )
             )
         lost = _lost_record(
@@ -2274,6 +2279,93 @@ def _sidecar_run(sidecar: dict[str, Any]) -> str:
     return _UNKNOWN_RUN
 
 
+def _adopt_orphan_tmp_payload(
+    sidecar_path: Path, committed: dict[str, Any] | None, uuid: str
+) -> dict[str, Any] | None:
+    """Adopt the newest complete rewrite tmp for a dead producer (#88).
+
+    A K=1 return flush that dies inside ``os.replace`` leaves the new
+    payload in a complete orphan tmp while the committed sidecar stays
+    pre-return. The tmp replays the lost return: it must parse as a
+    sidecar, carry this producer's uuid, hold a valid in-progress
+    block, and cover at least the committed total (successive
+    snapshots only grow; equal totals still adopt since the return
+    lands without adding a call). Torn, foreign, or stale tmps read
+    as absent. Only called for dead-or-fenced producers (collectors
+    skip live/unresolved ones before reaching here); the adopted
+    payload still flows through the gap arms, so mark/journal
+    impossibilities conflict exactly as a committed sidecar would.
+    """
+    committed_total = 0
+    if isinstance(committed, dict):
+        in_progress = committed.get("in_progress")
+        if is_module_first_block(in_progress):
+            committed_total = in_progress["total_calls"]
+    best: dict[str, Any] | None = None
+    best_total = committed_total
+    try:
+        candidates = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
+    except OSError:
+        return None
+    for tmp in candidates:
+        payload = read_json_file(tmp)
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("worker_uuid") != uuid:
+            continue
+        in_progress = payload.get("in_progress")
+        if not is_module_first_block(in_progress):
+            continue
+        total = in_progress["total_calls"]
+        if total < best_total:
+            continue
+        best, best_total = payload, total
+    return best
+
+
+def _in_flight_rows(block: dict[str, Any]) -> list[dict[str, Any]]:
+    """Name every (module, bucket, fn) with entries but no return (#88).
+
+    Sorted for determinism. Malformed leaves are skipped defensively
+    (callers pass gap blocks, already valid); a lone return without
+    an entry never rows (negative gaps are a different anomaly).
+    """
+    rows: list[dict[str, Any]] = []
+    by_module = block.get("by_module")
+    if not isinstance(by_module, dict):
+        return []
+    for module in sorted(key for key in by_module if isinstance(key, str)):
+        module_block = by_module[module]
+        buckets = module_block.get("buckets") if isinstance(module_block, dict) else None
+        if not isinstance(buckets, dict):
+            continue
+        for bucket in sorted(key for key in buckets if isinstance(key, str)):
+            bucket_block = buckets[bucket]
+            by_fn = bucket_block.get("by_fn") if isinstance(bucket_block, dict) else None
+            if not isinstance(by_fn, dict):
+                continue
+            for fn in sorted(key for key in by_fn if isinstance(key, str)):
+                leaf = by_fn[fn]
+                if not isinstance(leaf, dict):
+                    continue
+                calls = leaf.get("calls")
+                by_rv = leaf.get("by_rv")
+                if not _is_nonneg_int(calls) or not isinstance(by_rv, dict):
+                    continue
+                assert isinstance(calls, int)
+                returned = 0
+                for item in by_rv.values():
+                    count = item.get("count") if isinstance(item, dict) else None
+                    if _is_nonneg_int(count):
+                        assert isinstance(count, int)
+                        returned += count
+                if calls - returned > 0 and module and bucket and fn:
+                    rows.append(
+                        {"module": module, "bucket": bucket, "fn": fn, "count": calls - returned}
+                    )
+    return rows
+
+
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
     """Adopt a sidecar with no live registry via its carried identity."""
     sidecar = read_json_file(sidecar_path)
@@ -2316,6 +2408,15 @@ def _collect_dead_producer(
     sidecar_raw = str(content.get("sidecar", ""))
     sidecar_path = Path(sidecar_raw)
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
+    if sidecar_raw:
+        # #88: a complete orphan rewrite tmp replays the return its
+        # death orphaned (dead-or-fenced producers only; torn, foreign,
+        # or stale tmps read as absent and the committed sidecar wins).
+        adopted = _adopt_orphan_tmp_payload(
+            sidecar_path, sidecar if isinstance(sidecar, dict) else None, uuid
+        )
+        if adopted is not None:
+            sidecar = adopted
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
     block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
     scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -2374,6 +2475,7 @@ def _collect_dead_producer(
                 lost_keys=_keys_to_wire(gap_keys),
                 orphan_keys=_keys_to_wire(orphan_keys),
                 recovered_keys=_keys_to_wire(set(recovered)),
+                in_flight=_in_flight_rows(block),
             )
         )
     lost = _lost_record(
