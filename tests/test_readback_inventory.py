@@ -1907,12 +1907,12 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "f75d9168bda4e85391ccbe7b0c036670298c7c8c0f9478ec891c259f38026d1a",
+            "955d75777ca0021122905c1b1f8ae578d6e9831993dd676311881b54b5010e8b",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "2a23deed198f3453d9d8bea2c1417fabb66b7a597918ddde484732c7a5e36a13",
+            "82f59458cc232a8dea6bc6ad226430b5083083bc0148c44119237627835c231b",
             characterization.candidate_digest,
         ),
         (

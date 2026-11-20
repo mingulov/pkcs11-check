@@ -2899,7 +2899,7 @@ def _verify_private_exponent_accept(
         inherit_mechanism=False,
         sensitive_is_conformant=True,
     )
-    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes):
+    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes) or not current:
         xfail_as(
             "not_operational",
             kind="policy",
@@ -3007,7 +3007,7 @@ def _verify_exponent_unchanged_after_refusal(
         inherit_mechanism=False,
         sensitive_is_conformant=True,
     )
-    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes):
+    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes) or not current:
         xfail_as(
             "honest_deviation",
             kind="policy",

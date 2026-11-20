@@ -5699,6 +5699,34 @@ def test_concurrent_no_success_skips() -> None:
         sopin_case._judge_concurrent_pin_trace(trace)
 
 
+def test_concurrent_prescan_no_success_returns_silently() -> None:
+    """Pre-review 1: a race that never ran has no fail-grade evidence."""
+    p0_works = _concurrent_trace(
+        {0: _GENERAL_ERROR, 1: _GENERAL_ERROR, 2: _GENERAL_ERROR, 3: _GENERAL_ERROR},
+        {
+            "P0": _OK,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    sopin_case._prescan_concurrent_pin_fails(p0_works)
+    assert classification.get_records() == []
+    nothing_works = _concurrent_trace(
+        {0: _GENERAL_ERROR, 1: _GENERAL_ERROR, 2: _GENERAL_ERROR, 3: _GENERAL_ERROR},
+        {
+            "P0": _PIN_INCORRECT,
+            "P1": _PIN_INCORRECT,
+            "P2": _PIN_INCORRECT,
+            "P3": _PIN_INCORRECT,
+            "P4": _PIN_INCORRECT,
+        },
+    )
+    sopin_case._prescan_concurrent_pin_fails(nothing_works)
+    assert classification.get_records() == []
+
+
 def test_concurrent_multi_success_fails_stale_write() -> None:
     """D2: two OKs from the same old PIN means a stale write was accepted."""
     trace = _concurrent_trace(

@@ -187,3 +187,19 @@ def test_r2b3_copy_runner_proved_change_beats_vendor_refusal(
     (record,) = [rec for rec in classification.get_records() if rec.outcome == "fail"]
     assert "refusal-after-mutation" in (record.summary or ""), record.summary
     assert record.actual_ckr == "CKR_VENDOR_DEFINED", record.summary
+
+
+def test_r2b3_empty_current_voids_accept() -> None:
+    """Pre-review 2: a zero-length post-change read proves no integer."""
+    with pytest.raises(XFailed):
+        _accept(_rs(b""))
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert "unproved-effect" in (record.summary or ""), record.summary
+
+
+def test_r2b3_empty_current_voids_refusal() -> None:
+    """Pre-review 2: a zero-length post-refusal read proves no mutation."""
+    with pytest.raises(XFailed):
+        _refused(_rs(b""))
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert "unproved" in (record.summary or ""), record.summary

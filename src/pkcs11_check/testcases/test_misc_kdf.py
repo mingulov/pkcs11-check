@@ -2931,6 +2931,9 @@ class TestByteKdfShortChild:
 
 _RECOVERY_BASE = bytes(range(32))
 _RECOVERY_XOR_FULL_DATA = b"\xa5" * 32
+#: Distinct short-data stimulus: 1 input byte (not a 32-byte input with
+#: a short output). Nonzero so its expectation differs from xor_zeros.
+_RECOVERY_XOR_SHORT_DATA = b"\x5a"
 
 
 def _judge_byte_recovery(
@@ -3107,6 +3110,8 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         expected = _RECOVERY_BASE[:1]
     elif shape == "xor_full":
         expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_FULL_DATA[0]])
+    elif shape == "xor_short":
+        expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_SHORT_DATA[0]])
     else:
         raise ValueError(f"unknown recovery shape {shape!r}")
 
@@ -3122,7 +3127,15 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
             return _derive_byte_child(rs, _EXTRACT_NAME, [base], child_attrs)
         # NOTE: 32 zero bytes (not 1) so length-strict tokens accept the
         # control derive; the 1-byte expectation (base[:1]) is identical.
-        data = b"\x00" * 32 if shape == "xor_zeros" else _RECOVERY_XOR_FULL_DATA
+        # xor_short deliberately passes 1 input byte: length-strict
+        # tokens refuse (the control skips as unbuildable), lenient
+        # ones run the recovery comparison on short input.
+        if shape == "xor_zeros":
+            data = b"\x00" * 32
+        elif shape == "xor_short":
+            data = _RECOVERY_XOR_SHORT_DATA
+        else:
+            data = _RECOVERY_XOR_FULL_DATA
         return _derive_raw(
             rs,
             int(CKM_XOR_BASE_AND_DATA),
@@ -3288,6 +3301,11 @@ class TestByteRecoveryOracle:
         if not p11_raw_session.has_mechanism("EXTRACT_KEY_FROM_KEY"):
             pytest.skip("CKM_EXTRACT_KEY_FROM_KEY not supported")
         _run_byte_recovery_case(p11_raw_session, shape="extract", label="qc12b-rec-extract")
+
+    def test_xor_short_1byte_recovery(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
+            pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
+        _run_byte_recovery_case(p11_raw_session, shape="xor_short", label="qc12b-rec-xorshort")
 
     def test_xor_zeros_1byte_recovery(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
