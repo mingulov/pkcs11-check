@@ -2397,6 +2397,7 @@ class TestProbeConsumedMarker:
                 journal_lines=[],
                 claims={},
                 known_uuids={parent_uuid},
+                fence_live=True,
             )
         )
         assert merged is None, "parent checkpoint already holds the probe counts"
@@ -2442,6 +2443,7 @@ class TestProbeConsumedMarker:
                 journal_lines=[],
                 claims={},
                 known_uuids={_UUID_A},
+                fence_live=True,
             )
         )
         assert merged is None
@@ -4018,6 +4020,7 @@ class TestProbeOrphanAdoption:
                 known_uuids={_UUID_A},
                 producer_run=_RUN,
                 producer_unit="a.py",
+                fence_live=True,
             )
         )
         assert merged is None
@@ -8837,13 +8840,19 @@ def test_probe_sidecar_stamps_writer_incarnation(tmp_path: Path) -> None:
     assert "pid" not in json.loads(legacy.read_text(encoding="utf-8"))
 
 
-def test_live_probe_orphan_retained(tmp_path: Path) -> None:
-    """#88R3F4: an orphan whose writer is alive retains everything."""
-    proc = subprocess.Popen(
+def _live_sleeper() -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def test_live_probe_orphan_fenced_and_folded(tmp_path: Path) -> None:
+    """#88R3F4: a live writer on a dead path is fenced, then folded."""
+    if not sys.platform.startswith("linux") and sys.platform != "win32":
+        pytest.skip("verified fencing needs pidfd or a process handle")
+    proc = _live_sleeper()
     try:
         birth = durability.birth_token_for_pid(proc.pid)
         if birth is None:
@@ -8860,11 +8869,96 @@ def test_live_probe_orphan_retained(tmp_path: Path) -> None:
             birth=birth,
         )
         records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        assert proc.poll() is not None, "fence must terminate the live writer"
         partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
-        assert partials == []
-        lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
-        assert len(lost) == 1
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 1
+        assert not orphan.exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+
+
+def test_unfenceable_probe_defers_whole_producer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R3F4: an unfenceable live writer defers everything (no records)."""
+    proc = _live_sleeper()
+    try:
+        birth = durability.birth_token_for_pid(proc.pid)
+        if birth is None:
+            pytest.skip("birth tokens unavailable on this platform")
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=424243)
+        orphan = _plant_probe_orphan(
+            tmp_path,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=proc.pid,
+            birth=birth,
+        )
+        monkeypatch.setattr(durability, "_terminate_verified", lambda *a: False)
+        with pytest.warns(UserWarning, match="deferred"):
+            records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        assert records == []
+        assert proc.poll() is None
+        assert Path(planted["registry"]).exists()
         assert orphan.exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+
+
+def test_committed_path_never_fences_live_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R3F4: a live producer's probe is never fenced (no sabotage)."""
+    proc = _live_sleeper()
+    try:
+        birth = durability.birth_token_for_pid(proc.pid)
+        if birth is None:
+            pytest.skip("birth tokens unavailable on this platform")
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=424243)
+        _plant_probe_orphan(
+            tmp_path,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=proc.pid,
+            birth=birth,
+        )
+        signaled: list[tuple[int, int]] = []
+        real_terminate = durability._terminate_verified
+
+        def _spy(pid: int, birth: int, timeout: float) -> bool:
+            signaled.append((pid, birth))
+            return real_terminate(pid, birth, timeout)
+
+        monkeypatch.setattr(durability, "_terminate_verified", _spy)
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(7),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        durability.collect_unit(
+            tmp_path, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        assert signaled == []
+        assert proc.poll() is None
     finally:
         if proc.poll() is None:
             proc.kill()

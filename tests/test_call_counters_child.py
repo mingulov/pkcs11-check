@@ -2010,6 +2010,7 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
             known_uuids={parent},
             producer_run="R1",
             producer_unit="a.py",
+            fence_live=True,
         )
         assert merged is not None
         assert merged["total_calls"] == 3

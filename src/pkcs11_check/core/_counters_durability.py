@@ -1660,6 +1660,22 @@ def _rows_returns_diff(merged: list[Any], own: list[Any]) -> dict[tuple[str, ...
     return diff
 
 
+class _DeferProducerError(Exception):
+    """Quiescence deferral: a live probe writer blocks this pass (#88R3).
+
+    Raised when a stamped probe writer is alive but unfenceable (no
+    verified termination possible): the caller retains the whole
+    producer state (no records, no consume) so a later pass collects
+    parent and probe coherently. Carries the producer uuid and the
+    live writer pid for the warning.
+    """
+
+    def __init__(self, uuid: str, pid: int) -> None:
+        super().__init__(uuid, pid)
+        self.uuid = uuid
+        self.pid = pid
+
+
 def _adopt_probe_orphans(
     root: Path,
     *,
@@ -1671,6 +1687,7 @@ def _adopt_probe_orphans(
     producer_run: str | None = None,
     producer_unit: str | None = None,
     heal_orphans: bool = True,
+    fence_live: bool,
 ) -> tuple[
     dict[str, Any] | None,
     list[dict[str, Any]],
@@ -1687,7 +1704,10 @@ def _adopt_probe_orphans(
     authoritative): an uncovered orphan was never absorbed, so healing
     its claim would pierce supersede while the counts die to it. Only
     vacuous orphans heal there; markers always heal (absorbed-live
-    proof the session includes).
+    proof the session includes). ``fence_live`` fences stamped live
+    writers on postmortem paths (dead/torn/resume-dead) and raises
+    ``_DeferProducerError`` when a writer cannot be verified terminated;
+    committed paths pass False (never fence a live producer's probe).
     Orphans covered by the producer's durable receipts (sidecar + all
     journal windows + JSONL session/entry claims) suppress silently: their
     evidence is already durable. Uncovered orphans fold into one
@@ -1848,18 +1868,17 @@ def _adopt_probe_orphans(
             orphan_pid,
             orphan_birth,
         ) = orphan
-        if (
-            orphan_pid is not None
-            and orphan_birth is not None
-            and birth_token_for_pid(orphan_pid) == orphan_birth
-        ):
-            # Quiescence (#88R3): the writer incarnation is still alive,
-            # so the slot retains for a later pass -- folding (or tmp
-            # replay) under a live writer could consume evidence it is
-            # still extending. A mismatched birth proves recycling (the
-            # writer is dead); an unreadable birth cannot prove
-            # aliveness, so adoption proceeds.
-            continue
+        if fence_live and orphan_pid is not None and orphan_birth is not None:
+            # Quiescence (#88R3): on postmortem paths a stamped live
+            # writer is fenced first (its test died with its parent, so
+            # its tail is moot; the fence names it in-flight). Only a
+            # verified termination (or an already-dead pid) proceeds;
+            # unfenceable writers defer the whole producer (the caller
+            # retains everything and warns) so a later pass collects
+            # parent and probe coherently. Committed paths never fence
+            # (their producer may still be running its tests).
+            if not _terminate_verified(orphan_pid, orphan_birth, 5.0):
+                raise _DeferProducerError(worker_uuid, orphan_pid)
         # #88: a same-probe rewrite tmp replays its returns onto the
         # orphan's rows before either reunion pass folds them.
         counters = _replay_probe_tmp_rows(
@@ -2309,16 +2328,28 @@ def collect_unit(
             continue
         if verify_producer(content) != "dead":
             continue
-        records, consumed = _collect_dead_producer(
-            content,
-            entries,
-            uuid,
-            end_state,
-            root=root,
-            known_uuids=known_uuids,
-            claims=claims,
-            heal_orphans=_orphan_heal_allowed(lenient_sessions, content["run_id"], uuid),
-        )
+        try:
+            records, consumed = _collect_dead_producer(
+                content,
+                entries,
+                uuid,
+                end_state,
+                root=root,
+                known_uuids=known_uuids,
+                claims=claims,
+                heal_orphans=_orphan_heal_allowed(lenient_sessions, content["run_id"], uuid),
+            )
+        except _DeferProducerError as exc:
+            # A live probe writer survives collection: retain the whole
+            # producer state (no records, no consume) so a later pass
+            # collects parent and probe coherently.
+            warnings.warn(
+                f"producer {exc.uuid} deferred: live probe writer "
+                f"(pid {exc.pid}) unfenceable; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         if _append_collected(child_path, records):
             appended.extend(records)
             _consume_producer_files(_producer_files(content, registry_path))
@@ -2359,28 +2390,38 @@ def collect_unit(
         journal_lines = _read_journal_lines(journal_path)
         sidecar_run = sidecar.get("run_id")
         sidecar_unit = sidecar.get("unit")
-        (
-            orphan_block,
-            orphan_receipts,
-            consumed,
-            recovered,
-            orphan_keys,
-            adopted_lost,
-        ) = _adopt_probe_orphans(
-            root,
-            worker_uuid=uuid,
-            sidecar=sidecar,
-            journal_lines=journal_lines,
-            claims=claims,
-            known_uuids=known_uuids,
-            producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
-            producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
-            heal_orphans=_orphan_heal_allowed(
-                lenient_sessions,
-                sidecar_run if isinstance(sidecar_run, str) else None,
-                uuid,
-            ),
-        )
+        try:
+            (
+                orphan_block,
+                orphan_receipts,
+                consumed,
+                recovered,
+                orphan_keys,
+                adopted_lost,
+            ) = _adopt_probe_orphans(
+                root,
+                worker_uuid=uuid,
+                sidecar=sidecar,
+                journal_lines=journal_lines,
+                claims=claims,
+                known_uuids=known_uuids,
+                producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
+                producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
+                heal_orphans=_orphan_heal_allowed(
+                    lenient_sessions,
+                    sidecar_run if isinstance(sidecar_run, str) else None,
+                    uuid,
+                ),
+                fence_live=True,
+            )
+        except _DeferProducerError as exc:
+            warnings.warn(
+                f"producer {exc.uuid} deferred: live probe writer "
+                f"(pid {exc.pid}) unfenceable; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         if isinstance(sidecar_run, str) and (sidecar_run, uuid) in sessions:
             records = []
             # Recovery-only evidence still emits its zero-call claim
@@ -3021,6 +3062,7 @@ def _collect_dead_producer(
         producer_run=content["run_id"],
         producer_unit=content["unit"],
         heal_orphans=heal_orphans,
+        fence_live=True,
     )
     if orphan_block is not None:
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
@@ -3103,6 +3145,7 @@ def _collect_committed_producer(
         producer_run=content["run_id"],
         producer_unit=content["unit"],
         heal_orphans=False,
+        fence_live=False,
     )
     if orphan_block is None and not recovered and not orphan_keys and not adopted_lost:
         return [], consumed
@@ -3460,15 +3503,26 @@ def prepare_resume(
             continue
         verdict = verify_producer(content)
         if verdict == "dead":
-            records, consumed = _collect_dead_producer(
-                content,
-                entries,
-                uuid,
-                "unknown",
-                root=root,
-                known_uuids=known_uuids,
-                claims=claims,
-            )
+            try:
+                records, consumed = _collect_dead_producer(
+                    content,
+                    entries,
+                    uuid,
+                    "unknown",
+                    root=root,
+                    known_uuids=known_uuids,
+                    claims=claims,
+                )
+            except _DeferProducerError as exc:
+                warnings.warn(
+                    f"producer {exc.uuid} deferred: live probe writer "
+                    f"(pid {exc.pid}) unfenceable; evidence retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["unresolved"].append(uuid)
+                retained_runs.add(content["run_id"])
+                continue
             _emit(content["unit"], records)
             to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
@@ -3476,15 +3530,26 @@ def prepare_resume(
             plan["fenced"].append(uuid)
             continue
         if verdict == "alive" and fence_producer(content) == "fenced":
-            records, consumed = _collect_dead_producer(
-                content,
-                entries,
-                uuid,
-                "killed",
-                root=root,
-                known_uuids=known_uuids,
-                claims=claims,
-            )
+            try:
+                records, consumed = _collect_dead_producer(
+                    content,
+                    entries,
+                    uuid,
+                    "killed",
+                    root=root,
+                    known_uuids=known_uuids,
+                    claims=claims,
+                )
+            except _DeferProducerError as exc:
+                warnings.warn(
+                    f"producer {exc.uuid} deferred: live probe writer "
+                    f"(pid {exc.pid}) unfenceable; evidence retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["unresolved"].append(uuid)
+                retained_runs.add(content["run_id"])
+                continue
             _emit(content["unit"], records)
             to_consume.extend(_producer_files(content, registry_path))
             to_consume.extend(consumed)
@@ -3530,18 +3595,31 @@ def prepare_resume(
         # adopted scalar are unpacked but deliberately not wired yet;
         # behavior preserved exactly.
         barrier_unit = sidecar.get("unit")
-        orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys, _adopted = (
-            _adopt_probe_orphans(
-                root,
-                worker_uuid=uuid,
-                sidecar=sidecar,
-                journal_lines=journal_lines,
-                claims=claims,
-                known_uuids=known_uuids,
-                producer_run=barrier_run if isinstance(barrier_run, str) else None,
-                producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
+        try:
+            orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys, _adopted = (
+                _adopt_probe_orphans(
+                    root,
+                    worker_uuid=uuid,
+                    sidecar=sidecar,
+                    journal_lines=journal_lines,
+                    claims=claims,
+                    known_uuids=known_uuids,
+                    producer_run=barrier_run if isinstance(barrier_run, str) else None,
+                    producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
+                    fence_live=True,
+                )
             )
-        )
+        except _DeferProducerError as exc:
+            warnings.warn(
+                f"producer {exc.uuid} deferred: live probe writer "
+                f"(pid {exc.pid}) unfenceable; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            plan["unresolved"].append(uuid)
+            if isinstance(barrier_run, str):
+                retained_runs.add(barrier_run)
+            continue
         # Resume track (postponed): uuid-only matching preserves the
         # frozen claim-vs-gap routing exactly.
         if any(known_uuid == uuid for _, known_uuid in sessions):
