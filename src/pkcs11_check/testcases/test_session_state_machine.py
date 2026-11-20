@@ -1021,6 +1021,22 @@ def _judge_cross_token_trace(trace: Any) -> None:
             f"({ckr_name(by_name['target_logout'])}); cross-token leg untestable "
             "(see same-slot QC9b logout tests)"
         )
+    # R4F11: validity grades first -- an undefined find RV fails the
+    # metadata contract before any candidate is collected, so no
+    # lifecycle fail or vendor xfail can mask an uninterpretable trace.
+    for leg in ("target_find", "control_find"):
+        rv = by_name[leg]
+        if rv != int(CKR_OK) and not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_FindObjects",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=(f"{label}: {leg} refused with undefined CK_RV {ckr_name(rv)}"),
+            )
     candidates: list[Classification] = []
     # Use observations are independent direct reads: a broken control
     # fails, and CKR_OK with changed bytes fails (the USE line carries
@@ -1110,6 +1126,22 @@ def _judge_cross_token_trace(trace: Any) -> None:
     stale_record = _deferred_stale_use_record(by_name, label=label)
     if stale_record is not None:
         candidates.append(stale_record)
+    # R4F11: the probe emits a target_stale USE line only when the dead
+    # handle served bytes (on success or on refusal) -- a stale-handle
+    # leak fails loud, whatever the step RV claimed.
+    if any(use.name == "target_stale" for use in trace.use_checks):
+        candidates.append(
+            record_as(
+                "accepted_invalid",
+                kind="lifecycle",
+                label=label,
+                operation="C_GetAttributeValue",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=by_name["target_stale_use"],
+                summary=(f"{label}: stale target handle served bytes after logout"),
+            )
+        )
     # Find legs evaluate independently: the probe emits INV lines only
     # for successful finds (in leg order), so a refused leg consumes no
     # line and never hides its sibling's evidence.
@@ -1173,21 +1205,8 @@ def _judge_cross_token_trace(trace: Any) -> None:
     if xfails:
         raise_for_record(xfails[0])
     if refused:
-        # R3F11: an undefined find RV fails the metadata contract --
-        # only defined refusals (standard or vendor) void into the skip.
-        for leg in refused:
-            rv = by_name[leg]
-            if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
-                fail_as(
-                    "self_contradiction",
-                    kind="metadata",
-                    label=label,
-                    operation="C_FindObjects",
-                    mechanism=None,
-                    inherit_mechanism=False,
-                    actual=rv,
-                    summary=(f"{label}: {leg} refused with undefined CK_RV {ckr_name(rv)}"),
-                )
+        # Only defined refusals (standard or vendor) void into the skip;
+        # undefined RVs failed above.
         unobservable = "; ".join(f"{leg} ({ckr_name(by_name[leg])})" for leg in refused)
         pytest.skip(
             f"{label}: post-logout finds unobservable ({unobservable}); find-count leg untestable"

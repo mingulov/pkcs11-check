@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_SESSION_HANDLE,
     CK_ULONG,
+    CK_UNAVAILABLE_INFORMATION,
     CKA_BASE,
     CKA_CLASS,
     CKA_EC_PARAMS,
@@ -2609,10 +2610,14 @@ class _SepNodeRaw:
         self.reads.append((int(handle), attr))
         if attr == int(CKA_EC_POINT):
             if int(handle) in self._point_refuse:
+                # R4-F10: ABI-faithful refusal (RV plus sentinel, as
+                # production receives it -- never a bare RV alone).
+                tmpl[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
                 return self._point_refuse[int(handle)]
             value = self._point[int(handle)]
         elif attr == int(CKA_EC_PARAMS):
             if int(handle) in self._params_refuse:
+                tmpl[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
                 return self._params_refuse[int(handle)]
             value = self._params[int(handle)]
         else:
@@ -2728,6 +2733,14 @@ def test_sep_node_point_refused_params_fail_wins() -> None:
     assert type(exc_info.value) is Failed, exc_info.value
     assert all(key[0] != int(CKA_EC_POINT) for key in fake.searched), fake.searched
     assert (103, int(CKA_EC_POINT)) in fake.reads, fake.reads
+    # R4-F10: the params failure wins, but the point refusal RV survives
+    # alongside it (both records journaled, refusal carries its CKR).
+    point_records = [
+        rec for rec in get_records() if rec.outcome == "xfail" and "EC_POINT" in (rec.summary or "")
+    ]
+    assert len(point_records) == 1, [(rec.reason, rec.summary) for rec in get_records()]
+    assert point_records[0].reason == "not_operational", point_records[0].summary
+    assert point_records[0].actual_ckr == "CKR_ATTRIBUTE_SENSITIVE", point_records[0].summary
 
 
 def test_sep_node_params_refused_point_fail_wins() -> None:

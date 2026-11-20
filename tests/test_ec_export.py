@@ -268,6 +268,44 @@ def test_read_conventional_ec_point_direct_refusal_keeps_exact_ckr(
     )
 
 
+def test_read_conventional_ec_point_channel_refusal_keeps_exact_ckr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F10: a refusals-channel refusal rides the xfail as its observed CKR."""
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    result = AttrReadResult()
+    result.refusals[int(CKA_EC_POINT)] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_SENSITIVE))
+    monkeypatch.setattr(_ec_export, "read_attributes", lambda *_a, **_k: result)
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(pytest.xfail.Exception):
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    assert C.get_records()[0].actual_ckr == "CKR_ATTRIBUTE_SENSITIVE"
+
+
+def test_read_conventional_ec_point_refusal_with_data_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-F10: refusal-with-data evidence already captured fails loud (never voids)."""
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    result = AttrReadResult()
+    result.refusals[int(CKA_EC_POINT)] = AttrRefusal(
+        ckr=int(CKR_ATTRIBUTE_SENSITIVE), leaked_len=65
+    )
+    monkeypatch.setattr(_ec_export, "read_attributes", lambda *_a, **_k: result)
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(Failed, match="wrote"):
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    record = C.get_records()[0]
+    assert record.reason == "self_contradiction", record.summary
+    assert record.actual_ckr == "CKR_ATTRIBUTE_SENSITIVE", record.summary
+
+
 def test_read_conventional_ec_point_invalid_point_is_crypto_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -556,6 +594,9 @@ def test_read_ec_public_key_missing_point_is_one_structured_xfail(
     assert record.operation == "C_GetAttributeValue"
     assert record.actual_ckr is None
     assert record.expected_ckr is None
+    # R4-F10: the absence rides the refusal-aware accessor's record
+    # (CKR when one was observed); the curve detail is preserved.
+    assert record.mechanism is None
     assert record.detail == {
         "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
         "curve": "secp256r1",

@@ -88,7 +88,8 @@ def _run_ec_export_readback() -> None:
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(ec_export, "read_attributes", lambda *_a, **_kw: {})
-        with pytest.raises(pytest.xfail.Exception, match="CKA_EC_POINT attribute unavailable"):
+        # R4-F10: the absence rides the standard accessor's wording.
+        with pytest.raises(pytest.xfail.Exception, match="attribute unavailable"):
             ec_export.read_conventional_ec_point_or_xfail(
                 _rs(), 2, ec.SECP256R1(), label="ACVP ECDSA public key"
             )

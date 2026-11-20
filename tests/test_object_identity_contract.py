@@ -784,13 +784,45 @@ def test_unique_id_override_dead_nonzero_handle_xfails_honest_deviation() -> Non
         identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create,
         _rs(fake),
     )
-    detail = _record("honest_deviation", "C_CreateObject").detail
+    record = _record("honest_deviation", "C_CreateObject")
+    detail = record.detail
     assert detail["handle_after"] == _DEAD_HANDLE
     assert detail["handle_class"] == "dead-nonzero"
     assert detail["found_by_label"] == []
     assert detail["new_handles"] == []
+    # R4-F7: the summary reports the observed delta, never a bare
+    # "no object created" conclusion over a suspicious handle write.
+    assert "post-attempt delta" in (record.summary or ""), record.summary
+    assert "no object created" not in (record.summary or ""), record.summary
     assert fake.staged == []
     assert _DEAD_HANDLE not in fake.destroyed
+
+
+def test_override_undefined_rv_journaled_before_follow_ups() -> None:
+    """R4-F7: an undefined producer RV is journaled before follow-up inventories run."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _IdentityRaw()
+    fake.find_script = [int(CKR_DEVICE_ERROR)]
+    rs = _rs(fake)
+    with pytest.raises(CkrAssertionError):
+        identity_case._judge_override(
+            rs,
+            rv=0x7FFFFFFF,
+            handle_value=0,
+            label="L",
+            producer_operation="C_CreateObject",
+            label_text=None,
+            leaked=[],
+            inventory_before=[],
+        )
+    records = [
+        rec
+        for rec in C.get_records()
+        if rec.outcome == "fail" and "undefined" in (rec.summary or "")
+    ]
+    assert len(records) == 1, [(rec.reason, rec.summary) for rec in C.get_records()]
+    assert records[0].actual_ckr == "0x7fffffff", records[0].summary
 
 
 def test_unique_id_override_undefined_rv_with_dead_handle_fails() -> None:
