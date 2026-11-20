@@ -2206,6 +2206,21 @@ def _adopt_probe_orphans(
     withheld: list[tuple[str, int, Path, int, bool]] = []
     held_receipts: set[tuple[str, int]] = set()
     marker_covered_slots: dict[str, tuple[str, int]] = {}
+    # Receipt-group resolution (#88R20-1/#88R20-2): heals publish per
+    # receipt group, never per copy. rewrite_held_slots carries fresh
+    # per-slot rewrite observations (distinct from skipped_slots,
+    # which carries live-writer holds for the orphan loop);
+    # receipt_slots/seq_slots map groups to slots (content-keyed for
+    # admitted markers, filename-seq-keyed for undecidable ones);
+    # receipt_first_snapshot + incoherent_receipts track group
+    # coherence (all copies must agree numerically).
+    receipt_slots: dict[tuple[str, int], set[str]] = {}
+    seq_slots: dict[int, set[str]] = {}
+    rewrite_held_slots: set[str] = set()
+    receipt_first_snapshot: dict[
+        tuple[str, int], tuple[list[Any], frozenset[tuple[str, int]], int]
+    ] = {}
+    incoherent_receipts: set[tuple[str, int]] = set()
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
     adopted_lost: list[int] = []
@@ -2246,11 +2261,7 @@ def _adopt_probe_orphans(
         defer instead.
         """
         held_receipts.add((child_uuid, seq))
-        for marker_path in marker_paths.pop((child_uuid, seq), []):
-            if marker_path in consumed:
-                consumed.remove(marker_path)
-            skipped.append(marker_path)
-        recovered[:] = [entry for entry in recovered if entry != (worker_uuid, seq)]
+        _withdraw_receipt_heal(child_uuid, seq)
         kept: list[tuple[str, int, Path, int, bool]] = []
         for entry in withheld:
             if (entry[0], entry[1]) == (child_uuid, seq):
@@ -2258,6 +2269,39 @@ def _adopt_probe_orphans(
             else:
                 kept.append(entry)
         withheld[:] = kept
+
+    def _withdraw_receipt_heal(child_uuid: str, seq: int) -> None:
+        """Withdraw a receipt's published heal without pinning (#88R20-2).
+
+        Rewrite and coherence withholds arrive slot-local and static:
+        the heal waits (un-consume + strip + skip) but the receipt
+        stays reconcilable -- pinning here would deadlock the
+        withhold's own convergence path. Live/receipt withholds use
+        _rollback_receipt_group (pinning) instead: a live writer may
+        still grow any slot. Idempotent (safe on already-clean groups).
+        """
+        for marker_path in marker_paths.pop((child_uuid, seq), []):
+            if marker_path in consumed:
+                consumed.remove(marker_path)
+            skipped.append(marker_path)
+        recovered[:] = [entry for entry in recovered if entry != (worker_uuid, seq)]
+
+    def _observe_marker_slot(marker_path: Path, seq: int, receipt: tuple[str, int] | None) -> None:
+        """Record one marker slot in its receipt group plus any rewrite hold (#88R20-2).
+
+        Admitted markers join by content receipt; undecidable ones
+        (torn bytes, invalid shape) join conservatively by filename
+        seq. Idempotent: holds only ever add here (the reconcile
+        clears adjudicated ones, the withhold path refreshes its own).
+        """
+        slot = _marker_slot_name(marker_path.name)
+        if slot is None:
+            return
+        seq_slots.setdefault(seq, set()).add(slot)
+        if receipt is not None:
+            receipt_slots.setdefault(receipt, set()).add(slot)
+        if _slot_rewrite_unresolved(root, slot, digests):
+            rewrite_held_slots.add(slot)
 
     def _fold(
         path: Path,
@@ -2405,13 +2449,24 @@ def _adopt_probe_orphans(
         scan_parsed = _parse_consumed_probe_filename(scan_path.name)
         if scan_parsed is None:
             continue
-        scan_owner, _ = scan_parsed
+        scan_owner, scan_filename_seq = scan_parsed
         if len(scan_owner) == 32:
             if scan_owner != worker_uuid:
                 continue
         elif scan_owner != prefix:
             continue
         scan_status, scan_raw = _read_json_evidence(scan_path)
+        if scan_status == "torn":
+            # A torn marker's slot observes here (order-free): the
+            # main loop may meet a clean same-seq copy first, and a
+            # torn marker cannot withdraw by receipt (unknown), so
+            # the hold must predate every heal (#88R20-2). The main
+            # loop re-observes at debris time for freshness. Gone and
+            # unreadable markers observe nothing: gone is external
+            # (markers never move honestly), and unreadable aborts
+            # the producer via defer before any heal publishes.
+            _observe_marker_slot(scan_path, scan_filename_seq, None)
+            continue
         if scan_status != "ok" or not isinstance(scan_raw, dict):
             continue
         # Admission mirrors the main loop exactly (#88R19-4): parse
@@ -2421,6 +2476,7 @@ def _adopt_probe_orphans(
         # raw-stamp gate bit for bit.
         scan_parsed_payload = _parse_probe_orphan_payload(scan_raw)
         if scan_parsed_payload is None:
+            _observe_marker_slot(scan_path, scan_filename_seq, None)
             continue
         scan_child, scan_seq = scan_parsed_payload[0], scan_parsed_payload[1]
         if (
@@ -2481,6 +2537,10 @@ def _adopt_probe_orphans(
             raise _DeferProducerError(worker_uuid, None, source=path.name)
         orphan = _parse_probe_orphan_payload(raw)
         if orphan is None:
+            # Undecidable markers re-observe their slot for freshness
+            # (the pre-scan observed order-free); an unresolved
+            # rewrite under one blocks same-seq heals conservatively.
+            _observe_marker_slot(path, filename_seq, None)
             consumed.append(path)
             continue
         (
@@ -2541,6 +2601,34 @@ def _adopt_probe_orphans(
             marker_adopted,
         )
         orphan_keys |= marker_keys
+        receipt_key = (marker_child, marker_seq)
+        _observe_marker_slot(path, marker_seq, receipt_key)
+        # Group coherence (#88R20-1): every admitted copy of one receipt
+        # must agree numerically (mutual subset against the first --
+        # equality is transitive, so one comparison per copy suffices).
+        # A contradictory copy proves corruption (no honest path marks
+        # one receipt twice): the group skips loud for forensics while
+        # other receipts proceed. Keys union above regardless (a
+        # superset of loss claims stays loud; dropping a possibly-real
+        # claim would read silent-complete).
+        snapshot = (marker_counters, marker_keys, marker_adopted)
+        first_snapshot = receipt_first_snapshot.setdefault(receipt_key, snapshot)
+        if receipt_key not in incoherent_receipts and not (
+            _snapshot_covered_by(*snapshot, *first_snapshot)
+            and _snapshot_covered_by(*first_snapshot, *snapshot)
+        ):
+            incoherent_receipts.add(receipt_key)
+        if receipt_key in incoherent_receipts:
+            _withdraw_receipt_heal(marker_child, marker_seq)
+            skipped.append(path)
+            warnings.warn(
+                f"contradictory consumed marker {path.name} "
+                "(another copy of its receipt disagrees); "
+                "recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         # Writer quiescence (#88R17-4): a stamped live writer may still
         # complete the slot's rewrite, so healing or consuming now
         # could clear returns that have not landed yet. Committed paths
@@ -2601,10 +2689,16 @@ def _adopt_probe_orphans(
         # snapshot stays load-bearing for the reappearing-baseline
         # catch in _fold), but recovery and marker consumption withhold
         # until the slot's latest word is provable; the tmp's own
-        # replay/prune paths converge the retry (#88R10-2).
+        # replay/prune paths converge the retry (#88R10-2). The
+        # observation re-runs fresh (a postmortem fence may have raced
+        # it) and withdraws earlier group heals without pinning: the
+        # reconcile below is this withhold's own convergence path
+        # (#88R20-2).
         slot_name = _marker_slot_name(path.name)
         assert slot_name is not None  # parsed_name guarantees the shape
         if _slot_rewrite_unresolved(root, slot_name, digests):
+            rewrite_held_slots.add(slot_name)
+            _withdraw_receipt_heal(marker_child, marker_seq)
             warnings.warn(
                 f"consumed marker {path.name} slot {slot_name} keeps an unresolved "
                 "rewrite; recovery withheld",
@@ -2612,6 +2706,22 @@ def _adopt_probe_orphans(
                 stacklevel=2,
             )
             withheld.append((marker_child, marker_seq, path, filename_seq, marker_finalized))
+            continue
+        rewrite_held_slots.discard(slot_name)
+        group_slots = receipt_slots.get(receipt_key, set()) | seq_slots.get(marker_seq, set())
+        if group_slots & rewrite_held_slots:
+            # A clean copy never publishes through its receipt group's
+            # unresolved rewrites (#88R20-2): the group finalizes
+            # together at the reconcile once every slot proves or
+            # clears. Plain skip, no pin: pins would deadlock the held
+            # copy's own reconcile.
+            skipped.append(path)
+            warnings.warn(
+                f"consumed marker {path.name} shares its receipt with an unresolved "
+                "rewrite; recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         if marker_finalized and marker_seq == filename_seq:
             recovered.append((worker_uuid, marker_seq))
@@ -2703,6 +2813,16 @@ def _adopt_probe_orphans(
                 UserWarning,
                 stacklevel=2,
             )
+            continue
+        if (child_uuid, seq) in incoherent_receipts:
+            # Contradictory markers void the absorb claim's use (not
+            # the claim itself): the baseline waits instead of
+            # folding under contested numbers or suppressing under a
+            # corrupt snapshot (#88R20-1). Skips even on postmortem
+            # with a live writer: nothing folds or cleans here, so no
+            # ghost can slip between decide and delete, and fencing a
+            # corrupt-contested writer would destroy evidence.
+            _skip_covered_orphan(path, child_uuid, seq, "sits under contradictory markers")
             continue
         if fence_live and orphan_pid is not None:
             # Quiescence (#88R3): on postmortem paths a stamped live
@@ -2823,17 +2943,32 @@ def _adopt_probe_orphans(
     # (debris, foreign, and uncovered folds all consume), so the heal
     # needs the recorded marker-covered verdict for this receipt and
     # every surviving rewrite adjudicated stable (an unattributable
-    # tmp may be ours with corrupt stamps: fail closed); anything
-    # else -- or a receipt another slot holds (#88R19-5) -- keeps the
-    # parent association for retry.
+    # tmp may be ours with corrupt stamps: fail closed). Phase 1
+    # clears adjudicated slots' holds; phase 2 heals receipt groups
+    # whose every slot cleared, that stay coherent and unpinned
+    # (#88R20-1/#88R20-2); anything else keeps the parent association
+    # for retry.
+    proved_slots: set[str] = set()
     for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
         held_slot = _marker_slot_name(held_path.name)
         covered = marker_covered_slots.get(held_slot) if held_slot is not None else None
         if (
             held_slot is not None
-            and (held_child, held_seq) not in held_receipts
             and covered == (held_child, held_seq)
             and _slot_tmps_adjudicated(root, held_slot, digests)
+        ):
+            proved_slots.add(held_slot)
+            rewrite_held_slots.discard(held_slot)
+    for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
+        held_slot = _marker_slot_name(held_path.name)
+        held_key = (held_child, held_seq)
+        group_slots = receipt_slots.get(held_key, set()) | seq_slots.get(held_seq, set())
+        if (
+            held_slot is not None
+            and held_slot in proved_slots
+            and held_key not in held_receipts
+            and held_key not in incoherent_receipts
+            and not (group_slots & rewrite_held_slots)
         ):
             if held_finalized and held_seq == held_filename_seq:
                 recovered.append((worker_uuid, held_seq))
@@ -3792,9 +3927,10 @@ def collect_unit(
             records.append(lost)
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files(
-                [sidecar_path, _journal_for_sidecar(sidecar_path)], read_digests
-            )
+            if not skipped_live:
+                _consume_producer_files(
+                    [sidecar_path, _journal_for_sidecar(sidecar_path)], read_digests
+                )
             _consume_producer_files(consumed, read_digests)
             # The twin funnels through the reaper (valid content and
             # I/O failure retain; only provably-torn content reaps),
@@ -5791,6 +5927,21 @@ def prepare_resume(
             if _note_collected(uuid):
                 _emit(content["unit"], records)
                 plan["consumed"] += 1
+            else:
+                # A reunion proving new keys after staging publishes
+                # them as a delta, exactly like the committed branch
+                # (#88R20-4): suppressing the retry heal while
+                # consuming its evidence would strand the loss.
+                _emit_key_delta(
+                    content["unit"],
+                    records,
+                    uuid,
+                    run_id=content["run_id"],
+                    attempt=content["attempt"],
+                    pid=content["pid"],
+                    role=content["role"],
+                    isolation=content.get("isolation", "unknown"),
+                )
             if skipped_live:
                 # Unresolved probe evidence keeps its retry route on
                 # the dead path too: retain the parent association
@@ -5830,6 +5981,18 @@ def prepare_resume(
             if _note_collected(uuid):
                 _emit(content["unit"], records)
                 plan["consumed"] += 1
+            else:
+                # Retry heals publish as deltas here too (#88R20-4).
+                _emit_key_delta(
+                    content["unit"],
+                    records,
+                    uuid,
+                    run_id=content["run_id"],
+                    attempt=content["attempt"],
+                    pid=content["pid"],
+                    role=content["role"],
+                    isolation=content.get("isolation", "unknown"),
+                )
             if skipped_live:
                 # Unresolved probe evidence keeps its retry route on
                 # the fenced path too: retain the parent association
@@ -5977,10 +6140,22 @@ def prepare_resume(
             to_consume.extend(consumed)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+        scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
+        if scalar is None:
+            scalar_count = 0
+        elif _is_nonneg_int(scalar):
+            assert isinstance(scalar, int)
+            scalar_count = scalar
+        else:
+            scalar_count = 0
+            conflict = True
+        gap_keys = _sidecar_loss_keys(sidecar)
         if orphan_block is not None:
             block = orphan_block if block is None else merge_module_first(block, orphan_block)
             receipts = [*receipts, *orphan_receipts]
         records = []
+        if block is None and (scalar_count or gap_keys or orphan_keys or adopted_lost):
+            block = {"total_calls": 0, "by_module": {}}
         barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
         if block is not None:
             records.append(
@@ -5994,8 +6169,12 @@ def prepare_resume(
                     pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
                     block=block,
                     receipts=receipts,
+                    probes_lost=scalar_count + adopted_lost,
                     role=barrier_stamp_role,
                     isolation=barrier_stamp_isolation,
+                    lost_keys=_keys_to_wire(gap_keys),
+                    orphan_keys=_keys_to_wire(orphan_keys),
+                    recovered_keys=_keys_to_wire(set(recovered)),
                     in_flight=_in_flight_rows(block),
                 )
             )
@@ -6014,7 +6193,26 @@ def prepare_resume(
         if _note_collected(uuid):
             _emit(str(sidecar.get("unit", "")), records)
             plan["consumed"] += 1
-        to_consume.extend([sidecar_path, _journal_for_sidecar(sidecar_path)])
+        else:
+            # Retry heals publish as deltas here too (#88R20-4).
+            _emit_key_delta(
+                str(sidecar.get("unit", "")),
+                records,
+                uuid,
+                run_id=_sidecar_run(sidecar),
+                attempt=sidecar.get("attempt", 0) if _is_nonneg_int(sidecar.get("attempt")) else 0,
+                pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
+                role=barrier_stamp_role,
+                isolation=barrier_stamp_isolation,
+            )
+        if skipped_live:
+            # Unresolved probe evidence keeps its retry route on the
+            # orphan-sidecar dead path too (#88R20-5).
+            skip_retained.extend([sidecar_path, _journal_for_sidecar(sidecar_path)])
+            plan["retained_uuids"].append(uuid)
+            skip_held_now.add(uuid)
+        else:
+            to_consume.extend([sidecar_path, _journal_for_sidecar(sidecar_path)])
         to_consume.extend(consumed)
     # Parentless probe adoption: probes of validated parents are
     # interrupted cleanup, never fresh evidence (#88R10-4c).
