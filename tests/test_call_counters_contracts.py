@@ -356,6 +356,10 @@ class TestShapePredicates:
             in_flight=[{"module": "m", "bucket": "test", "fn": "C_Digest", "count": 2}]
         )
         assert schema.is_sidecar_partial(good) is True
+        unknown_module = self._partial(
+            in_flight=[{"module": "", "bucket": "test", "fn": "C_Digest", "count": 1}]
+        )
+        assert schema.is_sidecar_partial(unknown_module) is True
         assert schema.is_sidecar_partial(self._partial(in_flight=[])) is True
         assert schema.is_sidecar_partial(self._partial(in_flight=None)) is False
         assert schema.is_sidecar_partial(self._partial(in_flight=[{}])) is False

@@ -501,7 +501,7 @@ def _in_flight_valid(value: object) -> bool:
             return False
         if set(row) != {"module", "bucket", "fn", "count"}:
             return False
-        if not row["module"] or not isinstance(row["module"], str):
+        if not isinstance(row["module"], str):
             return False
         if not row["bucket"] or not isinstance(row["bucket"], str):
             return False
