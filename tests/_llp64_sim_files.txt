@@ -1,3 +1,4 @@
+tests/test_attempt_adoption_contract.py
 tests/test_attribute_encoding_contract.py
 tests/test_byte_kdf_protection_contract.py
 tests/test_byte_recovery_contract.py
