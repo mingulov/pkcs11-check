@@ -1909,8 +1909,10 @@ def _replay_probe_tmp_rows(
     ``_DeferProducerError`` on a persistently unreadable candidate.
     Returns ``(rows, divergent)``: a held conflict the caller must
     not silently clear when the baseline is covered (#88R8-2).
-    ``digests`` records ``{path: sha256}`` for every candidate read
-    (None discards: live ingest has no staging to bind to).
+    ``digests`` records ``{path: sha256}`` for torn candidates and
+    gated ones only (None discards: live ingest has no staging to
+    bind to): a rejected replacement must never inherit cleanup
+    authorization from the read that refused it (#88R16-3).
     """
     quarantined = _list_tmp_paths(path.parent, f"{path.name}.quarantined-")
     if quarantined is None:
@@ -1935,19 +1937,23 @@ def _replay_probe_tmp_rows(
     gated: list[tuple[Path, list[Any]]] = []
     for tmp in candidates:
         status, payload, digest = _read_json_evidence_digested(tmp)
-        if digest is not None and digests is not None:
-            # Assign (not setdefault): the replay read is the fold
-            # decision, so it wins over any earlier informational
-            # scan of the same tmp (#88R15-3).
-            digests[str(tmp)] = digest
         if status == "gone":
             continue
         if status == "unreadable":
             # An I/O fault is never a skip (see the producer replay):
             # defer for a coherent retry.
             raise _DeferProducerError(producer_uuid, None, source=tmp.name)
+        if status == "torn":
+            # Torn bytes identify stable debris (assign: the replay
+            # read is the fold decision, winning over any earlier
+            # informational scan of the same tmp (#88R15-3)).
+            if digest is not None and digests is not None:
+                digests[str(tmp)] = digest
+            continue
         if not _gates(payload):
             continue
+        if digest is not None and digests is not None:
+            digests[str(tmp)] = digest
         assert isinstance(payload, dict)
         gated.append((tmp, payload["counters"]))
     if quarantined and _divergence_vetoed(quarantined, _gates, producer_uuid):
@@ -2509,26 +2515,24 @@ def _adopt_probe_orphans(
                     raise _DeferProducerError(worker_uuid, orphan_pid)
             elif not _terminate_verified(orphan_pid, orphan_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, orphan_pid)
-        # A covered orphan with a live writer must not suppress: the
-        # writer may replace the file after our reads. Only the
-        # committed path skips (postmortem paths fence first and defer
-        # on failure); detection is incarnation-aware so recycled pids
-        # and zombies never read as running. The skip retains the
-        # parent association (the caller drops the parent files from
-        # its consume set and reports them held): the parent's records
-        # are complete without this file, but only a coherent retry
-        # may revisit it, so the skip reports through the return flag
-        # (#88R11-1). Only marker-covered orphans skip: their snapshot
-        # makes the retry safe (an advance defers on subset mismatch).
-        # Durable-covered orphans carry no snapshot to detect an
-        # advance, so a live writer defers the whole producer instead
-        # (loud and honest; convergence awaits the delta-reunion
-        # design). Unstamped orphans cannot be gated (no identity to
-        # check): they proceed to the rereads, and the fold-time
-        # reread skips-or-defers them on any advance.
+        # An orphan with a live writer must not fold or suppress on
+        # the committed path: the writer may replace the file after
+        # our reads (postmortem paths fence first and defer on
+        # failure); detection is incarnation-aware so recycled pids
+        # and zombies never read as running. Only marker-covered
+        # orphans skip: the skip retains the parent association (the
+        # caller drops the parent files from its consume set and
+        # reports them held), and their snapshot makes the retry safe
+        # (an advance defers on subset mismatch) (#88R11-1). Anything
+        # else with a live writer -- uncovered or durable-covered --
+        # carries no snapshot to detect an advance, so it defers the
+        # whole producer instead (loud and honest; convergence awaits
+        # the delta-reunion design) (#88R16-4). Unstamped orphans
+        # cannot be gated (no identity to check): they proceed to the
+        # rereads, and the fold-time reread skips-or-defers them on
+        # any advance.
         if (
             not fence_live
-            and (child_uuid, seq) in coverage
             and orphan_pid is not None
             and _incarnation_alive(orphan_pid, orphan_birth)
         ):
@@ -4449,6 +4453,58 @@ def _collect_dead_producer(
     return records, consumed
 
 
+def _committed_claim_records(
+    *,
+    worker_uuid: str,
+    run_id: str,
+    unit: str,
+    attempt: int,
+    pid: int | None,
+    role: str,
+    isolation: str,
+    orphan_block: dict[str, Any] | None,
+    orphan_receipts: list[dict[str, Any]],
+    recovered: list[tuple[str, int]],
+    orphan_keys: set[tuple[str, int]],
+    adopted_lost: int,
+) -> list[dict[str, Any]]:
+    """Build the claim-only records for one committed producer (#88R16-1).
+
+    Shared by the registry and orphan-sidecar routes: a partial appends
+    for uncovered orphans (the session supersedes the counts at
+    extraction, keeping totals exact) and for recovery-only evidence
+    (a zero-count partial carrying the heal its loss claim waits for).
+    No lost record ever emits here: the producer lived, so a loss
+    claim would be false.
+    """
+    if orphan_block is None and not recovered and not orphan_keys and not adopted_lost:
+        return []
+    # Claim-only: orphan evidence rides orphan_keys (union-always); no gap
+    # set (the live session is authoritative for this producer's own keys).
+    # Recovery-only evidence (a consumed marker's healed identity, or an
+    # empty orphan's) still emits a zero-call partial: dropping it would
+    # delete the heal the session's loss claim waits for (codex CX2). The
+    # session supersedes the zero counts at extraction; the recovered_keys
+    # harvest pierces supersede by design.
+    block = orphan_block if orphan_block is not None else {"total_calls": 0, "by_module": {}}
+    return [
+        _partial_record(
+            worker_uuid=worker_uuid,
+            run_id=run_id,
+            unit=unit,
+            attempt=attempt,
+            pid=pid,
+            block=block,
+            receipts=orphan_receipts,
+            probes_lost=adopted_lost,
+            role=role,
+            isolation=isolation,
+            orphan_keys=_keys_to_wire(orphan_keys),
+            recovered_keys=_keys_to_wire(set(recovered)),
+        )
+    ]
+
+
 def _collect_committed_producer(
     content: dict[str, Any],
     uuid: str,
@@ -4494,33 +4550,21 @@ def _collect_committed_producer(
         fence_live=False,
         digests=digests,
     )
-    if orphan_block is None and not recovered and not orphan_keys and not adopted_lost:
-        return [], consumed, skipped_live
-    # Claim-only: orphan evidence rides orphan_keys (union-always); no gap
-    # set (the live session is authoritative for this producer's own keys).
-    # Recovery-only evidence (a consumed marker's healed identity, or an
-    # empty orphan's) still emits a zero-call partial: dropping it would
-    # delete the heal the session's loss claim waits for (codex CX2). The
-    # session supersedes the zero counts at extraction; the recovered_keys
-    # harvest pierces supersede by design.
-    block = orphan_block if orphan_block is not None else {"total_calls": 0, "by_module": {}}
     return (
-        [
-            _partial_record(
-                worker_uuid=uuid,
-                run_id=content["run_id"],
-                unit=content["unit"],
-                attempt=content["attempt"],
-                pid=content["pid"],
-                block=block,
-                receipts=orphan_receipts,
-                probes_lost=adopted_lost,
-                role=content["role"],
-                isolation=content.get("isolation", "unknown"),
-                orphan_keys=_keys_to_wire(orphan_keys),
-                recovered_keys=_keys_to_wire(set(recovered)),
-            )
-        ],
+        _committed_claim_records(
+            worker_uuid=uuid,
+            run_id=content["run_id"],
+            unit=content["unit"],
+            attempt=content["attempt"],
+            pid=content["pid"],
+            role=content["role"],
+            isolation=content.get("isolation", "unknown"),
+            orphan_block=orphan_block,
+            orphan_receipts=orphan_receipts,
+            recovered=recovered,
+            orphan_keys=orphan_keys,
+            adopted_lost=adopted_lost,
+        ),
         consumed,
         skipped_live,
     )
@@ -5556,9 +5600,6 @@ def prepare_resume(
             # reunite below instead (#88R15-2).
             to_consume.extend([sidecar_path, journal_path])
             continue
-        # Resume track (postponed past 0.3.0): recovered/orphan-keys/
-        # adopted scalar are unpacked but deliberately not wired yet;
-        # behavior preserved exactly.
         barrier_unit = sidecar.get("unit")
         routed_committed = any(known_uuid == uuid for _, known_uuid in sessions)
         try:
@@ -5567,9 +5608,9 @@ def prepare_resume(
                 orphan_block,
                 orphan_receipts,
                 consumed,
-                _recovered,
-                _orphan_keys,
-                _adopted,
+                recovered,
+                orphan_keys,
+                adopted_lost,
                 skipped_live,
             ) = _adopt_probe_orphans(
                 root,
@@ -5580,7 +5621,10 @@ def prepare_resume(
                 known_uuids=known_uuids,
                 producer_run=barrier_run if isinstance(barrier_run, str) else None,
                 producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
-                fence_live=not (uuid in staged_skip_held and routed_committed),
+                # A committed session is authoritative: reunion skips
+                # (or defers) live writers instead of fencing them,
+                # exactly like the registry route (#88R16-2).
+                fence_live=not routed_committed,
                 digests=read_digests,
             )
         except _DeferProducerError as exc:
@@ -5600,24 +5644,21 @@ def prepare_resume(
         # Resume track (postponed): uuid-only matching preserves the
         # frozen claim-vs-gap routing exactly.
         if routed_committed:
-            claim_records = []
-            if orphan_block is not None:
-                barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
-                claim_records.append(
-                    _partial_record(
-                        worker_uuid=uuid,
-                        run_id=_sidecar_run(sidecar),
-                        unit=str(sidecar.get("unit", "")),
-                        attempt=sidecar.get("attempt", 0)
-                        if _is_nonneg_int(sidecar.get("attempt"))
-                        else 0,
-                        pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-                        block=orphan_block,
-                        receipts=orphan_receipts,
-                        role=barrier_stamp_role,
-                        isolation=barrier_stamp_isolation,
-                    )
-                )
+            barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
+            claim_records = _committed_claim_records(
+                worker_uuid=uuid,
+                run_id=_sidecar_run(sidecar),
+                unit=str(sidecar.get("unit", "")),
+                attempt=sidecar.get("attempt", 0) if _is_nonneg_int(sidecar.get("attempt")) else 0,
+                pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
+                role=barrier_stamp_role,
+                isolation=barrier_stamp_isolation,
+                orphan_block=orphan_block,
+                orphan_receipts=orphan_receipts,
+                recovered=recovered,
+                orphan_keys=orphan_keys,
+                adopted_lost=adopted_lost,
+            )
             if _note_collected(uuid):
                 _emit(str(sidecar.get("unit", "")), claim_records)
                 plan["consumed"] += 1
@@ -5715,7 +5756,7 @@ def prepare_resume(
     # immune: they sweep with empty collected_runs, which makes the
     # run-match branches dead code there.
     plan["collected_runs"] = sorted(seen_runs - retained_runs)
-    if plan["cache_records"]:
+    if plan["cache_records"] or skip_held_now:
         collected_union = collected_now | set(validated_collected)
         # Self-healing count (#88R11-5): the staged invariant is
         # consumed == len(collected_uuids); a corrupt staged count

@@ -734,6 +734,8 @@ def _apply_counters_barrier_plan(
             idempotently); the resume must not proceed without its
             recovered evidence.
     """
+    staged_root = plan.get("counters_dir")
+    held = plan.get("cleanup_held", [])
     pending_set = set(pending_units)
     failed: list[str] = []
     for unit, records in plan["cache_records"].items():
@@ -776,8 +778,6 @@ def _apply_counters_barrier_plan(
             f"counter barrier plan failed to land for {sorted(failed)}; "
             "staging retained for the next resume"
         )
-    staged_root = plan.get("counters_dir")
-    held = plan.get("cleanup_held", [])
     if staged_root is None:
         warnings.warn(
             "counter barrier plan names no counters dir; "
@@ -801,6 +801,10 @@ def _apply_counters_barrier_plan(
             UserWarning,
             stacklevel=2,
         )
+    elif not plan["cache_records"]:
+        # Nothing landed and nothing is held: best-effort discard of
+        # any stale staging (a leftover skip-hold clears with it).
+        discard_barrier_staging(staged_root)
     elif not discard_barrier_staging(staged_root):
         warnings.warn(
             f"counter barrier staging in {staged_root} could not be removed; "
