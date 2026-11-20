@@ -726,10 +726,27 @@ def _apply_counters_barrier_plan(
             "staging retained for the next resume"
         )
     staged_root = plan.get("counters_dir")
+    held = plan.get("cleanup_held", [])
     if staged_root is None:
         warnings.warn(
             "counter barrier plan names no counters dir; "
             "staging (if any) left for the next barrier",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif held:
+        # Held cleanup targets keep their staging: discarding it would
+        # expire the authority their retry needs, and the next barrier
+        # would re-emit the records a second time. The retry finishes
+        # the cleanup without re-emitting, and a later application
+        # with nothing held discards the staging (#88R10-4c).
+        names = ", ".join(sorted(Path(entry).name for entry in held[:3]))
+        if len(held) > 3:
+            names += f", +{len(held) - 3} more"
+        warnings.warn(
+            f"counter barrier staging in {staged_root} retained: "
+            f"{len(held)} cleanup target(s) still present ({names}); "
+            "the next barrier retries them without re-emitting",
             UserWarning,
             stacklevel=2,
         )
