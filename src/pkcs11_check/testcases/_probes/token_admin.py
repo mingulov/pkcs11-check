@@ -461,16 +461,19 @@ _BURN_TOKEN_LABEL = b"qc11-admin-test"
 
 
 def _rediscover_burn_slot(
-    ctx: ProbeContext,
+    ctx: ProbeContext, *, expected_label: bytes, expected_serial: bytes
 ) -> tuple[tuple[int, ...], int, tuple[tuple[int, int], ...]]:
-    """Find the burn token by label after restart.
+    """Find the burn token by observed identity after restart (R4F12).
 
     Returns (matches, enum_rv, info_refusals): every slot whose token
-    label matches, the enumeration RV, and (slot, rv) for each refused
-    C_GetTokenInfo. Per-slot refusals are preserved (never discarded):
-    a match hidden behind a refusal is unproved, not absent. The
-    pre-restart slot is never reused blindly: slot numbering may shift
-    across C_Finalize/C_Initialize.
+    (label, serial) equals the post-InitToken observed identity, the
+    enumeration RV, and (slot, rv) for each refused C_GetTokenInfo.
+    Per-slot refusals are preserved (never discarded): a match hidden
+    behind a refusal is unproved, not absent. The pre-restart slot is
+    never reused blindly: slot numbering may shift across
+    C_Finalize/C_Initialize. The submitted InitToken label is never
+    matched: a provider that keeps the token under its original label
+    still rediscovers instead of reporting vanished.
     """
     sc = ctypes.c_ulong(0)
     rv = int(ctx.raw.C_GetSlotList(1, None, ctypes.byref(sc)))
@@ -491,7 +494,10 @@ def _rediscover_burn_slot(
         if irv != int(CKR_OK):
             info_refusals.append((slot, irv))
             continue
-        if bytes(info.label).rstrip(b" \x00") == _BURN_TOKEN_LABEL:
+        if (
+            bytes(info.label).rstrip(b" \x00") == expected_label
+            and bytes(info.serialNumber).rstrip(b" \x00") == expected_serial
+        ):
             matches.append(slot)
     return tuple(matches), int(CKR_OK), tuple(info_refusals)
 
@@ -513,14 +519,14 @@ def _phase2_rediscovery_outcome(
 ) -> tuple[str, str | int]:
     """Decide the post-restart attribution (R2C5a).
 
-    Returns ("proceed", slot) only for exactly one label match under
+    Returns ("proceed", slot) only for exactly one identity match under
     complete visibility; ("absent", 0) only when no slot matches and
     every slot answered; otherwise ("assumption", reason). Absence is
     never declared while a match could hide behind a refusal, and a
-    duplicated label never resolves to one slot silently.
+    duplicated identity never resolves to one slot silently.
     """
     if len(matches) > 1:
-        return ("assumption", f"burn token label ambiguous across {len(matches)} slots")
+        return ("assumption", f"burn token identity ambiguous across {len(matches)} slots")
     if not matches:
         if info_refusals:
             return (
@@ -546,12 +552,27 @@ def _open_rw(ctx: ProbeContext, slot: int) -> tuple[int, int]:
     return int(rv), int(sess.value)
 
 
-def _token_info(ctx: ProbeContext, slot: int) -> tuple[int, int, int, int]:
+def _token_info(ctx: ProbeContext, slot: int) -> tuple[int, int, int, int, bytes, bytes]:
+    """Read flags/bounds plus the observed (label, serial) identity (R4F12).
+
+    Returns (rv, flags, min_pin, max_pin, label, serial); identity fields
+    are blank-stripped, empty when the read is refused. The post-InitToken
+    identity is what phase-2 rediscovery matches: a provider that keeps
+    the token under its original label still rediscovers instead of
+    reporting vanished.
+    """
     info = CK_TOKEN_INFO()
     rv = int(ctx.raw.C_GetTokenInfo(slot, ctypes.byref(info)))
     if rv != int(CKR_OK):
-        return rv, 0, 0, 0
-    return rv, int(info.flags), int(info.ulMinPinLen), int(info.ulMaxPinLen)
+        return rv, 0, 0, 0, b"", b""
+    return (
+        rv,
+        int(info.flags),
+        int(info.ulMinPinLen),
+        int(info.ulMaxPinLen),
+        bytes(info.label).rstrip(b" \x00"),
+        bytes(info.serialNumber).rstrip(b" \x00"),
+    )
 
 
 def _login(ctx: ProbeContext, sh: int, role: str, pin: bytes) -> int:
@@ -576,6 +597,10 @@ def _find_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, list[i
     Returns (RV, handles, phantom): ``phantom`` counts reported-but-
     undelivered handles (over-capacity pages), so callers can void
     honestly instead of crashing on the index or silently truncating.
+    Pagination runs until an empty page (R4F11): a short nonempty page
+    never ends the scan, so a same-label twin on a later page cannot
+    hide behind false uniqueness. A refused Final voids the scan with
+    the Final RV (the enumeration never completed cleanly).
     """
     label_buf = _buf(label)
     tmpl = (CK_ATTRIBUTE * 1)()
@@ -602,12 +627,18 @@ def _find_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, list[i
             phantom += reported - len(buf)
             reported = len(buf)
         out.extend(int(buf[i]) for i in range(reported))
-        if int(found.value) < len(buf):
+        if int(found.value) == 0:
             break
     try:
-        ctx.raw.C_FindObjectsFinal(sh)
+        final_rv = int(ctx.raw.C_FindObjectsFinal(sh))
     except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
         print(f"CLEANUP_IGNORED:C_FindObjectsFinal:{type(exc).__name__}")
+        return int(CKR_OK), out, phantom
+    if final_rv != int(CKR_OK):
+        # R4F11: a refused Final voids the scan it closed (same arm as a
+        # refused Find page: the enumeration never completed cleanly, so
+        # the delivered pages cannot support a uniqueness verdict).
+        return final_rv, [], 0
     return int(CKR_OK), out, phantom
 
 
@@ -618,13 +649,17 @@ def _count_labeled(ctx: ProbeContext, sh: int, label: bytes) -> tuple[int, int]:
     return int(CKR_OK), len(found) + phantom
 
 
-def _setup_burn_session(ctx: ProbeContext, role: str, then_other: bool) -> tuple[int, int] | None:
+def _setup_burn_session(
+    ctx: ProbeContext, role: str, then_other: bool
+) -> tuple[int, int, bytes, bytes] | None:
     """Provision a pristine token + open provisioned session; None when untestable.
 
     Shared by the two-phase burn and the same-process burn/read op:
     discovery, self-provision InitToken, pristine gate, open, and user
     PIN provisioning print identical steps; every early return prints
     its own terminal marker (OK, NO_SLOTS, or ASSUMPTION_FAILED).
+    Returns (slot, session, observed label, observed serial): the
+    post-InitToken identity phase-2 rediscovery must match (R4F12).
     """
     slot = _discover_slot(ctx)
     if slot is None:
@@ -636,7 +671,7 @@ def _setup_burn_session(ctx: ProbeContext, role: str, then_other: bool) -> tuple
         print(f"ASSUMPTION_FAILED:self_provision:{itrv:#x}")
         print("OK")
         return None
-    info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
+    info_rv, flags, min_pin, max_pin, token_label, token_serial = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         print("PINBOUNDS:unknown")
         print(f"ASSUMPTION_FAILED:tokeninfo:{info_rv:#x}")
@@ -644,6 +679,7 @@ def _setup_burn_session(ctx: ProbeContext, role: str, then_other: bool) -> tuple
         return None
     print(f"PINBOUNDS:{min_pin}:{max_pin}")
     print(f"FLAGS:initial:0x{flags:08x}")
+    print(f"TOKENID:{token_label.hex()}:{token_serial.hex()}")
     low, final, locked = _ROLE_COUNTER_FLAGS[role]
     if flags & (low | final | locked):
         print("ASSUMPTION_FAILED:not_pristine")
@@ -675,7 +711,7 @@ def _setup_burn_session(ctx: ProbeContext, role: str, then_other: bool) -> tuple
             ctx.raw.C_Logout(sh)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
             print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
-    return slot, sh
+    return slot, sh, token_label, token_serial
 
 
 def _burn_attempts(
@@ -687,7 +723,7 @@ def _burn_attempts(
     for i in range(1, attempts + 1):
         lrv = _login(ctx, sh, role, wrong)
         _step(f"login:{role}:wrong:{i}", lrv)
-        _info_rv, flags_now, _, _ = _token_info(ctx, slot)
+        _info_rv, flags_now, _, _, _, _ = _token_info(ctx, slot)
         if _info_rv != int(CKR_OK):
             _step(f"snapshot:attempt-{i}", _info_rv)
         _flags(f"attempt-{i}", flags_now if _info_rv == int(CKR_OK) else None)
@@ -711,7 +747,7 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     setup = _setup_burn_session(ctx, role, then_other)
     if setup is None:
         return
-    slot, sh = setup
+    slot, sh, _token_label, _token_serial = setup
     right = TEST_SO_PIN if role == "so" else TEST_USER_PIN
     wrong = WRONG_SO_PIN if role == "so" else WRONG_USER_PIN
     _burn_attempts(ctx, slot, sh, role, attempts, stop_at)
@@ -725,7 +761,7 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         for j in range(1, post_wrongs + 1):
             prv = _login(ctx, sh, role, wrong)
             _step(f"login:{role}:post:{j}", prv)
-            _info_rv, flags_now, _, _ = _token_info(ctx, slot)
+            _info_rv, flags_now, _, _, _, _ = _token_info(ctx, slot)
             if _info_rv != int(CKR_OK):
                 _step(f"snapshot:post-{j}", _info_rv)
             _flags(f"post-{j}", flags_now if _info_rv == int(CKR_OK) else None)
@@ -733,7 +769,7 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         other = "so" if role == "user" else "user"
         orv = _login(ctx, sh, other, TEST_SO_PIN if other == "so" else TEST_USER_PIN)
         _step(f"login:{other}:correct", orv)
-    _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    _info_rv, flags_end, _, _, _, _ = _token_info(ctx, slot)
     if _info_rv != int(CKR_OK):
         _step("snapshot:final", _info_rv)
     _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
@@ -770,7 +806,7 @@ def _read_phase(ctx: ProbeContext, slot: int, role: str) -> None:
     stay judgable. Used by the two-phase read op and the same-process
     op after its in-process Finalize/Initialize cycle.
     """
-    info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
+    info_rv, flags, min_pin, max_pin, _tlabel, _tserial = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         _step("snapshot:initial", info_rv)
         print("PINBOUNDS:unknown")
@@ -789,7 +825,7 @@ def _read_phase(ctx: ProbeContext, slot: int, role: str) -> None:
         ctx.raw.C_Logout(sh)
     except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
         print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
-    _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    _info_rv, flags_end, _, _, _, _ = _token_info(ctx, slot)
     if _info_rv != int(CKR_OK):
         _step("snapshot:final", _info_rv)
     _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
@@ -831,7 +867,7 @@ def _qc11b_pin_lengths(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         print(f"ASSUMPTION_FAILED:self_provision:{itrv:#x}")
         print("OK")
         return
-    info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
+    info_rv, flags, min_pin, max_pin, _tlabel, _tserial = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         # F3: keep the raw bounds-read RV as a snapshot step so the judge can
         # FAIL undefined RVs instead of dissolving them into the skip below.
@@ -904,7 +940,7 @@ def _snapshot(ctx: ProbeContext, slot: int, tag: str) -> None:
     hide undefined CK_RVs from the judges, so every failed read also emits a
     ``snapshot:{tag}`` step carrying the raw RV.
     """
-    info_rv, flags, _, _ = _token_info(ctx, slot)
+    info_rv, flags, _, _, _, _ = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         _step(f"snapshot:{tag}", info_rv)
     _flags(tag, flags if info_rv == int(CKR_OK) else None)
@@ -953,7 +989,7 @@ def _qc11c_journey(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if open_rv != int(CKR_OK):
         print("OK")
         return
-    bounds_rv, _, min_pin, max_pin = _token_info(ctx, slot)
+    bounds_rv, _, min_pin, max_pin, _tlabel, _tserial = _token_info(ctx, slot)
     if bounds_rv != int(CKR_OK):
         # F1: never fabricate bounds from a failed read; keep the raw RV as a
         # snapshot step and report the bounds as unknown.
@@ -1150,14 +1186,27 @@ def _create_private_session_witness(ctx: ProbeContext, sh: int, label: bytes) ->
     return rv, int(handle.value)
 
 
-def _read_value_rv(ctx: ProbeContext, sh: int, handle: int) -> int:
-    """Read CKA_VALUE off one handle; return the raw RV (never raises)."""
-    buf = (ctypes.c_ubyte * 64)()
+def _read_stale_bytes(ctx: ProbeContext, sh: int, handle: int) -> tuple[int, bytes]:
+    """Read CKA_VALUE off a dead handle; (rv, b"") unless bytes moved (R4F11).
+
+    Poisoned buffer (alternating 0xA5/0x5A): any provider write --
+    on success or on refusal -- surfaces as returned bytes so the
+    caller can emit a USE line. A refusal that wrote nothing returns
+    empty (no leak to report). A use-after-logout that still serves
+    bytes is a stale-handle leak the judge must fail.
+    """
+    poison = bytes((0xA5, 0x5A)) * 32
+    buf = (ctypes.c_ubyte * 64)(*poison)
     attr = CK_ATTRIBUTE()
     attr.type = CKA_VALUE
     attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
     attr.ulValueLen = len(buf)
-    return int(ctx.raw.C_GetAttributeValue(sh, handle, ctypes.byref(attr), 1))
+    rv = int(ctx.raw.C_GetAttributeValue(sh, handle, ctypes.byref(attr), 1))
+    if rv == int(CKR_OK):
+        return rv, bytes(buf[: int(attr.ulValueLen)])
+    if bytes(buf) == poison:
+        return rv, b""
+    return rv, bytes(buf)
 
 
 def _read_witness_bytes(ctx: ProbeContext, sh: int, handle: int) -> tuple[int, bytes]:
@@ -1179,10 +1228,11 @@ def _read_witness_flags(
 ) -> tuple[int, bool | None, bool | None]:
     """Read CKA_PRIVATE/CKA_TOKEN off a witness; (rv, None, None) unless clean OK.
 
-    Buffers preset to nonzero poison (R3F11): an untouched slot reads
-    True, so stale False can never bind -- only a provider-written
-    False clears. Post-call lengths must be exactly 1 (a short or
-    garbage length voids as malformed, never reads as False).
+    Buffers preset to 0xFF poison (R3F11): only a provider-written 0
+    or 1 reads as False/True (R4F11). An untouched slot still holds
+    poison and any other byte is garbage -- both void as malformed,
+    never read as True. Post-call lengths must be exactly 1 (a short
+    or garbage length voids as malformed, never reads as False).
     """
     priv = ctypes.c_ubyte(0xFF)
     tok = ctypes.c_ubyte(0xFF)
@@ -1197,6 +1247,8 @@ def _read_witness_flags(
     if rv != int(CKR_OK):
         return rv, None, None
     if int(tmpl[0].ulValueLen) != 1 or int(tmpl[1].ulValueLen) != 1:
+        return rv, None, None
+    if int(priv.value) not in (0, 1) or int(tok.value) not in (0, 1):
         return rv, None, None
     return rv, bool(priv.value), bool(tok.value)
 
@@ -1366,7 +1418,12 @@ def _qc9b_cross_token(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         # control value survived; the length + hash travel separately
         # for the judge to verify independently.
         _emit_use_check("control", cubytes)
-    _step("target_stale_use", _read_value_rv(ctx, tsh, thandle))
+    srv, sbytes = _read_stale_bytes(ctx, tsh, thandle)
+    _step("target_stale_use", srv)
+    if sbytes:
+        # R4F11: the dead handle served bytes (on success or on
+        # refusal) -- a stale-handle leak the judge fails loud.
+        _emit_use_check("target_stale", sbytes)
     _quiet_close(ctx, tsh)
     _quiet_close(ctx, csh)
     print("OK")
@@ -1394,9 +1451,9 @@ def _qc11a_same_process(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     setup = _setup_burn_session(ctx, role, False)
     if setup is None:
         return
-    slot, sh = setup
+    slot, sh, token_label, token_serial = setup
     _burn_attempts(ctx, slot, sh, role, attempts, stop_at)
-    _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    _info_rv, flags_end, _, _, _, _ = _token_info(ctx, slot)
     if _info_rv != int(CKR_OK):
         _step("snapshot:final", _info_rv)
     _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
@@ -1409,7 +1466,9 @@ def _qc11a_same_process(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if frv != int(CKR_OK) or irv != int(CKR_OK):
         print("OK")
         return
-    matches, enum_rv, info_refusals = _rediscover_burn_slot(ctx)
+    matches, enum_rv, info_refusals = _rediscover_burn_slot(
+        ctx, expected_label=token_label, expected_serial=token_serial
+    )
     _step("setup:phase2_enumerate", enum_rv)
     _emit_phase2_snapshot_refusals(info_refusals)
     if enum_rv != int(CKR_OK):
@@ -1450,7 +1509,7 @@ def _qc11c_concurrent_pin(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     setup = _setup_burn_session(ctx, "user", False)
     if setup is None:
         return
-    slot, sh = setup
+    slot, sh, _token_label, _token_serial = setup
     _quiet_close(ctx, sh)
     frv = int(ctx.raw.C_Finalize(None))
     _step("setup:refinalize", frv)

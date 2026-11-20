@@ -87,6 +87,15 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
+    CKG_MGF1_SHA1,
+    CKG_MGF1_SHA3_224,
+    CKG_MGF1_SHA3_256,
+    CKG_MGF1_SHA3_384,
+    CKG_MGF1_SHA3_512,
+    CKG_MGF1_SHA224,
+    CKG_MGF1_SHA256,
+    CKG_MGF1_SHA384,
+    CKG_MGF1_SHA512,
     CKK_AES,
     CKK_EC,
     CKK_GENERIC_SECRET,
@@ -108,15 +117,24 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_RSA_PKCS_PSS,
     CKM_SHA1_RSA_PKCS_PSS,
+    CKM_SHA3_224,
     CKM_SHA3_224_RSA_PKCS_PSS,
+    CKM_SHA3_256,
     CKM_SHA3_256_RSA_PKCS_PSS,
+    CKM_SHA3_384,
     CKM_SHA3_384_RSA_PKCS_PSS,
+    CKM_SHA3_512,
     CKM_SHA3_512_RSA_PKCS_PSS,
+    CKM_SHA224,
     CKM_SHA224_RSA_PKCS_PSS,
+    CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
     CKM_SHA256_RSA_PKCS_PSS,
+    CKM_SHA384,
     CKM_SHA384_RSA_PKCS_PSS,
+    CKM_SHA512,
     CKM_SHA512_RSA_PKCS_PSS,
+    CKM_SHA_1,
     CKM_SLH_DSA,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
@@ -534,6 +552,7 @@ class _PolicyFake:
         self._msg_enc_op: tuple[int, int, bytes, str] | None = None
         self._msg_dec_op: tuple[int, int, bytes, str] | None = None
         self._sign_op: tuple[int, int] | None = None
+        self.sign_init_calls: list[tuple[int, bytes]] = []
         self._verify_op: tuple[int, int] | None = None
         self._find_seq = 0
         self._find_offset = 0
@@ -1512,7 +1531,10 @@ class _PolicyFake:
     def C_SignInit(self, _sh: int, mech: Any, handle: int) -> int:  # noqa: N802
         if self._sign_raise is not None:
             raise self._sign_raise
-        mech_id, _ = _decode_mech(mech)
+        mech_id, param = _decode_mech(mech)
+        # R4-F8: the wire parameters are evidence (PSS triples must reach
+        # the call exactly); keep every (mechanism, params) pair.
+        self.sign_init_calls.append((mech_id, param))
         scripted = self._pop(self._sign_init_script)
         if scripted is not None:
             if scripted == _OK:
@@ -1642,7 +1664,14 @@ _ALL_MECHS = {
 
 def _rs(fake: _PolicyFake, *, mechs: set[str] | None = None) -> SimpleNamespace:
     advertised = _ALL_MECHS if mechs is None else mechs
-    return SimpleNamespace(raw=fake, sh=1, has_mechanism=lambda name: name in advertised)
+    # R4-F8: presence implies every flag unless a test overrides this
+    # lambda (capability-specific tests set their own flags).
+    return SimpleNamespace(
+        raw=fake,
+        sh=1,
+        has_mechanism=lambda name: name in advertised,
+        has_mechanism_flag=lambda name, flag: name in advertised,
+    )
 
 
 def _qc4a_derive(rs: SimpleNamespace, leg: str, use: str) -> None:
@@ -1746,6 +1775,10 @@ _WRONG_ALGO_MECHS = _ALL_MECHS | {
     "RSA_X9_31",
     "SHA1_RSA_X9_31",
     "RSA_X_509",
+    "SHA3_224_RSA_PKCS",
+    "SHA3_256_RSA_PKCS",
+    "SHA3_384_RSA_PKCS",
+    "SHA3_512_RSA_PKCS",
 }
 
 
@@ -4847,6 +4880,81 @@ def test_qc4b_create_missing_params_domain_params_refusal_passes() -> None:
     _assert_cleaned_up(fake)
 
 
+def test_qc4b_create_pqc_missing_params_domain_params_xfails_unadjudicated() -> None:
+    """R4-F9: DOMAIN_PARAMS_INVALID does not sanction a missing PQC selector."""
+    fake = _PolicyFake(create_script=[None, _DOMAIN_PARAMS_INVALID])
+    assert_xfails(_qc4b_create, _rs(fake), "pqc", "missing_params")
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    assert record.actual_ckr == ckr_name(_DOMAIN_PARAMS_INVALID), record.summary
+    assert (record.detail or {}).get("expected_rvs") == ["CKR_TEMPLATE_INCOMPLETE"], record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_create_pqc_missing_params_incomplete_passes() -> None:
+    """R4-F9: INCOMPLETE sanctions the missing-selector cell (the specified code)."""
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCOMPLETE])
+    _qc4b_create(_rs(fake), "pqc", "missing_params")
+    _assert_terminal_pass()
+    record = _terminal_record()
+    assert record.reason == "sanctioned_refusal", record.summary
+    assert record.actual_ckr == ckr_name(_TEMPLATE_INCOMPLETE), record.summary
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_generate_pqc_missing_params_domain_params_xfails_unadjudicated() -> None:
+    """R4-F9: DOMAIN_PARAMS_INVALID does not sanction a missing PQC selector (generate)."""
+    fake = _PolicyFake(keypair_script=[None, _DOMAIN_PARAMS_INVALID])
+    assert_xfails(_qc4b_generate, _rs(fake), "pqc", "missing_params")
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    assert (record.detail or {}).get("expected_rvs") == ["CKR_TEMPLATE_INCOMPLETE"], record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_generate_pqc_missing_params_incomplete_passes() -> None:
+    """R4-F9: INCOMPLETE sanctions the missing-selector generate cell."""
+    fake = _PolicyFake(keypair_script=[None, _TEMPLATE_INCOMPLETE])
+    _qc4b_generate(_rs(fake), "pqc", "missing_params")
+    _assert_terminal_pass()
+    record = _terminal_record()
+    assert record.reason == "sanctioned_refusal", record.summary
+    _assert_cleaned_up(fake)
+
+
+def test_create_pqc_swap_templates_carry_parameter_set() -> None:
+    """R4-F9: swap rows isolate the swap (the selector is always supplied)."""
+    mod = _policy_module()
+    family = mod._ML_DSA_FAMILY
+    for malformation in ("swap_secret_class_asym_type", "swap_asym_class_secret_type"):
+        attrs, _requested = mod._create_pqc_templates(family, malformation, b"v" * 32, "L")
+        assert attrs[int(CKA_PARAMETER_SET)] == family.param_set, malformation
+    attrs, _requested = mod._create_pqc_templates(family, "missing_params", b"v" * 32, "L")
+    assert int(CKA_PARAMETER_SET) not in attrs
+
+
+def test_qc4b_create_pqc_swap_wire_template_carries_selector() -> None:
+    """R4-F9: the swap attempt's wire template carries the PQC selector."""
+    mod = _policy_module()
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCONSISTENT])
+    _qc4b_create(_rs(fake), "pqc", "swap_secret_class_asym_type")
+    _assert_terminal_pass()
+    attempt = fake.create_templates[1]
+    assert int.from_bytes(attempt[int(CKA_PARAMETER_SET)], sys.byteorder) == (
+        mod._ML_DSA_FAMILY.param_set
+    )
+
+
+def test_qc4b_create_pqc_swap_incomplete_xfails_unadjudicated() -> None:
+    """R4-F9: INCOMPLETE on a selector-complete swap row stays unexpected (strict)."""
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCOMPLETE])
+    assert_xfails(_qc4b_create, _rs(fake), "pqc", "swap_secret_class_asym_type")
+    record = _assert_xfail_record("honest_deviation")
+    assert "unadjudicated" in (record.summary or ""), record.summary
+    attempt = fake.create_templates[1]
+    assert int(CKA_PARAMETER_SET) in attempt, "strictness is sound: selector present"
+
+
 def test_qc4b_create_vendor_refusal_xfails() -> None:
     fake = _PolicyFake(create_script=[None, _VENDOR_RV])
     assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
@@ -6443,6 +6551,56 @@ def test_qc4c_wrong_algo_combined_pss_row_runs_oracle(mech_name: str, hash_name:
     _assert_no_secret_bytes()
 
 
+def test_qc4c_wrong_algo_verify_only_row_skips() -> None:
+    """R4-F8: a mechanism without CKF_SIGN skips (never "defense held")."""
+    fake = _PolicyFake(sign_init_script=[int(CKR_MECHANISM_INVALID)])
+    rs = _rs_wrong_algo(fake)
+    rs.has_mechanism_flag = lambda _name, _flag: False
+    try:
+        _qc4c_wrong_algo(rs, "RSA_PKCS")
+    except XFailed as exc:
+        pytest.fail(f"verify-only row xfailed instead of skipping: {exc}")
+    except Skipped as exc:
+        assert "sign" in str(exc).lower(), str(exc)
+    else:
+        pytest.fail("verify-only row passed instead of skipping")
+
+
+def test_qc4c_wrong_algo_oversized_sign_carries_init_rv() -> None:
+    """R4-F8: the oversized-length record retains the passed Init RV."""
+    fake = _PolicyFake(sign_output=b"X" * 600)
+    _run_must_fail(_qc4c_wrong_algo, _rs_wrong_algo(fake), "RSA_PKCS")
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert (record.detail or {}).get("init_rv") == "CKR_OK", record.detail
+
+
+def test_qc4c_wrong_algo_init_pass_noted_before_sign() -> None:
+    """R4-F8: a passed Init streams to the notes before Sign runs."""
+    fake = _PolicyFake(sign_script=[_DEVICE_ERROR])
+    before = len(get_notes())
+    assert_xfails(_qc4c_wrong_algo, _rs_wrong_algo(fake), "RSA_PKCS")
+    fresh = [note for note in get_notes()[before:] if "C_SignInit" in note.description]
+    assert len(fresh) == 1, [note.description for note in get_notes()[before:]]
+    assert "CKR_OK" in fresh[0].description, fresh[0].description
+
+
+def test_qc4c_wrong_algo_pss_wire_params_match_literals() -> None:
+    """R4-F8: the PSS triple on the wire equals the literal triple (decoded)."""
+    from pkcs11_check.raw.types_std import CK_RSA_PKCS_PSS_PARAMS
+
+    fake = _PolicyFake()
+    with pytest.raises((Failed, XFailed)):
+        _qc4c_wrong_algo(_rs_wrong_algo(fake), "SHA256_RSA_PKCS_PSS")
+    (mech_id, param) = fake.sign_init_calls[-1]
+    assert mech_id == int(CKM_SHA256_RSA_PKCS_PSS), mech_id
+    assert len(param) == ctypes.sizeof(CK_RSA_PKCS_PSS_PARAMS), len(param)
+    decoded = CK_RSA_PKCS_PSS_PARAMS.from_buffer_copy(param)
+    want_hash, want_mgf, want_salt = _PSS_PARAM_LITERALS["SHA256_RSA_PKCS_PSS"]
+    assert int(decoded.hashAlg) == want_hash, (decoded.hashAlg, want_hash)
+    assert int(decoded.mgf) == want_mgf, (decoded.mgf, want_mgf)
+    assert int(decoded.sLen) == want_salt, (decoded.sLen, want_salt)
+
+
 def test_qc4c_wrong_algo_message_per_mech() -> None:
     """C1: raw mechs sign encoded input; combined mechs sign the probe message."""
     import hashlib
@@ -6463,6 +6621,10 @@ def test_qc4c_wrong_algo_message_per_mech() -> None:
         "SHA256_RSA_PKCS",
         "SHA384_RSA_PKCS",
         "SHA512_RSA_PKCS",
+        "SHA3_224_RSA_PKCS",
+        "SHA3_256_RSA_PKCS",
+        "SHA3_384_RSA_PKCS",
+        "SHA3_512_RSA_PKCS",
         "SHA1_RSA_PKCS_PSS",
         "SHA256_RSA_PKCS_PSS",
         "SHA384_RSA_PKCS_PSS",
@@ -6478,30 +6640,42 @@ def test_qc4c_wrong_algo_message_per_mech() -> None:
         assert mod._wrong_algo_message(rows[name]) == mod.QC4_SIGN_DATA, name
 
 
+#: Independent PSS parameter triples per row (R4-F8): hash mechanism,
+#: MGF, salt length. Literals here, never read back from production.
+_PSS_PARAM_LITERALS: dict[str, tuple[int, int, int]] = {
+    "RSA_PKCS_PSS": (int(CKM_SHA256), int(CKG_MGF1_SHA256), 32),
+    "SHA1_RSA_PKCS_PSS": (int(CKM_SHA_1), int(CKG_MGF1_SHA1), 20),
+    "SHA256_RSA_PKCS_PSS": (int(CKM_SHA256), int(CKG_MGF1_SHA256), 32),
+    "SHA384_RSA_PKCS_PSS": (int(CKM_SHA384), int(CKG_MGF1_SHA384), 48),
+    "SHA512_RSA_PKCS_PSS": (int(CKM_SHA512), int(CKG_MGF1_SHA512), 64),
+    "SHA224_RSA_PKCS_PSS": (int(CKM_SHA224), int(CKG_MGF1_SHA224), 28),
+    "SHA3_224_RSA_PKCS_PSS": (int(CKM_SHA3_224), int(CKG_MGF1_SHA3_224), 28),
+    "SHA3_256_RSA_PKCS_PSS": (int(CKM_SHA3_256), int(CKG_MGF1_SHA3_256), 32),
+    "SHA3_384_RSA_PKCS_PSS": (int(CKM_SHA3_384), int(CKG_MGF1_SHA3_384), 48),
+    "SHA3_512_RSA_PKCS_PSS": (int(CKM_SHA3_512), int(CKG_MGF1_SHA3_512), 64),
+}
+
+
 def test_qc4c_wrong_algo_pss_params_per_row() -> None:
     """R2B4: every PSS row carries hash-matched params for its mechanism."""
     mod = _policy_module()
     rows = {entry.name: entry for entry in mod._RSA_SIGN_MECHS}
-    assert rows["RSA_PKCS_PSS"].pss_params is not None
-    for name in (
-        "SHA1_RSA_PKCS_PSS",
-        "SHA256_RSA_PKCS_PSS",
-        "SHA384_RSA_PKCS_PSS",
-        "SHA512_RSA_PKCS_PSS",
-        "SHA224_RSA_PKCS_PSS",
-        "SHA3_224_RSA_PKCS_PSS",
-        "SHA3_256_RSA_PKCS_PSS",
-        "SHA3_384_RSA_PKCS_PSS",
-        "SHA3_512_RSA_PKCS_PSS",
-    ):
+    assert set(rows) >= set(_PSS_PARAM_LITERALS), set(rows)
+    for name, (want_hash, want_mgf, want_salt) in _PSS_PARAM_LITERALS.items():
         assert rows[name].pss_params is not None, name
         packed = mod._wrong_algo_mech_param(rows[name])
         assert int(packed.ck.mechanism) == rows[name].mech, name
-        want_hash, want_mgf, want_salt = rows[name].pss_params
         assert int(packed.params.hashAlg) == want_hash, name
         assert int(packed.params.mgf) == want_mgf, name
         assert int(packed.params.sLen) == want_salt, name
-    assert rows["SHA256_RSA_PKCS"].pss_params is None
+    for name in (
+        "SHA256_RSA_PKCS",
+        "SHA3_224_RSA_PKCS",
+        "SHA3_256_RSA_PKCS",
+        "SHA3_384_RSA_PKCS",
+        "SHA3_512_RSA_PKCS",
+    ):
+        assert rows[name].pss_params is None, name
 
 
 def test_qc4c_unsupported_create_skips() -> None:

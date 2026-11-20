@@ -1276,6 +1276,17 @@ def test_qc3a_keytype_applied_beats_vendor_use_refusal() -> None:
     assert "override value" in (record.summary or ""), record.summary
 
 
+def test_qc3a_keytype_use_refusal_names_init_operation() -> None:
+    """R4-F7: a use RV from C_EncryptInit carries its own stage operation."""
+    from pkcs11_check import classification
+
+    fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _VENDOR_RV})
+    _run_must_fail(_qc3a_keytype, _rs(fake))
+    (record,) = [rec for rec in classification.get_records() if rec.reason == "nonspec_reject"]
+    assert record.operation == "C_EncryptInit", record.operation
+    assert record.actual_ckr == "0x80000042", record.actual_ckr
+
+
 def test_qc3a_keytype_undefined_use_refusal_fails_metadata() -> None:
     """R3F7: an undefined use RV fails metadata on any identity."""
     fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _UNDEFINED_RV})
@@ -1960,7 +1971,9 @@ def test_shape_unknown_shape_is_programmer_error() -> None:
 
 def test_qc3a_material_readback_device_error_xfails_unproved() -> None:
     """I12: a DEVICE_ERROR material readback is an unproved xfail, never unclassified."""
-    fake = _CopyFake(copy_mode="ignore", get_attr_script=[_DEVICE_ERROR])
+    # R4-F1: adoption reads (source + copy identity) precede the material
+    # readback; the refusal targets the readback (call 17).
+    fake = _CopyFake(copy_mode="ignore", get_attr_script=[None] * 16 + [_DEVICE_ERROR])
     assert_xfails(_qc3a_material, _rs(fake))
     record = _assert_xfail_record("honest_deviation")
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
@@ -1970,14 +1983,16 @@ def test_qc3a_material_readback_device_error_xfails_unproved() -> None:
 
 def test_qc3a_material_readback_undefined_rv_fails() -> None:
     """I12/I13: an undefined-RV readback refusal fails the return-value contract."""
-    fake = _CopyFake(copy_mode="ignore", get_attr_script=[_UNDEFINED_RV])
+    # R4-F1: the refusal targets the material readback (call 17).
+    fake = _CopyFake(copy_mode="ignore", get_attr_script=[None] * 16 + [_UNDEFINED_RV])
     _run_must_fail(_qc3a_material, _rs(fake))
     _assert_fail_record("self_contradiction", "metadata")
 
 
 def test_qc3a_material_readback_vendor_rv_xfails() -> None:
     """I12/I13: a vendor-RV readback refusal is a visible alternate xfail."""
-    fake = _CopyFake(copy_mode="ignore", get_attr_script=[_VENDOR_RV])
+    # R4-F1: the refusal targets the material readback (call 17).
+    fake = _CopyFake(copy_mode="ignore", get_attr_script=[None] * 16 + [_VENDOR_RV])
     assert_xfails(_qc3a_material, _rs(fake))
     _assert_xfail_record("nonspec_reject")
 
@@ -5110,6 +5125,54 @@ def test_compare_readback_refused_voids_with_equal_sibling(
     assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
 
 
+def test_compare_changed_value_with_baseline_refused_sibling_fails(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R4-F7: a changed copy fails even when the sibling baseline was refused."""
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(
+            empty=("ok", b"mutated-value!"),
+            restated=("baseline-refused", _DEVICE_ERROR),
+        )
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("wrong_result", "crypto")
+    ]
+
+
+def test_compare_undefined_baseline_rv_fails_metadata(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R4-F7: an undefined baseline RV fails validity from inside the judge."""
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(
+            empty=("ok", _COMPARE_SOURCE),
+            restated=("baseline-refused", 0x7FFFFFFF),
+        )
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("self_contradiction", "metadata")
+    ]
+
+
+def test_compare_readback_records_precede_early_mutation_fail(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R4-F7: readback records journal before an early mutation terminal."""
+    with pytest.raises(_CompareVerdictError, match="fail_as"):
+        _judge_compare(
+            empty=("ok", b"mutated-value!"),
+            restated=("readback-refused", _ATTR_READ_ONLY),
+        )
+    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
+        ("wrong_result", "crypto")
+    ]
+    per_leg = [
+        (reason, kw.get("actual"))
+        for reason, kw in _compare_captures["record"]
+        if kw.get("operation") == "C_GetAttributeValue"
+    ]
+    assert per_leg == [("not_operational", _ATTR_READ_ONLY)], _compare_captures["record"]
+
+
 def test_compare_standard_readback_refusal_records_per_leg_rv(
     _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
 ) -> None:
@@ -5228,23 +5291,28 @@ def test_copy_compare_leg_source_alias_fails_without_destroy() -> None:
     assert fake.destroyed == [], fake.destroyed
 
 
-def test_copy_compare_leg_refused_baseline_xfails_unproved() -> None:
-    """R3F2: a refused baseline voids the leg visibly; the copy never runs."""
+def test_copy_compare_leg_refused_baseline_returns_evidence() -> None:
+    """R4-F7: a refused baseline rides as terminal evidence; the copy never runs."""
     import pkcs11_check.testcases._copy_mutability as cm
 
     fake = _CopyFake(copy_mode="apply", find_script=[_DEVICE_ERROR])
     source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    with pytest.raises(XFailed, match="unproved"):
-        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    try:
+        outcome = cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    except XFailed as exc:
+        pytest.fail(f"baseline refusal terminated instead of riding: {exc}")
+    assert outcome == ("baseline-refused", _DEVICE_ERROR), outcome
     assert fake.copy_calls == [], fake.copy_calls
 
 
-def test_copy_compare_leg_undefined_baseline_rv_fails() -> None:
-    """R3F2: an undefined baseline RV fails loud, never voids quietly."""
+def test_copy_compare_leg_undefined_baseline_rv_rides_to_judge() -> None:
+    """R4-F7: an undefined baseline RV rides as evidence (the judge fails it)."""
     import pkcs11_check.testcases._copy_mutability as cm
 
     fake = _CopyFake(copy_mode="apply", find_script=[0x7FFFFFFF])
     source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    with pytest.raises(Failed, match="undefined") as exc_info:
-        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
-    assert type(exc_info.value) is Failed, exc_info.value
+    assert cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty") == (
+        "baseline-refused",
+        0x7FFFFFFF,
+    )
+    assert fake.copy_calls == [], fake.copy_calls

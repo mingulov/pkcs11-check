@@ -122,6 +122,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
+    CKF_SIGN,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA3_224,
     CKG_MGF1_SHA3_256,
@@ -156,12 +157,16 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA1_RSA_PKCS_PSS,
     CKM_SHA1_RSA_X9_31,
     CKM_SHA3_224,
+    CKM_SHA3_224_RSA_PKCS,
     CKM_SHA3_224_RSA_PKCS_PSS,
     CKM_SHA3_256,
+    CKM_SHA3_256_RSA_PKCS,
     CKM_SHA3_256_RSA_PKCS_PSS,
     CKM_SHA3_384,
+    CKM_SHA3_384_RSA_PKCS,
     CKM_SHA3_384_RSA_PKCS_PSS,
     CKM_SHA3_512,
+    CKM_SHA3_512_RSA_PKCS,
     CKM_SHA3_512_RSA_PKCS_PSS,
     CKM_SHA224,
     CKM_SHA224_RSA_PKCS,
@@ -3674,20 +3679,30 @@ def _strongest_record(records: list[Any]) -> Any:
 #: Expected refusals per malformed-cell kind (R3F9, §5.18.1-literal).
 #: A swap (incompatible class or type) is specified
 #: CKR_TEMPLATE_INCONSISTENT; a missing required attribute is specified
-#: CKR_TEMPLATE_INCOMPLETE; a missing domain-parameter template may
-#: also legitimately refuse CKR_DOMAIN_PARAMS_INVALID. Only the cell's
-#: own codes sanction the pass -- near or confused codes (a use-time
-#: CKR_KEY_TYPE_INCONSISTENT, domain params on AES, an operational
-#: failure) leave the malformation unadjudicated and xfail with the
-#: proved zero delta, never pass.
+#: CKR_TEMPLATE_INCOMPLETE. Only the cell's own codes sanction the pass
+#: -- near or confused codes (a use-time CKR_KEY_TYPE_INCONSISTENT,
+#: domain params on AES, an operational failure) leave the malformation
+#: unadjudicated and xfail with the proved zero delta, never pass.
 _SWAP_REJECTION_RVS = frozenset({int(CKR_TEMPLATE_INCONSISTENT)})
 _MISSING_REJECTION_RVS = frozenset({int(CKR_TEMPLATE_INCOMPLETE)})
 _MISSING_PARAMS_EXTRA_RVS = frozenset({int(CKR_DOMAIN_PARAMS_INVALID)})
+#: Cells where a missing-params template may also legitimately refuse
+#: CKR_DOMAIN_PARAMS_INVALID (R4-F9): EC domain material only. A missing
+#: PQC parameter-set SELECTOR is an incomplete template (INCOMPLETE);
+#: letting DOMAIN_PARAMS sanction it would launder an EC-domain code
+#: onto a selector omission. Keyed by (operation, family, row) and
+#: fail-closed: unlisted cells stay INCOMPLETE-only.
+_DOMAIN_PARAMS_EXTRA_CELLS = frozenset(
+    {
+        ("C_CreateObject", "ec", "missing_params"),
+        ("C_GenerateKeyPair", "ec", "missing_params"),
+    }
+)
 
 
-def _malformed_rejection_rvs(malformation: str) -> frozenset[int]:
-    """Expected refusal set for one malformed cell (R3F9)."""
-    if malformation == "missing_params":
+def _malformed_rejection_rvs(operation: str, family: str, malformation: str) -> frozenset[int]:
+    """Expected refusal set for one malformed cell (R3F9, R4-F9)."""
+    if (operation, family, malformation) in _DOMAIN_PARAMS_EXTRA_CELLS:
         return _MISSING_REJECTION_RVS | _MISSING_PARAMS_EXTRA_RVS
     if malformation.startswith("missing_"):
         return _MISSING_REJECTION_RVS
@@ -4919,6 +4934,9 @@ def _create_pqc_templates(
                 CKA_VERIFY: True,
                 CKA_TOKEN: False,
                 CKA_LABEL: label,
+                # R4-F9: the selector stays supplied so the swap is the
+                # only malformation (the control supplies it too).
+                CKA_PARAMETER_SET: family.param_set,
             },
             (secret, family.key_type),
         )
@@ -4931,6 +4949,9 @@ def _create_pqc_templates(
                 CKA_VERIFY: True,
                 CKA_TOKEN: False,
                 CKA_LABEL: label,
+                # R4-F9: the selector stays supplied so the swap is the
+                # only malformation (the control supplies it too).
+                CKA_PARAMETER_SET: family.param_set,
             },
             (public, int(CKK_AES)),
         )
@@ -5101,7 +5122,7 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 operation="C_CreateObject",
                 before=before,
                 spec_ref=_QC4B_SPEC,
-                allowed_rvs=_malformed_rejection_rvs(malformation),
+                allowed_rvs=_malformed_rejection_rvs("C_CreateObject", family, malformation),
                 error_handles=(int(handle.value),),
                 attempt_templates=(attempt_attrs,),
                 identities=_swap_coherent_identities(
@@ -5567,7 +5588,7 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 operation="C_UnwrapKey",
                 before=before,
                 spec_ref=_QC4B_SPEC,
-                allowed_rvs=_malformed_rejection_rvs(malformation),
+                allowed_rvs=_malformed_rejection_rvs("C_UnwrapKey", family, malformation),
                 error_handles=(int(handle.value),),
                 attempt_templates=(attempt_attrs,),
                 identities=_swap_coherent_identities(
@@ -5987,7 +6008,7 @@ def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             operation="C_GenerateKey",
             before=before,
             spec_ref=_QC4B_GENKEY_SPEC,
-            allowed_rvs=_malformed_rejection_rvs(malformation),
+            allowed_rvs=_malformed_rejection_rvs("C_GenerateKey", family, malformation),
             error_handles=(int(handle.value),),
             attempt_templates=(attempt_attrs,),
             identities=(
@@ -6129,7 +6150,7 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             operation="C_GenerateKeyPair",
             before=before,
             spec_ref=_QC4B_SPEC,
-            allowed_rvs=_malformed_rejection_rvs(malformation),
+            allowed_rvs=_malformed_rejection_rvs("C_GenerateKeyPair", family, malformation),
             error_handles=(int(pub_handle.value), int(priv_handle.value)),
             attempt_templates=(pub_attrs, priv_attrs),
             identities=(
@@ -6604,6 +6625,11 @@ _RSA_SIGN_MECHS: tuple[RsaSignMech, ...] = (
     RsaSignMech("SHA256_RSA_PKCS", int(CKM_SHA256_RSA_PKCS), hashes.SHA256()),
     RsaSignMech("SHA384_RSA_PKCS", int(CKM_SHA384_RSA_PKCS), hashes.SHA384()),
     RsaSignMech("SHA512_RSA_PKCS", int(CKM_SHA512_RSA_PKCS), hashes.SHA512()),
+    # R4-F8: the four SHA-3 PKCS#1 v1.5 rows complete the advertised-applicable matrix.
+    RsaSignMech("SHA3_224_RSA_PKCS", int(CKM_SHA3_224_RSA_PKCS), hashes.SHA3_224()),
+    RsaSignMech("SHA3_256_RSA_PKCS", int(CKM_SHA3_256_RSA_PKCS), hashes.SHA3_256()),
+    RsaSignMech("SHA3_384_RSA_PKCS", int(CKM_SHA3_384_RSA_PKCS), hashes.SHA3_384()),
+    RsaSignMech("SHA3_512_RSA_PKCS", int(CKM_SHA3_512_RSA_PKCS), hashes.SHA3_512()),
     RsaSignMech(
         "RSA_PKCS_PSS",
         int(CKM_RSA_PKCS_PSS),
@@ -6699,6 +6725,11 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
     label = f"RSA wrong-algorithm sign {mech_name} on EC-material object"
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"CKM_{mech_name} not supported")
+    if not rs.has_mechanism_flag(mech_name, int(CKF_SIGN)):
+        # R4-F8: presence is not signing capability -- a verify-only
+        # row legitimately refuses C_SignInit with MECHANISM_INVALID,
+        # which must skip as inapplicable, never report "defense held".
+        pytest.skip(f"CKM_{mech_name} not sign-capable (CKF_SIGN unset); row inapplicable")
     entry = next((item for item in _RSA_SIGN_MECHS if item.name == mech_name), None)
     assert entry is not None, f"unknown wrong-algorithm mechanism {mech_name}"
     spec_ref = (
@@ -6761,8 +6792,15 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
         sig_buf = (ctypes.c_ubyte * 512)()
         sig_len = CK_ULONG(512)
         # R2B4: the passed Init is evidence before the Sign stage runs, so
-        # the vendor/undefined Sign-RV terminals below retain it.
+        # the vendor/undefined Sign-RV terminals below retain it. R4-F8:
+        # stream it to the notes before Sign (a Sign crash keeps the
+        # counters' durable Init return; the note keeps it in-report).
         init_detail = {"init_rv": ckr_name(rv_init)}
+        note(
+            f"{label}: C_SignInit passed ({ckr_name(rv_init)}) for CKM_{mech_name}; running C_Sign",
+            ComplianceLevel.STANDARD,
+            spec_ref,
+        )
         rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
         detail_base = {**init_detail, "sign_rv": ckr_name(rv_sign)}
         if rv_sign != int(CKR_OK):
@@ -6811,7 +6849,7 @@ def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
                     f"{label}: C_Sign claimed CKR_OK with length "
                     f"{int(sig_len.value)} on a 512-byte buffer"
                 ),
-                detail={"sig_len": int(sig_len.value), "capacity": 512},
+                detail={**detail_base, "sig_len": int(sig_len.value), "capacity": 512},
             )
         signature = bytes(sig_buf[: sig_len.value])
         if entry.oracle_hash is None:

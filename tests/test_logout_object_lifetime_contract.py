@@ -1360,6 +1360,36 @@ def test_cross_token_control_use_vendor_xfails_nonspec() -> None:
     assert record.reason == "nonspec_reject", record.summary
 
 
+def test_cross_token_undefined_find_beats_vendor_use() -> None:
+    """R4F11: an undefined refused find fails metadata even with a vendor use."""
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(
+            _cross_token_trace(target_find_rv=0x7FFFFFFF, control_use_rv=0x80000001, inv=(1,))
+        )
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "self_contradiction", record.summary
+    assert record.kind == "metadata", record.summary
+    assert "undefined" in (record.summary or ""), record.summary
+
+
+def test_cross_token_stale_use_line_fails() -> None:
+    """R4F11: a target_stale USE line fails (the dead handle leaked bytes)."""
+    expected_len, expected_hash = qc9b_witness_digest()
+    trace = _cross_token_trace(
+        use_checks=(
+            _control_use_check(),
+            AdminUseCheck("target_stale", expected_len, expected_hash),
+        ),
+    )
+    with pytest.raises(Failed) as excinfo:
+        tssm._judge_cross_token_trace(trace)
+    assert type(excinfo.value) is Failed
+    (record,) = C.get_records()
+    assert record.reason == "accepted_invalid", record.summary
+    assert "stale target handle" in (record.summary or ""), record.summary
+
+
 def test_cross_token_undefined_find_fails_metadata() -> None:
     """R3F11: an undefined refused-find RV fails loud, never voids into a skip."""
     with pytest.raises(Failed) as excinfo:
