@@ -1154,19 +1154,15 @@ def test_w2_import_size_policy_is_xfail() -> None:
     assert _run_w2(raw, 1) == "xfail"
 
 
-def test_w2_import_domain_params_invalid_is_fail() -> None:
-    # R3-A3: still a FAIL (proved contradiction on the valid vector),
-    # now classified at source instead of escaping through a raw raise.
+def test_w2_import_domain_params_invalid_is_xfail() -> None:
+    # R4-A3: unsupported is inside CKR_DOMAIN_PARAMS_INVALID per the RV
+    # definition, and support for the exact fixed domain stays
+    # provider-specific -- a clean refusal xfails with the original RV.
     raw = _W2Raw(create_rv=_ckr(CKR_DOMAIN_PARAMS_INVALID))
-    with pytest.raises(Failed) as exc_info:
-        dsa_mod.TestDSABoundedWidth().test_fixed_dsa_even_padded_halves_rejected(
-            _w2_session(raw), 1
-        )
-    assert type(exc_info.value) is Failed
-    fails = [rec for rec in classification.get_records() if rec.outcome == "fail"]
-    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in fails]
-    assert fails[0].reason == "self_contradiction", fails[0].summary
-    assert fails[0].kind == "metadata", fails[0].summary
+    assert _run_w2(raw, 1) == "xfail"
+    record = _last_record()
+    assert record.reason == "not_operational", record.summary
+    assert record.actual_ckr == "CKR_DOMAIN_PARAMS_INVALID", record.summary
 
 
 def test_w2_no_dsa_mechanism_is_skip() -> None:

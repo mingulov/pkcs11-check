@@ -4361,11 +4361,13 @@ def _fail_undefined_find_rv(label: str, outcome: _FindOutcome) -> None:
 
 
 def _record_sealed_match(*, outcome: _FindOutcome, handle: int, label: str) -> Any | None:
-    """Journal a proved sealed-handle match without raising (R3F4).
+    """Journal a proved sealed-handle match without raising (R3F4, R4-F4).
 
     The delivering pages prove the match even when a later stage
-    fails; recording it before any control verdict means a control
-    skip voids the verdict without discarding the evidence.
+    fails. Called ONLY post-calibration (by the screen, after the
+    controls pass): journaling earlier would let the report hook
+    promote a later control skip to this xfail. Membership before
+    calibration stays an in-memory observation on the outcome.
     """
     if handle not in outcome.handles:
         return None
@@ -4384,30 +4386,31 @@ def _record_sealed_match(*, outcome: _FindOutcome, handle: int, label: str) -> A
     )
 
 
-def _screen_sealed_find(
-    *, outcome: _FindOutcome, handle: int, label: str, match_record: Any | None = None
-) -> None:
-    """Direct sealed-find evidence (R2A3, R3F4).
+def _screen_sealed_find(*, outcome: _FindOutcome, handle: int, label: str) -> None:
+    """Direct sealed-find evidence (R2A3, R3F4, R4-F4).
 
-    A proved sealed-handle match is recorded oracle surface (v3.2
-    §5.7.7 implies byte-exact match with no sensitivity carve-out),
-    never a conformance defect; the delivering pages prove it even
-    when a later stage fails. Any undefined stage RV fails the
-    metadata contract. A refused Init returns for the negative
-    judge (the template refusal is sanctioned where it was
-    evaluated, never collapsed into an incomplete skip). An
+    Runs post-calibration (controls already passed): a proved
+    sealed-handle match is recorded oracle surface (v3.2 §5.7.7
+    implies byte-exact match with no sensitivity carve-out), never a
+    conformance defect; the delivering pages prove it even when a
+    later stage fails. Any undefined stage RV fails the metadata
+    contract. A refused Init returns for the negative judge (the
+    template refusal is sanctioned where it was evaluated, never
+    collapsed into an incomplete skip), as does a vendor-defined Find
+    or Final RV (the negative judge owns the vendor verdict). An
     incomplete search without the sealed handle leaves membership
     unproved. Anything else returns for the control-dependent
     negative verdict.
     """
     _fail_undefined_find_rv(label, outcome)
-    if match_record is None:
-        match_record = _record_sealed_match(outcome=outcome, handle=handle, label=label)
+    match_record = _record_sealed_match(outcome=outcome, handle=handle, label=label)
     if match_record is not None:
         classification.raise_for_record(match_record)
     if outcome.init_rv != int(CKR_OK):
         return
     if not outcome.complete:
+        if is_vendor_defined_ckr(outcome.effective_rv):
+            return
         pytest.skip(f"{label}: search incomplete; sealed membership unproved")
 
 
@@ -4469,11 +4472,18 @@ def _judge_sealed_negative(*, outcome: _FindOutcome, label: str, control_proved:
         )
         return
     if is_vendor_defined_ckr(rv):
+        # R4-F4: the vendor RV carries its own stage operation (Init,
+        # Find, or Final) -- never a collapsed C_FindObjects.
+        operation = "C_FindObjects"
+        for stage, stage_rv in outcome.staged_rvs():
+            if stage_rv != int(CKR_OK):
+                operation = _FIND_STAGE_OPERATIONS[stage]
+                break
         record = classification.record_as(
             "nonspec_reject",
             kind="metadata",
             label=label,
-            operation="C_FindObjects",
+            operation=operation,
             inherit_mechanism=False,
             actual=rv,
             summary=f"{label}: sealed search took a vendor-defined path ({ckr_name(rv)})",
@@ -4515,14 +4525,21 @@ def _judge_wrong_value_find(*, outcome: _FindOutcome, label: str) -> None:
 def _skip_unless_sealed_unreadable(
     rs: Any, handle: int, attr: int, *, label: str, attr_name: str
 ) -> None:
-    """Prove the sealed component resists reads; skip when readable (R3F4).
+    """Prove the sealed component resists reads; skip when readable (R3F4, R4-F4).
 
     Flags alone do not prove sealing: a module reporting SENSITIVE
-    while serving the bytes voids the find premise. Any refusal
-    proves unreadability (undefined RVs still fail loud).
+    while serving the bytes voids the find premise. Only a normal
+    CKR_ATTRIBUTE_SENSITIVE refusal (RV plus sentinel on the refusals
+    channel -- read_attributes raises nothing for it) proves
+    unreadability. Served bytes skip (seal unproved); a call-level
+    failure voids the check (inconclusive, never proof); a vendor
+    failure xfails visibly; a refusal that still wrote bytes fails;
+    TYPE_INVALID or any other answered-nothing shape skips as moot
+    (no value present, so the seal question cannot be asked).
+    Undefined RVs still fail loud.
     """
     try:
-        read_attributes(rs.raw, rs.sh, handle, [attr])
+        read = read_attributes(rs.raw, rs.sh, handle, [attr])
     except CkrAssertionError as exc:
         if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
             record = classification.record_as(
@@ -4538,8 +4555,55 @@ def _skip_unless_sealed_unreadable(
                 ),
             )
             classification.raise_for_record(record)
+        if is_vendor_defined_ckr(exc.rv):
+            record = classification.record_as(
+                "nonspec_reject",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: sealed {attr_name} seal check took a vendor-defined "
+                    f"path ({ckr_name(exc.rv)})"
+                ),
+            )
+            classification.raise_for_record(record)
+        pytest.skip(
+            f"{label}: sealed {attr_name} seal check inconclusive "
+            f"({ckr_name(exc.rv)}); seal unproved"
+        )
+    value = attr_or_record(
+        read,
+        attr,
+        label=f"{label}: seal check",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if value is not MISSING_ATTRIBUTE:
+        pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
+    refusal = read.refusals.get(int(attr))
+    if refusal is not None and refusal.leaked_len is not None:
+        record = classification.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: sealed {attr_name} readback answered "
+                f"{ckr_name(refusal.ckr)} but still wrote {refusal.leaked_len} "
+                "bytes into the template"
+            ),
+            detail={"leaked_len": refusal.leaked_len},
+        )
+        classification.raise_for_record(record)
+    if refusal is not None and refusal.ckr == int(CKR_ATTRIBUTE_SENSITIVE):
         return
-    pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
+    pytest.skip(f"{label}: sealed {attr_name} has no value present; seal question moot")
 
 
 def _grade_seed_import_rv(rv: int, *, label: str) -> None:
@@ -4685,12 +4749,14 @@ class TestSealedFindObjects:
                 attr_bool(CKA_TOKEN, False),
                 attr_bytes(CKA_VALUE, _absent_value(_SEALED_FIND_VALUE, _SEALED_FIND_VALUE_ALT)),
             )
-            # Collect-then-judge (B1/R2A3/R3F4): every search runs
-            # before any verdict. Undefined stages fail first
+            # Collect-then-judge (B1/R2A3/R3F4/R4-F4): every search
+            # runs before any verdict. Undefined stages fail first
             # (validity beats everything), then retained page defects,
-            # then the sealed match is journaled -- before either
-            # control can skip (a broken control voids the match
-            # verdict but never discards the evidence).
+            # then delivered forbidden hits (a proved selectivity defect
+            # grades before any control can void it), then the positive
+            # control, and only then the sealed screen -- the match stays
+            # an in-memory observation until calibration passes, so a
+            # control skip can never promote to an uncalibrated xfail.
             sealed_out = _find_page(rs.raw, rs.sh, sealed_tmpl)
             control_out = _find_page(rs.raw, rs.sh, control_tmpl)
             wrong_out = _find_page(rs.raw, rs.sh, wrong_tmpl)
@@ -4700,16 +4766,12 @@ class TestSealedFindObjects:
             for outcome in (sealed_out, control_out, wrong_out):
                 for retained in outcome.retained:
                     classification.raise_for_record(retained)
-            match_record = _record_sealed_match(
-                outcome=sealed_out, handle=sealed, label="QC1b sealed AES find"
-            )
-            _judge_find_control(outcome=control_out, handle=control, label="QC1b control find")
             _judge_wrong_value_find(outcome=wrong_out, label="QC1b wrong-value find")
+            _judge_find_control(outcome=control_out, handle=control, label="QC1b control find")
             _screen_sealed_find(
                 outcome=sealed_out,
                 handle=sealed,
                 label="QC1b sealed AES find",
-                match_record=match_record,
             )
             _judge_sealed_negative(
                 outcome=sealed_out, label="QC1b sealed AES find", control_proved=True
@@ -4794,20 +4856,16 @@ class TestSealedFindObjects:
             for outcome in (out, ctrl_out, wrong_out):
                 for retained in outcome.retained:
                     classification.raise_for_record(retained)
-            match_record = _record_sealed_match(
-                outcome=out, handle=int(handle.value), label="QC1b sealed seed find"
-            )
+            _judge_wrong_value_find(outcome=wrong_out, label="QC1b ML-DSA wrong-value find")
             _judge_find_control(
                 outcome=ctrl_out,
                 handle=int(control_handle.value),
                 label="QC1b ML-DSA control find",
             )
-            _judge_wrong_value_find(outcome=wrong_out, label="QC1b ML-DSA wrong-value find")
             _screen_sealed_find(
                 outcome=out,
                 handle=int(handle.value),
                 label="QC1b sealed seed find",
-                match_record=match_record,
             )
             _judge_sealed_negative(outcome=out, label="QC1b sealed seed find", control_proved=True)
         finally:

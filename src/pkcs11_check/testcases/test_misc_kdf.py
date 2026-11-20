@@ -2936,6 +2936,74 @@ _RECOVERY_XOR_FULL_DATA = b"\xa5" * 32
 _RECOVERY_XOR_SHORT_DATA = b"\x5a"
 
 
+def _grade_len_omitted_accept(rs: Any, child: int, *, label: str, expected: bytes) -> NoReturn:
+    """Grade an accepted length-omitted derive (R4-F5).
+
+    The standard requires an error for a type-only template whose type
+    has no well-defined length (PKCS#11 v3.0 §2.43.6); acceptance is an
+    honest deviation (xfail), never a protection verdict -- the recovery
+    question is asked of conforming forms only. The value rule still
+    binds on acceptance: a wrong 1-byte value fails crypto. The child
+    length comes from the digest oracle (a sealed child's value is not
+    directly readable): a brute-forced byte proves a 1-byte child, no
+    match proves a non-1-byte child (the control calibrated the oracle).
+    The adopted child is destroyed (graded) before the terminal.
+    """
+    try:
+        sfound, digest_op, digest_rv = _attempt_sealed_recovery(rs, child, label=label)
+    except _DigestLengthDefectError as exc:
+        _fail_digest_length_defect(exc, label=label, leg="sealed")
+    _destroy_recovery_child(rs, child, label=label, leg="sealed")
+    if digest_op is not None:
+        stage_rv = f" {ckr_name(digest_rv)}" if digest_rv is not None else ""
+        xfail_as(
+            "honest_deviation",
+            label=label,
+            operation=digest_op,
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=digest_rv,
+            summary=(
+                f"{label}: accepted length-omitted derive (deviation); recovery "
+                f"oracle blocked ({digest_op}{stage_rv})"
+            ),
+        )
+    if sfound is None:
+        xfail_as(
+            "honest_deviation",
+            label=label,
+            operation="C_DigestKey",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: accepted length-omitted derive with a non-1-byte "
+                "child (deviation; oracle N/A)"
+            ),
+        )
+    if sfound != expected:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism="CKM_XOR_BASE_AND_DATA",
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: accepted length-omitted derive produced a wrong "
+                "1-byte value (value rule binds on acceptance)"
+            ),
+            detail={"expected_len": len(expected), "found_len": len(sfound)},
+        )
+    xfail_as(
+        "honest_deviation",
+        label=label,
+        operation="C_DeriveKey",
+        mechanism="CKM_XOR_BASE_AND_DATA",
+        inherit_mechanism=False,
+        summary=(f"{label}: accepted length-omitted derive (deviation); 1-byte value sane"),
+    )
+
+
 def _judge_byte_recovery(
     *,
     derive_rv: int,
@@ -2944,6 +3012,7 @@ def _judge_byte_recovery(
     label: str,
     digest_op: str | None = None,
     digest_rv: int | None = None,
+    expect_refusal: bool = False,
 ) -> None:
     """Judge one 1-byte recovery leg (#54.3).
 
@@ -2955,7 +3024,9 @@ def _judge_byte_recovery(
     base yielded material — self-evident, no oracle needed); an
     unproven/blocked chain xfails when the control calibrated the
     oracle, else skips, with the digest operation and RV retained.
-    Malformed RVs fail.
+    Malformed RVs fail. When expect_refusal is set (R4-F5: the row's
+    deviant form must refuse), a clean refusal passes as the conforming
+    outcome and journals that conformance visibly.
     """
     if not _is_defined_rv(derive_rv):
         fail_as(
@@ -2983,6 +3054,20 @@ def _judge_byte_recovery(
                 ),
             )
         if derive_rv in _RECOVERY_CLEAN_REFUSALS:
+            if expect_refusal:
+                record_as(
+                    "sanctioned_refusal",
+                    kind="policy",
+                    label=label,
+                    operation="C_DeriveKey",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=derive_rv,
+                    summary=(
+                        f"{label}: length-omitted derive refused with "
+                        f"{ckr_name(derive_rv)} as PKCS#11 v3.0 §2.43.6 requires"
+                    ),
+                )
             return
         xfail_as(
             "not_operational",
@@ -3164,10 +3249,12 @@ def _skip_unless_single_byte_child(
 ) -> None:
     """Require a 1-byte recovery child; otherwise the oracle cannot calibrate (R3F5).
 
-    Explicit-length shapes pin CKA_VALUE_LEN=1; the default shape lets
-    the provider choose. Either way a non-1-byte child voids the
-    comparison (skip, never fail: length semantics belong to the
-    mechanism, and an uncalibrated oracle proves nothing).
+    Explicit-length shapes pin CKA_VALUE_LEN=1; a non-1-byte child voids
+    the comparison (skip, never fail: length semantics belong to the
+    mechanism, and an uncalibrated oracle proves nothing). The specified
+    default shape (xor_short_default) is strict (R4-F5): the standard
+    fixes the default at min(data, base) = 1 byte on this stimulus, so
+    any other accepted default length fails loudly.
     """
     try:
         read = read_attributes(rs.raw, rs.sh, child, [CKA_VALUE])
@@ -3190,9 +3277,22 @@ def _skip_unless_single_byte_child(
         child_len = len(value)
     if child_len != 1:
         if shape == "xor_short_default":
-            why = f"provider default child length is {child_len}, want 1"
-        else:
-            why = f"child length is {child_len} (template asked 1)"
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: {leg} length readback",
+                operation="C_DeriveKey",
+                mechanism="CKM_XOR_BASE_AND_DATA",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=_DERIVE_SPEC,
+                summary=(
+                    f"{label}: {leg} specified-default child length is {child_len}, "
+                    "want 1 (min(data, base) per PKCS#11 v3.0 §2.43.6)"
+                ),
+                detail={"child_len": child_len, "expected_len": 1},
+            )
+        why = f"child length is {child_len} (template asked 1)"
         pytest.skip(f"{label}: {leg} 1-byte oracle untestable ({why})")
 
 
@@ -3220,11 +3320,13 @@ def _adopt_recovery_child(rs: Any, child: int, base: int, *, label: str, leg: st
     A null handle or the base handle back is a proved contradiction
     (fail WITHOUT destroying: the handle is nothing or the live
     base). Otherwise the child's CKA_LABEL must read back the attempt
-    label the template requested: a mismatch fails (the provider
-    accepted the label and returned something else), an unreadable
-    label voids the leg (ownership unproved: skip, never use, never
-    destroy), with undefined RVs failing and vendor RVs xfailing loud.
-    Returns the adopted child; never returns an unproved handle.
+    label the template requested: a read-back DIFFERENT value fails
+    (the provider accepted the label and returned something else); an
+    unreadable label voids the leg (ownership unproved: skip, never
+    use, never destroy) -- unreadable is not mismatching (R4-F2). A
+    refusal that still wrote bytes fails loudly (refusal-with-data).
+    Undefined RVs fail and vendor RVs xfail loud. Returns the adopted
+    child; never returns an unproved handle.
     """
     if not child or child == base:
         fail_as(
@@ -3270,10 +3372,28 @@ def _adopt_recovery_child(rs: Any, child: int, base: int, *, label: str, leg: st
         inherit_mechanism=False,
     )
     if claimed is MISSING_ATTRIBUTE:
-        mismatch = True
-    else:
-        mismatch = claimed != label and claimed != label.encode()
-    if mismatch:
+        # R4-F2: unreadable is not mismatching. Only a refusal that
+        # still wrote bytes fails here; every other unreadable shape
+        # voids the leg (the absence is already journaled above).
+        refusal = read.refusals.get(int(CKA_LABEL))
+        if refusal is not None and refusal.leaked_len is not None:
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=f"{label}: {leg} adoption readback",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=refusal.ckr,
+                summary=(
+                    f"{label}: {leg} child label readback answered "
+                    f"{ckr_name(refusal.ckr)} but still wrote {refusal.leaked_len} "
+                    "bytes into the template; refusing to use or destroy it"
+                ),
+                detail={"base": base, "child": child, "leaked_len": refusal.leaked_len},
+            )
+        pytest.skip(f"{label}: {leg} child label unreadable; ownership unproved")
+    expected_stamp = f"{label}:{leg}"
+    if claimed != expected_stamp and claimed != expected_stamp.encode():
         fail_as(
             "self_contradiction",
             kind="policy",
@@ -3290,6 +3410,34 @@ def _adopt_recovery_child(rs: Any, child: int, base: int, *, label: str, leg: st
     return child
 
 
+def _destroy_recovery_child(rs: Any, child: int, *, label: str, leg: str) -> None:
+    """Destroy an adopted recovery child, grading the teardown (R4-F2).
+
+    A refused destroy retains the child: fail loudly (a retained child
+    must never leak into the next leg). A harness-side teardown failure
+    (no provider RV at all) errors loudly instead of blaming the provider.
+    """
+    drv = destroy_quietly(rs.raw, rs.sh, child)
+    if drv is None:
+        raise RuntimeError(
+            f"{label}: {leg} child destroy failed without a provider RV (harness fault)"
+        )
+    if drv != int(CKR_OK):
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=f"{label}: {leg} teardown",
+            operation="C_DestroyObject",
+            inherit_mechanism=False,
+            actual=drv,
+            summary=(
+                f"{label}: {leg} adopted child destroy refused "
+                f"({ckr_name(drv)}); refusing to leak a retained child"
+            ),
+            detail={"child": child},
+        )
+
+
 def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     """Run one sealed-vs-control 1-byte recovery comparison (#54.3)."""
     if shape == "extract":
@@ -3298,23 +3446,30 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         expected = _RECOVERY_BASE[:1]
     elif shape == "xor_full":
         expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_FULL_DATA[0]])
-    elif shape in ("xor_short", "xor_short_default"):
+    elif shape in ("xor_short", "xor_short_default", "xor_short_len_omitted"):
         expected = bytes([_RECOVERY_BASE[0] ^ _RECOVERY_XOR_SHORT_DATA[0]])
     else:
         raise ValueError(f"unknown recovery shape {shape!r}")
 
-    def derive(base: int) -> tuple[int, int]:
+    def derive(base: int, *, leg: str) -> tuple[int, int]:
         child_attrs: dict[int, Any] = {
             CKA_CLASS: CKO_SECRET_KEY,
-            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
             CKA_TOKEN: False,
-            CKA_LABEL: label,
+            # R4-F2: fresh per-leg correlation -- a retained control child
+            # (or any same-case foreign object) can never satisfy the
+            # other leg's adoption.
+            CKA_LABEL: f"{label}:{leg}",
         }
+        # R4-F5: xor_short_default omits BOTH the type and the length
+        # (PKCS#11 v3.0 §2.43.6 = v3.2 §6.43.6): generic secret of
+        # min(data, base). The xor_short_len_omitted sealed leg omits
+        # only the length while keeping a variable-width type -- that
+        # deviant form must refuse (its control runs full-arity).
+        len_omitted = shape == "xor_short_len_omitted" and leg == "sealed"
         if shape != "xor_short_default":
-            child_attrs[CKA_VALUE_LEN] = _SHORT_CHILD_LEN
-        # R3F5: xor_short_default omits CKA_VALUE_LEN (provider default
-        # length on short input); the control length gate skips unless
-        # the default is 1 byte.
+            child_attrs[CKA_KEY_TYPE] = CKK_GENERIC_SECRET
+            if not len_omitted:
+                child_attrs[CKA_VALUE_LEN] = _SHORT_CHILD_LEN
         if shape == "extract":
             return _derive_byte_child(rs, _EXTRACT_NAME, [base], child_attrs)
         # NOTE: 32 zero bytes (not 1) so length-strict tokens accept the
@@ -3324,7 +3479,7 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
         # ones run the recovery comparison on short input.
         if shape == "xor_zeros":
             data = b"\x00" * 32
-        elif shape in ("xor_short", "xor_short_default"):
+        elif shape in ("xor_short", "xor_short_default", "xor_short_len_omitted"):
             data = _RECOVERY_XOR_SHORT_DATA
         else:
             data = _RECOVERY_XOR_FULL_DATA
@@ -3354,7 +3509,7 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     control_ok = False
     crv, cchild = -1, 0
     try:
-        crv, _raw_child = derive(cbase)
+        crv, _raw_child = derive(cbase, leg="control")
         if crv != int(CKR_OK):
             _fail_undefined_setup_rv(crv, label=label, operation="C_DeriveKey")
             pytest.skip(f"{label}: control derive refused ({ckr_name(crv)}); fixture unbuildable")
@@ -3383,8 +3538,10 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     finally:
         # R2A1/R3F2: only an ADOPTED derive output is destroyed; a
         # refused or unadopted derive never donates a handle to cleanup.
+        # R4-F2: the teardown RV is graded -- a retained control child
+        # fails here, before the sealed leg can ever see it.
         if crv == int(CKR_OK) and cchild:
-            destroy_quietly(rs.raw, rs.sh, cchild)
+            _destroy_recovery_child(rs, cchild, label=label, leg="control")
         destroy_quietly(rs.raw, rs.sh, cbase)
     try:
         sbase = import_secret_key_negotiated(
@@ -3405,16 +3562,28 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
     srv, schild = -1, 0
     try:
         _assert_recovery_sealed_or_skip(rs, sbase, label=label)
-        srv, _raw_child = derive(sbase)
+        srv, _raw_child = derive(sbase, leg="sealed")
         recovered: bool | None = False
         digest_op: str | None = None
         digest_rv: int | None = None
         if srv == int(CKR_OK):
             schild = _adopt_recovery_child(rs, _raw_child, sbase, label=label, leg="sealed")
+            if shape == "xor_short_len_omitted":
+                # The deviant form was accepted: grade the acceptance
+                # itself (never a protection verdict). The helper always
+                # raises; the adopted child is consumed (graded) inside it.
+                adopted = schild
+                schild = 0
+                _grade_len_omitted_accept(rs, adopted, label=label, expected=expected)
             try:
                 sfound, digest_op, digest_rv = _attempt_sealed_recovery(rs, schild, label=label)
             except _DigestLengthDefectError as exc:
                 _fail_digest_length_defect(exc, label=label, leg="sealed")
+            # R4-F2: the sealed child is fully consumed (the digest oracle
+            # is done with it); destroy it BEFORE judging so a refused
+            # teardown fails loudly instead of hiding behind the verdict.
+            _destroy_recovery_child(rs, schild, label=label, leg="sealed")
+            schild = 0
             if digest_op is None:
                 # Only the independently expected byte counts as a
                 # recovery; any other derived byte is not the sealed
@@ -3429,6 +3598,7 @@ def _run_byte_recovery_case(rs: Any, *, shape: str, label: str) -> None:
             label=label,
             digest_op=digest_op,
             digest_rv=digest_rv,
+            expect_refusal=(shape == "xor_short_len_omitted"),
         )
     finally:
         if srv == int(CKR_OK) and schild:
@@ -3503,11 +3673,23 @@ class TestByteRecoveryOracle:
         _run_byte_recovery_case(p11_raw_session, shape="xor_short", label="qc12b-rec-xorshort")
 
     def test_xor_short_default_1byte_recovery(self, p11_raw_session: Any) -> None:
-        """Short input with omitted CKA_VALUE_LEN (R3F5 provider-default route)."""
+        """Short input with the specified default (R4-F5: both type and length omitted)."""
         if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
             pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
         _run_byte_recovery_case(
             p11_raw_session, shape="xor_short_default", label="qc12b-rec-xorshortdef"
+        )
+
+    def test_xor_short_len_omitted_must_refuse(self, p11_raw_session: Any) -> None:
+        """Short input, length omitted but variable-width type kept (R4-F5).
+
+        PKCS#11 v3.0 §2.43.6 requires an error for this deviant form;
+        refusal is the conforming outcome, acceptance an honest deviation.
+        """
+        if not p11_raw_session.has_mechanism("XOR_BASE_AND_DATA"):
+            pytest.skip("CKM_XOR_BASE_AND_DATA not supported")
+        _run_byte_recovery_case(
+            p11_raw_session, shape="xor_short_len_omitted", label="qc12b-rec-xorshortlen"
         )
 
     def test_xor_zeros_1byte_recovery(self, p11_raw_session: Any) -> None:

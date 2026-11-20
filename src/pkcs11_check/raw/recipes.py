@@ -98,7 +98,6 @@ from .types_std import (
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
-    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
@@ -916,21 +915,25 @@ def create_object(
     return handle.value
 
 
-def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> int:
-    """Destroy an object, returning the raw CK_RV (R3F2).
+def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> int | None:
+    """Destroy an object, returning the raw CK_RV (R3F2, R4-F2).
 
     Still ignores clean teardown errors and surfaces provider faults;
     returning the RV (instead of discarding it) lets owned-handle
-    cleanup observe a refused destroy rather than leak silently.
+    cleanup observe a refused destroy rather than leak silently. A
+    harness-side failure (dead binding, bad handle shape -- anything
+    that never produced a provider RV) returns None, distinct from
+    every CK_RV: inventing CKR_FUNCTION_FAILED for it would report a
+    returned refusal the provider never made.
     """
     try:
         return int(raw.C_DestroyObject(session, handle))
     except OSError as exc:
         if ctypes_access_violation_code(exc) is not None:
             raise
-        return int(CKR_FUNCTION_FAILED)
+        return None
     except (AttributeError, ctypes.ArgumentError):
-        return int(CKR_FUNCTION_FAILED)
+        return None
 
 
 def encrypt_single(

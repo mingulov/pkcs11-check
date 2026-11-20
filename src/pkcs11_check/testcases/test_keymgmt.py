@@ -84,6 +84,13 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._adoption import (
+    OwnershipUnprovedError,
+    adopt_correlated_output,
+    compare_attempt_identity,
+    read_attempt_identity,
+    read_source_expectations,
+)
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
@@ -673,6 +680,9 @@ def _import_copy_mutability_source(rs: Any, *, sealed: bool = False) -> int:
                 CKA_SENSITIVE: sealed,
                 CKA_COPYABLE: True,
                 CKA_TOKEN: False,
+                # R4-F1: copies inherit the source label, which the
+                # guess/control/third adoption correlates against.
+                CKA_LABEL: "qc3a-copy-source-aes",
             },
         )
     except CkrAssertionError as exc:
@@ -1006,6 +1016,9 @@ def _import_sealed_rsa_or_xfail(rs: Any, components: Mapping[str, bytes], *, lab
                 CKA_SENSITIVE: True,
                 CKA_COPYABLE: True,
                 CKA_TOKEN: False,
+                # R4-F1: copies inherit the source label, which the
+                # guess adoption correlates against.
+                CKA_LABEL: "qc3a-copy-source-rsa",
             },
             purpose="sealed RSA guess-confirm source",
             preserve_policy_attrs=True,
@@ -1171,6 +1184,47 @@ def _sealed_exponent_unreadable_or_skip(rs: Any, key: int, *, label: str) -> Non
     )
 
 
+def _delta_created_handles(
+    rs: Any, delta: frozenset[int], *, expect: dict[str, Any], label: str
+) -> set[int]:
+    """Partition a refused-leg delta into attempt-created handles (R4-F1).
+
+    A delta handle matching the source identity is the attempt's leaked
+    product; foreign or unreadable handles are unproved (mere visibility
+    never proves creation -- and never fails).
+    """
+    fields = tuple(name for name, want in expect.items() if want is not None)
+    assert fields, "token-None expectations never reach delta grading"
+    matched: set[int] = set()
+    for handle in sorted(delta):
+        observed = read_attempt_identity(
+            rs, handle, label=label, operation="C_CopyObject", fields=fields
+        )
+        if compare_attempt_identity(observed, expect) == "match":
+            matched.add(handle)
+    return matched
+
+
+def _adopt_copy_or_skip(rs: Any, handle: int, *, label: str, expect: dict[str, Any]) -> None:
+    """Adopt a novel copy output; void the legs when unproved (R4-F1)."""
+    try:
+        adopt_correlated_output(
+            rs,
+            handle,
+            label=label,
+            operation="C_CopyObject",
+            expect_label=expect["label"],
+            expect_token=expect["token"],
+            expect_class=expect["class"],
+            expect_key_type=expect["key_type"],
+        )
+    except OwnershipUnprovedError as exc:
+        fields = ", ".join(f"{name}: {why}" for name, why in exc.fields.items())
+        pytest.skip(
+            f"{label}: accepted copy ownership unproved ({fields}); refusing to use or destroy it"
+        )
+
+
 def _run_guess_legs(
     rs: Any,
     original: int,
@@ -1205,6 +1259,20 @@ def _run_guess_legs(
     created: list[bool | None] = []
     inventory_rvs: list[int | None] = []
     deltas: list[frozenset[int]] = []
+    source_expect: dict[str, Any] | None = None
+
+    def _expect() -> dict[str, Any]:
+        # R4-F1: source identity is read lazily (refused legs with
+        # empty deltas need no reads) and cached across the legs.
+        nonlocal source_expect
+        if source_expect is None:
+            source_expect = read_source_expectations(
+                rs, original, label=label, operation="C_CopyObject"
+            )
+            if source_expect["token"] is None:
+                pytest.skip(f"{label}: guess source session-ness unprovable; adoption impossible")
+        return source_expect
+
     for guess in guesses:
         before, before_rv = _inventory_object_set(rs, label=label)
         try:
@@ -1224,17 +1292,26 @@ def _run_guess_legs(
                 deltas.append(frozenset())
             else:
                 # R3F3: the delta SET is retained (not just its
-                # emptiness) so the creation terminal names its
-                # evidence; a nonempty delta across complete
-                # inventories proves creation (single session: nothing
-                # else runs between them).
+                # emptiness) so terminals name their evidence. R4-F1: a
+                # nonempty delta across complete inventories proves
+                # creation only when correlated -- a foreign token object
+                # can become visible mid-leg, so each delta handle's
+                # identity must match the source before it proves a leak.
                 delta = frozenset(set(after) - set(before))
-                created.append(bool(delta))
+                if not delta:
+                    created.append(False)
+                else:
+                    matched = _delta_created_handles(rs, delta, expect=_expect(), label=label)
+                    created.append(True if matched else None)
                 inventory_rvs.append(None)
                 deltas.append(delta)
             continue
         excs.append(None)
-        if not copy or copy == original or (before is not None and copy in before):
+        if before is None:
+            # R4-F1: no baseline, no adoption -- an accepted copy naming
+            # an unprovable handle is never used nor destroyed.
+            pytest.skip(f"{label}: accepted guess copy with a refused baseline; ownership unproved")
+        if not copy or copy == original or copy in before:
             # A1 (R3F2): an accepted copy that is null, aliases the
             # source, or predates the attempt inventory is a proved
             # contradiction; fail WITHOUT destroying, or cleanup would
@@ -1258,6 +1335,10 @@ def _run_guess_legs(
                 ),
                 detail={"source": original, "copy": copy},
             )
+        # R4-F1: novelty plus a successful baseline is still not
+        # ownership (a foreign token object can be novel too) -- the
+        # handle's identity must match the attempt before use/destroy.
+        _adopt_copy_or_skip(rs, copy, label=label, expect=_expect())
         try:
             uses.append(preserves(rs, copy, baseline))
         finally:
@@ -1300,7 +1381,11 @@ def _copy_unchanged_control_or_skip(
         pytest.skip(
             f"{label}: empty-template copy refused ({ckr_name(exc.rv)}); verdict would be vacuous"
         )
-    if not control or control == original or (before is not None and control in before):
+    if before is None:
+        # R4-F1: no baseline, no adoption -- an accepted control naming
+        # an unprovable handle is never used nor destroyed.
+        pytest.skip(f"{label}: accepted control copy with a refused baseline; ownership unproved")
+    if not control or control == original or control in before:
         # R2B1/R3F3: the ownership guard covers the control too; a
         # null, aliased, or pre-existing control duplicate fails
         # WITHOUT destroying the source (or a foreign object).
@@ -1323,6 +1408,14 @@ def _copy_unchanged_control_or_skip(
             ),
             detail={"source": original, "copy": control},
         )
+    expect = read_source_expectations(rs, original, label=label, operation="C_CopyObject")
+    if expect["token"] is None:
+        pytest.skip(f"{label}: guess source session-ness unprovable; adoption impossible")
+    # R4-F1: novelty plus a successful baseline is still not ownership.
+    # Controls prove ownership only (label plus session-ness).
+    expect["class"] = None
+    expect["key_type"] = None
+    _adopt_copy_or_skip(rs, control, label=label, expect=expect)
     try:
         if preserves is not None:
             outcome = preserves(rs, control, baseline)
@@ -1340,7 +1433,7 @@ def _copy_unchanged_control_or_skip(
 def _probe_third_value(
     rs: Any, original: int, attr: int, value: bytes, *, label: str
 ) -> tuple[str, int | None]:
-    """Run the post-legs third-value probe; never skips (R3F3).
+    """Run the post-legs third-value probe; never skips (R3F3, R4-F1).
 
     The probe runs AFTER both guess legs: a refused third value must
     not void the pair (a value-sensitive oracle refuses it too -- the
@@ -1348,14 +1441,24 @@ def _probe_third_value(
     Returns ("accepted", None) or ("refused", rv) for the judge, which
     qualifies an identical-refusals pair as uniform (third refused)
     or selective (third accepted). A null, aliased, or pre-existing
-    output fails WITHOUT destroying.
+    output fails WITHOUT destroying. An accepted output with unproved
+    ownership (refused baseline, unreadable identity) leaks deliberately:
+    the acceptance signal is kept (the probe never skips) but the handle
+    is never destroyed; a mismatched identity fails WITHOUT destroying.
     """
     before, _before_rv = _inventory_object_set(rs, label=label)
     try:
         control = copy_object(rs.raw, rs.sh, original, {attr: value})
     except CkrAssertionError as exc:
         return ("refused", exc.rv)
-    if not control or control == original or (before is not None and control in before):
+    if before is None:
+        note(
+            f"{label}: third-value copy accepted with a refused baseline; "
+            "ownership unproved, handle leaked deliberately",
+            ComplianceLevel.STANDARD,
+        )
+        return ("accepted", None)
+    if not control or control == original or control in before:
         if not control:
             cause = "a null handle"
         elif control == original:
@@ -1374,6 +1477,36 @@ def _probe_third_value(
             ),
             detail={"source": original, "copy": control},
         )
+    expect = read_source_expectations(rs, original, label=label, operation="C_CopyObject")
+    if expect["token"] is None:
+        note(
+            f"{label}: third-value copy accepted with an unprovable source; "
+            "ownership unproved, handle leaked deliberately",
+            ComplianceLevel.STANDARD,
+        )
+        return ("accepted", None)
+    # The probe proves ownership only (label plus session-ness).
+    expect["class"] = None
+    expect["key_type"] = None
+    try:
+        adopt_correlated_output(
+            rs,
+            control,
+            label=label,
+            operation="C_CopyObject",
+            expect_label=expect["label"],
+            expect_token=expect["token"],
+            expect_class=expect["class"],
+            expect_key_type=expect["key_type"],
+        )
+    except OwnershipUnprovedError as exc:
+        fields = ", ".join(f"{name}: {why}" for name, why in exc.fields.items())
+        note(
+            f"{label}: third-value copy accepted with unproved identity ({fields}); "
+            "handle leaked deliberately",
+            ComplianceLevel.STANDARD,
+        )
+        return ("accepted", None)
     destroy_quietly(rs.raw, rs.sh, control)
     return ("accepted", None)
 
@@ -1450,6 +1583,7 @@ class TestCopyForbiddenMutation:
         original = _import_copy_mutability_source(rs)
         try:
             baseline_ct = _encrypt_baseline_or_xfail(rs, original, label=label)
+            before, _before_rv = _inventory_object_set(rs, label=label)
             try:
                 copy = copy_object(rs.raw, rs.sh, original, {CKA_VALUE: PROBE_INJECTED_VALUE})
             except CkrAssertionError as exc:
@@ -1460,6 +1594,33 @@ class TestCopyForbiddenMutation:
                     operation="C_CopyObject",
                 )
                 return
+            # R4-F1 variant: the direct copy adopts only a correlated
+            # handle (baseline + attempt identity), like the guess legs.
+            if before is None:
+                pytest.skip(f"{label}: accepted copy with a refused baseline; ownership unproved")
+            if not copy or copy == original or copy in before:
+                if not copy:
+                    cause = "a null handle"
+                elif copy == original:
+                    cause = "the source handle"
+                else:
+                    cause = "a pre-existing handle"
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label=label,
+                    operation="C_CopyObject",
+                    inherit_mechanism=False,
+                    actual=int(CKR_OK),
+                    summary=(
+                        f"{label}: accepted copy returned {cause} ({copy}); refusing to destroy it"
+                    ),
+                    detail={"source": original, "copy": copy},
+                )
+            expect = read_source_expectations(rs, original, label=label, operation="C_CopyObject")
+            if expect["token"] is None:
+                pytest.skip(f"{label}: guess source session-ness unprovable; adoption impossible")
+            _adopt_copy_or_skip(rs, copy, label=label, expect=expect)
             try:
                 check_material_preserved(
                     rs,
