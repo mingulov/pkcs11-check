@@ -44,6 +44,7 @@ from pkcs11_check.core._counters_durability import (
     PROBE_SIDECAR_ENV,
     PROBE_UNIT_ENV,
     CounterPersistenceError,
+    _prune_sidecar_tmps,
     _replay_probe_tmp_rows,
     durability_dir,
     mark_probe_consumed,
@@ -57,6 +58,7 @@ from pkcs11_check.core.call_counters import (
     get_worker_uuid,
     ingest_child_evidence,
     note_lost_probe,
+    registration_info,
 )
 from pkcs11_check.core.counters_schema import mint_filename_nonce
 from pkcs11_check.core.loader import SUPPORTED_INTERFACES
@@ -195,42 +197,47 @@ def _read_probe_json(path: str | None) -> dict[str, Any] | None | _UnreadableEvi
     return data if isinstance(data, dict) else None
 
 
-def _delete_probe_sidecar(path: str | None) -> bool:
-    """Remove a probe sidecar and its rewrite tmps (never raises).
+def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool:
+    """Remove a probe sidecar and its adjudicated rewrite tmps (never raises).
 
     True when the sidecar is gone or absent. A missing file counts as
     deleted: the sidecar writer suppresses I/O failures, so valid
     coverage may arrive with no sidecar at all, and that must not
     escalate into a consumed-marker rename of nothing. Rewrite tmps
-    go with the sidecar (#88R3: leaving them strands evidence no
-    later pass references); tmp failures never flip the sidecar's
-    verdict (same directory, same permissions -- independent tmp
-    failure is ~impossible, and a stranded tmp is debris, not loss).
+    triage through the shared collector prune (#88R3): unreadable
+    tmps and complete-with-returns tmps without a usable baseline
+    retain for retry/forensics (named loudly), everything else goes
+    with the sidecar. ``force_tmps`` deletes tmps unconditionally
+    for superseded evidence (a receipt-bound exit coverage already
+    subsumes every mid-run tmp).
     """
     if not path:
         return True
+    if force_tmps:
+        parent = os.path.dirname(path) or "."
+        try:
+            names = os.listdir(parent)
+        except OSError:
+            names = []
+        prefix = os.path.basename(path) + ".tmp-"
+        for name in names:
+            if name.startswith(prefix):
+                try:
+                    os.unlink(os.path.join(parent, name))
+                except OSError:
+                    pass
+    else:
+        _prune_sidecar_tmps(Path(path))
     try:
         os.unlink(path)
     except FileNotFoundError:
-        pass
+        return True
     except OSError:
         return False
-    parent = os.path.dirname(path) or "."
-    try:
-        names = os.listdir(parent)
-    except OSError:
-        return True
-    prefix = os.path.basename(path) + ".tmp-"
-    for name in names:
-        if name.startswith(prefix):
-            try:
-                os.unlink(os.path.join(parent, name))
-            except OSError:
-                pass
     return True
 
 
-def _commit_probe_sidecar(path: str | None) -> None:
+def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None:
     """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
 
     The parent checkpoint must be durable before the probe's own evidence
@@ -253,7 +260,7 @@ def _commit_probe_sidecar(path: str | None) -> None:
     flush_counters()
     if path is None:
         return
-    if _delete_probe_sidecar(path):
+    if _delete_probe_sidecar(path, force_tmps=force_tmps):
         return
     mark_probe_consumed(path)
 
@@ -304,7 +311,8 @@ def ingest_probe_payload(
                 lost_keys=data.get("lost_keys", ()),
                 source=source,
             )
-            _commit_probe_sidecar(sidecar)
+            # Exit coverage subsumes every mid-run tmp (#88R3).
+            _commit_probe_sidecar(sidecar, force_tmps=True)
             return "folded"
         if isinstance(counters, (list, tuple)) and receipt is not None:
             validated = validate_probe_receipt(receipt, seq)
@@ -320,7 +328,8 @@ def ingest_probe_payload(
                     lost_keys=data.get("lost_keys", ()),
                     source=source,
                 )
-                _commit_probe_sidecar(sidecar)
+                # Exit coverage subsumes every mid-run tmp (#88R3).
+                _commit_probe_sidecar(sidecar, force_tmps=True)
                 return "folded"
     fallback = _read_probe_json(sidecar)
     if isinstance(fallback, _UnreadableEvidence):
@@ -342,12 +351,18 @@ def ingest_probe_payload(
             # (#88R3). Path freshness binds the run (the slot path carries
             # a per-spawn nonce), so no producer stamps are needed.
             assert sidecar is not None  # fallback read implies a path
+            info = registration_info()
             fallback_counters = _replay_probe_tmp_rows(
                 Path(sidecar),
                 validated_fallback[0],
                 validated_fallback[1],
                 fallback,
                 list(fallback_counters),
+                producer_run=info["run_id"] if info else None,
+                producer_unit=info["unit"] if info else None,
+                orphan_pid=fallback.get("pid"),
+                orphan_birth=fallback.get("birth_token"),
+                producer_uuid=get_worker_uuid(),
             )
             # The consumed identity rides inside the ingest transaction:
             # no checkpoint ever carries absorbed counts without their

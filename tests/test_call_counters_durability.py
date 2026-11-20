@@ -618,6 +618,19 @@ class TestProbeChannel:
         assert not sidecar.exists()
         assert not tmp.exists()
 
+    def test_lost_branch_retains_baseless_complete_tmp(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R3F1: no baseline keeps a complete tmp for forensics."""
+        from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+        seq = call_counters.assign_probe_seq()
+        cov = tmp_path / "cov.json"
+        cov.write_text('{"call_log": ', encoding="utf-8")
+        sidecar = tmp_path / "probe-9.json"
+        tmp = _plant_probe_tmp(sidecar, _probe_tmp_payload(_UUID_B, seq, [["m", "C_Digest", 0, 1]]))
+        with pytest.warns(UserWarning, match="retained"):
+            assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "lost"
+        assert tmp.exists()
+
     def test_probe_sidecar_with_wrong_seq_is_not_evidence(
         self, engaged: Path, tmp_path: Path
     ) -> None:
@@ -1630,6 +1643,131 @@ class TestSweepAndFence:
         )
         assert Path(planted["registry"]).exists()
         assert Path(planted["sidecar"]).exists()
+
+    def test_sweep_torn_registry_shields_collected_sidecar(self, engaged: Path) -> None:
+        """#88R3F5: a present (even torn) registry shields its sidecar."""
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=os.getpid(),
+            birth=durability.birth_token_for_pid(os.getpid()),
+            run_id="OLD",
+            in_progress=_counts_block(5),
+        )
+        Path(planted["registry"]).write_text('{"worker_uuid": "torn', encoding="utf-8")
+        swept = durability.sweep_orphans(
+            engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
+        )
+        assert swept["removed"] == 0
+        assert Path(planted["registry"]).exists()
+        assert Path(planted["sidecar"]).exists()
+
+    def test_barrier_torn_registry_with_sidecar_reserves_uuid(self, engaged: Path) -> None:
+        """#88R3F5: every deferred producer rides the sweep skip set."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="OLD",
+            in_progress=_counts_block(5),
+        )
+        Path(planted["registry"]).write_text('{"worker_uuid": "torn', encoding="utf-8")
+        with pytest.warns(UserWarning, match="torn registry"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["retained_uuids"] == [_UUID_A]
+
+    def test_sweep_unreadable_probe_baseline_retained(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R3F5: probe I/O failure retains the baseline and its tmp."""
+        (engaged / "registrations").mkdir(parents=True, exist_ok=True)
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=3)
+        tmp = _plant_probe_tmp(
+            orphan,
+            _probe_tmp_payload(_UUID_B, 3, [["m", "C_Digest", None, 2]]),
+        )
+        real_read_text = Path.read_text
+
+        def _eperm_probe(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self.name == orphan.name:
+                raise PermissionError("injected probe EPERM")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _eperm_probe)
+        swept = durability.sweep_orphans(engaged, current_run=_RUN)
+        assert swept["removed"] == 0
+        assert orphan.exists()
+        assert tmp.exists()
+
+    def test_sweep_collected_sidecar_co_deletes_tmps(self, engaged: Path) -> None:
+        """#88R3F5: authoritative sweep leaves no stranded tmps behind."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="OLD",
+            in_progress=_counts_block(5),
+            journal=[{"window": 1}],
+        )
+        sidecar = Path(planted["sidecar"])
+        Path(planted["registry"]).unlink()
+        complete = _plant_tmp(
+            sidecar, _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid)
+        )
+        torn_tmp = _plant_tmp(sidecar, None, raw="torn-bytes", nonce="zzz")
+        swept = durability.sweep_orphans(
+            engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
+        )
+        assert swept["removed"] == 4, "sidecar + journal + both tmps"
+        assert not sidecar.exists()
+        assert not complete.exists()
+        assert not torn_tmp.exists()
+
+    def test_sweep_torn_probe_prunes_tmps(self, engaged: Path) -> None:
+        """#88R3F5: a torn probe baseline dies; complete tmps stay loudly."""
+        (engaged / "registrations").mkdir(parents=True, exist_ok=True)
+        orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=3)
+        torn_tmp = _plant_probe_tmp(orphan, None, raw="torn-bytes", pid=999)
+        complete = _plant_probe_tmp(
+            orphan,
+            _probe_tmp_payload(_UUID_B, 3, [["m", "C_Digest", 0, 2]]),
+            pid=1000,
+        )
+        orphan.write_text('{"worker_uuid": "torn', encoding="utf-8")
+        with pytest.warns(UserWarning, match="unadjudicated tmp"):
+            swept = durability.sweep_orphans(engaged, current_run=_RUN)
+        assert swept["removed"] == 2, "torn baseline + torn tmp"
+        assert not orphan.exists()
+        assert not torn_tmp.exists()
+        assert complete.exists()
+
+    def test_sweep_mutual_debris_converges(self, engaged: Path) -> None:
+        """#88R3F5: torn registry + torn sidecar clear in two passes."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            run_id="OLD",
+            in_progress=_counts_block(5),
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        registry.write_text('{"worker_uuid": "torn', encoding="utf-8")
+        sidecar.write_text("torn-bytes", encoding="utf-8")
+        durability.sweep_orphans(engaged, current_run=_RUN, collected_runs=frozenset({"OLD"}))
+        assert not sidecar.exists()
+        assert registry.exists()
+        second = durability.sweep_orphans(
+            engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
+        )
+        assert not registry.exists()
+        assert second["removed"] == 1
 
     def test_fence_terminates_a_live_writer(self, engaged: Path) -> None:
         proc = subprocess.Popen(
@@ -8131,6 +8269,48 @@ def test_resume_torn_gap_names_in_flight(engaged: Path) -> None:
     ]
 
 
+def test_consume_retains_unreadable_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R3F1: an unreadable tmp survives consumption (retry later)."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    tmp = _plant_tmp(
+        planted["sidecar"], _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid)
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_tmp(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name.endswith(".tmp-999-abc"):
+            raise PermissionError("injected tmp EPERM")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _eperm_tmp)
+    with pytest.warns(UserWarning, match="retained"):
+        records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+    assert tmp.exists()
+
+
+def test_consume_retains_baseless_complete_tmp(tmp_path: Path) -> None:
+    """#88R3F1: a complete tmp without a baseline is kept for forensics."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=birth)
+    sidecar = Path(planted["sidecar"])
+    assert not sidecar.exists()
+    tmp = _plant_tmp(sidecar, _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid))
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert partials == []
+    assert tmp.exists()
+
+
 def test_unreadable_registry_uuid_taxonomy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """#88R2: reservation fires on I/O errors, never on torn content."""
     reg = tmp_path / f"{_UUID_A}.json"
@@ -8525,6 +8705,76 @@ def test_orphan_tmp_divergent_conflicts(tmp_path: Path) -> None:
     assert lost[0]["end_state"] == "conflict"
 
 
+def test_orphan_tmp_unkeyed_ingest_skipped(tmp_path: Path) -> None:
+    """#88R3F2: unkeyed new entries never donate their returns."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    unkeyed = _entry_only_block(2)
+    unkeyed["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "0": {"name": "CKR_OK", "count": 1}
+    }
+    _plant_tmp(planted["sidecar"], _tmp_payload(_UUID_A, unkeyed, pid=pid))
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+    assert partials[0]["in_flight"] == [
+        {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 1}
+    ]
+
+
+def test_orphan_tmp_lost_keys_dont_block_replay(tmp_path: Path) -> None:
+    """#88R3F2: new loss metadata never blocks a genuine return replay."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    payload = _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid)
+    payload["lost_keys"] = [{"parent_uuid": _UUID_B, "probe_seq": 3}]
+    _plant_tmp(planted["sidecar"], payload)
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    leaf = _fn_leaf(partials[0], "C_Digest")
+    assert leaf["by_rv"] == {"0": {"name": "CKR_OK", "count": 1}}, leaf
+    assert partials[0].get("lost_keys") == [{"parent_uuid": _UUID_B, "probe_seq": 3}]
+
+
+def test_probe_tmp_population_mismatch_skipped(tmp_path: Path) -> None:
+    """#88R3F2: probe replay needs matching entry populations too."""
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=birth)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 1]],
+        identity=_f2_identity(_UUID_A),
+    )
+    _plant_probe_tmp(
+        orphan,
+        _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", None, 1], ["m", "C_Digest", 0, 1]]),
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["total_calls"] == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+    assert partials[0]["in_flight"] == [
+        {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 1}
+    ]
+
+
 def test_orphan_tmp_ingest_checkpoint_skipped(tmp_path: Path) -> None:
     """#88R3F2: a tmp with new coverage never replays (orphan folds)."""
     pid, birth = _dead_pid_with_birth()
@@ -8547,8 +8797,64 @@ def test_orphan_tmp_ingest_checkpoint_skipped(tmp_path: Path) -> None:
     ]
 
 
-def test_orphan_tmp_missing_committed_ignored(tmp_path: Path) -> None:
-    """#88R1: with no committed sidecar a tmp cannot replay (fail-closed)."""
+def test_orphan_tmp_scalar_maxes_across_candidates(tmp_path: Path) -> None:
+    """#88R3F3: tied returns still adopt the newest loss scalar."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(1),
+    )
+    payload_a = _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid)
+    payload_a["probes_lost"] = 1
+    payload_b = _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid)
+    payload_b["probes_lost"] = 3
+    _plant_tmp(planted["sidecar"], payload_a, nonce="aaa")
+    _plant_tmp(planted["sidecar"], payload_b, nonce="bbb")
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {"0": {"name": "CKR_OK", "count": 1}}
+    assert partials[0]["probes_lost"] == 3
+
+
+def test_orphan_tmp_divergent_quarantined(tmp_path: Path) -> None:
+    """#88R3F3: divergent tmps are preserved, not consumed."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_entry_only_block(2),
+    )
+    block_a = _entry_only_block(2)
+    block_a["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "0": {"name": "CKR_OK", "count": 2}
+    }
+    block_b = _entry_only_block(2)
+    block_b["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "1": {"name": "CKR_CANCEL", "count": 2}
+    }
+    _plant_tmp(planted["sidecar"], _tmp_payload(_UUID_A, block_a, pid=pid), nonce="aaa")
+    _plant_tmp(planted["sidecar"], _tmp_payload(_UUID_A, block_b, pid=pid), nonce="bbb")
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
+    assert len(lost) == 1
+    assert lost[0]["end_state"] == "conflict"
+    quarantined = sorted(tmp_path.glob("*.quarantined-*"))
+    assert len(quarantined) == 2, [path.name for path in tmp_path.iterdir()]
+    assert list(tmp_path.glob("*.tmp-*")) == []
+
+
+def test_orphan_tmp_missing_committed_retained(
+    tmp_path: Path, recwarn: pytest.WarningsRecorder
+) -> None:
+    """#88R1 (superseded by #88R3F1): with no committed sidecar a tmp cannot
+    replay, but it is retained loudly for forensics (it may belong to a
+    later incarnation), never deleted or replayed blindly."""
     pid, birth = _dead_pid_with_birth()
     planted = _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=birth)
     sidecar = Path(planted["sidecar"])
@@ -8559,7 +8865,11 @@ def test_orphan_tmp_missing_committed_ignored(tmp_path: Path) -> None:
     assert partials == []
     lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
     assert len(lost) == 1
-    assert list(tmp_path.glob("*.tmp-*")) == []
+    assert len(list(tmp_path.glob("*.tmp-*"))) == 1
+    assert any(
+        "retained" in str(warn.message) and "unadjudicated" in str(warn.message)
+        for warn in recwarn.list
+    )
 
 
 def test_torn_tmp_names_in_flight_row(tmp_path: Path) -> None:
@@ -8777,6 +9087,64 @@ def test_probe_tmp_wrong_run_ignored(tmp_path: Path) -> None:
     ]
 
 
+def test_probe_tmp_bool_seq_ignored(tmp_path: Path) -> None:
+    """#88R3F6: a JSON true never equals sequence 1."""
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=birth)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=1,
+        counters=[["m", "C_Digest", None, 1]],
+        identity=_f2_identity(_UUID_A),
+    )
+    payload = _probe_tmp_payload(_UUID_B, True, [["m", "C_Digest", 0, 1]])
+    _plant_probe_tmp(orphan, payload)
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+
+
+def test_probe_tmp_foreign_parent_legacy_orphan_ignored(tmp_path: Path) -> None:
+    """#88R3F6: a legacy orphan cannot launder a cross-producer tmp."""
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=birth)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 1]],
+    )
+    _plant_probe_tmp(
+        orphan,
+        _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 1]], parent_uuid=_UUID_B),
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+
+
+def test_orphan_tmp_bool_attempt_ignored(tmp_path: Path) -> None:
+    """#88R3F6: a JSON true never equals attempt 1."""
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        tmp_path,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        attempt=1,
+        in_progress=_entry_only_block(1),
+    )
+    payload = _tmp_payload(_UUID_A, _counts_block(1, fn="C_Digest"), pid=pid, attempt=True)
+    _plant_tmp(planted["sidecar"], payload)
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
+
+
 def test_probe_tmp_wrong_unit_ignored(tmp_path: Path) -> None:
     """#88R3F6: a probe tmp from another unit never replays."""
     pid, birth = _dead_pid_with_birth()
@@ -8819,6 +9187,9 @@ def test_probe_tmp_divergent_warns_and_keeps_orphan(tmp_path: Path) -> None:
     assert partials[0]["in_flight"] == [
         {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 2}
     ]
+    quarantined = sorted(tmp_path.glob("probe-*.quarantined-*"))
+    assert len(quarantined) == 2, [path.name for path in tmp_path.iterdir()]
+    assert list(tmp_path.glob("probe-*.tmp-*")) == []
 
 
 def test_probe_sidecar_stamps_writer_incarnation(tmp_path: Path) -> None:
@@ -8911,6 +9282,118 @@ def test_unfenceable_probe_defers_whole_producer(
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=30)
+
+
+def test_deferred_probe_collects_after_child_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R3F4: pass 2 collects a deferred parent + probe coherently."""
+    proc = _live_sleeper()
+    try:
+        birth = durability.birth_token_for_pid(proc.pid)
+        if birth is None:
+            pytest.skip("birth tokens unavailable on this platform")
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=424243)
+        orphan = _plant_probe_orphan(
+            tmp_path,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=proc.pid,
+            birth=birth,
+        )
+
+        def _fence_like_reality(pid: int, birth: int, timeout: float) -> bool:
+            return proc.poll() is not None
+
+        monkeypatch.setattr(durability, "_terminate_verified", _fence_like_reality)
+        with pytest.warns(UserWarning, match="deferred"):
+            first = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        assert first == []
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        proc.kill()
+        assert proc.wait(timeout=30) is not None
+        second = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        partials = [rec for rec in second if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert _fn_leaf(partials[0], "C_Digest")["calls"] == 1
+        assert not Path(planted["registry"]).exists()
+        assert not orphan.exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+
+
+def test_live_writer_without_birth_defers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R3F4: a present pid with unverifiable identity stays unresolved."""
+    proc = _live_sleeper()
+    try:
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=424243)
+        orphan = _plant_probe_orphan(
+            tmp_path,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=proc.pid,
+            birth=None,
+        )
+        tmp = _plant_probe_tmp(
+            orphan,
+            _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 1]]),
+        )
+        signaled: list[tuple[int, int]] = []
+        real_terminate = durability._terminate_verified
+
+        def _spy(pid: int, birth: int, timeout: float) -> bool:
+            signaled.append((pid, birth))
+            return real_terminate(pid, birth, timeout)
+
+        monkeypatch.setattr(durability, "_terminate_verified", _spy)
+        with pytest.warns(UserWarning, match="deferred"):
+            records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        assert records == []
+        assert signaled == [], "unverifiable writers are never signaled"
+        assert proc.poll() is None
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        assert tmp.exists()
+        proc.kill()
+        assert proc.wait(timeout=30) is not None
+        second = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+        partials = [rec for rec in second if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert _fn_leaf(partials[0], "C_Digest")["calls"] == 1
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=30)
+
+
+def test_dead_writer_without_birth_proceeds(tmp_path: Path) -> None:
+    """#88R3F4: a proven-dead pid needs no birth token to collect."""
+    pid, _ = _dead_pid_with_birth()
+    planted = _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=424243)
+    orphan = _plant_probe_orphan(
+        tmp_path,
+        parent_uuid=_UUID_A,
+        seq=0,
+        counters=[["m", "C_Digest", None, 1]],
+        identity=_f2_identity(_UUID_A),
+        pid=pid,
+        birth=None,
+    )
+    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert _fn_leaf(partials[0], "C_Digest")["calls"] == 1
+    assert not Path(planted["registry"]).exists()
+    assert not orphan.exists()
 
 
 def test_committed_path_never_fences_live_probe(
@@ -9019,29 +9502,6 @@ def test_probe_tmp_pid_mismatch_ignored(tmp_path: Path) -> None:
     partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
     assert len(partials) == 1
     assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
-
-
-def test_probe_tmp_phantom_entry_not_adopted(tmp_path: Path) -> None:
-    """#88: probe tmp entries never become calls (returns replay only)."""
-    pid, birth = _dead_pid_with_birth()
-    _plant_producer(tmp_path, uuid=_UUID_A, pid=pid, birth=birth)
-    orphan = _plant_probe_orphan(
-        tmp_path,
-        parent_uuid=_UUID_A,
-        seq=0,
-        counters=[["m", "C_Digest", None, 1]],
-        identity=_f2_identity(_UUID_A),
-    )
-    _plant_probe_tmp(
-        orphan,
-        _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", None, 1], ["m", "C_Digest", 0, 1]]),
-    )
-    records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
-    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
-    assert len(partials) == 1
-    assert partials[0]["total_calls"] == 1
-    leaf = _fn_leaf(partials[0], "C_Digest")
-    assert leaf["by_rv"] == {"0": {"name": "CKR_OK", "count": 1}}, leaf
 
 
 def test_complete_returns_omit_in_flight(tmp_path: Path) -> None:
