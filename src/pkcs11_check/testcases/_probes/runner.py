@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -266,6 +267,31 @@ def _commit_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> None
     mark_probe_consumed(path, parent_uuid=get_worker_uuid())
 
 
+def _fallback_identity_clash(
+    fallback: dict[str, Any], launcher: str, info: dict[str, Any] | None
+) -> str | None:
+    """Describe a fallback/launcher identity contradiction, if any (#88R7-3).
+
+    Mirrors the file-reunion ownership rule: the sidecar's stated
+    parent/run/unit must agree with the launcher's, each compared only
+    when both sides state it. A contradiction means the slot holds a
+    stale or foreign sidecar that live ingest must not absorb (it
+    would also poison the consumed marker the commit path writes).
+    """
+    parent = fallback.get("parent_uuid")
+    if parent is not None and parent != launcher:
+        return f"parent {parent!r} != launcher {launcher!r}"
+    run = fallback.get("run_id")
+    launcher_run = info.get("run_id") if info else None
+    if run is not None and launcher_run is not None and run != launcher_run:
+        return f"run {run!r} != launcher run {launcher_run!r}"
+    unit = fallback.get("unit")
+    launcher_unit = info.get("unit") if info else None
+    if unit is not None and launcher_unit is not None and unit != launcher_unit:
+        return f"unit {unit!r} != launcher unit {launcher_unit!r}"
+    return None
+
+
 def ingest_probe_payload(
     cov_path: str | Path,
     *,
@@ -351,10 +377,21 @@ def ingest_probe_payload(
             # The child is reaped before ingest (run_probe waits), so its
             # rewrite tmps are quiescent by construction: replay returns
             # onto the sidecar rows with the shared collector logic
-            # (#88R3). Path freshness binds the run (the slot path carries
-            # a per-spawn nonce), so no producer stamps are needed.
+            # (#88R3). Path freshness usually binds the run (the slot
+            # path carries a per-spawn nonce), but a stale or foreign
+            # sidecar can still land here: identity is validated
+            # against the launcher before anything is absorbed (#88R7-3).
             assert sidecar is not None  # fallback read implies a path
             info = registration_info()
+            clash = _fallback_identity_clash(fallback, get_worker_uuid(), info)
+            if clash is not None:
+                warnings.warn(
+                    f"probe sidecar {sidecar} contradicts the launcher ({clash}); "
+                    "evidence retained for file collection",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return "lost"
             try:
                 fallback_counters = _replay_probe_tmp_rows(
                     Path(sidecar),

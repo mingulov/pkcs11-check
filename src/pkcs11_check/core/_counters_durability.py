@@ -1280,9 +1280,11 @@ def mark_probe_consumed(sidecar: Path | str, *, parent_uuid: str | None = None) 
     else the legacy 8-hex filename prefix.
 
     Raises:
-        CounterPersistenceError: When the name is foreign (unparseable)
-            or the rename fails. Both are loud: proceeding would risk a
-            silent double-fold.
+        CounterPersistenceError: When the name is foreign (unparseable),
+            when ``parent_uuid`` contradicts a stamped sidecar parent
+            (naming one producer with another's body would strand the
+            marker unclaimable), or when the rename fails. All are loud:
+            proceeding would risk a silent double-fold.
     """
     path = Path(sidecar)
     parsed = _parse_probe_filename(path.name)
@@ -1293,6 +1295,13 @@ def mark_probe_consumed(sidecar: Path | str, *, parent_uuid: str | None = None) 
     owner = parsed[0]
     if is_worker_uuid(parent_uuid):
         assert isinstance(parent_uuid, str)
+        content = read_json_file(path)
+        if isinstance(content, dict):
+            stamped = content.get("parent_uuid")
+            if is_worker_uuid(stamped) and stamped != parent_uuid:
+                raise CounterPersistenceError(
+                    f"marker parent {parent_uuid} contradicts sidecar stamp {stamped}: {path}"
+                )
         owner = parent_uuid
     else:
         content = read_json_file(path)
@@ -1459,6 +1468,20 @@ def _read_probe_orphan(
     directly, so a healed transient is never discarded (#88R5-1).
     """
     return _parse_probe_orphan_payload(read_json_file(path))
+
+
+def _rows_exit_total(rows: list[Any]) -> int:
+    """Sum returned-call counts over flat probe rows (garbage skipped).
+
+    Replay adopts exits on a superset rule only, so a changed total
+    proves adoption exactly (order/format rebuilds never move it).
+    """
+    total = 0
+    for row in rows:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is not None and parsed[2] is not None:
+            total += parsed[3]
+    return total
 
 
 def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
@@ -1692,14 +1715,12 @@ def _replay_probe_tmp_rows(
     dropped, as before -- counters-only replay). Raises
     ``_DeferProducerError`` on a persistently unreadable candidate.
     """
-    try:
-        quarantined = sorted(path.parent.glob(f"{path.name}.quarantined-*"))
-    except OSError:
-        quarantined = []
-    try:
-        candidates = sorted(path.parent.glob(f"{path.name}.tmp-*"))
-    except OSError:
-        return counters
+    quarantined = _list_tmp_paths(path.parent, f"{path.name}.quarantined-")
+    if quarantined is None:
+        raise _DeferProducerError(producer_uuid, None, source=path.name, reason="enum")
+    candidates = _list_tmp_paths(path.parent, f"{path.name}.tmp-")
+    if candidates is None:
+        raise _DeferProducerError(producer_uuid, None, source=path.name, reason="enum")
 
     def _gates(payload: Any) -> bool:
         return _probe_tmp_gates_clean(
@@ -1819,17 +1840,22 @@ class _DeferProducerError(Exception):
     for I/O deferrals), and the unreadable file name for the warning.
     """
 
-    def __init__(self, uuid: str, pid: int | None, source: str = "") -> None:
-        super().__init__(uuid, pid, source)
+    def __init__(self, uuid: str, pid: int | None, source: str = "", reason: str = "") -> None:
+        super().__init__(uuid, pid, source, reason)
         self.uuid = uuid
         self.pid = pid
         self.source = source
+        self.reason = reason
 
     @property
     def detail(self) -> str:
         """Human-readable deferral cause for the warning."""
         if self.pid is not None:
             return f"live probe writer (pid {self.pid}) unfenceable"
+        if self.reason == "rewrite":
+            return f"rewrite newer than marker coverage ({self.source or 'unknown file'})"
+        if self.reason == "enum":
+            return f"tmp listing failed under {self.source or 'unknown file'}"
         if self.source:
             return f"unreadable evidence ({self.source})"
         return "unreadable evidence"
@@ -1932,8 +1958,15 @@ def _adopt_probe_orphans(
         finalized: bool,
         adopted: int,
         vacuous_ok: bool,
+        replayed_adopted: bool,
     ) -> None:
         if (child_uuid, seq) in coverage:
+            if replayed_adopted:
+                # The marker covers the baseline snapshot, not this
+                # newer rewrite: suppressing would drop the delta and
+                # folding would double the baseline, so the producer
+                # defers with the association intact (#88R7-1).
+                raise _DeferProducerError(worker_uuid, None, source=path.name, reason="rewrite")
             consumed.append(path)
             return
         # Healing and key-union never gate on counts: a zero-counters
@@ -2109,17 +2142,14 @@ def _adopt_probe_orphans(
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
-        if parent_claim is None and not unambiguous:
+        if parent_claim is None and not unambiguous and (child_uuid, seq) not in coverage:
             # Pass 2: legacy filename fallback (no content identity).
             # Under a prefix collision the orphan could belong to any
             # collider, so it retains with one warning instead of
-            # attributing by a hint -- unless a consumed marker already
-            # proved this exact evidence absorbed (#88R6-2a): then it
-            # suppresses like any covered orphan instead of stranding
-            # for a later pass that can no longer see the marker.
-            if (child_uuid, seq) in coverage:
-                consumed.append(path)
-                continue
+            # attributing by a hint. A marker-covered copy instead falls
+            # through to fencing + replay like owned evidence (#88R6-2a):
+            # its writer and rewrites are quiesced before _fold
+            # suppresses the duplicate (or defers on a newer rewrite).
             if ambiguous_reporter:
                 warnings.warn(
                     f"ambiguous probe orphan {path.name} retained "
@@ -2171,6 +2201,7 @@ def _adopt_probe_orphans(
                 raise _DeferProducerError(worker_uuid, orphan_pid)
         # #88: a same-probe rewrite tmp replays its returns onto the
         # orphan's rows before the reunion fold.
+        pre_replay_exits = _rows_exit_total(counters)
         counters = _replay_probe_tmp_rows(
             path,
             child_uuid,
@@ -2183,6 +2214,7 @@ def _adopt_probe_orphans(
             orphan_birth=orphan_birth,
             producer_uuid=worker_uuid,
         )
+        replayed_adopted = _rows_exit_total(counters) != pre_replay_exits
         _fold(
             path,
             child_uuid,
@@ -2193,6 +2225,7 @@ def _adopt_probe_orphans(
             finalized,
             adopted,
             vacuous_ok,
+            replayed_adopted,
         )
     adopted = sum(adopted_lost)
     if merged["total_calls"] == 0:
@@ -2395,6 +2428,26 @@ def _unlink_counted(path: Path) -> bool:
         return False
 
 
+def _list_tmp_paths(directory: Path, prefix: str) -> list[Path] | None:
+    """List ``prefix*`` entries; None when enumeration itself faults (#88R7-4).
+
+    ``pathlib`` globbing swallows listing errors (an EACCES reads as
+    empty), which would silently strand tmps behind a deleted
+    baseline. ``os.scandir`` surfaces them instead: a missing
+    directory reads as empty (no tmps possible), any other OSError
+    reads as None (callers hold or defer for retry). Never raises.
+    """
+    try:
+        with os.scandir(directory) as entries:
+            return sorted(
+                directory / entry.name for entry in entries if entry.name.startswith(prefix)
+            )
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return None
+
+
 def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
     """Delete a sidecar's rewrite tmps except unadjudicable ones (#88R3).
 
@@ -2409,10 +2462,15 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
     around either would strand the tmp beyond re-discovery). Forensic
     retention of a classified-complete tmp never holds. Never raises.
     """
-    try:
-        tmps = sorted(path.parent.glob(f"{path.name}.tmp-*"))
-    except OSError:
-        return (0, 0, False)
+    maybe_tmps = _list_tmp_paths(path.parent, f"{path.name}.tmp-")
+    if maybe_tmps is None:
+        warnings.warn(
+            f"cannot enumerate tmps under {path.name} (I/O fault); baseline held for retry",
+            UserWarning,
+            stacklevel=3,
+        )
+        return (0, 0, True)
+    tmps = maybe_tmps
     if not tmps:
         return (0, 0, False)
     baseline_usable = _replay_baseline_usable(path)
@@ -2484,16 +2542,16 @@ def _producer_files(registry: dict[str, Any], registry_path: Path) -> list[Path]
     return files
 
 
-def _sidecar_tmps(content: dict[str, Any]) -> list[Path]:
-    """Rewrite tmps keyed off a registry's sidecar name (never raises)."""
+def _sidecar_tmps(content: dict[str, Any]) -> list[Path] | None:
+    """Rewrite tmps keyed off a registry's sidecar name (never raises).
+
+    None when enumeration itself faults (callers hold the baseline).
+    """
     sidecar_raw = str(content.get("sidecar", ""))
     if not sidecar_raw:
         return []
     sidecar_path = Path(sidecar_raw)
-    try:
-        return sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
-    except OSError:
-        return []
+    return _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.tmp-")
 
 
 def _partial_record(
@@ -3294,14 +3352,12 @@ def _replay_orphan_tmps(
     if not _is_nonneg_int(committed_seq):
         return None, False
     assert isinstance(committed_seq, int)
-    try:
-        quarantined = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.quarantined-*"))
-    except OSError:
-        quarantined = []
-    try:
-        candidates = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
-    except OSError:
-        return None, False
+    quarantined = _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.quarantined-")
+    if quarantined is None:
+        raise _DeferProducerError(uuid, None, source=sidecar_path.name, reason="enum")
+    candidates = _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.tmp-")
+    if candidates is None:
+        raise _DeferProducerError(uuid, None, source=sidecar_path.name, reason="enum")
 
     def _gates(payload: Any) -> bool:
         return _producer_tmp_gates_clean(
@@ -3993,16 +4049,21 @@ def sweep_orphans(
             except OSError:
                 retained += 1
 
-    def _remove_with_tmps(paths: list[Path], tmps: list[Path]) -> None:
+    def _remove_with_tmps(paths: list[Path], tmps: list[Path] | None) -> None:
         """Authoritative removal, tmps first (#88R5-6).
 
         The tmps key off the baseline name, so the baseline goes only
         when every tmp is gone: a failed tmp unlink holds the whole
         set for the next sweep to rediscover and retry (silent +
         counted: the retained count already surfaces, and the next
-        pass converges).
+        pass converges). An unlistable tmp set holds too (#88R7-4).
         """
         nonlocal removed, retained
+        if tmps is None:
+            for path in paths:
+                if path.exists() or path.is_symlink():
+                    retained += 1
+            return
         for index, tmp in enumerate(tmps):
             if not tmp.exists() and not tmp.is_symlink():
                 continue
@@ -4071,7 +4132,7 @@ def sweep_orphans(
         if uuid in committed_uuids:
             _remove_with_tmps(
                 [sidecar_path, journal_path],
-                sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*")),
+                _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.tmp-"),
             )
         elif status == "unreadable" or (reg_path.exists() and isinstance(sidecar, dict)):
             # An I/O fault proves nothing either way (retry later), and a
@@ -4097,7 +4158,7 @@ def sweep_orphans(
         elif sidecar.get("run_id") in collected_runs and sidecar.get("run_id") != current_run:
             _remove_with_tmps(
                 [sidecar_path, journal_path],
-                sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*")),
+                _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.tmp-"),
             )
         else:
             retained += 1
