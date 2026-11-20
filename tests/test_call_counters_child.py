@@ -2049,7 +2049,7 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         payload = json.loads(slot.read_text(encoding="utf-8"))
         assert payload["probe_seq"] == 0
         assert payload["parent_uuid"] == parent
-        merged, claimed, consumed, recovered, _keys, _adopted, _skipped = (
+        merged, claimed, consumed, recovered, _keys, _adopted, _skipped, _froze = (
             durability._adopt_probe_orphans(
                 root,
                 worker_uuid=parent,
@@ -2074,3 +2074,77 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=30)
+
+
+def test_own_spawn_writes_launch_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: the child announces its own launch before doing anything."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    parent = "a" * 32
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    slot = counters / "probe-aaaaaaaa-3-bead01.json"
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(slot))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "3")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, parent)
+    monkeypatch.setenv(durability.PROBE_RUN_ENV, "R9")
+    monkeypatch.setenv(durability.PROBE_UNIT_ENV, "u.py")
+    monkeypatch.setenv(durability.PROBE_ATTEMPT_ENV, "1")
+    written = call_counters.note_own_probe_spawn()
+    assert written is not None
+    files = sorted(counters.glob("spawn-*.json"))
+    assert files == [Path(written)]
+    assert files[0].name.startswith("spawn-aaaaaaaa-3-")
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["parent_uuid"] == parent
+    assert payload["probe_seq"] == 3
+    assert payload["slot"] == str(slot)
+    assert payload["pid"] == os.getpid()
+    birth = durability.birth_token_for_pid(os.getpid())
+    if birth is None:
+        assert "birth_token" not in payload
+    else:
+        assert payload["birth_token"] == birth
+    assert payload["run_id"] == "R9"
+    assert payload["unit"] == "u.py"
+    assert payload["attempt"] == 1
+
+
+def test_own_spawn_disengaged_is_silent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: no probe env means no spawn record (manual runs unaffected)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    for key in (
+        durability.PROBE_SIDECAR_ENV,
+        durability.PROBE_SEQ_ENV,
+        durability.PROBE_PARENT_ENV,
+    ):
+        monkeypatch.delenv(key, raising=False)
+    assert call_counters.note_own_probe_spawn() is None
+    assert list(tmp_path.glob("spawn-*.json")) == []
+
+
+def test_own_spawn_malformed_env_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: engaged-but-broken spawn env fails closed (never runs mute)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(counters / "probe.json"))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "not-an-int")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, "a" * 32)
+    with pytest.raises(ValueError, match="probe_seq"):
+        call_counters.note_own_probe_spawn()
+    assert list(counters.glob("spawn-*.json")) == []
+
+
+def test_own_spawn_write_failure_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: an unrecordable launch must not run (fail closed, loud)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    missing = tmp_path / "no-such-dir" / "probe.json"
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(missing))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "0")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, "b" * 32)
+    with pytest.raises(durability.CounterPersistenceError):
+        call_counters.note_own_probe_spawn()

@@ -47,6 +47,7 @@ import warnings
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from pathlib import Path
 from threading import RLock, local
 from typing import Any
 
@@ -56,8 +57,10 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_ROLE_ENV,
     COUNTERS_UNIT_ENV,
     FLUSH_WINDOW_K,
+    PROBE_PARENT_ENV,
     PROBE_SEQ_ENV,
     PROBE_SIDECAR_ENV,
+    SPAWN_FILE_PREFIX,
     CounterPersistenceError,
     Registration,
     append_journal,
@@ -77,6 +80,7 @@ from pkcs11_check.core.counters_schema import (
     is_probe_seq,
     is_receipt,
     is_worker_uuid,
+    mint_filename_nonce,
     mint_worker_uuid,
 )
 
@@ -1083,6 +1087,55 @@ def note_probe_spawned(
         except CounterPersistenceError:
             _set_pending_locked("note")
             raise
+
+
+def note_own_probe_spawn() -> str | None:
+    """Record this probe child's own launch before it does anything (#88R23-1).
+
+    The child announces itself (parent uuid, assigned seq, slot path,
+    own pid + birth) in an atomic ``spawn-<parent8>-<seq>-<nonce>.json``
+    file next to its slot, FIRST -- before any provider call -- so a
+    supervisor that dies before its parent-side note flushes still
+    leaves the launch attributable: reunion waits for the child
+    instead of publishing through it and stranding its later flush.
+    Returns the record path. Disengaged processes (no probe sidecar
+    env: manual runs, custom probes) record nothing. Malformed spawn
+    env raises ``ValueError`` and a failed write raises
+    ``CounterPersistenceError``: an unrecordable launch must not run
+    (fail closed, loud -- the probe crashes at startup instead of
+    executing unattributed).
+    """
+    slot = os.environ.get(PROBE_SIDECAR_ENV, "")
+    if not slot:
+        return None
+    seq_raw = os.environ.get(PROBE_SEQ_ENV, "")
+    try:
+        seq = int(seq_raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"bad probe_seq for own spawn record: {seq_raw!r}") from None
+    if not is_probe_seq(seq):
+        raise ValueError(f"bad probe_seq for own spawn record: {seq_raw!r}")
+    parent = os.environ.get(PROBE_PARENT_ENV, "")
+    if not is_worker_uuid(parent):
+        raise ValueError(f"bad parent_uuid for own spawn record: {parent!r}")
+    assert isinstance(parent, str)
+    pid = os.getpid()
+    birth = birth_token_for_pid(pid)
+    payload: dict[str, Any] = {
+        "parent_uuid": parent,
+        "probe_seq": seq,
+        "slot": slot,
+        "pid": pid,
+    }
+    if birth is not None:
+        payload["birth_token"] = birth
+    payload.update(probe_sidecar_identity_from_env(os.environ))
+    payload["parent_uuid"] = parent
+    counters_dir = Path(slot).parent
+    nonce = mint_filename_nonce()
+    path = counters_dir / f"{SPAWN_FILE_PREFIX}{parent[:8]}-{seq}-{nonce}.json"
+    write_sidecar_atomic(path, payload)
+    return str(path)
 
 
 def forget_probe_spawn(probe_seq: int) -> None:

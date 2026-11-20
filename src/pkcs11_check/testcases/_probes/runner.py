@@ -845,8 +845,14 @@ def run_probe(
                         birth=birth_token_for_pid(proc.pid),
                     )
                 except (ValueError, CounterPersistenceError):
+                    # Reap without draining (#88R23-6): communicate()
+                    # waits for pipe EOF, which a grandchild holding an
+                    # inherited pipe delays past the probe timeout. The
+                    # output is discarded (we raise), so wait() suffices
+                    # on every platform (unlike the timeout path, which
+                    # mirrors run()'s partial-output capture).
                     proc.kill()
-                    proc.communicate()
+                    proc.wait()
                     raise
             try:
                 out, err = proc.communicate(timeout=timeout)

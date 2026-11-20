@@ -161,6 +161,11 @@ PROBE_FILE_SUFFIX = ".json"
 #: to ``probe-consumed-<parent-uuid8>-<seq>-<nonce>.json`` (same content) so
 #: orphan adoption suppresses it instead of folding it a second time.
 PROBE_CONSUMED_PREFIX = "probe-consumed-"
+#: Child-side spawn records (``spawn-<parent-uuid8>-<seq>-<nonce>.json``):
+#: the probe child announces its own launch first, so a supervisor that
+#: dies before its parent-side note flushes still leaves the launch
+#: attributable (#88R23-1). Matches no other collector/sweep glob.
+SPAWN_FILE_PREFIX = "spawn-"
 #: Resume-barrier staging: the collected plan persisted (atomically) before
 #: any source file is consumed, so a controller death between the barrier
 #: and its application loses nothing. Matches no collector/sweep glob.
@@ -1953,8 +1958,8 @@ def _replay_probe_tmp_rows(
     Returns ``(rows, divergent, refused_garbage)``: a held conflict
     the caller must not silently clear when the baseline is covered
     (#88R8-2), plus whether any gated tmp refused for malformed rows
-    (the caller flags its receipt dirty so no heal publishes through
-    understated numbers (#88R22-6)).
+    or a malformed loss scalar (the caller flags its receipt dirty so
+    no heal publishes through understated numbers (#88R22-6)).
     ``digests`` records ``{path: sha256}`` for torn candidates and
     gated ones only (None discards: live ingest has no staging to
     bind to): a rejected replacement must never inherit cleanup
@@ -2009,6 +2014,18 @@ def _replay_probe_tmp_rows(
             refused_garbage = True
             warnings.warn(
                 f"probe rewrite {tmp.name} carries malformed rows; refused",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if not _probes_lost_wellformed(payload):
+            # A mistyped loss scalar taints the whole tmp (#88R23-5):
+            # the rows parse but the writer (or bytes) proved corrupt,
+            # so nothing replays even though the scalar itself would
+            # drop. Absent scalars stay clean (legacy tmps).
+            refused_garbage = True
+            warnings.warn(
+                f"probe rewrite {tmp.name} carries a malformed loss scalar; refused",
                 UserWarning,
                 stacklevel=2,
             )
@@ -2192,14 +2209,18 @@ def _adopt_probe_orphans(
     set[tuple[str, int]],
     int,
     bool,
+    bool,
 ]:
     """Fold one producer's retained probe sidecars.
 
     Returns ``(block, receipts, consumed, recovered, orphan_keys,
-    adopted_lost, skipped_live)``: ``skipped_live`` reports covered
+    adopted_lost, skipped_live, froze_alias)``: ``skipped_live`` reports covered
     orphans skipped for a live or racing writer, whose parent
     association the caller must retain for a coherent retry
-    (#88R11-1). ``digests`` records ``{path: sha256}`` for every
+    (#88R11-1). ``froze_alias`` reports an alias freeze this pass: the
+    caller must flag conflict (a frozen contest is fail-visible in the
+    durable record, never warnings-only) (#88R23-3). ``digests`` records
+    ``{path: sha256}`` for every
     probe file read (None discards): the barrier stages them so a
     retry proves byte-identity before acting on the old adjudication
     (#88R13-2).
@@ -2292,6 +2313,8 @@ def _adopt_probe_orphans(
     receipt_evidence_dirty: set[tuple[str, int]] = set()
     incoherent_receipts: set[tuple[str, int]] = set()
     heal_candidates: list[tuple[str, int, Path, int, bool, Any, int | None]] = []
+    undecided_markers: list[Path] = []
+    froze_alias = False
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
     adopted_lost: list[int] = []
@@ -2670,8 +2693,11 @@ def _adopt_probe_orphans(
             # Undecidable markers re-observe their slot for freshness
             # (the pre-scan observed order-free); an unresolved
             # rewrite under one blocks same-seq heals conservatively.
+            # Consumption waits for the alias freeze below: an
+            # undecidable copy of a contested slot is contest evidence,
+            # not debris (#88R23-3).
             _observe_marker_slot(path, filename_seq, None)
-            consumed.append(path)
+            undecided_markers.append(path)
             continue
         (
             marker_child,
@@ -2902,6 +2928,22 @@ def _adopt_probe_orphans(
     # next pass. Computed once observations complete; migration pairs
     # (same receipt twice) stay single-owner and resolve normally.
     aliased_slots = {slot for slot, owners in slot_owners.items() if len(owners) > 1}
+    for undecided_path in undecided_markers:
+        undecided_slot = _marker_slot_name(undecided_path.name)
+        if undecided_slot is not None and undecided_slot in aliased_slots:
+            # A contested slot keeps every copy for forensics: consuming
+            # one side would let the other heal on the emptied slot next
+            # pass and destroy the contest evidence (#88R23-3).
+            froze_alias = True
+            skipped.append(undecided_path)
+            warnings.warn(
+                f"undecidable consumed marker {undecided_path.name} shares its slot "
+                "with another receipt; retained for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            consumed.append(undecided_path)
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
         parsed_name = _parse_probe_filename(path.name)
         if parsed_name is None or parsed_name[0] != prefix:
@@ -3029,6 +3071,7 @@ def _adopt_probe_orphans(
             # moot without a marker in play but keeps the rule uniform.
             receipt_evidence_dirty.add((child_uuid, seq))
         if path.name in aliased_slots:
+            froze_alias = True
             _skip_covered_orphan(path, child_uuid, seq, "sits on an aliased slot")
             continue
         if fence_live and orphan_pid is not None:
@@ -3207,6 +3250,7 @@ def _adopt_probe_orphans(
             _refresh_slot_hold(group_slot)
         cand_slot = _marker_slot_name(cand_path.name)
         if cand_slot is not None and cand_slot in aliased_slots:
+            froze_alias = True
             skipped.append(cand_path)
             warnings.warn(
                 f"consumed marker {cand_path.name} shares its slot with another "
@@ -3240,6 +3284,20 @@ def _adopt_probe_orphans(
             warnings.warn(
                 f"contradictory consumed marker {cand_path.name} "
                 "(another copy of its receipt disagrees); "
+                "recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if not _marker_heal_clean(cand_key):
+            # The orphan loop's replay runs after the marker loop, so
+            # garbage it refuses (or a baseline/scalar it flags) dirties
+            # the receipt after admission: recheck validity before every
+            # direct heal, like the marker turn and the reconcile do
+            # (#88R23-5).
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} carries malformed evidence; "
                 "recovery withheld for forensics",
                 UserWarning,
                 stacklevel=2,
@@ -3283,6 +3341,20 @@ def _adopt_probe_orphans(
     for held_child, held_seq, held_path, held_filename_seq, held_finalized in withheld:
         held_slot = _marker_slot_name(held_path.name)
         held_key = (held_child, held_seq)
+        if held_slot is not None and held_slot in aliased_slots:
+            # Contested slots never reconcile-heal (#88R23-3): complete
+            # mediation alongside direct finalize (aliased baselines
+            # never suppress, so coverage cannot prove today -- this
+            # keeps the freeze total if that ever changes).
+            froze_alias = True
+            skipped.append(held_path)
+            warnings.warn(
+                f"consumed marker {held_path.name} shares its slot with another "
+                "receipt; recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         group_slots = receipt_slots.get(held_key, set()) | seq_slots.get(held_seq, set())
         if (
             held_slot is not None
@@ -3298,12 +3370,65 @@ def _adopt_probe_orphans(
             consumed.append(held_path)
         else:
             skipped.append(held_path)
+    # Child-side spawn files reunite with their slots (#88R23-1): a
+    # file whose slot consumed this pass (orphan folded/suppressed,
+    # marker healed) rides the cleanup, as does one whose child
+    # provably died with no slot file (absorbed: nothing is coming).
+    # Live or slot-pending files retain; malformed/foreign files are
+    # never consumed here (malformed defers the producer before
+    # adoption runs, so consumption only ever sees validated files).
+    consumed_slot_names = set()
+    for consumed_path in consumed:
+        if consumed_path.name.startswith(PROBE_CONSUMED_PREFIX):
+            consumed_slot = _marker_slot_name(consumed_path.name)
+            if consumed_slot is not None:
+                consumed_slot_names.add(consumed_slot)
+        elif consumed_path.name.startswith(PROBE_FILE_PREFIX) and consumed_path.name.endswith(
+            PROBE_FILE_SUFFIX
+        ):
+            consumed_slot_names.add(consumed_path.name)
+    for spawn_path, spawn_entry, spawn_digest in _read_spawn_file_records(root, worker_uuid):
+        if spawn_entry is None:
+            continue
+        if spawn_digest is not None and digests is not None:
+            digests.setdefault(str(spawn_path), spawn_digest)
+        if Path(spawn_entry["slot"]).name in consumed_slot_names:
+            consumed.append(spawn_path)
+            continue
+        slot_path = Path(spawn_entry["slot"])
+        if not slot_path.is_absolute():
+            slot_path = root / slot_path
+        if slot_path.exists():
+            continue
+        spawn_pid = spawn_entry["pid"]
+        spawn_birth = spawn_entry.get("birth_token")
+        assert isinstance(spawn_pid, int)
+        if not _incarnation_alive(spawn_pid, spawn_birth if isinstance(spawn_birth, int) else None):
+            consumed.append(spawn_path)
     adopted = sum(adopted_lost)
     skipped_live = len(skipped) > 0
     if merged["total_calls"] == 0:
-        return None, [], consumed, sorted(set(recovered)), orphan_keys, adopted, skipped_live
+        return (
+            None,
+            [],
+            consumed,
+            sorted(set(recovered)),
+            orphan_keys,
+            adopted,
+            skipped_live,
+            froze_alias,
+        )
     claimed.sort(key=lambda item: (item["worker_uuid"], item["probe_seq"]))
-    return merged, claimed, consumed, sorted(set(recovered)), orphan_keys, adopted, skipped_live
+    return (
+        merged,
+        claimed,
+        consumed,
+        sorted(set(recovered)),
+        orphan_keys,
+        adopted,
+        skipped_live,
+        froze_alias,
+    )
 
 
 def _sidecar_loss_keys(sidecar: Any | None) -> set[tuple[str, int]]:
@@ -3774,8 +3899,9 @@ def _consume_producer_files(
 
     ``digests`` maps adjudicated paths to their byte digests: a listed
     file whose bytes changed since adjudication holds (never deletes
-    evolved evidence), and an unlisted probe file holds too
-    (orphaned writers can ghost probe slots). Unlisted producer
+    evolved evidence), and an unlisted probe or spawn file holds too
+    (orphaned writers can ghost probe slots; unadjudicated launch
+    records must never delete). Unlisted producer
     files delete as before (dead/fenced writers cannot ghost), as do
     producer-baseline tmps (legacy content rules); probe-baseline
     tmps delete only when listed and identical (#88R13-2).
@@ -3798,9 +3924,12 @@ def _consume_producer_files(
                 continue
         elif (
             digests is not None
-            and path.name.startswith(PROBE_FILE_PREFIX)
+            and (path.name.startswith(PROBE_FILE_PREFIX) or path.name.startswith(SPAWN_FILE_PREFIX))
             and path.name.endswith(PROBE_FILE_SUFFIX)
         ):
+            # Spawn files hold like probe files (#88R23-1): an
+            # unadjudicated launch record must never delete (their
+            # write tmps still prune under legacy debris rules below).
             warnings.warn(
                 f"cleanup target {path.name} was never adjudicated; held",
                 UserWarning,
@@ -4169,7 +4298,7 @@ def collect_unit(
         try:
             journal_lines = _read_journal_lines_strict(journal_path, uuid)
             if not unit_routed_committed:
-                _raise_for_outstanding_spawns(uuid, sidecar)
+                _raise_for_outstanding_spawns(uuid, sidecar, root)
             (
                 orphan_block,
                 orphan_receipts,
@@ -4178,6 +4307,7 @@ def collect_unit(
                 orphan_keys,
                 adopted_lost,
                 skipped_live,
+                froze_alias,
             ) = _adopt_probe_orphans(
                 root,
                 worker_uuid=uuid,
@@ -4229,6 +4359,7 @@ def collect_unit(
                 _consume_producer_files(consumed, read_digests)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+        conflict = conflict or froze_alias
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
         if scalar is None:
             scalar_count = 0
@@ -4631,7 +4762,9 @@ def _replay_orphan_tmps(
 ) -> tuple[dict[str, Any] | None, bool]:
     """Replay the best same-window rewrite tmp, or flag divergence (#88).
 
-    Returns ``(replayed sidecar or None, divergent)``. A K=1 return
+    Returns ``(replayed sidecar or None, divergent)`` (a refused
+    scalar-tainted tmp also raises the flag: committed wins and the
+    lost record reads conflict). A K=1 return
     flush that dies inside ``os.replace`` leaves the new payload in a
     complete orphan tmp while the committed sidecar stays pre-return.
     A candidate must parse as a sidecar, bind to the producer's full
@@ -4674,6 +4807,7 @@ def _replay_orphan_tmps(
         )
 
     gated: list[tuple[Path, dict[str, Any]]] = []
+    scalar_tainted = False
     for tmp in candidates:
         status, payload = _read_json_evidence(tmp)
         if status == "gone":
@@ -4686,6 +4820,19 @@ def _replay_orphan_tmps(
         if not _gates(payload):
             continue
         assert isinstance(payload, dict)
+        if not _probes_lost_wellformed(payload):
+            # A mistyped loss scalar taints the whole tmp (#88R23-5):
+            # nothing replays and the conflict flag carries to the
+            # lost record, mirroring the probe-tmp refusal (the
+            # producer path has no dirty flag; conflict is its
+            # uncertainty channel). Absent scalars stay clean.
+            scalar_tainted = True
+            warnings.warn(
+                f"rewrite {tmp.name} carries a malformed loss scalar; refused",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         gated.append((tmp, payload))
     if quarantined and _divergence_vetoed(quarantined, _gates, uuid):
         # A previous pass already judged this checkpoint divergent but
@@ -4708,7 +4855,7 @@ def _replay_orphan_tmps(
         )
         return None, True
     if not gated:
-        return None, False
+        return None, scalar_tainted
     committed_prog = committed.get("in_progress")
     vectors: list[dict[tuple[str, ...], int]] = []
     merged_sides: list[dict[str, Any]] = []
@@ -4741,15 +4888,15 @@ def _replay_orphan_tmps(
         # shallow above in-progress); downstream readers never mutate.
         loss_only = dict(committed)
         if _apply_loss_union(loss_only, committed, merged_sides):
-            return loss_only, False
-        return None, False
+            return loss_only, scalar_tainted
+        return None, scalar_tainted
     winner = max(
         winner_indexes,
         key=lambda index: gated[index][1]["in_progress"]["total_calls"],
     )
     merged = merged_sides[winner]
     _apply_loss_union(merged, committed, merged_sides)
-    return merged, False
+    return merged, scalar_tainted
 
 
 def _apply_loss_union(
@@ -5019,54 +5166,121 @@ def _registry_claims_orphan(reg_dir: Path, uuid: str) -> bool:
     return read_registry_file(reg_dir / f"{uuid}.json") is not None
 
 
-def _unflushed_live_spawns(sidecar: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _spawn_entry_valid(entry: Any) -> bool:
+    """Whether a spawn record has the strict launch shape (#88R22-4/#88R23-1).
+
+    Shared by parent-side sidecar records and child-side spawn files:
+    an int seq, a non-empty slot path, a positive int pid, and an
+    absent-or-int birth token. Anything else is malformed (fail
+    closed: outstanding).
+    """
+    if not isinstance(entry, dict):
+        return False
+    seq = entry.get("probe_seq")
+    slot = entry.get("slot")
+    pid = entry.get("pid")
+    birth = entry.get("birth_token")
+    return (
+        type(seq) is int
+        and isinstance(slot, str)
+        and bool(slot)
+        and type(pid) is int
+        and pid > 0
+        and (birth is None or type(birth) is int)
+    )
+
+
+def _read_spawn_file_records(
+    root: Path, uuid: str
+) -> list[tuple[Path, dict[str, Any] | None, str | None]]:
+    """Read + validate one producer's child-side spawn files (#88R23-1).
+
+    Returns ``[(path, entry-or-None, digest-or-None)]``: ``None`` entry
+    marks a torn/unreadable/malformed file (fail closed: outstanding);
+    the digest binds validated bytes for cleanup authorization.
+    Foreign files (another ``parent_uuid``) are skipped silently (their
+    own producer's pass owns them); a missing/mistyped ``parent_uuid``
+    cannot prove foreign, so it reads malformed. Never raises.
+    """
+    try:
+        candidates = sorted(root.glob(f"{SPAWN_FILE_PREFIX}*{PROBE_FILE_SUFFIX}"))
+    except OSError:
+        return []
+    records: list[tuple[Path, dict[str, Any] | None, str | None]] = []
+    for path in candidates:
+        status, payload, digest = _read_json_evidence_digested(path)
+        if status == "gone":
+            continue
+        if status != "ok" or not isinstance(payload, dict):
+            records.append((path, None, None))
+            continue
+        if payload.get("parent_uuid") != uuid:
+            if is_worker_uuid(payload.get("parent_uuid")):
+                continue
+            records.append((path, None, None))
+            continue
+        if not _spawn_entry_valid(payload):
+            records.append((path, None, None))
+            continue
+        records.append((path, payload, digest))
+    return records
+
+
+def _entry_unflushed(entry: dict[str, Any]) -> bool:
+    """Whether a validated spawn record still owes evidence (#88R22-4).
+
+    A slot file present means flushed; a dead-verified pid means
+    nothing is coming; anything else is outstanding. Birthless records
+    consult the incarnation helper (pidfd exit readiness covers
+    zombies) (#88R23-7). Never raises.
+    """
+    slot = entry["slot"]
+    pid = entry["pid"]
+    birth = entry.get("birth_token")
+    assert isinstance(slot, str) and isinstance(pid, int)
+    if Path(slot).exists():
+        return False
+    return _incarnation_alive(pid, birth if isinstance(birth, int) else None)
+
+
+def _unflushed_live_spawns(
+    uuid: str, sidecar: dict[str, Any] | None, root: Path | str
+) -> list[dict[str, Any]]:
     """Spawn records still owed evidence: unflushed with a live writer (#88R22-4).
 
-    A slot file present means flushed (fold it on reunion); a
-    dead-verified pid (birth-pinned mismatch/gone, or lookup failure
-    for birthless records) means nothing is coming; anything else is
-    outstanding and postmortem publication must wait for it -- a first
-    flush landing between passes would otherwise fold into a retry
-    whose counts first-wins already discarded. Malformed records fail
-    closed (outstanding). Never raises.
+    Unions parent-side sidecar records with child-side spawn files
+    (#88R23-1): a supervisor that dies before its note flushes still
+    leaves the child's own launch record, so reunion waits for the
+    child instead of publishing through it. The union is a fail-closed
+    OR (either source outstanding defers; disagreements defer, so a
+    forged file can never clear a real outstanding). A slot file
+    present means flushed (fold it on reunion); a dead-verified pid
+    means nothing is coming. Malformed records fail closed
+    (outstanding). Never raises.
     """
-    if not isinstance(sidecar, dict):
-        return []
-    records = sidecar.get("spawned_children")
-    if records is None:
-        return []
-    if not isinstance(records, list):
-        return [{"malformed": True}]
     outstanding: list[dict[str, Any]] = []
-    for entry in records:
-        if not isinstance(entry, dict):
+    if isinstance(sidecar, dict):
+        records = sidecar.get("spawned_children")
+        if isinstance(records, list):
+            for entry in records:
+                if not _spawn_entry_valid(entry):
+                    outstanding.append({"malformed": True})
+                elif _entry_unflushed(entry):
+                    assert isinstance(entry, dict)
+                    outstanding.append(entry)
+        elif records is not None:
             outstanding.append({"malformed": True})
-            continue
-        seq = entry.get("probe_seq")
-        slot = entry.get("slot")
-        pid = entry.get("pid")
-        birth = entry.get("birth_token")
-        if (
-            type(seq) is not int
-            or not isinstance(slot, str)
-            or not slot
-            or type(pid) is not int
-            or pid <= 0
-            or (birth is not None and type(birth) is not int)
-        ):
+    for _, file_entry, _ in _read_spawn_file_records(Path(root), uuid):
+        if file_entry is None:
             outstanding.append({"malformed": True})
-            continue
-        if Path(slot).exists():
-            continue
-        if birth is not None:
-            if _incarnation_alive(pid, birth):
-                outstanding.append(entry)
-        elif _pid_exists(pid):
-            outstanding.append(entry)
+        elif _entry_unflushed(file_entry):
+            outstanding.append(file_entry)
     return outstanding
 
 
-def _raise_for_outstanding_spawns(uuid: str, sidecar: dict[str, Any] | None) -> None:
+def _raise_for_outstanding_spawns(
+    uuid: str, sidecar: dict[str, Any] | None, root: Path | str
+) -> None:
     """Defer postmortem publication while spawn children are unflushed (#88R22-4).
 
     A first flush landing between passes would fold into a retry whose
@@ -5076,7 +5290,7 @@ def _raise_for_outstanding_spawns(uuid: str, sidecar: dict[str, Any] | None) -> 
     Bounded by child lifetime (suite time); loud per pass through the
     standard defer warning.
     """
-    outstanding = _unflushed_live_spawns(sidecar)
+    outstanding = _unflushed_live_spawns(uuid, sidecar, root)
     if outstanding:
         first_pid = outstanding[0].get("pid")
         raise _DeferProducerError(
@@ -5212,7 +5426,7 @@ def _collect_dead_producer(
         scalar_count = 0
         conflict = True
     gap_keys = _sidecar_loss_keys(sidecar)
-    _raise_for_outstanding_spawns(uuid, sidecar if isinstance(sidecar, dict) else None)
+    _raise_for_outstanding_spawns(uuid, sidecar if isinstance(sidecar, dict) else None, root)
     (
         orphan_block,
         orphan_receipts,
@@ -5221,6 +5435,7 @@ def _collect_dead_producer(
         orphan_keys,
         adopted_lost,
         skipped_live,
+        froze_alias,
     ) = _adopt_probe_orphans(
         root,
         worker_uuid=uuid,
@@ -5234,6 +5449,7 @@ def _collect_dead_producer(
         fence_live=True,
         digests=digests,
     )
+    conflict = conflict or froze_alias
     if orphan_block is not None:
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
         receipts = [*receipts, *orphan_receipts]
@@ -5354,6 +5570,9 @@ def _collect_committed_producer(
     sidecar_path = Path(sidecar_raw)
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
+    # An alias freeze needs no flag here: the committed route emits
+    # no lost record, and the frozen receipt's session claim stays open
+    # (no heal arrives), which is the visible pending state (#88R23-3).
     (
         orphan_block,
         orphan_receipts,
@@ -5362,6 +5581,7 @@ def _collect_committed_producer(
         orphan_keys,
         adopted_lost,
         skipped_live,
+        _froze_alias,
     ) = _adopt_probe_orphans(
         root,
         worker_uuid=uuid,
@@ -6463,7 +6683,7 @@ def prepare_resume(
         if (
             uuid in validated_collected
             and uuid not in staged_skip_held
-            and not _unflushed_live_spawns(sidecar)
+            and not _unflushed_live_spawns(uuid, sidecar, root)
         ):
             # Staged retry (#88R13-2): no second reunion (see the
             # registry loop); the files consume directly while probes
@@ -6478,7 +6698,7 @@ def prepare_resume(
         try:
             journal_lines = _read_journal_lines_strict(journal_path, uuid)
             if not routed_committed:
-                _raise_for_outstanding_spawns(uuid, sidecar)
+                _raise_for_outstanding_spawns(uuid, sidecar, root)
             (
                 orphan_block,
                 orphan_receipts,
@@ -6487,6 +6707,7 @@ def prepare_resume(
                 orphan_keys,
                 adopted_lost,
                 skipped_live,
+                froze_alias,
             ) = _adopt_probe_orphans(
                 root,
                 worker_uuid=uuid,
@@ -6567,6 +6788,7 @@ def prepare_resume(
             to_consume.extend(consumed)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+        conflict = conflict or froze_alias
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
         if scalar is None:
             scalar_count = 0
