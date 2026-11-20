@@ -128,6 +128,51 @@ def test_ingest_non_dict_payload_returns_false_raw(tmp_path: Path) -> None:
     assert call_counters.serialize_current()["total_calls"] == 0
 
 
+def _fake_popen_factory(
+    *,
+    on_spawn: Any = None,
+    stdout: str = "",
+    stderr: str = "",
+    returncode: int = 0,
+    pid: int = 424242,
+) -> Any:
+    """Build a subprocess.Popen double honoring the runner's call shape."""
+
+    class _FakePopen:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.pid = pid
+            self.returncode: int | None = None
+            if on_spawn is not None:
+                on_spawn(*args, **kwargs)
+
+        def __enter__(self) -> _FakePopen:
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            self.wait()
+            return False
+
+        def communicate(self, timeout: Any = None) -> tuple[str, str]:
+            if self.returncode is None:
+                self.returncode = returncode
+            return (stdout, stderr)
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout: Any = None) -> int:
+            if self.returncode is None:
+                self.returncode = returncode
+            return self.returncode
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    return _FakePopen
+
+
 @pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
 def test_ingest_finalized_only_file_returns_false(ingest: _IngestFn, tmp_path: Path) -> None:
     cov = _write_coverage_file(tmp_path / "cov.json", {"python_finalized": True})
@@ -343,11 +388,10 @@ def test_run_probe_exports_registered_run_not_ambient(
     monkeypatch.setenv(RUN_ID_ENV, "unknown")
     captured: dict[str, str] = {}
 
-    def _fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _capture(cmd: Any, **kwargs: Any) -> None:
         captured.update(kwargs["env"])
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_capture))
     try:
         run_probe("_echo", {"module_path": "/nonexistent.so"}, timeout=30)
     finally:
@@ -1445,12 +1489,14 @@ def test_run_probe_deep_coverage_json_is_lost_not_abrupt(
     drain_process_observations()
     poison = _nested_poison_json()
 
-    def _fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _poison_cov(args: list[str], **kwargs: Any) -> None:
         cov_path = str(kwargs["env"]["_P11CHECK_SUBPROCESS_COVERAGE"])
         Path(cov_path).write_text(poison, encoding="utf-8")
-        return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_poison_cov),
+    )
     result = run_probe("_echo", {"module_path": "/x.so"})
     assert result.returncode == 0
     assert SUBPROCESS_ABRUPT_EXIT_MARKER not in result.stderr
@@ -1469,8 +1515,8 @@ def test_run_probe_empty_coverage_without_traceback_stays_abrupt(
 
     drain_process_observations()
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *a, **k: subprocess.CompletedProcess([], 0, "", ""),
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(),
     )
     result = run_probe("_echo", {"module_path": "/x.so"})
     assert result.returncode == 0
@@ -1509,12 +1555,14 @@ def test_run_probe_poisoned_trace_keeps_valid_counters(
     drain_subprocess_rv_trace()
     drain_process_observations()
 
-    def _fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _write_cov(args: list[str], **kwargs: Any) -> None:
         cov_path = str(kwargs["env"]["_P11CHECK_SUBPROCESS_COVERAGE"])
         Path(cov_path).write_text(json.dumps(_child_payload()), encoding="utf-8")
-        return subprocess.CompletedProcess(args, 0, f"{RV_TRACE_MARKER}{poison}\n", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_write_cov, stdout=f"{RV_TRACE_MARKER}{poison}\n"),
+    )
     try:
         result = run_probe("_echo", {"module_path": "/x.so"})
     finally:

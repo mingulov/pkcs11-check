@@ -1717,6 +1717,38 @@ def _probe_rows_garbage_count(rows: list[Any]) -> int:
     return sum(1 for row in rows if _parse_probe_flat_row(row) is None)
 
 
+def _probes_lost_wellformed(payload: Any) -> bool:
+    """Whether a probes_lost scalar is absent or strictly valid (#88R22-6).
+
+    Mirrors the orphan parser's own split (absent reads clean; anything
+    present must be a non-bool non-negative int): an explicit null, a
+    boolean, or any other mistyped scalar proves corruption, never zero.
+    """
+    if not isinstance(payload, dict) or "probes_lost" not in payload:
+        return True
+    return _is_nonneg_int(payload["probes_lost"])
+
+
+def _snapshots_coherent(
+    first: tuple[list[Any], frozenset[tuple[str, int]], int],
+    first_fingerprint: tuple[int, bool],
+    second: tuple[list[Any], frozenset[tuple[str, int]], int],
+    second_fingerprint: tuple[int, bool],
+) -> bool:
+    """Whether two marker snapshots agree numerically (#88R20-1/#88R21-6).
+
+    Mutual subset (equality on grouped rows, keys, and adopted
+    remainder) plus equal evidence fingerprints (garbage-row count,
+    loss-scalar validity). Shared by the coherence pre-scan and the
+    incremental main-loop check so both agree bit for bit (#88R22-5).
+    """
+    return (
+        first_fingerprint == second_fingerprint
+        and _snapshot_covered_by(*second, *first)
+        and _snapshot_covered_by(*first, *second)
+    )
+
+
 def _probe_rows_groups(rows: list[Any]) -> dict[tuple[str, str], dict[str, Any]]:
     """Group flat rows per (module, fn) into entries + per-RV exits (#88R8-1).
 
@@ -1901,7 +1933,7 @@ def _replay_probe_tmp_rows(
     orphan_birth: int | None = None,
     producer_uuid: str,
     digests: dict[str, str] | None = None,
-) -> tuple[list[Any], bool]:
+) -> tuple[list[Any], bool, bool]:
     """Replay the best same-probe rewrite tmp into orphan rows (#88).
 
     A probe return flush that dies inside ``os.replace`` leaves the
@@ -1918,8 +1950,11 @@ def _replay_probe_tmp_rows(
     loss keys/scalar always win (a tmp's marginal loss evidence stays
     dropped, as before -- counters-only replay). Raises
     ``_DeferProducerError`` on a persistently unreadable candidate.
-    Returns ``(rows, divergent)``: a held conflict the caller must
-    not silently clear when the baseline is covered (#88R8-2).
+    Returns ``(rows, divergent, refused_garbage)``: a held conflict
+    the caller must not silently clear when the baseline is covered
+    (#88R8-2), plus whether any gated tmp refused for malformed rows
+    (the caller flags its receipt dirty so no heal publishes through
+    understated numbers (#88R22-6)).
     ``digests`` records ``{path: sha256}`` for torn candidates and
     gated ones only (None discards: live ingest has no staging to
     bind to): a rejected replacement must never inherit cleanup
@@ -1946,6 +1981,7 @@ def _replay_probe_tmp_rows(
         )
 
     gated: list[tuple[Path, list[Any]]] = []
+    refused_garbage = False
     for tmp in candidates:
         status, payload, digest = _read_json_evidence_digested(tmp)
         if status == "gone":
@@ -1963,9 +1999,22 @@ def _replay_probe_tmp_rows(
             continue
         if not _gates(payload):
             continue
+        assert isinstance(payload, dict)
+        if _probe_rows_garbage_count(payload["counters"]) > 0:
+            # Malformed rewrite rows never replay (#88R22-6): grouped
+            # numbers would understate corrupt evidence, so this
+            # refuses like a gates miss (unlisted, blocking the
+            # reconcile) while flagging the receipt dirty at the
+            # caller and warning loud.
+            refused_garbage = True
+            warnings.warn(
+                f"probe rewrite {tmp.name} carries malformed rows; refused",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         if digest is not None and digests is not None:
             digests[str(tmp)] = digest
-        assert isinstance(payload, dict)
         gated.append((tmp, payload["counters"]))
     if quarantined and _divergence_vetoed(quarantined, _gates, producer_uuid):
         # A previous pass already judged this probe divergent but died
@@ -1984,9 +2033,9 @@ def _replay_probe_tmp_rows(
             UserWarning,
             stacklevel=2,
         )
-        return counters, True
+        return counters, True, refused_garbage
     if not gated:
-        return counters, False
+        return counters, False, refused_garbage
     vectors: list[dict[tuple[str, ...], int]] = []
     merged_sides: list[list[list[Any]]] = []
     for _, rows in gated:
@@ -2005,11 +2054,11 @@ def _replay_probe_tmp_rows(
             UserWarning,
             stacklevel=2,
         )
-        return counters, True
+        return counters, True, refused_garbage
     if all(not vector for vector in vectors):
-        return counters, False
+        return counters, False, refused_garbage
     winner = max(winner_indexes, key=lambda index: _probe_rows_volume(gated[index][1]))
-    return merged_sides[winner], False
+    return merged_sides[winner], False, refused_garbage
 
 
 def _probe_rows_volume(counters: list[Any]) -> int:
@@ -2057,6 +2106,8 @@ class _DeferProducerError(Exception):
     records, no consume) so a later pass collects parent and probe
     coherently. Carries the producer uuid, the live writer pid (None
     for I/O deferrals), and the unreadable file name for the warning.
+    Reason ``"outstanding"`` names unflushed spawn children (pid when
+    the first one carries a usable pid, else None).
     """
 
     def __init__(self, uuid: str, pid: int | None, source: str = "", reason: str = "") -> None:
@@ -2069,6 +2120,10 @@ class _DeferProducerError(Exception):
     @property
     def detail(self) -> str:
         """Human-readable deferral cause for the warning."""
+        if self.reason == "outstanding":
+            if self.pid is not None:
+                return f"unflushed probe child (pid {self.pid}) still live"
+            return "unflushed probe children outstanding"
         if self.pid is not None:
             return f"live probe writer (pid {self.pid}) unfenceable"
         if self.reason == "rewrite":
@@ -2228,10 +2283,13 @@ def _adopt_probe_orphans(
     receipt_slots: dict[tuple[str, int], set[str]] = {}
     seq_slots: dict[int, set[str]] = {}
     rewrite_held_slots: set[str] = set()
+    observed_slot_tmps: dict[str, set[str]] = {}
+    slot_owners: dict[str, set[tuple[str, int] | None]] = {}
     receipt_first_snapshot: dict[
         tuple[str, int], tuple[list[Any], frozenset[tuple[str, int]], int]
     ] = {}
-    receipt_first_garbage: dict[tuple[str, int], int] = {}
+    receipt_first_fingerprint: dict[tuple[str, int], tuple[int, bool]] = {}
+    receipt_evidence_dirty: set[tuple[str, int]] = set()
     incoherent_receipts: set[tuple[str, int]] = set()
     heal_candidates: list[tuple[str, int, Path, int, bool, Any, int | None]] = []
     recovered: list[tuple[str, int]] = []
@@ -2299,6 +2357,44 @@ def _adopt_probe_orphans(
             skipped.append(marker_path)
         recovered[:] = [entry for entry in recovered if entry != (worker_uuid, seq)]
 
+    def _marker_heal_clean(receipt: tuple[str, int]) -> bool:
+        """Whether a receipt's evidence proves marker recovery cleanly (#88R22-6).
+
+        The first marker's fingerprint must be pristine (zero garbage
+        rows, well-formed loss scalar) and no baseline, rewrite, or
+        scalar anywhere in the group may have dirtied it since.
+        Orphan-heals follow R2-F3 (unchanged); only marker channels
+        consult this.
+        """
+        return (
+            receipt_first_fingerprint.get(receipt) == (0, True)
+            and receipt not in receipt_evidence_dirty
+        )
+
+    def _refresh_slot_hold(slot: str) -> None:
+        """Refresh one slot's rewrite hold from present truth plus memory (#88R22-3).
+
+        Holds when fresh observation shows return-carrying tmps, when
+        enumeration faults, or when a previously observed return tmp
+        no longer lists (the writer may have unlinked it on failure,
+        which proves no landing): a vanish clears nothing. Observed
+        names accumulate monotonically; the reconcile clears
+        adjudicated slots.
+        """
+        presence = _slot_tmp_presence(root, slot, digests)
+        if presence is None:
+            rewrite_held_slots.add(slot)
+            return
+        present, with_returns = presence
+        observed = observed_slot_tmps.setdefault(slot, set())
+        if any(name not in present for name in observed):
+            rewrite_held_slots.add(slot)
+        elif with_returns:
+            rewrite_held_slots.add(slot)
+        else:
+            rewrite_held_slots.discard(slot)
+        observed |= with_returns
+
     def _observe_marker_slot(marker_path: Path, seq: int, receipt: tuple[str, int] | None) -> None:
         """Record one marker slot in its receipt group plus any rewrite hold (#88R20-2).
 
@@ -2311,10 +2407,10 @@ def _adopt_probe_orphans(
         if slot is None:
             return
         seq_slots.setdefault(seq, set()).add(slot)
+        slot_owners.setdefault(slot, set()).add(receipt)
         if receipt is not None:
             receipt_slots.setdefault(receipt, set()).add(slot)
-        if _slot_rewrite_unresolved(root, slot, digests):
-            rewrite_held_slots.add(slot)
+        _refresh_slot_hold(slot)
 
     def _fold(
         path: Path,
@@ -2504,6 +2600,27 @@ def _adopt_probe_orphans(
             is not None
         ):
             continue
+        # Coherence establishes here, before any disposition (#88R22-5):
+        # fencing and cleanup decisions below must know a group is
+        # contested before touching its writers or evidence. The
+        # main-loop check continues incrementally as a backstop for
+        # files appearing between the two globs.
+        scan_key = (scan_child, scan_seq)
+        scan_snapshot = (
+            scan_parsed_payload[2],
+            scan_parsed_payload[3],
+            scan_parsed_payload[6],
+        )
+        scan_fingerprint = (
+            _probe_rows_garbage_count(scan_parsed_payload[2]),
+            _probes_lost_wellformed(scan_raw),
+        )
+        scan_first = receipt_first_snapshot.setdefault(scan_key, scan_snapshot)
+        scan_first_fingerprint = receipt_first_fingerprint.setdefault(scan_key, scan_fingerprint)
+        if not _snapshots_coherent(
+            scan_first, scan_first_fingerprint, scan_snapshot, scan_fingerprint
+        ):
+            incoherent_receipts.add(scan_key)
         scan_pid = scan_raw.get("pid")
         scan_birth = scan_raw.get("birth_token")
         if (
@@ -2636,12 +2753,13 @@ def _adopt_probe_orphans(
         # claim would read silent-complete).
         snapshot = (marker_counters, marker_keys, marker_adopted)
         first_snapshot = receipt_first_snapshot.setdefault(receipt_key, snapshot)
-        garbage = _probe_rows_garbage_count(marker_counters)
-        first_garbage = receipt_first_garbage.setdefault(receipt_key, garbage)
-        if receipt_key not in incoherent_receipts and not (
-            garbage == first_garbage
-            and _snapshot_covered_by(*snapshot, *first_snapshot)
-            and _snapshot_covered_by(*first_snapshot, *snapshot)
+        fingerprint = (
+            _probe_rows_garbage_count(marker_counters),
+            _probes_lost_wellformed(raw),
+        )
+        first_fingerprint = receipt_first_fingerprint.setdefault(receipt_key, fingerprint)
+        if receipt_key not in incoherent_receipts and not _snapshots_coherent(
+            first_snapshot, first_fingerprint, snapshot, fingerprint
         ):
             incoherent_receipts.add(receipt_key)
         if receipt_key in incoherent_receipts:
@@ -2719,14 +2837,14 @@ def _adopt_probe_orphans(
         # catch in _fold), but recovery and marker consumption withhold
         # until the slot's latest word is provable; the tmp's own
         # replay/prune paths converge the retry (#88R10-2). The
-        # observation re-runs fresh (a postmortem fence may have raced
-        # it) and withdraws earlier group heals without pinning: the
-        # reconcile below is this withhold's own convergence path
-        # (#88R20-2).
+        # observation refreshes (a postmortem fence may have raced it;
+        # a vanish since coverage holds too) and withdraws earlier
+        # group heals without pinning: the reconcile below is this
+        # withhold's own convergence path (#88R20-2).
         slot_name = _marker_slot_name(path.name)
         assert slot_name is not None  # parsed_name guarantees the shape
-        if _slot_rewrite_unresolved(root, slot_name, digests):
-            rewrite_held_slots.add(slot_name)
+        _refresh_slot_hold(slot_name)
+        if slot_name in rewrite_held_slots:
             _withdraw_receipt_heal(marker_child, marker_seq)
             warnings.warn(
                 f"consumed marker {path.name} slot {slot_name} keeps an unresolved "
@@ -2752,13 +2870,14 @@ def _adopt_probe_orphans(
                 stacklevel=2,
             )
             continue
-        if receipt_first_garbage[receipt_key] != 0:
-            # Malformed rows prove corruption (writers emit ints), so
-            # even a coherent group of them waits for forensics
-            # instead of healing or consuming (#88R21-6).
+        if not _marker_heal_clean(receipt_key):
+            # Malformed evidence proves corruption (writers emit ints
+            # and strict scalars), so even a coherent group of it
+            # waits for forensics instead of healing or consuming
+            # (#88R21-6/#88R22-6).
             skipped.append(path)
             warnings.warn(
-                f"consumed marker {path.name} carries malformed rows; "
+                f"consumed marker {path.name} carries malformed evidence; "
                 "recovery withheld for forensics",
                 UserWarning,
                 stacklevel=2,
@@ -2775,105 +2894,14 @@ def _adopt_probe_orphans(
                 validated_birth,
             )
         )
-    # Finalize direct heals after every slot observation (#88R21-2): a
-    # heal publishes only on fresh group truth, so a hold recorded
-    # anywhere in the pass (including a torn marker's late debris
-    # re-observe, which cannot withdraw by receipt) blocks every
-    # affected copy. Each candidate re-verifies pins, liveness
-    # (recorded stamps rechecked against the world: birthless reuse,
-    # mainstream on platforms without birth tokens, can flip late),
-    # and group holds (every group slot re-observed fresh, catching
-    # rewrites that landed mid-loop). Marker bytes are not re-read:
-    # markers never mutate honestly (unlike baselines, whose reread
-    # is load-bearing), so a mid-pass marker change is external-only
-    # (same model line as the R20-3 rebuttal). Residual: a change
-    # landing between this final observation and return
-    # (microseconds; deletions stay digest-verified at cleanup).
-    for (
-        cand_child,
-        cand_seq,
-        cand_path,
-        cand_filename_seq,
-        cand_finalized,
-        cand_pid,
-        cand_birth_valid,
-    ) in heal_candidates:
-        cand_key = (cand_child, cand_seq)
-        if not cand_path.exists():
-            continue
-        if cand_key in held_receipts:
-            skipped.append(cand_path)
-            warnings.warn(
-                f"consumed marker {cand_path.name} shares its receipt with an "
-                "outstanding hold; recovery withheld for a later pass",
-                UserWarning,
-                stacklevel=2,
-            )
-            continue
-        if (
-            type(cand_pid) is int
-            and cand_pid > 0
-            and _incarnation_alive(cand_pid, cand_birth_valid)
-        ):
-            if not fence_live:
-                _rollback_receipt_group(cand_child, cand_seq)
-                skipped.append(cand_path)
-                cand_slot_name = _marker_slot_name(cand_path.name)
-                if cand_slot_name is not None:
-                    skipped_slots.add(cand_slot_name)
-                warnings.warn(
-                    f"consumed marker {cand_path.name} has a live writer (pid {cand_pid}); "
-                    "recovery withheld for a later pass",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                continue
-            if cand_birth_valid is None:
-                if _pid_exists(cand_pid):
-                    raise _DeferProducerError(worker_uuid, cand_pid)
-            elif not _terminate_verified(cand_pid, cand_birth_valid, 5.0):
-                raise _DeferProducerError(worker_uuid, cand_pid)
-        cand_group = receipt_slots.get(cand_key, set()) | seq_slots.get(cand_seq, set())
-        for group_slot in sorted(cand_group):
-            if _slot_rewrite_unresolved(root, group_slot, digests):
-                rewrite_held_slots.add(group_slot)
-            else:
-                rewrite_held_slots.discard(group_slot)
-        cand_slot = _marker_slot_name(cand_path.name)
-        if cand_slot is not None and cand_slot in rewrite_held_slots:
-            _withdraw_receipt_heal(cand_child, cand_seq)
-            withheld.append((cand_child, cand_seq, cand_path, cand_filename_seq, cand_finalized))
-            warnings.warn(
-                f"consumed marker {cand_path.name} slot {cand_slot} keeps an unresolved "
-                "rewrite; recovery withheld",
-                UserWarning,
-                stacklevel=2,
-            )
-            continue
-        if cand_group & rewrite_held_slots:
-            _withdraw_receipt_heal(cand_child, cand_seq)
-            skipped.append(cand_path)
-            warnings.warn(
-                f"consumed marker {cand_path.name} shares its receipt with an unresolved "
-                "rewrite; recovery withheld for a later pass",
-                UserWarning,
-                stacklevel=2,
-            )
-            continue
-        if cand_key in incoherent_receipts:
-            skipped.append(cand_path)
-            warnings.warn(
-                f"contradictory consumed marker {cand_path.name} "
-                "(another copy of its receipt disagrees); "
-                "recovery withheld for forensics",
-                UserWarning,
-                stacklevel=2,
-            )
-            continue
-        if cand_finalized and cand_seq == cand_filename_seq:
-            recovered.append((worker_uuid, cand_seq))
-        marker_paths.setdefault(cand_key, []).append(cand_path)
-        consumed.append(cand_path)
+    # Slots claimed by more than one receipt (legacy + full-uuid names
+    # aliasing one slot, or a torn marker sharing a slot) freeze for
+    # forensics (#88R22-1): no honest path parks two receipts on one
+    # slot, so any proof there is unattributable -- and consuming one
+    # receipt's evidence would let the other heal on the emptied slot
+    # next pass. Computed once observations complete; migration pairs
+    # (same receipt twice) stay single-owner and resolve normally.
+    aliased_slots = {slot for slot, owners in slot_owners.items() if len(owners) > 1}
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
         parsed_name = _parse_probe_filename(path.name)
         if parsed_name is None or parsed_name[0] != prefix:
@@ -2899,6 +2927,15 @@ def _adopt_probe_orphans(
                 warnings.warn(
                     f"probe baseline {path.name} shares its slot with a live marker "
                     "writer; retained for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            if path.name in aliased_slots:
+                skipped.append(path)
+                warnings.warn(
+                    f"probe baseline {path.name} shares its slot with another "
+                    "receipt; retained for forensics",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -2971,11 +3008,28 @@ def _adopt_probe_orphans(
             # corrupt-contested writer would destroy evidence.
             _skip_covered_orphan(path, child_uuid, seq, "sits under contradictory markers")
             continue
-        if receipt_first_garbage.get((child_uuid, seq), 0) != 0:
+        if receipt_first_fingerprint.get((child_uuid, seq), (0, True)) != (0, True):
             # Malformed marker rows void suppression too (#88R21-6):
             # grouped numbers understate corrupt evidence, so the
             # baseline waits rather than dropping rows as absorbed.
             _skip_covered_orphan(path, child_uuid, seq, "sits under malformed markers")
+            continue
+        orphan_dirty = _probe_rows_garbage_count(counters) > 0 or not _probes_lost_wellformed(raw)
+        if orphan_dirty and (child_uuid, seq) in coverage:
+            # A corrupt covered baseline proves nothing either way
+            # (#88R22-6): it waits (flagging its receipt dirty so no
+            # marker channel heals through it) instead of suppressing
+            # under understated numbers.
+            receipt_evidence_dirty.add((child_uuid, seq))
+            _skip_covered_orphan(path, child_uuid, seq, "carries malformed evidence")
+            continue
+        if orphan_dirty:
+            # Uncovered corrupt baselines keep folding per R2-F3 (their
+            # counts merge garbage-blind by design); the flag below is
+            # moot without a marker in play but keeps the rule uniform.
+            receipt_evidence_dirty.add((child_uuid, seq))
+        if path.name in aliased_slots:
+            _skip_covered_orphan(path, child_uuid, seq, "sits on an aliased slot")
             continue
         if fence_live and orphan_pid is not None:
             # Quiescence (#88R3): on postmortem paths a stamped live
@@ -3060,7 +3114,7 @@ def _adopt_probe_orphans(
         # #88: a same-probe rewrite tmp replays its returns onto the
         # orphan's rows before the reunion fold.
         pre_replay_exits = _rows_exit_total(counters)
-        counters, replay_divergent = _replay_probe_tmp_rows(
+        counters, replay_divergent, replay_refused_garbage = _replay_probe_tmp_rows(
             path,
             child_uuid,
             seq,
@@ -3073,6 +3127,8 @@ def _adopt_probe_orphans(
             producer_uuid=worker_uuid,
             digests=digests,
         )
+        if replay_refused_garbage:
+            receipt_evidence_dirty.add((child_uuid, seq))
         replayed_adopted = _rows_exit_total(counters) != pre_replay_exits
         _fold(
             path,
@@ -3088,6 +3144,111 @@ def _adopt_probe_orphans(
             replay_divergent,
             raw,
         )
+    # Finalize direct heals after orphan reads, replay, and fencing
+    # (#88R21-2/#88R22-2): a heal publishes only on fresh group truth,
+    # so a hold recorded anywhere in the pass (including a rewrite a
+    # live writer published mid-orphan-loop, after any marker turn
+    # could see it) blocks every affected copy. Each candidate
+    # re-verifies pins, liveness (recorded stamps rechecked against
+    # the world: birthless reuse, mainstream on platforms without
+    # birth tokens, can flip late), and group holds (every group slot
+    # re-observed fresh). Marker bytes are not re-read: markers never
+    # mutate honestly (unlike baselines, whose reread is
+    # load-bearing), so a mid-pass marker change is external-only
+    # (same model line as the R20-3 rebuttal). Residual: a change
+    # landing between this final observation and return
+    # (microseconds; deletions stay digest-verified at cleanup).
+    for (
+        cand_child,
+        cand_seq,
+        cand_path,
+        cand_filename_seq,
+        cand_finalized,
+        cand_pid,
+        cand_birth_valid,
+    ) in heal_candidates:
+        cand_key = (cand_child, cand_seq)
+        if not cand_path.exists():
+            continue
+        if cand_key in held_receipts:
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} shares its receipt with an "
+                "outstanding hold; recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if (
+            type(cand_pid) is int
+            and cand_pid > 0
+            and _incarnation_alive(cand_pid, cand_birth_valid)
+        ):
+            if not fence_live:
+                _rollback_receipt_group(cand_child, cand_seq)
+                skipped.append(cand_path)
+                cand_slot_name = _marker_slot_name(cand_path.name)
+                if cand_slot_name is not None:
+                    skipped_slots.add(cand_slot_name)
+                warnings.warn(
+                    f"consumed marker {cand_path.name} has a live writer (pid {cand_pid}); "
+                    "recovery withheld for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            if cand_birth_valid is None:
+                if _pid_exists(cand_pid):
+                    raise _DeferProducerError(worker_uuid, cand_pid)
+            elif not _terminate_verified(cand_pid, cand_birth_valid, 5.0):
+                raise _DeferProducerError(worker_uuid, cand_pid)
+        cand_group = receipt_slots.get(cand_key, set()) | seq_slots.get(cand_seq, set())
+        for group_slot in sorted(cand_group):
+            _refresh_slot_hold(group_slot)
+        cand_slot = _marker_slot_name(cand_path.name)
+        if cand_slot is not None and cand_slot in aliased_slots:
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} shares its slot with another "
+                "receipt; recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_slot is not None and cand_slot in rewrite_held_slots:
+            _withdraw_receipt_heal(cand_child, cand_seq)
+            withheld.append((cand_child, cand_seq, cand_path, cand_filename_seq, cand_finalized))
+            warnings.warn(
+                f"consumed marker {cand_path.name} slot {cand_slot} keeps an unresolved "
+                "rewrite; recovery withheld",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_group & rewrite_held_slots:
+            _withdraw_receipt_heal(cand_child, cand_seq)
+            skipped.append(cand_path)
+            warnings.warn(
+                f"consumed marker {cand_path.name} shares its receipt with an unresolved "
+                "rewrite; recovery withheld for a later pass",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_key in incoherent_receipts:
+            skipped.append(cand_path)
+            warnings.warn(
+                f"contradictory consumed marker {cand_path.name} "
+                "(another copy of its receipt disagrees); "
+                "recovery withheld for forensics",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        if cand_finalized and cand_seq == cand_filename_seq:
+            recovered.append((worker_uuid, cand_seq))
+        marker_paths.setdefault(cand_key, []).append(cand_path)
+        consumed.append(cand_path)
     # Reconcile withheld markers with the replay result (#88R18-1): a
     # slot whose baseline suppressed under this receipt's marker
     # snapshot proved absorbed, so its marker heals now instead of
@@ -3108,7 +3269,9 @@ def _adopt_probe_orphans(
         if (
             held_slot is not None
             and covered == (held_child, held_seq)
-            and _slot_tmps_adjudicated(root, held_slot, digests)
+            and _slot_tmps_adjudicated(
+                root, held_slot, digests, observed_slot_tmps.get(held_slot, ())
+            )
         ):
             # Proof binds slot AND receipt (#88R21-1): two markers
             # aliasing one slot (legacy + full-uuid names) must not
@@ -3126,7 +3289,7 @@ def _adopt_probe_orphans(
             and proved_receipt_slots.get(held_slot) == held_key
             and held_key not in held_receipts
             and held_key not in incoherent_receipts
-            and receipt_first_garbage.get(held_key, 0) == 0
+            and _marker_heal_clean(held_key)
             and not (group_slots & rewrite_held_slots)
         ):
             if held_finalized and held_seq == held_filename_seq:
@@ -3312,6 +3475,41 @@ def _marker_slot_name(marker_name: str) -> str | None:
     return f"{PROBE_FILE_PREFIX}{owner[:8]}-{seq}-{nonce}{PROBE_FILE_SUFFIX}"
 
 
+def _slot_tmp_presence(
+    root: Path, slot_name: str, digests: dict[str, str] | None = None
+) -> tuple[set[str], set[str]] | None:
+    """Present and return-carrying rewrite tmp names at a slot (#88R22-3).
+
+    Returns ``(present, with_returns)`` file-name sets, or None when
+    enumeration itself faults. Debris digests record exactly as the
+    unresolved check below (torn or returnless reads only); a tmp
+    carrying returns never inherits cleanup authorization from this
+    informational scan (#88R17-3). Never raises.
+    """
+    tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
+    if tmps is None:
+        return None
+    present: set[str] = set()
+    with_returns: set[str] = set()
+    for tmp in tmps:
+        status, payload, digest = _read_json_evidence_digested(tmp)
+        if status == "gone":
+            continue
+        present.add(tmp.name)
+        if status == "torn":
+            if digest is not None and digests is not None:
+                digests.setdefault(str(tmp), digest)
+            continue
+        if status != "ok":
+            return None
+        if _tmp_has_return_rows(payload):
+            with_returns.add(tmp.name)
+            continue
+        if digest is not None and digests is not None:
+            digests.setdefault(str(tmp), digest)
+    return (present, with_returns)
+
+
 def _slot_rewrite_unresolved(
     root: Path, slot_name: str, digests: dict[str, str] | None = None
 ) -> bool:
@@ -3326,29 +3524,16 @@ def _slot_rewrite_unresolved(
     replay gate refused must never inherit cleanup authorization from
     this informational scan (#88R17-3). None discards.
     """
-    tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
-    if tmps is None:
-        return True
-    for tmp in tmps:
-        status, payload, digest = _read_json_evidence_digested(tmp)
-        if status == "gone":
-            continue
-        if status == "gone":
-            continue
-        if status == "torn":
-            if digest is not None and digests is not None:
-                digests.setdefault(str(tmp), digest)
-            continue
-        if status != "ok":
-            return True
-        if _tmp_has_return_rows(payload):
-            return True
-        if digest is not None and digests is not None:
-            digests.setdefault(str(tmp), digest)
-    return False
+    presence = _slot_tmp_presence(root, slot_name, digests)
+    return presence is None or len(presence[1]) > 0
 
 
-def _slot_tmps_adjudicated(root: Path, slot_name: str, digests: dict[str, str] | None) -> bool:
+def _slot_tmps_adjudicated(
+    root: Path,
+    slot_name: str,
+    digests: dict[str, str] | None,
+    observed: Collection[str] = (),
+) -> bool:
     """Whether every surviving rewrite tmp at a slot was adjudicated stable (#88R19-1).
 
     A withheld marker reconciles only when the slot's latest word is
@@ -3356,12 +3541,20 @@ def _slot_tmps_adjudicated(root: Path, slot_name: str, digests: dict[str, str] |
     or debris-ruled this pass -- a refused replacement is never listed)
     and byte-identical to its adjudication. Vanished tmps, listing
     faults, and untracked passes (no digest map) fail closed. Never raises.
+    ``observed`` carries tmp names seen earlier this pass: a previously
+    observed return tmp that no longer lists proves nothing landed --
+    the writer may have unlinked it on failure -- so the hold stays
+    instead of clearing on the empty listing (#88R22-3).
     """
     if digests is None:
         return False
     tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
     if tmps is None:
         return False
+    if observed:
+        present = {tmp.name for tmp in tmps}
+        if any(name not in present for name in observed):
+            return False
     for tmp in tmps:
         listed = digests.get(str(tmp))
         if listed is None:
@@ -3975,6 +4168,8 @@ def collect_unit(
         unit_routed_committed = isinstance(sidecar_run, str) and (sidecar_run, uuid) in sessions
         try:
             journal_lines = _read_journal_lines_strict(journal_path, uuid)
+            if not unit_routed_committed:
+                _raise_for_outstanding_spawns(uuid, sidecar)
             (
                 orphan_block,
                 orphan_receipts,
@@ -4824,6 +5019,71 @@ def _registry_claims_orphan(reg_dir: Path, uuid: str) -> bool:
     return read_registry_file(reg_dir / f"{uuid}.json") is not None
 
 
+def _unflushed_live_spawns(sidecar: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Spawn records still owed evidence: unflushed with a live writer (#88R22-4).
+
+    A slot file present means flushed (fold it on reunion); a
+    dead-verified pid (birth-pinned mismatch/gone, or lookup failure
+    for birthless records) means nothing is coming; anything else is
+    outstanding and postmortem publication must wait for it -- a first
+    flush landing between passes would otherwise fold into a retry
+    whose counts first-wins already discarded. Malformed records fail
+    closed (outstanding). Never raises.
+    """
+    if not isinstance(sidecar, dict):
+        return []
+    records = sidecar.get("spawned_children")
+    if records is None:
+        return []
+    if not isinstance(records, list):
+        return [{"malformed": True}]
+    outstanding: list[dict[str, Any]] = []
+    for entry in records:
+        if not isinstance(entry, dict):
+            outstanding.append({"malformed": True})
+            continue
+        seq = entry.get("probe_seq")
+        slot = entry.get("slot")
+        pid = entry.get("pid")
+        birth = entry.get("birth_token")
+        if (
+            type(seq) is not int
+            or not isinstance(slot, str)
+            or not slot
+            or type(pid) is not int
+            or pid <= 0
+            or (birth is not None and type(birth) is not int)
+        ):
+            outstanding.append({"malformed": True})
+            continue
+        if Path(slot).exists():
+            continue
+        if birth is not None:
+            if _incarnation_alive(pid, birth):
+                outstanding.append(entry)
+        elif _pid_exists(pid):
+            outstanding.append(entry)
+    return outstanding
+
+
+def _raise_for_outstanding_spawns(uuid: str, sidecar: dict[str, Any] | None) -> None:
+    """Defer postmortem publication while spawn children are unflushed (#88R22-4).
+
+    A first flush landing between passes would fold into a retry whose
+    counts first-wins already discarded, so reunion waits for launched
+    children to flush or die instead of publishing a partial gap.
+    Committed routes never call this (the live session supersedes).
+    Bounded by child lifetime (suite time); loud per pass through the
+    standard defer warning.
+    """
+    outstanding = _unflushed_live_spawns(sidecar)
+    if outstanding:
+        first_pid = outstanding[0].get("pid")
+        raise _DeferProducerError(
+            uuid, first_pid if isinstance(first_pid, int) else None, reason="outstanding"
+        )
+
+
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
     """Adopt a sidecar with no live registry via its carried identity."""
     sidecar = read_json_file(sidecar_path)
@@ -4952,6 +5212,7 @@ def _collect_dead_producer(
         scalar_count = 0
         conflict = True
     gap_keys = _sidecar_loss_keys(sidecar)
+    _raise_for_outstanding_spawns(uuid, sidecar if isinstance(sidecar, dict) else None)
     (
         orphan_block,
         orphan_receipts,
@@ -6199,18 +6460,25 @@ def prepare_resume(
         if isinstance(barrier_run, str):
             seen_runs.add(barrier_run)
         journal_path = _journal_for_sidecar(sidecar_path)
-        if uuid in validated_collected and uuid not in staged_skip_held:
+        if (
+            uuid in validated_collected
+            and uuid not in staged_skip_held
+            and not _unflushed_live_spawns(sidecar)
+        ):
             # Staged retry (#88R13-2): no second reunion (see the
             # registry loop); the files consume directly while probes
             # converge through digest-gated adoption. Quiescence was
             # proven by the adoption gate above. Skip-held producers
-            # reunite below instead (#88R15-2).
+            # reunite below instead (#88R15-2), as do producers with
+            # unflushed spawn children (#88R22-4).
             to_consume.extend([sidecar_path, journal_path])
             continue
         barrier_unit = sidecar.get("unit")
         routed_committed = any(known_uuid == uuid for _, known_uuid in sessions)
         try:
             journal_lines = _read_journal_lines_strict(journal_path, uuid)
+            if not routed_committed:
+                _raise_for_outstanding_spawns(uuid, sidecar)
             (
                 orphan_block,
                 orphan_receipts,
