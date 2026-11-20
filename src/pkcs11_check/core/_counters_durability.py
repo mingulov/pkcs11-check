@@ -366,6 +366,22 @@ def unseal(root: Path | str) -> None:
         raise CounterPersistenceError(f"cannot unseal counters dir {Path(root)}: {exc}") from exc
 
 
+def _pid_representable(pid: object) -> bool:
+    """Whether ``pid`` survives the platform pid conversion (#88R25-5).
+
+    Posix ``pid_t`` is 32-bit signed; Windows ``OpenProcess`` takes a
+    ``c_uint``. Beyond that the OS liveness helpers raise
+    ``OverflowError`` (an ``ArithmeticError``, not an ``OSError``, so
+    the usual fault arms never catch it) -- callers retain such
+    records as malformed evidence before calling them.
+    """
+    if type(pid) is not int or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        return pid <= 0xFFFFFFFF
+    return pid <= 0x7FFFFFFF
+
+
 def birth_token_for_pid(pid: int) -> int | None:
     """Return the OS process-birth id for ``pid``, or None when unverifiable.
 
@@ -374,7 +390,7 @@ def birth_token_for_pid(pid: int) -> int | None:
     source (macOS). None means fencing must report unresolved without
     signaling, never guess.
     """
-    if pid < 0:
+    if not _pid_representable(pid):
         return None
     if sys.platform == "win32":
         return _windows_creation_time(pid)
@@ -488,6 +504,11 @@ def _pid_exists(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
+        return True
+    except OverflowError:
+        # Unrepresentable pids never name a provable process here, but
+        # _pid_exists feeds fencing: alive-conservative, never dead by
+        # conversion failure (#88R25-5).
         return True
     except OSError:
         return False
@@ -938,6 +959,12 @@ def _incarnation_alive(pid: int, birth: int | None) -> bool:
             fd = open_pidfd(pid, 0)
         except ProcessLookupError:
             return False
+        except OverflowError:
+            # Unrepresentable here, unprovable everywhere: alive reads
+            # retain the record instead of crashing the barrier
+            # (#88R25-5). OverflowError is an ArithmeticError, so the
+            # OSError arm below never catches it.
+            return True
         except OSError:
             return True
         try:
@@ -2174,6 +2201,8 @@ class _DeferProducerError(Exception):
             return f"probe listing failed under {self.source or 'unknown file'}"
         if self.reason == "enum-spawn":
             return f"spawn listing failed under {self.source or 'unknown file'}"
+        if self.reason == "enum-marker":
+            return f"marker listing failed under {self.source or 'unknown file'}"
         if self.source:
             return f"unreadable evidence ({self.source})"
         return "unreadable evidence"
@@ -2600,7 +2629,12 @@ def _adopt_probe_orphans(
     # loop's reads bind the digests.
     live_writers: dict[tuple[str, int], list[tuple[int, int | None]]] = {}
     live_marker_names: set[str] = set()
-    for scan_path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
+    prescan_files = _list_evidence_files(root, PROBE_CONSUMED_PREFIX, PROBE_FILE_SUFFIX)
+    if prescan_files is None:
+        # An unlistable marker dir defers the producer (#88R25-2):
+        # coherence and freeze inputs would be incomplete.
+        raise _DeferProducerError(worker_uuid, None, source=root.name, reason="enum-marker")
+    for scan_path in prescan_files:
         scan_parsed = _parse_consumed_probe_filename(scan_path.name)
         if scan_parsed is None:
             continue
@@ -2678,8 +2712,13 @@ def _adopt_probe_orphans(
                 (scan_pid, scan_birth if type(scan_birth) is int else None)
             )
             live_marker_names.add(scan_path.name)
+    marker_files = _list_evidence_files(root, PROBE_CONSUMED_PREFIX, PROBE_FILE_SUFFIX)
+    if marker_files is None:
+        # An unlistable marker dir defers the producer (#88R25-2):
+        # proceeding blind would strand any recovery the fault hides.
+        raise _DeferProducerError(worker_uuid, None, source=root.name, reason="enum-marker")
     for path in sorted(
-        root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}"),
+        marker_files,
         key=lambda candidate: (candidate.name not in live_marker_names, candidate.name),
     ):
         parsed_name = _parse_consumed_probe_filename(path.name)
@@ -3843,11 +3882,15 @@ def _path_is_dir(path: Path | str) -> PathState:
 
     Same tri-state as :func:`_path_state`, but ``present`` additionally
     requires directory-ness (a file where a directory belongs reads
-    ``missing``: callers skip it exactly as before). Single stat, so no
-    check-then-act gap. Never raises.
+    ``missing``: callers skip it exactly as before). The stat follows
+    symlinks like the pre-tri-state ``Path.is_dir`` did: a link to a
+    directory reads present, a link to a file or a broken link reads
+    missing, a loop reads missing (ELOOP), and a link into an
+    unreadable directory reads unreadable (#88R25-7). Single stat, so
+    no check-then-act gap. Never raises.
     """
     try:
-        mode = os.stat(path, follow_symlinks=False).st_mode
+        mode = os.stat(path).st_mode
     except OSError as exc:
         if exc.errno in _MISSING_ERRNOS:
             return "missing"
@@ -4235,12 +4278,20 @@ def _collect_unreadable_child(
     """
     warnings.warn(
         f"call-counter collection cannot read {child_path.name}: "
-        "retaining evidence, naming conflict",
+        "retaining evidence for a later pass",
         UserWarning,
         stacklevel=3,
     )
     appended: list[dict[str, Any]] = []
-    for registry_path in sorted(reg_dir.glob("*.json")):
+    registry_files = _list_evidence_files(reg_dir, "", ".json")
+    if registry_files is None:
+        warnings.warn(
+            f"registry listing under {reg_dir.name} unlistable (I/O fault); retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return appended
+    for registry_path in registry_files:
         content = read_registry_file(registry_path)
         if content is None:
             _reap_torn_registry(root, registry_path)
@@ -4333,7 +4384,17 @@ def collect_unit(
     appended: list[dict[str, Any]] = []
     seen_sidecar_uuids: set[str] = set()
     read_digests: dict[str, str] = {}
-    for registry_path in sorted(reg_dir.glob("*.json")):
+    registry_files = _list_evidence_files(reg_dir, "", ".json")
+    if registry_files is None:
+        # An unlistable registry defers the whole collect (#88R25-3):
+        # producer scope is unprovable, so nothing is decided.
+        warnings.warn(
+            f"registry listing under {reg_dir.name} unlistable (I/O fault); deferred",
+            UserWarning,
+            stacklevel=2,
+        )
+        return appended
+    for registry_path in registry_files:
         content = read_registry_file(registry_path)
         if content is None:
             # #88R2: an I/O-failed read is unreadable, never torn: reserve
@@ -4414,7 +4475,17 @@ def collect_unit(
             if not skipped_live:
                 _consume_producer_files(_producer_files(content, registry_path), read_digests)
             _consume_producer_files(consumed, read_digests)
-    for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
+    sidecar_files = _list_evidence_files(root, "", SIDECAR_SUFFIX)
+    if sidecar_files is None:
+        # An unlistable sidecar dir skips the orphan loop loudly
+        # (#88R25-3): registry results stand, unlisted sidecars wait.
+        warnings.warn(
+            f"sidecar listing under {root.name} unlistable (I/O fault); skipped",
+            UserWarning,
+            stacklevel=2,
+        )
+        return appended
+    for sidecar_path in sidecar_files:
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids)
         if adopted is None:
             continue
@@ -5979,7 +6050,15 @@ def sweep_orphans(
                 return
         _remove(paths)
 
-    for registry_path in sorted(reg_dir.glob("*.json")):
+    sweep_registries = _list_evidence_files(reg_dir, "", ".json")
+    if sweep_registries is None:
+        warnings.warn(
+            f"sweep registry listing under {reg_dir.name} unlistable (I/O fault); skipped",
+            UserWarning,
+            stacklevel=2,
+        )
+        sweep_registries = []
+    for registry_path in sweep_registries:
         claimed = parse_registry_filename(registry_path.name)
         if claimed is not None and claimed in retain_uuids:
             retained += 1
@@ -6008,7 +6087,15 @@ def sweep_orphans(
             sidecar_path = Path(sidecar_raw)
             _count_if_present(sidecar_path)
             _count_if_present(_journal_for_sidecar(sidecar_path))
-    for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
+    sweep_sidecars = _list_evidence_files(root, "", SIDECAR_SUFFIX)
+    if sweep_sidecars is None:
+        warnings.warn(
+            f"sweep sidecar listing under {root.name} unlistable (I/O fault); skipped",
+            UserWarning,
+            stacklevel=2,
+        )
+        sweep_sidecars = []
+    for sidecar_path in sweep_sidecars:
         uuid = _uuid_from_evidence_name(sidecar_path.name)
         if uuid is None:
             continue
@@ -6067,7 +6154,15 @@ def sweep_orphans(
         else:
             retained += 1
             _count_if_present(journal_path)
-    for journal_path in sorted(root.glob(f"*{JOURNAL_SUFFIX}")):
+    sweep_journals = _list_evidence_files(root, "", JOURNAL_SUFFIX)
+    if sweep_journals is None:
+        warnings.warn(
+            f"sweep journal listing under {root.name} unlistable (I/O fault); skipped",
+            UserWarning,
+            stacklevel=2,
+        )
+        sweep_journals = []
+    for journal_path in sweep_journals:
         uuid = _uuid_from_evidence_name(journal_path.name)
         if uuid is None:
             continue
@@ -6092,7 +6187,15 @@ def sweep_orphans(
             retained += 1
             continue
         _remove([journal_path])
-    for probe_path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
+    sweep_probes = _list_evidence_files(root, PROBE_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    if sweep_probes is None:
+        warnings.warn(
+            f"sweep probe listing under {root.name} unlistable (I/O fault); skipped",
+            UserWarning,
+            stacklevel=2,
+        )
+        sweep_probes = []
+    for probe_path in sweep_probes:
         status, raw = _read_json_evidence(probe_path)
         if status == "gone":
             continue
@@ -6162,6 +6265,15 @@ def sweep_orphans(
             birth_raw = payload.get("birth_token")
             birth = birth_raw if isinstance(birth_raw, int) else None
             assert isinstance(pid, int)
+            if not _pid_representable(pid):
+                warnings.warn(
+                    f"spawn file {spawn_path.name} has an unrepresentable pid "
+                    f"({pid}); retained as malformed evidence",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                continue
             if _incarnation_alive(pid, birth):
                 warnings.warn(
                     f"spawn file {spawn_path.name} has a live writer (pid {pid}); retained",
@@ -6505,6 +6617,15 @@ def _adopted_staged_probe_targets(
             )
             retained.append(probe_path)
             continue
+        if not _pid_representable(pid):
+            warnings.warn(
+                f"staged probe {probe_path.name} has an unrepresentable pid "
+                f"({pid}); retained as malformed evidence",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained.append(probe_path)
+            continue
         if _incarnation_alive(pid, birth):
             warnings.warn(
                 f"staged probe {probe_path.name} has a live writer (pid {pid}); "
@@ -6635,9 +6756,22 @@ def _adopted_staged_spawn_targets(
                 retained.append(spawn_path)
             continue
         parent = payload.get("parent_uuid")
+        if not isinstance(parent, str):
+            # Malformed identity: filename routing like content-mute
+            # files (an unhashable parent must never reach the
+            # membership test) (#88R25-5).
+            parsed = _parse_spawn_filename(spawn_path.name)
+            if parsed is not None and any(uuid.startswith(parsed[0]) for uuid in validated):
+                warnings.warn(
+                    f"staged spawn {spawn_path.name} has a malformed identity; "
+                    "retained for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained.append(spawn_path)
+            continue
         if parent not in validated:
             continue
-        assert isinstance(parent, str)
         if not _spawn_entry_valid(payload):
             warnings.warn(
                 f"staged spawn {spawn_path.name} is malformed; retained (no authority)",
@@ -6650,6 +6784,15 @@ def _adopted_staged_spawn_targets(
         birth_raw = payload.get("birth_token")
         birth = birth_raw if isinstance(birth_raw, int) else None
         assert isinstance(pid, int)
+        if not _pid_representable(pid):
+            warnings.warn(
+                f"staged spawn {spawn_path.name} has an unrepresentable pid "
+                f"({pid}); retained as malformed evidence",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained.append(spawn_path)
+            continue
         if _incarnation_alive(pid, birth):
             warnings.warn(
                 f"staged spawn {spawn_path.name} has a live writer (pid {pid}); "
@@ -6673,6 +6816,28 @@ def _adopted_staged_spawn_targets(
             digests.setdefault(str(spawn_path), digest)
         adopted.append(spawn_path)
     return adopted, retained
+
+
+def _staged_target_carries(path: Path, digest: str) -> bool:
+    """Whether a previously-staged cleanup target keeps authority (#88R25-4).
+
+    Byte-identical targets carry (re-verified now); gone targets drop
+    (consumed since); evolved targets drop (new evidence the next
+    barrier re-adjudicates fresh); unreadable targets carry blind
+    (adoption re-verifies byte-identity before acting, so a stale
+    entry can never authorize a changed file). A hash fault
+    mid-verify is unverifiable, not evolved: it carries blind for
+    the same adoption-guarded reason. Never raises.
+    """
+    state = _path_state(path)
+    if state == "missing":
+        return False
+    if state == "unreadable":
+        return True
+    digest_now = _sha256_file_hex(path)
+    if digest_now is None:
+        return True
+    return digest_now == digest
 
 
 def prepare_resume(
@@ -6758,13 +6923,23 @@ def prepare_resume(
     # earlier informational scan of the same tmp (#88R15-3).
     read_digests: dict[str, str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
+    if prior is not None and _path_state(prior) == "unreadable":
+        # An unreadable prior refuses the barrier (#88R25-1). Reading
+        # it as empty flips authority committed->dead, which turns
+        # claim-only orphan folds into claim+recover and discards a
+        # session loss the dead path never saw (loss becomes
+        # complete=True). This overturns the frozen legacy
+        # empty-reading: the freeze is proven unsound, and the next
+        # barrier retries with a fresh seal instead.
+        warnings.warn(
+            f"counter resume barrier cannot read prior {prior.name}; refusing",
+            UserWarning,
+            stacklevel=2,
+        )
+        plan["barrier_ok"] = False
+        _release_barrier_seal(root)
+        return plan
     prior_arg = prior if prior and _path_state(prior) == "present" else None
-    # Resume track (postponed past 0.3.0): an unreadable prior keeps the
-    # legacy empty-reading here; behavior preserved exactly on every
-    # interpreter (present-only gates it; faults read empty like 3.14).
-    # NOTE for the resume track: re-collection under an empty prior
-    # relies on barrier/extractor idempotence to avoid double-folds;
-    # re-verify that assumption if this line ever changes (#88R24-1).
     committed = _committed_from_jsonl(prior_arg)
     sessions, entries = committed[:2] if committed is not None else (set(), set())
     claims = _claimed_receipts_from_jsonl(prior_arg)
@@ -6918,7 +7093,20 @@ def prepare_resume(
         collected_now.add(uuid)
         return True
 
-    for registry_path in sorted(reg_dir.glob("*.json")):
+    registry_files = _list_evidence_files(reg_dir, "", ".json")
+    if registry_files is None:
+        # An unlistable registry refuses the barrier (#88R25-3): run
+        # credit requires a complete inventory, and quiescence cannot
+        # be proven with producers possibly hidden.
+        warnings.warn(
+            f"registry listing under {reg_dir.name} unlistable (I/O fault); refusing",
+            UserWarning,
+            stacklevel=2,
+        )
+        plan["barrier_ok"] = False
+        _release_barrier_seal(root)
+        return plan
+    for registry_path in registry_files:
         content = read_registry_file(registry_path)
         if content is None:
             # #88R2: unreadable is never torn (see collect_unit): reserve
@@ -7154,7 +7342,19 @@ def prepare_resume(
         plan["unresolved"].append(uuid)
         retained_runs.add(content["run_id"])
         skipped_live_units.add(content["unit"])
-    for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
+    sidecar_files = _list_evidence_files(root, "", SIDECAR_SUFFIX)
+    if sidecar_files is None:
+        # Same refusal for the sidecar inventory: a hidden live
+        # producer must never pass quiescence (#88R25-3).
+        warnings.warn(
+            f"sidecar listing under {root.name} unlistable (I/O fault); refusing",
+            UserWarning,
+            stacklevel=2,
+        )
+        plan["barrier_ok"] = False
+        _release_barrier_seal(root)
+        return plan
+    for sidecar_path in sidecar_files:
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_uuids)
         if adopted is None:
             continue
@@ -7418,11 +7618,22 @@ def prepare_resume(
             return str(Path(parent) / name.split(".tmp-", 1)[0])
 
         probe_targets = sorted(
-            (path_str, digest)
-            for path_str, digest in read_digests.items()
-            if path_str in consumed_set
-            or _tmp_base(path_str) in consumed_set
-            or _tmp_base(path_str) in slot_bases
+            {
+                (path_str, digest)
+                for path_str, digest in read_digests.items()
+                if path_str in consumed_set
+                or _tmp_base(path_str) in consumed_set
+                or _tmp_base(path_str) in slot_bases
+            }
+            | {
+                # Carry forward still-valid staged authority (#88R25-4):
+                # a held target the retry cannot re-verify (unreadable)
+                # or never revisits keeps its original digest instead
+                # of expiring into an unlisted stranger.
+                (path_str, digest)
+                for path_str, digest in staged_targets
+                if _staged_target_carries(Path(path_str), digest)
+            }
         )
         # Skip-holds persist until a clean application discards the
         # staging: a pass that never revisits the producer (deferred
@@ -7443,6 +7654,7 @@ def prepare_resume(
                 stacklevel=2,
             )
             plan["barrier_ok"] = False
+            _release_barrier_seal(root)
             return plan
     held = _consume_producer_files(to_consume, read_digests)
     # Held cleanup targets ride the plan: application keeps the staging
