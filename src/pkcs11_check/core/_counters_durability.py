@@ -40,10 +40,12 @@ This module imports only stdlib plus ``counters_schema`` and
 
 from __future__ import annotations
 
+import copy
 import errno
 import hashlib
 import json
 import os
+import select
 import signal
 import sys
 import time
@@ -758,32 +760,32 @@ def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
     return False
 
 
-def _linux_terminated(pid: int, birth: int) -> bool:
-    """Whether a Linux pid is provably not the registered incarnation anymore."""
+def _pidfd_exited(fd: int, timeout_s: float) -> bool:
+    """Whether a pidfd reports its pinned process exited in time (#88R3).
+
+    A pidfd becomes readable exactly when its process exits (zombies
+    included: they hold no writers, so they are quiescent). No /proc
+    consult, so permission faults can never masquerade as death. Any
+    poll failure or unmet wait reads unresolved (False).
+    """
     try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
-            data = fh.read()
+        poller = select.poll()
+        poller.register(fd, select.POLLIN)
+        return bool(poller.poll(max(int(timeout_s * 1000), 0)))
     except (OSError, ValueError):
-        return True
-    tail = data[data.rfind(")") + 1 :].split()
-    if len(tail) < 20:
-        return True
-    if tail[0] == "Z":
-        return True
-    try:
-        return int(tail[19]) != birth
-    except ValueError:
-        return True
+        return False
 
 
 def _terminate_pidfd(pid: int, birth: int, timeout_s: float) -> bool:
-    """SIGKILL through a pidfd (pins the incarnation) and poll for death.
+    """SIGKILL through a pidfd (pins the incarnation) and wait for exit.
 
     The birth is re-read after the open: the fd pins the open-time
     occupant, so a starttime mismatch proves the claimed incarnation died
     and the pid was recycled between verification and open (close, no
     signal, fenced). Only a lookup failure proves death at the excepts;
     permission/syscall failures are unresolved, never assumed quiescent.
+    The post-signal wait polls the pidfd itself for exit readiness
+    (never /proc, whose faults must not masquerade as death).
 
     Tick-granularity residual: starttime ticks in jiffies, so two
     incarnations forked within one tick of the same pid slot share a
@@ -812,13 +814,7 @@ def _terminate_pidfd(pid: int, birth: int, timeout_s: float) -> bool:
             return True
         except OSError:
             return False
-        deadline = time.monotonic() + max(timeout_s, 0.0)
-        while True:
-            if _linux_terminated(pid, birth):
-                return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(0.05)
+        return _pidfd_exited(fd, timeout_s)
     finally:
         try:
             os.close(fd)
@@ -1432,6 +1428,107 @@ def _durable_receipts(sidecar: Any | None, journal_lines: list[str]) -> set[tupl
     return keys
 
 
+def _merge_probe_tmp_rows(own: list[Any], tmp: list[Any]) -> list[list[Any]]:
+    """Merge a same-probe rewrite tmp's returns into orphan rows (#88).
+
+    Keyed returns-only merge per (module, fn): tmp exit rows replay as
+    the max against the orphan's, capped so merged exits never exceed
+    the orphan's entries for that key (counts are not attributable per
+    call, so excess returns keep the orphan's rows and stay named
+    in-flight downstream). Tmp entry rows (rv None) never transfer: a
+    tmp holding newer entries is an uncommitted admission snapshot.
+    Keys present only in the tmp are skipped (their entries are
+    unproved). Garbage rows on either side are skipped, never fatal.
+    """
+    own_groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in own:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is None:
+            continue
+        module, fn, rv, count = parsed
+        group = own_groups.setdefault((module, fn), {"entries": 0, "exits": {}})
+        group["entries"] += count
+        if rv is not None:
+            group["exits"][rv] = group["exits"].get(rv, 0) + count
+    tmp_exits: dict[tuple[str, str], dict[int, int]] = {}
+    for row in tmp:
+        parsed = _parse_probe_flat_row(row)
+        if parsed is None:
+            continue
+        module, fn, rv, count = parsed
+        if rv is None:
+            continue
+        keyed = tmp_exits.setdefault((module, fn), {})
+        keyed[rv] = keyed.get(rv, 0) + count
+    merged: list[list[Any]] = []
+    for (module, fn), group in own_groups.items():
+        exits = dict(group["exits"])
+        for rv, count in tmp_exits.get((module, fn), {}).items():
+            if count > exits.get(rv, 0):
+                exits[rv] = count
+        if sum(exits.values()) > group["entries"]:
+            exits = group["exits"]
+        for rv in sorted(exits):
+            merged.append([module, fn, rv, exits[rv]])
+        unreturned = group["entries"] - sum(exits.values())
+        if unreturned > 0:
+            merged.append([module, fn, None, unreturned])
+    merged.sort(key=lambda item: (item[0], item[1], item[2] is None, item[2] or 0))
+    return merged
+
+
+def _replay_probe_tmp_rows(
+    path: Path,
+    child_uuid: str,
+    seq: int,
+    identity: dict[str, Any],
+    counters: list[Any],
+) -> list[Any]:
+    """Replay the best same-probe rewrite tmp into orphan rows (#88).
+
+    A probe return flush that dies inside ``os.replace`` leaves the
+    new snapshot in a complete ``{probe}.tmp-{pid}`` while the orphan
+    sidecar stays pre-return. A candidate must parse, bind to the
+    probe run (child uuid, probe seq, and the F2 parent when both
+    sides state it), and carry a row list; the largest snapshot (by
+    parsed call volume) replays returns-only onto the orphan's rows.
+    Torn, foreign, or row-less tmps read as absent. The orphan's own
+    loss keys/scalar always win (a tmp's marginal loss evidence stays
+    dropped, as before -- counters-only replay).
+    """
+    best: list[Any] | None = None
+    best_volume = 0
+    try:
+        candidates = sorted(path.parent.glob(f"{path.name}.tmp-*"))
+    except OSError:
+        return counters
+    own_parent = identity.get("parent_uuid")
+    for tmp in candidates:
+        payload = read_json_file(tmp)
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("worker_uuid") != child_uuid:
+            continue
+        if payload.get("probe_seq") != seq:
+            continue
+        tmp_parent = payload.get("parent_uuid")
+        if tmp_parent is not None and own_parent is not None and tmp_parent != own_parent:
+            continue
+        tmp_counters = payload.get("counters")
+        if not isinstance(tmp_counters, list):
+            continue
+        volume = 0
+        for row in tmp_counters:
+            parsed = _parse_probe_flat_row(row)
+            if parsed is not None:
+                volume += parsed[3]
+        if volume > best_volume:
+            best, best_volume = tmp_counters, volume
+    if best is None:
+        return counters
+    return _merge_probe_tmp_rows(counters, best)
+
+
 def _adopt_probe_orphans(
     root: Path,
     *,
@@ -1609,6 +1706,9 @@ def _adopt_probe_orphans(
                 consumed.append(path)
             continue
         child_uuid, seq, counters, keys, identity, finalized, adopted, vacuous_ok = orphan
+        # #88: a same-probe rewrite tmp replays its returns onto the
+        # orphan's rows before either reunion pass folds them.
+        counters = _replay_probe_tmp_rows(path, child_uuid, seq, identity, counters)
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
@@ -2011,6 +2111,18 @@ def collect_unit(
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
         if content is None:
+            # #88R2: an I/O-failed read is unreadable, never torn: reserve
+            # the filename uuid so the torn-sidecar sweep cannot adopt a
+            # live producer's evidence (and name false losses) this pass.
+            reserved = _unreadable_registry_uuid(registry_path)
+            if reserved is not None:
+                warnings.warn(
+                    f"unreadable registry {registry_path.name} retained "
+                    "(I/O failure, not torn content; its sidecar waits a later pass)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                seen_sidecar_uuids.add(reserved)
             _reap_torn_registry(root, registry_path)
             continue
         uuid = content["worker_uuid"]
@@ -2052,6 +2164,11 @@ def collect_unit(
         if adopted is None:
             continue
         uuid, sidecar = adopted
+        if _registry_claims_orphan(reg_dir, uuid):
+            # A registry that appeared or healed after the main loop owns
+            # this sidecar: skip it this pass (the next pass routes it by
+            # its registry instead of adopting it as an orphan).
+            continue
         # A registryless sidecar from another unit or run is stale evidence
         # (its barrier owns prior runs): skip it loudly, never misfold it.
         # Live-registry uuids never reach here (``seen_sidecar_uuids`` holds
@@ -2280,29 +2397,38 @@ def _sidecar_run(sidecar: dict[str, Any]) -> str:
 
 
 def _adopt_orphan_tmp_payload(
-    sidecar_path: Path, committed: dict[str, Any] | None, uuid: str
+    sidecar_path: Path,
+    committed: dict[str, Any] | None,
+    *,
+    uuid: str,
+    run_id: str,
+    unit: str,
+    attempt: int,
+    pid: int,
 ) -> dict[str, Any] | None:
-    """Adopt the newest complete rewrite tmp for a dead producer (#88).
+    """Select the newest same-window rewrite tmp for a dead producer (#88).
 
     A K=1 return flush that dies inside ``os.replace`` leaves the new
     payload in a complete orphan tmp while the committed sidecar stays
-    pre-return. The tmp replays the lost return: it must parse as a
-    sidecar, carry this producer's uuid, hold a valid in-progress
-    block, and cover at least the committed total (successive
-    snapshots only grow; equal totals still adopt since the return
-    lands without adding a call). Torn, foreign, or stale tmps read
-    as absent. Only called for dead-or-fenced producers (collectors
-    skip live/unresolved ones before reaching here); the adopted
-    payload still flows through the gap arms, so mark/journal
-    impossibilities conflict exactly as a committed sidecar would.
+    pre-return. A candidate must parse as a sidecar, bind to the
+    producer's full identity (uuid, run, unit, attempt, pid), hold a
+    valid in-progress block, and carry the committed window mark: the
+    in-progress totals reset at every journal boundary, so only
+    same-window snapshots are comparable (an older window's larger
+    total must never displace the current tail, and a newer window's
+    tail belongs to entries the journal has not published). Torn,
+    foreign, stale-window, or mark-less tmps read as absent, as does
+    every tmp when the committed sidecar itself is missing or
+    mark-less (a first-flush tmp is an uncommitted entry snapshot,
+    never replayable). Only called for dead-or-fenced producers.
     """
-    committed_total = 0
-    if isinstance(committed, dict):
-        in_progress = committed.get("in_progress")
-        if is_module_first_block(in_progress):
-            committed_total = in_progress["total_calls"]
+    if not isinstance(committed, dict):
+        return None
+    committed_seq = committed.get("journal_seq")
+    if not _is_nonneg_int(committed_seq):
+        return None
     best: dict[str, Any] | None = None
-    best_total = committed_total
+    best_total = -1
     try:
         candidates = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
     except OSError:
@@ -2313,14 +2439,115 @@ def _adopt_orphan_tmp_payload(
             continue
         if payload.get("worker_uuid") != uuid:
             continue
+        if payload.get("run_id") != run_id:
+            continue
+        if payload.get("unit") != unit:
+            continue
+        if payload.get("attempt") != attempt:
+            continue
+        if payload.get("pid") != pid:
+            continue
+        tmp_seq = payload.get("journal_seq")
+        if not _is_nonneg_int(tmp_seq) or tmp_seq != committed_seq:
+            continue
         in_progress = payload.get("in_progress")
         if not is_module_first_block(in_progress):
             continue
         total = in_progress["total_calls"]
-        if total < best_total:
-            continue
-        best, best_total = payload, total
+        if total > best_total:
+            best, best_total = payload, total
     return best
+
+
+def _replay_tmp_returns(committed: dict[str, Any], tmp: dict[str, Any]) -> dict[str, Any]:
+    """Replay a same-window tmp's returns onto committed entries (#88).
+
+    Entries are NEVER adopted: a tmp holding newer entry counts is an
+    uncommitted admission snapshot (at K=1 its provider never ran --
+    the failed flush rolls back and blocks dispatch), so adopting it
+    would report calls that never happened. Returns replay per leaf
+    as the max of committed and tmp counts, so a same-window older
+    snapshot can never erase a committed return; a leaf replays only
+    when the merged returns fit its committed entries (counts are not
+    attributable per call, so excess returns -- corrupt at K=1, K-loss
+    tradeoff beyond -- keep the committed leaf untouched and stay
+    named in-flight). Receipts, consumed
+    probes, and loss keys union (same-window cumulative sets; dropping
+    the tmp's would double-fold absorbed probes) and the loss scalar
+    takes the max when both sides type-check. The window mark is
+    preserved, so the gap arms treat the replayed sidecar exactly as
+    the committed one. Returns ``committed`` unchanged when its
+    in-progress block is invalid (the gap arms conflict on it as
+    before); callers pass a validated tmp.
+    """
+    in_progress = committed.get("in_progress")
+    if not is_module_first_block(in_progress):
+        return committed
+    tmp_progress = tmp.get("in_progress")
+    if not is_module_first_block(tmp_progress):
+        return committed
+    merged_prog: dict[str, Any] = copy.deepcopy(in_progress)
+    for module, tmp_module in tmp_progress["by_module"].items():
+        own_module = merged_prog["by_module"].get(module)
+        if not isinstance(own_module, dict):
+            continue
+        for bucket, tmp_bucket in tmp_module.get("buckets", {}).items():
+            own_bucket = own_module.get("buckets", {}).get(bucket)
+            if not isinstance(own_bucket, dict):
+                continue
+            for fn, tmp_leaf in tmp_bucket.get("by_fn", {}).items():
+                own_leaf = own_bucket.get("by_fn", {}).get(fn)
+                if not isinstance(own_leaf, dict):
+                    continue
+                own_rv = own_leaf.get("by_rv")
+                tmp_rv = tmp_leaf.get("by_rv") if isinstance(tmp_leaf, dict) else None
+                if not isinstance(own_rv, dict) or not isinstance(tmp_rv, dict):
+                    continue
+                own_calls = own_leaf.get("calls")
+                if not _is_nonneg_int(own_calls):
+                    continue
+                assert isinstance(own_calls, int)
+                merged_counts: dict[str, int] = {}
+                for rv, own_item in own_rv.items():
+                    own_count = own_item.get("count") if isinstance(own_item, dict) else None
+                    if _is_nonneg_int(own_count):
+                        assert isinstance(own_count, int)
+                        merged_counts[rv] = own_count
+                    else:
+                        merged_counts[rv] = 0
+                for rv, tmp_item in tmp_rv.items():
+                    tmp_count = tmp_item.get("count") if isinstance(tmp_item, dict) else None
+                    if not _is_nonneg_int(tmp_count):
+                        continue
+                    assert isinstance(tmp_count, int)
+                    if tmp_count > merged_counts.get(rv, 0):
+                        merged_counts[rv] = tmp_count
+                if sum(merged_counts.values()) > own_calls:
+                    continue
+                for rv, count in merged_counts.items():
+                    own_item = own_rv.get(rv)
+                    if isinstance(own_item, dict):
+                        own_item["count"] = count
+                    else:
+                        tmp_item = tmp_rv.get(rv)
+                        own_rv[rv] = {
+                            "name": tmp_item.get("name") if isinstance(tmp_item, dict) else None,
+                            "count": count,
+                        }
+    merged = dict(committed)
+    merged["in_progress"] = merged_prog
+    for key in ("receipts", "consumed_probes", "lost_keys"):
+        own_items = committed.get(key)
+        tmp_items = tmp.get(key)
+        if not isinstance(own_items, list) or not isinstance(tmp_items, list):
+            continue
+        merged[key] = [*own_items, *[item for item in tmp_items if item not in own_items]]
+    own_lost = committed.get("probes_lost")
+    tmp_lost = tmp.get("probes_lost")
+    if _is_nonneg_int(own_lost) and _is_nonneg_int(tmp_lost):
+        assert isinstance(own_lost, int) and isinstance(tmp_lost, int)
+        merged["probes_lost"] = max(own_lost, tmp_lost)
+    return merged
 
 
 def _in_flight_rows(block: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2359,11 +2586,44 @@ def _in_flight_rows(block: dict[str, Any]) -> list[dict[str, Any]]:
                     if _is_nonneg_int(count):
                         assert isinstance(count, int)
                         returned += count
-                if calls - returned > 0 and module and bucket and fn:
+                if calls - returned > 0 and bucket and fn:
+                    # The module keeps the unknown-module sentinel ("")
+                    # when the call carried no handle (issue #87 item 6).
                     rows.append(
                         {"module": module, "bucket": bucket, "fn": fn, "count": calls - returned}
                     )
     return rows
+
+
+def _unreadable_registry_uuid(registry_path: Path) -> str | None:
+    """Return the filename uuid when a registry read fails I/O-side (#88R2).
+
+    Permission and other OS read errors are unreadable, never torn: the
+    caller reserves the uuid so the torn-sidecar sweep cannot adopt a
+    live producer's evidence this pass. Missing files, undecodable
+    bytes, and readable content all return None (gone, torn, or owned
+    -- none of which reserve).
+    """
+    try:
+        Path(registry_path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        return None
+    except OSError:
+        return parse_registry_filename(Path(registry_path).name)
+    return None
+
+
+def _registry_claims_orphan(reg_dir: Path, uuid: str) -> bool:
+    """Whether a registry file currently owns one uuid (#88R2).
+
+    The adoption-time probe against mid-pass races (a registry that
+    appeared or healed after the main loop): present-and-parsing
+    means owned, never orphan. Anything else (missing, torn,
+    unreadable) leaves the torn path to decide.
+    """
+    return read_registry_file(reg_dir / f"{uuid}.json") is not None
 
 
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
@@ -2377,6 +2637,16 @@ def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict
     assert isinstance(uuid, str)
     if not isinstance(sidecar.get("unit"), str) or not sidecar.get("unit"):
         return None
+    pid = sidecar.get("pid")
+    if _is_nonneg_int(pid):
+        # Quiescence (#88R2): a provably alive pid may still be the
+        # producer, so the sidecar retains for a later pass instead of
+        # folding (and naming losses) under a live writer. An unreadable
+        # birth (dead pid, recycled slot, or a platform without a birth
+        # source) cannot prove aliveness, so adoption proceeds.
+        assert isinstance(pid, int)
+        if birth_token_for_pid(pid) is not None:
+            return None
     return (uuid, sidecar)
 
 
@@ -2409,14 +2679,22 @@ def _collect_dead_producer(
     sidecar_path = Path(sidecar_raw)
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
     if sidecar_raw:
-        # #88: a complete orphan rewrite tmp replays the return its
+        # #88: a same-window orphan rewrite tmp replays the return its
         # death orphaned (dead-or-fenced producers only; torn, foreign,
-        # or stale tmps read as absent and the committed sidecar wins).
+        # or stale-window tmps read as absent). Returns merge onto
+        # committed entries; entry counts are never adopted (a tmp
+        # holding newer entries is an uncommitted admission snapshot).
         adopted = _adopt_orphan_tmp_payload(
-            sidecar_path, sidecar if isinstance(sidecar, dict) else None, uuid
+            sidecar_path,
+            sidecar if isinstance(sidecar, dict) else None,
+            uuid=uuid,
+            run_id=content["run_id"],
+            unit=content["unit"],
+            attempt=content["attempt"],
+            pid=content["pid"],
         )
-        if adopted is not None:
-            sidecar = adopted
+        if adopted is not None and isinstance(sidecar, dict):
+            sidecar = _replay_tmp_returns(sidecar, adopted)
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
     block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
     scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -2838,6 +3116,18 @@ def prepare_resume(
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
         if content is None:
+            # #88R2: unreadable is never torn (see collect_unit): reserve
+            # the filename uuid so the torn-sidecar sweep cannot adopt a
+            # live producer's evidence this pass.
+            reserved = _unreadable_registry_uuid(registry_path)
+            if reserved is not None:
+                warnings.warn(
+                    f"unreadable registry {registry_path.name} retained "
+                    "(I/O failure, not torn content; its sidecar waits a later pass)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                seen_uuids.add(reserved)
             _reap_torn_registry(root, registry_path)
             continue
         uuid = content["worker_uuid"]
@@ -2908,6 +3198,10 @@ def prepare_resume(
         if adopted is None:
             continue
         uuid, sidecar = adopted
+        if _registry_claims_orphan(reg_dir, uuid):
+            # A registry that appeared or healed after the main loop owns
+            # this sidecar: skip it this pass (mirrors collect_unit).
+            continue
         barrier_run = sidecar.get("run_id")
         # Sweep authority needs a genuine stamp: only real strings
         # credit a run ("" included -- live writers emit it when no
@@ -2980,6 +3274,7 @@ def prepare_resume(
                     receipts=receipts,
                     role=barrier_stamp_role,
                     isolation=barrier_stamp_isolation,
+                    in_flight=_in_flight_rows(block),
                 )
             )
         lost = _lost_record(
