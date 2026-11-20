@@ -694,18 +694,12 @@ def _verify_counters_application(
         return True
     try:
         if pending:
-            path = supplements_path(state_file, unit)
-            if not path.exists():
-                return False
-            content = path.read_text(encoding="utf-8")
-            have: set[str] = set()
-            for line in content.splitlines():
-                try:
-                    identity = _record_identity_hex(json.loads(line))
-                except ValueError:
-                    continue
-                if identity is not None:
-                    have.add(identity)
+            # Production-reader parity (see append_supplement_records).
+            have = {
+                identity
+                for record in iter_report_log_records(supplements_path(state_file, unit))
+                if (identity := _record_identity_hex(record)) is not None
+            }
         else:
             cache_path = _report_record_cache_path(state_file, unit)
             have = set()

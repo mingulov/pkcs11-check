@@ -50,7 +50,7 @@ import signal
 import sys
 import time
 import warnings
-from collections.abc import Callable, Collection, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -66,6 +66,7 @@ from pkcs11_check.core.counters_schema import (
     UNKNOWN_MODULE,
     ensure_five_buckets,
     is_birth_token,
+    is_legacy_buckets_block,
     is_lost_key,
     is_lost_record,
     is_module_first_block,
@@ -81,7 +82,11 @@ from pkcs11_check.core.counters_schema import (
     parse_registry_filename,
     wrap_module_first,
 )
-from pkcs11_check.core.report_log import parse_report_log_line, user_property
+from pkcs11_check.core.report_log import (
+    iter_report_log_records,
+    parse_report_log_line,
+    user_property,
+)
 
 COUNTERS_DIR_ENV = "PKCS11_CHECK_COUNTERS_DIR"
 COUNTERS_UNIT_ENV = "PKCS11_CHECK_COUNTERS_UNIT"
@@ -165,11 +170,15 @@ BARRIER_STAGING_FILENAME = "barrier-staging.json"
 def _is_authoritative_staged_record(record: Any) -> bool:
     """Whether a staged record proves the evidence behind a uuid claim (#88R12-3).
 
-    Only schema-shaped barrier records authorize suppression: a partial
-    needs the partial key shape with a valid worker uuid, a loss needs
-    the loss schema with a valid worker uuid (a bare dict with a tag
-    proves nothing). The discriminator is type-checked first: an
-    unhashable tag degrades, never raises. Never raises.
+    Only extractor-acceptable barrier records authorize suppression: a
+    partial needs the partial key shape with valid values (mirroring
+    the extractor's own acceptance: exact ``truncated``, valid uuid,
+    usable total, well-formed round, one valid counters shape, and
+    valid pid/role/probes_lost when present), and a loss needs the
+    loss schema with a valid worker uuid. A bare dict with a tag --
+    or the right keys with garbage values the extractor would reject
+    -- proves nothing (#88R13-1). The discriminator is type-checked
+    first: an unhashable tag degrades, never raises. Never raises.
     """
     if not isinstance(record, dict):
         return False
@@ -179,7 +188,33 @@ def _is_authoritative_staged_record(record: Any) -> bool:
     if report_type == PARTIAL_REPORT_TYPE:
         if key_violations(record, allowed=PARTIAL_ALLOWED_KEYS, required=PARTIAL_REQUIRED_KEYS):
             return False
-        return is_worker_uuid(record.get("worker_uuid"))
+        if record.get("truncated") is not True:
+            return False
+        if not is_worker_uuid(record.get("worker_uuid")):
+            return False
+        total = record.get("total_calls")
+        if not _is_nonneg_int(total):
+            return False
+        if "run_id" in record:
+            run_id = record.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                return False
+        has_buckets = "buckets" in record
+        has_modules = "by_module" in record
+        if has_buckets == has_modules:
+            return False
+        assert isinstance(total, int)
+        if has_buckets:
+            if not is_legacy_buckets_block({"total_calls": total, "buckets": record["buckets"]}):
+                return False
+        elif not is_module_first_block({"total_calls": total, "by_module": record["by_module"]}):
+            return False
+        if "pid" in record and not _is_nonneg_int(record.get("pid")):
+            return False
+        role = record.get("role")
+        if role is not None and not is_role(role):
+            return False
+        return _is_nonneg_int(record.get("probes_lost", 0))
     if report_type == LOST_REPORT_TYPE:
         return is_lost_record(record) and is_worker_uuid(record.get("worker_uuid"))
     return False
@@ -658,6 +693,29 @@ def _read_json_evidence(path: Path) -> tuple[str, Any | None]:
         return ("ok", _json_loads_evidence(raw))
     except ValueError:
         return ("torn", None)
+
+
+def _read_json_evidence_digested(path: Path) -> tuple[str, Any | None, str | None]:
+    """Read JSON evidence plus the digest of the exact bytes parsed (#88R13-2).
+
+    Same classification as ``_read_json_evidence``, but the digest binds
+    the adjudicated bytes: decisions made from the payload carry it, so
+    a later retry proves the file byte-identical (not merely
+    re-readable) before acting on the old decision. Gone/unreadable
+    yield None (no bytes to bind); torn yields the torn bytes' digest
+    (stable debris identity). Never raises.
+    """
+    try:
+        data = _read_bytes_with_retry(path)
+    except FileNotFoundError:
+        return ("gone", None, None)
+    except OSError:
+        return ("unreadable", None, None)
+    digest = hashlib.sha256(data).hexdigest()
+    try:
+        return ("ok", _json_loads_evidence(data.decode("utf-8")), digest)
+    except ValueError:
+        return ("torn", None, digest)
 
 
 #: OSError errnos worth a bounded retry inside a persistence write.
@@ -1831,6 +1889,7 @@ def _replay_probe_tmp_rows(
     orphan_pid: int | None = None,
     orphan_birth: int | None = None,
     producer_uuid: str,
+    digests: dict[str, str] | None = None,
 ) -> tuple[list[Any], bool]:
     """Replay the best same-probe rewrite tmp into orphan rows (#88).
 
@@ -1850,6 +1909,8 @@ def _replay_probe_tmp_rows(
     ``_DeferProducerError`` on a persistently unreadable candidate.
     Returns ``(rows, divergent)``: a held conflict the caller must
     not silently clear when the baseline is covered (#88R8-2).
+    ``digests`` records ``{path: sha256}`` for every candidate read
+    (None discards: live ingest has no staging to bind to).
     """
     quarantined = _list_tmp_paths(path.parent, f"{path.name}.quarantined-")
     if quarantined is None:
@@ -1873,7 +1934,9 @@ def _replay_probe_tmp_rows(
 
     gated: list[tuple[Path, list[Any]]] = []
     for tmp in candidates:
-        status, payload = _read_json_evidence(tmp)
+        status, payload, digest = _read_json_evidence_digested(tmp)
+        if digest is not None and digests is not None:
+            digests[str(tmp)] = digest
         if status == "gone":
             continue
         if status == "unreadable":
@@ -2013,6 +2076,7 @@ def _adopt_probe_orphans(
     producer_unit: str | None = None,
     heal_orphans: bool = True,
     fence_live: bool,
+    digests: dict[str, str] | None = None,
 ) -> tuple[
     dict[str, Any] | None,
     list[dict[str, Any]],
@@ -2028,7 +2092,10 @@ def _adopt_probe_orphans(
     adopted_lost, skipped_live)``: ``skipped_live`` reports covered
     orphans skipped for a live or racing writer, whose parent
     association the caller must retain for a coherent retry
-    (#88R11-1).
+    (#88R11-1). ``digests`` records ``{path: sha256}`` for every
+    probe file read (None discards): the barrier stages them so a
+    retry proves byte-identity before acting on the old adjudication
+    (#88R13-2).
 
     ``heal_orphans`` is False on the committed path (a live session is
     authoritative): an uncovered orphan was never absorbed, so healing
@@ -2248,7 +2315,9 @@ def _adopt_probe_orphans(
                 continue  # Another producer's marker (name-routed).
         elif owner != prefix:
             continue
-        status, raw = _read_json_evidence(path)
+        status, raw, read_digest = _read_json_evidence_digested(path)
+        if read_digest is not None and digests is not None:
+            digests[str(path)] = read_digest
         if status == "gone":
             continue
         if status == "unreadable":
@@ -2332,7 +2401,7 @@ def _adopt_probe_orphans(
         # replay/prune paths converge the retry (#88R10-2).
         slot_name = _marker_slot_name(path.name)
         assert slot_name is not None  # parsed_name guarantees the shape
-        if _slot_rewrite_unresolved(root, slot_name):
+        if _slot_rewrite_unresolved(root, slot_name, digests):
             warnings.warn(
                 f"consumed marker {path.name} slot {slot_name} keeps an unresolved "
                 "rewrite; recovery withheld",
@@ -2348,7 +2417,9 @@ def _adopt_probe_orphans(
         parsed_name = _parse_probe_filename(path.name)
         if parsed_name is None or parsed_name[0] != prefix:
             continue
-        status, raw = _read_json_evidence(path)
+        status, raw, read_digest = _read_json_evidence_digested(path)
+        if read_digest is not None and digests is not None:
+            digests[str(path)] = read_digest
         if status == "gone":
             continue
         if status == "unreadable":
@@ -2505,6 +2576,7 @@ def _adopt_probe_orphans(
             orphan_pid=orphan_pid,
             orphan_birth=orphan_birth,
             producer_uuid=worker_uuid,
+            digests=digests,
         )
         replayed_adopted = _rows_exit_total(counters) != pre_replay_exits
         _fold(
@@ -2698,20 +2770,25 @@ def _marker_slot_name(marker_name: str) -> str | None:
     return f"{PROBE_FILE_PREFIX}{owner[:8]}-{seq}-{nonce}{PROBE_FILE_SUFFIX}"
 
 
-def _slot_rewrite_unresolved(root: Path, slot_name: str) -> bool:
+def _slot_rewrite_unresolved(
+    root: Path, slot_name: str, digests: dict[str, str] | None = None
+) -> bool:
     """Whether a slot keeps an undecided rewrite tmp (#88R10-2).
 
     A tmp survives "undecided" only when it decodes and carries return
     rows: torn or returnless tmps are debris that converge through the
     normal replay/prune paths. Unreadable state (tmp listing refused,
     payload unreadable) fails closed: the caller must withhold recovery
-    until the slot's latest word is provable.
+    until the slot's latest word is provable. ``digests`` records
+    ``{path: sha256}`` for every tmp read (None discards).
     """
     tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
     if tmps is None:
         return True
     for tmp in tmps:
-        status, payload = _read_json_evidence(tmp)
+        status, payload, digest = _read_json_evidence_digested(tmp)
+        if digest is not None and digests is not None:
+            digests[str(tmp)] = digest
         if status in {"gone", "torn"}:
             continue
         if status != "ok":
@@ -2732,6 +2809,21 @@ def _replay_baseline_usable(path: Path) -> bool:
     if isinstance(payload.get("counters"), list):
         return _read_probe_orphan(path) is not None
     return False
+
+
+def _read_bytes_with_retry(path: Path) -> bytes:
+    """Read a file's bytes, retrying transient faults (AV locks); raises persistently."""
+    attempts = 0
+    while True:
+        try:
+            return path.read_bytes()
+        except FileNotFoundError:
+            raise
+        except OSError:
+            attempts += 1
+            if attempts >= 3:
+                raise
+            time.sleep(0.001)
 
 
 def _read_text_with_retry(path: Path) -> str:
@@ -2788,7 +2880,9 @@ def _list_tmp_paths(directory: Path, prefix: str) -> list[Path] | None:
         return None
 
 
-def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
+def _prune_sidecar_tmps(
+    path: Path, listed: Mapping[str, str] | None = None
+) -> tuple[int, int, bool]:
     """Delete a sidecar's rewrite tmps except unadjudicable ones (#88R3).
 
     A tmp deletes when it proves debris (torn/unparseable, or carrying
@@ -2796,6 +2890,11 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
     replayed or ruled out upstream). Unreadable tmps (after retry) and
     complete-with-returns tmps without a usable baseline retain for a
     later pass or forensic review, named loudly (never silently).
+    ``listed`` maps adjudicated tmp paths to their byte digests (None
+    keeps the legacy content-only rules): an unlisted or evolved tmp
+    retains and holds its baseline instead of deleting unread
+    (#88R13-2). Markers also cover their original slot's tmps (a
+    marker rename orphans the slot glob otherwise).
     Returns ``(removed, retained, hold_baseline)``: authoritative
     callers (the sweep) hold the baseline while any tmp unlink failed
     or any tmp stayed unreadable (#88R5-6/#88R6-3: a baseline removed
@@ -2810,7 +2909,18 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
             stacklevel=3,
         )
         return (0, 0, True)
-    tmps = maybe_tmps
+    tmps = list(maybe_tmps)
+    slot_name = _marker_slot_name(path.name)
+    if slot_name is not None:
+        slot_tmps = _list_tmp_paths(path.parent, f"{slot_name}.tmp-")
+        if slot_tmps is None:
+            warnings.warn(
+                f"cannot enumerate tmps under {slot_name} (I/O fault); baseline held",
+                UserWarning,
+                stacklevel=3,
+            )
+            return (0, 0, True)
+        tmps.extend(slot_tmps)
     if not tmps:
         return (0, 0, False)
     baseline_usable = _replay_baseline_usable(path)
@@ -2818,6 +2928,12 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
     removed = 0
     hold_baseline = False
     for tmp in tmps:
+        if listed is not None:
+            digest = _sha256_file_hex(tmp)
+            if digest is None or listed.get(str(tmp)) != digest:
+                retained.append(tmp.name)
+                hold_baseline = True
+                continue
         try:
             raw = _read_text_with_retry(tmp)
         except FileNotFoundError:
@@ -2862,7 +2978,9 @@ def _prune_sidecar_tmps(path: Path) -> tuple[int, int, bool]:
     return (removed, len(retained), hold_baseline)
 
 
-def _consume_producer_files(paths: list[Path]) -> list[Path]:
+def _consume_producer_files(
+    paths: list[Path], digests: Mapping[str, str] | None = None
+) -> list[Path]:
     """Delete collected/committed evidence files (best effort, never raises).
 
     A baseline whose tmps the prune holds (failed unlink, unreadable
@@ -2872,13 +2990,50 @@ def _consume_producer_files(paths: list[Path]) -> list[Path]:
     single-shot per attempt; resume re-collection dedups through
     barrier staging and session routing).
 
+    ``digests`` maps adjudicated paths to their byte digests: a listed
+    file whose bytes changed since adjudication holds (never deletes
+    evolved evidence), and an unlisted probe file holds too
+    (orphaned writers can ghost probe slots). Unlisted producer
+    files delete as before (dead/fenced writers cannot ghost), as do
+    producer-baseline tmps (legacy content rules); probe-baseline
+    tmps delete only when listed and identical (#88R13-2).
+
     Returns the targets still present afterwards (held): the resume
     barrier reports them so application keeps the staging that
     authorizes their retry instead of discarding it (#88R10-4c).
     """
     held: list[Path] = []
     for path in paths:
-        _, _, hold = _prune_sidecar_tmps(path)
+        key = str(path)
+        if digests is not None and key in digests:
+            if (path.exists() or path.is_symlink()) and _sha256_file_hex(path) != digests[key]:
+                warnings.warn(
+                    f"cleanup target {path.name} changed since adjudication; held",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                held.append(path)
+                continue
+        elif (
+            digests is not None
+            and path.name.startswith(PROBE_FILE_PREFIX)
+            and path.name.endswith(PROBE_FILE_SUFFIX)
+        ):
+            warnings.warn(
+                f"cleanup target {path.name} was never adjudicated; held",
+                UserWarning,
+                stacklevel=2,
+            )
+            held.append(path)
+            continue
+        listed: Mapping[str, str] | None = None
+        if (
+            digests is not None
+            and path.name.startswith(PROBE_FILE_PREFIX)
+            and path.name.endswith(PROBE_FILE_SUFFIX)
+        ):
+            listed = digests
+        _, _, hold = _prune_sidecar_tmps(path, listed)
         if not hold:
             try:
                 path.unlink(missing_ok=True)
@@ -3111,6 +3266,7 @@ def collect_unit(
     end_state = end_state_for_attempt(status=status, returncode=returncode, timed_out=timed_out)
     appended: list[dict[str, Any]] = []
     seen_sidecar_uuids: set[str] = set()
+    read_digests: dict[str, str] = {}
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
         if content is None:
@@ -3140,7 +3296,12 @@ def collect_unit(
         if (content["run_id"], uuid) in sessions:
             try:
                 claim_records, consumed, skipped_live = _collect_committed_producer(
-                    content, uuid, root=root, known_uuids=known_uuids, claims=claims
+                    content,
+                    uuid,
+                    root=root,
+                    known_uuids=known_uuids,
+                    claims=claims,
+                    digests=read_digests,
                 )
             except _DeferProducerError as exc:
                 # The session is authoritative but its probe evidence is
@@ -3155,8 +3316,8 @@ def collect_unit(
             if _append_collected(child_path, claim_records):
                 appended.extend(claim_records)
                 if not skipped_live:
-                    _consume_producer_files(_producer_files(content, registry_path))
-                _consume_producer_files(consumed)
+                    _consume_producer_files(_producer_files(content, registry_path), read_digests)
+                _consume_producer_files(consumed, read_digests)
             continue
         if verify_producer(content) != "dead":
             continue
@@ -3170,6 +3331,7 @@ def collect_unit(
                 known_uuids=known_uuids,
                 claims=claims,
                 heal_orphans=_orphan_heal_allowed(lenient_sessions, content["run_id"], uuid),
+                digests=read_digests,
             )
         except _DeferProducerError as exc:
             # A live probe writer (or unreadable evidence) survives
@@ -3183,8 +3345,8 @@ def collect_unit(
             continue
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files(_producer_files(content, registry_path))
-            _consume_producer_files(consumed)
+            _consume_producer_files(_producer_files(content, registry_path), read_digests)
+            _consume_producer_files(consumed, read_digests)
     for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids)
         if adopted is None:
@@ -3245,6 +3407,7 @@ def collect_unit(
                     uuid,
                 ),
                 fence_live=True,
+                digests=read_digests,
             )
         except _DeferProducerError as exc:
             warnings.warn(
@@ -3284,8 +3447,8 @@ def collect_unit(
                 )
             if _append_collected(child_path, records):
                 appended.extend(records)
-                _consume_producer_files([sidecar_path, journal_path])
-                _consume_producer_files(consumed)
+                _consume_producer_files([sidecar_path, journal_path], read_digests)
+                _consume_producer_files(consumed, read_digests)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -3340,8 +3503,10 @@ def collect_unit(
             records.append(lost)
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files([sidecar_path, _journal_for_sidecar(sidecar_path)])
-            _consume_producer_files(consumed)
+            _consume_producer_files(
+                [sidecar_path, _journal_for_sidecar(sidecar_path)], read_digests
+            )
+            _consume_producer_files(consumed, read_digests)
             # The twin funnels through the reaper (valid content and
             # I/O failure retain; only provably-torn content reaps),
             # exactly like the sweep and the main loop (codex R7-F2).
@@ -4146,6 +4311,7 @@ def _collect_dead_producer(
     known_uuids: set[str],
     claims: dict[str, set[tuple[str, int]]],
     heal_orphans: bool = True,
+    digests: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[Path]]:
     """Build the partial+lost records for one dead producer (reads orphans only).
 
@@ -4218,6 +4384,7 @@ def _collect_dead_producer(
         producer_unit=content["unit"],
         heal_orphans=heal_orphans,
         fence_live=True,
+        digests=digests,
     )
     if orphan_block is not None:
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
@@ -4270,6 +4437,7 @@ def _collect_committed_producer(
     root: Path,
     known_uuids: set[str],
     claims: dict[str, set[tuple[str, int]]],
+    digests: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[Path], bool]:
     """Adopt one committed producer's probe orphans (claim-only partial, never lost).
 
@@ -4305,6 +4473,7 @@ def _collect_committed_producer(
         producer_unit=content["unit"],
         heal_orphans=False,
         fence_live=False,
+        digests=digests,
     )
     if orphan_block is None and not recovered and not orphan_keys and not adopted_lost:
         return [], consumed, skipped_live
@@ -4756,6 +4925,7 @@ def _adopted_staged_probe_targets(
     root: Path,
     validated: frozenset[str],
     staged_targets: frozenset[tuple[str, str]],
+    digests: dict[str, str] | None = None,
 ) -> list[Path]:
     """Cleanup targets for parentless probes of collected parents (#88R10-4c).
 
@@ -4776,13 +4946,16 @@ def _adopted_staged_probe_targets(
     parentless-fold design. Withheld markers never adopt (#88R11-2):
     a marker whose original slot keeps an undecided rewrite stays
     until the slot resolves. Quarantined forensics never adopt (the
-    glob excludes them). Never raises.
+    glob excludes them). ``digests`` records ``{path: sha256}`` for
+    every probe file read (None discards). Never raises.
     """
     adopted: list[Path] = []
     if not validated:
         return adopted
     for probe_path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
-        status, raw = _read_json_evidence(probe_path)
+        status, raw, read_digest = _read_json_evidence_digested(probe_path)
+        if read_digest is not None and digests is not None:
+            digests[str(probe_path)] = read_digest
         if status == "gone":
             continue
         if status == "unreadable":
@@ -4841,10 +5014,12 @@ def _adopted_staged_probe_targets(
                 stacklevel=2,
             )
             continue
+        if digests is not None:
+            digests[str(probe_path)] = digest
         slot_tmps: list[Path] = []
         if _parse_consumed_probe_filename(probe_path.name) is not None:
             slot_name = _marker_slot_name(probe_path.name)
-            if slot_name is None or _slot_rewrite_unresolved(root, slot_name):
+            if slot_name is None or _slot_rewrite_unresolved(root, slot_name, digests):
                 warnings.warn(
                     f"staged marker {probe_path.name} keeps an unresolved rewrite; "
                     "retained for a later pass",
@@ -4872,11 +5047,12 @@ def _adopted_staged_probe_targets(
                 stacklevel=2,
             )
             continue
-        # Set-atomic authority (#88R12-4): every file the adoption
-        # would delete must be listed and byte-identical -- an
-        # unlisted rewrite (appended after staging) holds its whole
-        # slot for replay or conflict handling instead of deleting
-        # unread.
+        # Set-atomic authority (#88R12-4): every rewrite under the
+        # slot must be listed and byte-identical -- an unlisted rewrite
+        # (appended after staging) holds its whole slot for replay or
+        # conflict handling instead of deleting unread. Only the
+        # baseline adopts here; its verified tmps converge through
+        # prune at consume time (listedness re-verified there).
         for tmp in [*tmps, *slot_tmps]:
             tmp_digest = _sha256_file_hex(tmp)
             if tmp_digest is None or (str(tmp), tmp_digest) not in staged_targets:
@@ -4887,8 +5063,10 @@ def _adopted_staged_probe_targets(
                     stacklevel=2,
                 )
                 break
+            if digests is not None:
+                digests[str(tmp)] = tmp_digest
         else:
-            adopted.extend([*tmps, *slot_tmps, probe_path])
+            adopted.append(probe_path)
     return adopted
 
 
@@ -4951,6 +5129,7 @@ def prepare_resume(
     collected_now: set[str] = set()
     to_consume: list[Path] = []
     skip_retained: list[Path] = []
+    read_digests: dict[str, str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
     prior_arg = prior if prior and prior.exists() else None
     # Resume track (postponed past 0.3.0): an unreadable prior keeps the
@@ -5057,12 +5236,28 @@ def prepare_resume(
         uuid = content["worker_uuid"]
         seen_uuids.add(uuid)
         seen_runs.add(content["run_id"])
+        if uuid in validated_collected and verify_producer(content) == "dead":
+            # Staged retry (#88R13-2): this producer's evidence was
+            # adjudicated by the earlier barrier and its records stand
+            # staged, so reunion runs no second adjudication (a
+            # post-stage ghost would fold and discard under the gate).
+            # The parent files consume directly (a dead writer cannot
+            # ghost them) while parentless probes converge through
+            # digest-gated adoption below. Anything not proven dead
+            # reunites normally (a live writer needs fencing).
+            to_consume.extend(_producer_files(content, registry_path))
+            continue
         # Resume track (postponed): uuid-only matching preserves the
         # frozen committed-vs-gap routing exactly.
         if any(known_uuid == uuid for _, known_uuid in sessions):
             try:
                 claim_records, consumed, skipped_live = _collect_committed_producer(
-                    content, uuid, root=root, known_uuids=known_uuids, claims=claims
+                    content,
+                    uuid,
+                    root=root,
+                    known_uuids=known_uuids,
+                    claims=claims,
+                    digests=read_digests,
                 )
             except _DeferProducerError as exc:
                 warnings.warn(
@@ -5103,6 +5298,7 @@ def prepare_resume(
                     root=root,
                     known_uuids=known_uuids,
                     claims=claims,
+                    digests=read_digests,
                 )
             except _DeferProducerError as exc:
                 warnings.warn(
@@ -5133,6 +5329,7 @@ def prepare_resume(
                     root=root,
                     known_uuids=known_uuids,
                     claims=claims,
+                    digests=read_digests,
                 )
             except _DeferProducerError as exc:
                 warnings.warn(
@@ -5188,6 +5385,13 @@ def prepare_resume(
         if isinstance(barrier_run, str):
             seen_runs.add(barrier_run)
         journal_path = _journal_for_sidecar(sidecar_path)
+        if uuid in validated_collected:
+            # Staged retry (#88R13-2): no second reunion (see the
+            # registry loop); the files consume directly while probes
+            # converge through digest-gated adoption. Quiescence was
+            # proven by the adoption gate above.
+            to_consume.extend([sidecar_path, journal_path])
+            continue
         # Resume track (postponed past 0.3.0): recovered/orphan-keys/
         # adopted scalar are unpacked but deliberately not wired yet;
         # behavior preserved exactly.
@@ -5205,6 +5409,7 @@ def prepare_resume(
                     producer_run=barrier_run if isinstance(barrier_run, str) else None,
                     producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
                     fence_live=True,
+                    digests=read_digests,
                 )
             )
         except _DeferProducerError as exc:
@@ -5290,7 +5495,9 @@ def prepare_resume(
         to_consume.extend(consumed)
     # Parentless probe adoption: probes of validated parents are
     # interrupted cleanup, never fresh evidence (#88R10-4c).
-    to_consume.extend(_adopted_staged_probe_targets(root, validated_collected, staged_targets))
+    to_consume.extend(
+        _adopted_staged_probe_targets(root, validated_collected, staged_targets, read_digests)
+    )
     plan["fenced"].sort()
     plan["unresolved"].sort()
     plan["skipped_units"] = sorted(
@@ -5321,33 +5528,18 @@ def prepare_resume(
         # consumed == len(collected_uuids); a corrupt staged count
         # recomputes from the validated union instead of persisting.
         plan["consumed"] = len(collected_union)
-        # Exact cleanup targets (#88R11-6): digest the adjudicated
-        # probe slots so a retry adopts only listed, byte-identical
-        # ones. Undigestable slots stay unlisted (a later barrier
-        # re-derives them once readable). The closure covers each
-        # slot's rewrite tmps too (marker globs plus original-slot
-        # globs): adoption is set-atomic, so an unlisted rewrite
-        # holds its whole slot for replay or conflict handling
-        # (#88R12-4).
-        probe_targets: list[tuple[str, str]] = []
-        for target in to_consume:
-            if not target.name.startswith(PROBE_FILE_PREFIX):
-                continue
-            if not target.name.endswith(PROBE_FILE_SUFFIX):
-                continue
-            closure: list[Path] = [target]
-            own_tmps = _list_tmp_paths(root, f"{target.name}.tmp-")
-            if own_tmps is not None:
-                closure.extend(own_tmps)
-            slot_name = _marker_slot_name(target.name)
-            if slot_name is not None:
-                slot_tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
-                if slot_tmps is not None:
-                    closure.extend(slot_tmps)
-            for candidate in closure:
-                digest = _sha256_file_hex(candidate)
-                if digest is not None:
-                    probe_targets.append((str(candidate), digest))
+        # Exact cleanup targets (#88R11-6): the digests captured
+        # atomically with this pass's reads, restricted to consumed
+        # files and their read rewrite tmps. Nothing is re-read here:
+        # a fresh read at stage time could digest post-adjudication
+        # ghosts, but captured bytes are exactly what reunion decided
+        # on (#88R13-2).
+        consumed_set = {str(path) for path in to_consume}
+        probe_targets = sorted(
+            (path_str, digest)
+            for path_str, digest in read_digests.items()
+            if path_str in consumed_set or path_str.split(".tmp-", 1)[0] in consumed_set
+        )
         if not _write_barrier_staging(
             root,
             plan["cache_records"],
@@ -5363,7 +5555,7 @@ def prepare_resume(
             )
             plan["barrier_ok"] = False
             return plan
-    held = _consume_producer_files(to_consume)
+    held = _consume_producer_files(to_consume, read_digests)
     # Held cleanup targets ride the plan: application keeps the staging
     # that authorizes their retry instead of discarding it, so the next
     # barrier finishes the cleanup without re-emitting (#88R10-4c).
@@ -5415,17 +5607,19 @@ def append_supplement_records(
     path = supplements_path(state_file, unit)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Production-reader parity (#88R13-5): applied-ness is what
+        # the production JSONL reader yields (binary b"\n" split,
+        # per-line decode, dict-or-skip) -- never str.splitlines,
+        # which splits unicode boundaries like \x1e that production
+        # treats as line content.
         applied: set[str] = set()
+        for record in iter_report_log_records(path):
+            identity = _record_identity_hex(record)
+            if identity is not None:
+                applied.add(identity)
         if path.exists():
-            content = path.read_text(encoding="utf-8")
-            for line in content.splitlines():
-                try:
-                    identity = _record_identity_hex(json.loads(line))
-                except ValueError:
-                    continue
-                if identity is not None:
-                    applied.add(identity)
-            if content and not content.endswith("\n"):
+            tail = path.read_bytes()
+            if tail and not tail.endswith(b"\n"):
                 # Torn tail (a crash mid-append left an unterminated
                 # fragment): isolate it on its own line so the records
                 # below land readable. The fragment itself stays for
@@ -5436,8 +5630,8 @@ def append_supplement_records(
                     UserWarning,
                     stacklevel=2,
                 )
-                with open(path, "a", encoding="utf-8") as fh:
-                    fh.write("\n")
+                with open(path, "ab") as fh:
+                    fh.write(b"\n")
         fresh: list[dict[str, Any]] = []
         for record in records:
             identity = _record_identity_hex(record)

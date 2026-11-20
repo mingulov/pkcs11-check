@@ -1659,13 +1659,20 @@ class TestProbeChannel:
         )
         tmp = _plant_probe_tmp(sidecar, _probe_tmp_payload(_UUID_B, seq, [["m", "C_Digest", 0, 1]]))
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _eperm_tmp(self: Path, *args: Any, **kwargs: Any) -> str:
             if self.name == tmp.name:
                 raise PermissionError("injected tmp EPERM")
             return real_read_text(self, *args, **kwargs)
 
+        def _eperm_tmp_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self.name == tmp.name:
+                raise PermissionError("injected tmp EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _eperm_tmp)
+        monkeypatch.setattr(Path, "read_bytes", _eperm_tmp_bytes)
         assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "lost"
         assert call_counters.serialize_current()["total_calls"] == 0
         assert sidecar.exists()
@@ -3340,8 +3347,9 @@ class TestSweepAndFence:
                 {
                     "$report_type": "CallCountersPartial",
                     "worker_uuid": _UUID_A,
-                    "truncated": False,
-                    "total_calls": 5,
+                    "truncated": True,
+                    "total_calls": 0,
+                    "by_module": {},
                 }
             ]
         }
@@ -3537,6 +3545,44 @@ class TestSweepAndFence:
         again = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert again["barrier_ok"] is True, "the seal never sticks"
 
+    def test_value_garbage_partial_authorizes_nothing(self, engaged: Path) -> None:
+        """#88R13-1: right keys with extractor-rejected values prove nothing."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(
+            json.dumps(
+                {
+                    "cache_records": {
+                        "a.py": [
+                            {
+                                "$report_type": "CallCountersPartial",
+                                "worker_uuid": _UUID_A,
+                                "truncated": True,
+                                "total_calls": "bad",
+                                "by_module": {},
+                            }
+                        ]
+                    },
+                    "consumed": 1,
+                    "collected_uuids": [_UUID_A],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.warns(UserWarning, match="re-collect as fresh"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert sum(len(records) for records in plan["cache_records"].values()) > 1
+        assert not Path(planted["registry"]).exists()
+        assert not Path(planted["sidecar"]).exists()
+
     def test_corrupt_consumed_count_self_heals(self, engaged: Path) -> None:
         """#88R11-5: the staged count recomputes from the validated union."""
         import warnings
@@ -3554,8 +3600,9 @@ class TestSweepAndFence:
                 {
                     "$report_type": "CallCountersPartial",
                     "worker_uuid": _UUID_A,
-                    "truncated": False,
-                    "total_calls": 5,
+                    "truncated": True,
+                    "total_calls": 0,
+                    "by_module": {},
                 }
             ]
         }
@@ -3898,8 +3945,9 @@ class TestSweepAndFence:
                             {
                                 "$report_type": "CallCountersPartial",
                                 "worker_uuid": _UUID_A,
-                                "truncated": False,
-                                "total_calls": 5,
+                                "truncated": True,
+                                "total_calls": 0,
+                                "by_module": {},
                             }
                         ]
                     },
@@ -3952,8 +4000,9 @@ class TestSweepAndFence:
                             {
                                 "$report_type": "CallCountersPartial",
                                 "worker_uuid": _UUID_A,
-                                "truncated": False,
-                                "total_calls": 5,
+                                "truncated": True,
+                                "total_calls": 0,
+                                "by_module": {},
                             }
                         ]
                     },
@@ -4081,6 +4130,166 @@ class TestSweepAndFence:
         assert probe.exists(), "the listed baseline waits with its rewrite"
         assert ghost.exists(), "the unlisted return is never deleted unread"
 
+    def test_registry_retry_ghost_rewrite_preserved(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R13-2: a post-stage ghost is never replayed-and-discarded."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        probe = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        held_names = {registry.name, probe.name}
+        real_unlink = Path.unlink
+        blocked = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if blocked and self.name in held_names:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert first["barrier_ok"] is True
+        assert registry.exists()
+        assert probe.exists()
+        ghost = _plant_probe_tmp(probe, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 5]]))
+        blocked = False
+        with pytest.warns(UserWarning, match="unlisted rewrite"):
+            second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert second["cache_records"] == first["cache_records"]
+        assert not registry.exists(), "staged parents converge directly"
+        assert not sidecar.exists()
+        assert probe.exists(), "the ghost holds its whole slot"
+        assert ghost.exists(), "the ghost return is never folded-and-dropped"
+
+    def test_stage_time_ghost_never_listed(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R13-2: staging binds adjudicated bytes, never fresh reads."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        probe = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        real_unlink = Path.unlink
+        blocked = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if blocked and self.name == probe.name:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        ghost_holder: dict[str, Any] = {}
+        real_stage = durability._write_barrier_staging
+
+        def _ghosting_stage(*args: Any, **kwargs: Any) -> bool:
+            ghost_holder["ghost"] = _plant_probe_tmp(
+                probe, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 5]])
+            )
+            return real_stage(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_write_barrier_staging", _ghosting_stage)
+        first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert first["barrier_ok"] is True
+        assert probe.exists()
+        ghost = ghost_holder["ghost"]
+        staged = json.loads(
+            (engaged / durability.BARRIER_STAGING_FILENAME).read_text(encoding="utf-8")
+        )
+        assert all(entry["path"] != str(ghost) for entry in staged["cleanup_targets"])
+        blocked = False
+        with pytest.warns(UserWarning, match="unlisted rewrite"):
+            second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert second["cache_records"] == first["cache_records"]
+        assert probe.exists()
+        assert ghost.exists()
+
+    def test_consume_time_evolution_holds_slot(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R13-2: a tmp evolved after verification holds its baseline."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        probe = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        tmp = _plant_probe_tmp(probe, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 1]]))
+        real_unlink = Path.unlink
+        blocked = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if blocked and self.name in {probe.name, tmp.name}:
+                raise PermissionError("injected unlink EPERM")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert first["barrier_ok"] is True
+        assert probe.exists()
+        assert tmp.exists()
+        blocked = False
+        real_sha = durability._sha256_file_hex
+        reads = {"count": 0}
+
+        def _evolving_sha(path: Path) -> str | None:
+            if path.name == tmp.name:
+                reads["count"] += 1
+                if reads["count"] > 1:
+                    tmp.write_text(
+                        json.dumps(_probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 9]])),
+                        encoding="utf-8",
+                    )
+            return real_sha(path)
+
+        monkeypatch.setattr(durability, "_sha256_file_hex", _evolving_sha)
+        with pytest.warns(UserWarning, match="unadjudicated tmp"):
+            second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert probe.exists(), "evolution holds the whole set"
+        assert tmp.exists()
+
     def test_malformed_cleanup_targets_disable_adoption(self, engaged: Path) -> None:
         """#88R11-6: malformed targets fail closed with a loud warning."""
         pid, birth = _dead_pid_with_birth()
@@ -4102,8 +4311,9 @@ class TestSweepAndFence:
                             {
                                 "$report_type": "CallCountersPartial",
                                 "worker_uuid": _UUID_A,
-                                "truncated": False,
-                                "total_calls": 5,
+                                "truncated": True,
+                                "total_calls": 0,
+                                "by_module": {},
                             }
                         ]
                     },
@@ -4142,8 +4352,9 @@ class TestSweepAndFence:
                             {
                                 "$report_type": "CallCountersPartial",
                                 "worker_uuid": _UUID_A,
-                                "truncated": False,
-                                "total_calls": 5,
+                                "truncated": True,
+                                "total_calls": 0,
+                                "by_module": {},
                             }
                         ]
                     },
@@ -5473,6 +5684,43 @@ class TestBarrierStaging:
             with pytest.warns(UserWarning, match="not readable after landing"):
                 file_runner_mod._apply_counters_barrier_plan(state_file, plan, ["a.py"], console)
         assert (root / durability.BARRIER_STAGING_FILENAME).exists()
+
+    def test_separator_glued_record_not_deduped(self, tmp_path: Path) -> None:
+        """#88R13-5: dedup uses production splitting (0x1e never splits)."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        from pkcs11_check.core.file_runner import _apply_counters_barrier_plan
+
+        root = tmp_path / "counters"
+        self._dead_unit(root, uuid=_UUID_A, unit="a.py")
+        plan = durability.prepare_resume(root, prior_merged_jsonl=None)
+        records = plan["cache_records"]["a.py"]
+        assert len(records) >= 1
+        state_file = tmp_path / "state.json"
+        supplements = durability.supplements_path(state_file, "a.py")
+        supplements.parent.mkdir(parents=True, exist_ok=True)
+        supplements.write_bytes(b"{fragment\x1e" + json.dumps(records[0]).encode("utf-8") + b"\n")
+        console = Console(file=StringIO(), force_terminal=False)
+        pending = _apply_counters_barrier_plan(state_file, plan, ["a.py"], console)
+        assert pending == ["a.py"]
+        from pkcs11_check.core.report_log import iter_report_log_records
+
+        readable = list(iter_report_log_records(supplements))
+        assert records[0] in readable, "the glued copy never counted as applied"
+        assert [rec for rec in readable if rec == records[0]] == [records[0]]
+
+    def test_verify_rejects_separator_glued_record(self, tmp_path: Path) -> None:
+        """#88R13-5: verification reads what production reads."""
+        from pkcs11_check.core.file_runner import _verify_counters_application
+
+        state_file = tmp_path / "state.json"
+        record = {"n": 1}
+        path = durability.supplements_path(state_file, "b.py")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"{fragment\x1e" + json.dumps(record).encode("utf-8") + b"\n")
+        assert not _verify_counters_application(state_file, "b.py", [record], pending=True)
 
     def test_healed_retry_apply_stays_single_copy(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -11167,13 +11415,20 @@ def test_unreadable_owned_marker_defers(tmp_path: Path, monkeypatch: pytest.Monk
     marker = durability.mark_probe_consumed(src)
     assert marker.name.startswith(f"probe-consumed-{_UUID_A}-")
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
 
     def _eperm_marker(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.name == marker.name:
             raise PermissionError("injected marker EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _eperm_marker_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if self.name == marker.name:
+            raise PermissionError("injected marker EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _eperm_marker)
+    monkeypatch.setattr(Path, "read_bytes", _eperm_marker_bytes)
     with pytest.warns(UserWarning, match="deferred"):
         records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert records == []
