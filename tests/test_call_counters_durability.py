@@ -4798,6 +4798,298 @@ class TestSweepAndFence:
         listed = {entry["path"] for entry in staged["cleanup_targets"]}
         assert str(foreign) not in listed
 
+    def test_orphan_committed_never_heals_uncovered(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R17-1: registryless committed routes never heal uncovered orphans."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        session = _session_record(
+            pid,
+            _counts_block(2, fn="C_Digest"),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "probes_lost": 1,
+                "lost_keys": [{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            },
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        Path(planted["registry"]).unlink()
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan["barrier_ok"] is True
+        for rec in plan["cache_records"].get("a.py", []):
+            assert rec.get("recovered_keys") in (None, [])
+        assert not Path(planted["sidecar"]).exists()
+        assert not orphan.exists()
+        stream = [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            session,
+            *plan["cache_records"]["a.py"],
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ]
+        payload = extract_call_counters_from_jsonl(_write_jsonl(tmp_path / "merged.jsonl", stream))
+        assert payload is not None
+        assert payload["total_calls"] == 2, "session supersedes the refold"
+        assert payload["complete"] is False
+        assert payload["probes_lost"] == 1
+
+    def test_collect_unit_orphan_committed_skips_live_writer(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R17-2: unit cleanup never fences a committed live writer."""
+        proc = _live_sleeper()
+        try:
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            marker_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=None,
+            )
+            marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+            marker_src.rename(marker)
+            orphan = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=None,
+            )
+            child = _committed_child(tmp_path, pid, _counts_block(10))
+            Path(planted["registry"]).unlink()
+            with pytest.warns(UserWarning, match="live writer"):
+                durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+                )
+            assert proc.poll() is None, "committed reunion skips, never fences"
+            assert Path(planted["sidecar"]).exists()
+            assert marker.exists()
+            assert orphan.exists()
+            proc.kill()
+            assert proc.wait(timeout=30) is not None
+            retry = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+            assert retry != []
+            assert not Path(planted["sidecar"]).exists()
+            assert not marker.exists()
+            assert not orphan.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_collect_unit_orphan_committed_defers_live_uncovered(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R17-2: uncovered live writers defer on the orphan route too."""
+        proc = _live_sleeper()
+        try:
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            orphan = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=None,
+            )
+            child = _committed_child(tmp_path, pid, _counts_block(10))
+            Path(planted["registry"]).unlink()
+            with pytest.warns(UserWarning, match="deferred"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+                )
+            assert records == []
+            assert proc.poll() is None
+            assert Path(planted["sidecar"]).exists()
+            assert orphan.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_slot_scan_never_authorizes_rejected_returns(self, engaged: Path) -> None:
+        """#88R17-3: a foreign complete tmp stays unauthored even when scanned."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        probe = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", None, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=birth,
+        )
+        foreign = _plant_probe_tmp(
+            probe,
+            _probe_tmp_payload("c" * 32, 0, [["m", "C_Digest", 0, 9]], parent_uuid=_UUID_A),
+        )
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert marker.exists(), "unresolved recovery withholds the marker"
+        assert probe.exists(), "the rejected rewrite holds its slot"
+        assert foreign.exists()
+        assert plan["cleanup_held"] != []
+        staged = json.loads(
+            (engaged / durability.BARRIER_STAGING_FILENAME).read_text(encoding="utf-8")
+        )
+        listed = {entry["path"] for entry in staged["cleanup_targets"]}
+        assert str(foreign) not in listed
+
+    def test_committed_marker_with_live_writer_skips(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R17-4: a live marker writer withholds recovery on committed paths."""
+        proc = _live_sleeper()
+        try:
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            marker_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=None,
+            )
+            marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+            marker_src.rename(marker)
+            slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+            tmp = slot.with_name(f"{slot.name}.tmp-4242")
+            tmp.write_text("{torn", encoding="utf-8")
+            child = _committed_child(tmp_path, pid, _counts_block(10))
+            with pytest.warns(UserWarning, match="live writer"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+                )
+            assert records == [], "the heal waits for quiescence"
+            assert proc.poll() is None
+            assert Path(planted["registry"]).exists()
+            assert Path(planted["sidecar"]).exists()
+            assert marker.exists()
+            assert tmp.exists()
+            proc.kill()
+            assert proc.wait(timeout=30) is not None
+            retry = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+            partials = [rec for rec in retry if rec["$report_type"] == "CallCountersPartial"]
+            assert len(partials) == 1
+            assert partials[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}]
+            assert not Path(planted["registry"]).exists()
+            assert not Path(planted["sidecar"]).exists()
+            assert not marker.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_postmortem_marker_with_live_writer_fences(self, engaged: Path) -> None:
+        """#88R17-4: postmortem fences a live marker writer before healing."""
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            marker_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=birth,
+            )
+            marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+            marker_src.rename(marker)
+            records = _collect_crashed88(engaged, engaged / "child.jsonl")
+            assert proc.poll() is not None, "postmortem fences first"
+            partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+            assert len(partials) == 1
+            assert partials[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}]
+            assert not marker.exists()
+            assert not Path(planted["registry"]).exists()
+            assert not Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
     def test_malformed_skip_held_degrades_loudly(self, engaged: Path) -> None:
         """#88R14-1: corrupt skip-holds are not trusted (loud empty)."""
         pid, birth = _dead_pid_with_birth()

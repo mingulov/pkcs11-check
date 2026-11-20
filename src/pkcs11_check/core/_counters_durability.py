@@ -2399,6 +2399,35 @@ def _adopt_probe_orphans(
             marker_adopted,
         )
         orphan_keys |= marker_keys
+        # Writer quiescence (#88R17-4): a stamped live writer may still
+        # complete the slot's rewrite, so healing or consuming now
+        # could clear returns that have not landed yet. Committed paths
+        # skip (retain + report, like an orphan skip, except nothing
+        # needs rolling back since the heal runs below); postmortem
+        # paths fence first and defer on failure, mirroring orphans.
+        assert isinstance(raw, dict)  # torn markers continued above
+        marker_pid = raw.get("pid")
+        marker_birth = raw.get("birth_token")
+        validated_birth = marker_birth if type(marker_birth) is int else None
+        if (
+            type(marker_pid) is int
+            and marker_pid > 0
+            and _incarnation_alive(marker_pid, validated_birth)
+        ):
+            if not fence_live:
+                skipped.append(path)
+                warnings.warn(
+                    f"consumed marker {path.name} has a live writer (pid {marker_pid}); "
+                    "recovery withheld for a later pass",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            if validated_birth is None:
+                if _pid_exists(marker_pid):
+                    raise _DeferProducerError(worker_uuid, marker_pid)
+            elif not _terminate_verified(marker_pid, validated_birth, 5.0):
+                raise _DeferProducerError(worker_uuid, marker_pid)
         # A surviving rewrite tmp for this slot means the absorbed
         # snapshot is not the latest word: healing here would clear a
         # stranded rewrite silently (the orphan loop never visits a
@@ -2787,21 +2816,29 @@ def _slot_rewrite_unresolved(
     normal replay/prune paths. Unreadable state (tmp listing refused,
     payload unreadable) fails closed: the caller must withhold recovery
     until the slot's latest word is provable. ``digests`` records
-    ``{path: sha256}`` for every tmp read (None discards).
+    debris only (torn or returnless reads): a tmp carrying returns the
+    replay gate refused must never inherit cleanup authorization from
+    this informational scan (#88R17-3). None discards.
     """
     tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
     if tmps is None:
         return True
     for tmp in tmps:
         status, payload, digest = _read_json_evidence_digested(tmp)
-        if digest is not None and digests is not None:
-            digests.setdefault(str(tmp), digest)
-        if status in {"gone", "torn"}:
+        if status == "gone":
+            continue
+        if status == "gone":
+            continue
+        if status == "torn":
+            if digest is not None and digests is not None:
+                digests.setdefault(str(tmp), digest)
             continue
         if status != "ok":
             return True
         if _tmp_has_return_rows(payload):
             return True
+        if digest is not None and digests is not None:
+            digests.setdefault(str(tmp), digest)
     return False
 
 
@@ -3405,6 +3442,7 @@ def collect_unit(
         journal_path = _journal_for_sidecar(sidecar_path)
         sidecar_run = sidecar.get("run_id")
         sidecar_unit = sidecar.get("unit")
+        unit_routed_committed = isinstance(sidecar_run, str) and (sidecar_run, uuid) in sessions
         try:
             journal_lines = _read_journal_lines_strict(journal_path, uuid)
             (
@@ -3414,7 +3452,7 @@ def collect_unit(
                 recovered,
                 orphan_keys,
                 adopted_lost,
-                _skipped_live,
+                skipped_live,
             ) = _adopt_probe_orphans(
                 root,
                 worker_uuid=uuid,
@@ -3428,8 +3466,12 @@ def collect_unit(
                     lenient_sessions,
                     sidecar_run if isinstance(sidecar_run, str) else None,
                     uuid,
-                ),
-                fence_live=True,
+                )
+                and not unit_routed_committed,
+                # A committed session is authoritative: reunion skips
+                # (or defers) live writers instead of fencing them,
+                # exactly like the barrier routes (#88R17-2).
+                fence_live=not unit_routed_committed,
                 digests=read_digests,
             )
         except _DeferProducerError as exc:
@@ -3439,38 +3481,26 @@ def collect_unit(
                 stacklevel=2,
             )
             continue
-        if isinstance(sidecar_run, str) and (sidecar_run, uuid) in sessions:
-            records = []
-            # Recovery-only evidence still emits its zero-call claim
-            # partial (same CX2 rule as the registry-committed path):
-            # the session supersedes the zero counts while the
-            # recovered_keys harvest pierces supersede to heal it.
-            claim_block = (
-                orphan_block if orphan_block is not None else {"total_calls": 0, "by_module": {}}
+        if unit_routed_committed:
+            torn_stamp_role, torn_stamp_isolation = _sidecar_stamp(sidecar)
+            records = _committed_claim_records(
+                worker_uuid=uuid,
+                run_id=_sidecar_run(sidecar),
+                unit=str(sidecar.get("unit", "")),
+                attempt=sidecar.get("attempt", 0) if _is_nonneg_int(sidecar.get("attempt")) else 0,
+                pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
+                role=torn_stamp_role,
+                isolation=torn_stamp_isolation,
+                orphan_block=orphan_block,
+                orphan_receipts=orphan_receipts,
+                recovered=recovered,
+                orphan_keys=orphan_keys,
+                adopted_lost=adopted_lost,
             )
-            if orphan_block is not None or recovered or orphan_keys or adopted_lost:
-                torn_stamp_role, torn_stamp_isolation = _sidecar_stamp(sidecar)
-                records.append(
-                    _partial_record(
-                        worker_uuid=uuid,
-                        run_id=_sidecar_run(sidecar),
-                        unit=str(sidecar.get("unit", "")),
-                        attempt=sidecar.get("attempt", 0)
-                        if _is_nonneg_int(sidecar.get("attempt"))
-                        else 0,
-                        pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
-                        block=claim_block,
-                        receipts=orphan_receipts,
-                        probes_lost=adopted_lost,
-                        role=torn_stamp_role,
-                        isolation=torn_stamp_isolation,
-                        orphan_keys=_keys_to_wire(orphan_keys),
-                        recovered_keys=_keys_to_wire(set(recovered)),
-                    )
-                )
             if _append_collected(child_path, records):
                 appended.extend(records)
-                _consume_producer_files([sidecar_path, journal_path], read_digests)
+                if not skipped_live:
+                    _consume_producer_files([sidecar_path, journal_path], read_digests)
                 _consume_producer_files(consumed, read_digests)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
@@ -5625,6 +5655,10 @@ def prepare_resume(
                 # (or defers) live writers instead of fencing them,
                 # exactly like the registry route (#88R16-2).
                 fence_live=not routed_committed,
+                # Committed routes never heal uncovered orphans: a heal
+                # would resolve a loss whose evidence the session never
+                # absorbed (#88R17-1).
+                heal_orphans=not routed_committed,
                 digests=read_digests,
             )
         except _DeferProducerError as exc:
