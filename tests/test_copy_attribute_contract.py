@@ -286,6 +286,8 @@ class _CopyFake:
         decrypt_output_for: dict[tuple[str, int], bytes] | None = None,
         cbc_as_ecb_for: set[str] | None = None,
         dsa_verify_refuse_roles: set[str] | None = None,
+        find_script: list[int | None] | None = None,
+        copy_handle_override: int | None = None,
     ) -> None:
         self._copy_mode = copy_mode
         self._copy_refuse_rv = copy_refuse_rv
@@ -349,6 +351,10 @@ class _CopyFake:
         self._enc_op: tuple[int, bytes, bytes, str] | None = None
         self._dec_op: tuple[int, bytes, bytes, str] | None = None
         self._sign_op: int | None = None
+        self._find_script = list(find_script or [])
+        self._copy_handle_override = copy_handle_override
+        self._find_active = False
+        self._find_offset = 0
 
     def _issue(self) -> int:
         handle = self._next_handle
@@ -416,6 +422,10 @@ class _CopyFake:
         self.copy_calls.append(raw_attrs)
         if self._copy_mode == "refuse":
             return self._copy_refuse_rv
+        if self._copy_handle_override is not None:
+            # R3F2: succeed with a chosen (possibly unproved) handle.
+            _fill_ulong(out, self._copy_handle_override)
+            return _OK
         source = self.objects[int(handle)]
         assert not source.destroyed, "copy from destroyed handle"
         attrs = dict(source.attrs)
@@ -451,6 +461,32 @@ class _CopyFake:
         if stored is not None:
             stored.destroyed = True
         self.destroyed.append(int(handle))
+        return _OK
+
+    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
+        """R3F2: unfiltered inventory for compare-leg adoption baselines."""
+        if self._find_script:
+            scripted = self._find_script.pop(0)
+            if scripted is not None:
+                return scripted
+        self._find_active = True
+        self._find_offset = 0
+        return _OK
+
+    def C_FindObjects(  # noqa: N802
+        self, _sh: int, handles: Any, max_count: int, out_count: Any
+    ) -> int:
+        assert self._find_active, "find without init"
+        live = [h for h, stored in self.objects.items() if not stored.destroyed]
+        page = live[self._find_offset : self._find_offset + int(max_count)]
+        self._find_offset += len(page)
+        for i, handle in enumerate(page):
+            handles[i] = handle
+        _fill_ulong(out_count, len(page))
+        return _OK
+
+    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
+        self._find_active = False
         return _OK
 
     def C_GenerateKeyPair(  # noqa: N802
@@ -1230,6 +1266,21 @@ def test_qc3a_keytype_applied_fails() -> None:
     fake = _CopyFake(copy_mode="apply")
     _run_must_fail(_qc3a_keytype, _rs(fake))
     _assert_fail_record("self_contradiction", "policy")
+
+
+def test_qc3a_keytype_applied_beats_vendor_use_refusal() -> None:
+    """R3F7: a proved applied override fails before a vendor use xfail."""
+    fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _VENDOR_RV})
+    _run_must_fail(_qc3a_keytype, _rs(fake))
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert "override value" in (record.summary or ""), record.summary
+
+
+def test_qc3a_keytype_undefined_use_refusal_fails_metadata() -> None:
+    """R3F7: an undefined use RV fails metadata on any identity."""
+    fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _UNDEFINED_RV})
+    _run_must_fail(_qc3a_keytype, _rs(fake))
+    _assert_fail_record("self_contradiction", "metadata")
 
 
 def test_qc3a_class_refusal_passes() -> None:
@@ -5059,6 +5110,22 @@ def test_compare_readback_refused_voids_with_equal_sibling(
     assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
 
 
+def test_compare_standard_readback_refusal_records_per_leg_rv(
+    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> None:
+    """R3F13: a standard readback refusal gets its own record with the raw RV."""
+    with pytest.raises(_CompareVerdictError, match="xfail_as"):
+        _judge_compare(
+            empty=("ok", _COMPARE_SOURCE),
+            restated=("readback-refused", _ATTR_READ_ONLY),
+        )
+    assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
+    (reason, kw), *_ = _compare_captures["record"]
+    assert reason == "not_operational", kw
+    assert kw["operation"] == "C_GetAttributeValue", kw
+    assert kw["actual"] == _ATTR_READ_ONLY, kw
+
+
 def test_policy_shaped_sets_split_crypto_vs_keymgmt() -> None:
     """A4: crypto ops keep the narrow proof set; only keymgmt credits MECHANISM_INVALID."""
     import pkcs11_check.testcases._copy_mutability as cm
@@ -5120,3 +5187,64 @@ def test_compare_void_names_readback_rvs(
     assert "CKR_DEVICE_ERROR" in kw["summary"], kw["summary"]
     assert kw["detail"]["restated_readback_rv"] == "CKR_DEVICE_ERROR", kw["detail"]
     assert kw["detail"]["empty_readback_rv"] is None, kw["detail"]
+
+
+def test_copy_compare_leg_adopts_fresh_copy() -> None:
+    """R3F2: a fresh copy is adopted, read back, and destroyed (happy path)."""
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    fake = _CopyFake(copy_mode="apply")
+    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
+    outcome = cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    assert outcome == ("ok", b"v" * 16), outcome
+    assert fake.destroyed == [source + 1], fake.destroyed
+    assert fake.objects[source].destroyed is False
+
+
+def test_copy_compare_leg_preexisting_copy_fails_without_destroy() -> None:
+    """R3F2: a copy returning a baseline handle fails; the foreign object survives."""
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    fake = _CopyFake(copy_mode="apply", copy_handle_override=101)
+    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
+    foreign = fake._store({int(CKA_VALUE): b"f" * 16}, role="create")
+    assert foreign == 101, foreign
+    with pytest.raises(Failed, match="pre-existing"):
+        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    assert fake.objects[foreign].destroyed is False
+    assert foreign not in fake.destroyed, fake.destroyed
+
+
+def test_copy_compare_leg_source_alias_fails_without_destroy() -> None:
+    """R3F2 (A1 pin): a copy returning the source handle fails; source survives."""
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    fake = _CopyFake(copy_mode="apply", copy_handle_override=100)
+    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
+    assert source == 100, source
+    with pytest.raises(Failed, match="source handle"):
+        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    assert fake.objects[source].destroyed is False
+    assert fake.destroyed == [], fake.destroyed
+
+
+def test_copy_compare_leg_refused_baseline_xfails_unproved() -> None:
+    """R3F2: a refused baseline voids the leg visibly; the copy never runs."""
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    fake = _CopyFake(copy_mode="apply", find_script=[_DEVICE_ERROR])
+    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
+    with pytest.raises(XFailed, match="unproved"):
+        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    assert fake.copy_calls == [], fake.copy_calls
+
+
+def test_copy_compare_leg_undefined_baseline_rv_fails() -> None:
+    """R3F2: an undefined baseline RV fails loud, never voids quietly."""
+    import pkcs11_check.testcases._copy_mutability as cm
+
+    fake = _CopyFake(copy_mode="apply", find_script=[0x7FFFFFFF])
+    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
+    with pytest.raises(Failed, match="undefined") as exc_info:
+        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
+    assert type(exc_info.value) is Failed, exc_info.value

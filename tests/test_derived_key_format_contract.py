@@ -305,13 +305,23 @@ def test_des2_cdmf_parity_adjusted_passes(monkeypatch: pytest.MonkeyPatch, type_
     _cleaned(fake)
 
 
+#: Independent key-type/length expectations (R3-pushback: never read from the
+#: production parity tables, so a remapped production row fails instead of
+#: passing against its own reflection). DES/CDMF are 8-byte keys, DES2 is 16.
+_SHA1_PARITY_EXPECTED: dict[str, tuple[int, int]] = {
+    "DES": (int(CKK_DES), 8),
+    "DES2": (int(CKK_DES2), 16),
+    "CDMF": (int(CKK_CDMF), 8),
+}
+
+
 @pytest.mark.parametrize("type_name", ["DES", "DES2", "CDMF"])
 def test_sha1_des_parity_adjusted_passes(monkeypatch: pytest.MonkeyPatch, type_name: str) -> None:
     """R2-gap: every SHA-1 row drives its exact typed + twin derives."""
     fake = _Fake()
     _run_sha1(monkeypatch, fake, type_name)
     assert classification.get_records() == [], type_name
-    key_type, out_len = tmisc._DES_PARITY_TYPES[type_name]
+    key_type, out_len = _SHA1_PARITY_EXPECTED[type_name]
     assert fake.derive_calls == [
         {"mech": int(CKM_SHA1_KEY_DERIVATION), "key_type": key_type, "len": out_len},
         {
@@ -399,6 +409,33 @@ def test_digest_fixture_slices_expose_missing_adjustment() -> None:
         assert any(b.bit_count() % 2 == 0 for b in raw), ("SHA1", type_name)
 
 
+#: Independent (mech, type, length) expectations per digest test row
+#: (R3-pushback: never read from the production parity tables).
+_DIGEST_ROW_EXPECTED: dict[tuple[str, str], tuple[int, int, int]] = {
+    ("CKM_SHA256_KEY_DERIVATION", "DES"): (int(CKM_SHA256_KEY_DERIVATION), int(CKK_DES), 8),
+    ("CKM_SHAKE_256_KEY_DERIVATION", "DES2"): (
+        int(CKM_SHAKE_256_KEY_DERIVATION),
+        int(CKK_DES2),
+        16,
+    ),
+    ("CKM_BLAKE2B_512_KEY_DERIVE", "CDMF"): (
+        int(CKM_BLAKE2B_512_KEY_DERIVE),
+        int(CKK_CDMF),
+        8,
+    ),
+    ("CKM_SHA3_224_KEY_DERIVATION", "DES2"): (
+        int(CKM_SHA3_224_KEY_DERIVATION),
+        int(CKK_DES2),
+        16,
+    ),
+    ("CKM_BLAKE2B_256_KEY_DERIVE", "CDMF"): (
+        int(CKM_BLAKE2B_256_KEY_DERIVE),
+        int(CKK_CDMF),
+        8,
+    ),
+}
+
+
 @pytest.mark.parametrize(
     ("mech", "type_name"),
     [
@@ -417,8 +454,7 @@ def test_digest_healthy_rows_pass(
     _run_digest(monkeypatch, fake, mech, type_name)
     # R2-gap: the cleanup assertion alone goes green on empty call
     # lists; pin the exact twin + typed derives for every row.
-    key_type, out_len = tmisc._DES_PARITY_TYPES[type_name]
-    mech_id = tmisc._DIGEST_PARITY_MECHS[mech][0]
+    mech_id, key_type, out_len = _DIGEST_ROW_EXPECTED[(mech, type_name)]
     assert fake.derive_calls == [
         {"mech": mech_id, "key_type": int(CKK_GENERIC_SECRET), "len": out_len},
         {"mech": mech_id, "key_type": key_type, "len": out_len},

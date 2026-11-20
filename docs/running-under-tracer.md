@@ -56,9 +56,11 @@ several times longer.
 To time your own setup, record a receipt, not just a duration:
 run each profile once with `time` and the exact selection you
 intend to keep, and capture alongside it the provider module path
-and version, the host details (`uname -a`, CPU count), and the
-vector inventory (the collected test count for that selection, via
-`--collect-only -q`). Provider, machine, and vector inventory
-dominate the result, so a duration without them is not
-reproducible, and do not extrapolate these rough magnitudes across
-setups.
+and version, the host details (`uname -a`, CPU count), the vector
+corpus revisions, and the exact vector inventory: the full
+selected node list, via `pkcs11-check list-tests` with the same
+selection, saved to a file. A bare collected count is not an
+inventory -- equal counts can represent different vectors -- so a
+duration without the provider, machine, corpus revisions, and node
+list is not reproducible, and do not extrapolate these rough
+magnitudes across setups.

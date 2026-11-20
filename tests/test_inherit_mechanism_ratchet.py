@@ -19,7 +19,8 @@ import collections
 import pathlib
 
 TESTCASES_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
-EXPECTED_ATTR_OR_RECORD_SITES = 462
+# R3: 462 + 3 F1 per-handle identity reads + 2 F2/F5 adopt+gate reads.
+EXPECTED_ATTR_OR_RECORD_SITES = 467
 
 
 def _unguarded_sites() -> tuple[dict[str, list[int]], int]:

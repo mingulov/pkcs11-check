@@ -39,7 +39,6 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 
 from pkcs11_check import classification
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_BASE,
     CKA_CLASS,
@@ -1156,11 +1155,18 @@ def test_w2_import_size_policy_is_xfail() -> None:
 
 
 def test_w2_import_domain_params_invalid_is_fail() -> None:
+    # R3-A3: still a FAIL (proved contradiction on the valid vector),
+    # now classified at source instead of escaping through a raw raise.
     raw = _W2Raw(create_rv=_ckr(CKR_DOMAIN_PARAMS_INVALID))
-    with pytest.raises(CkrAssertionError):
+    with pytest.raises(Failed) as exc_info:
         dsa_mod.TestDSABoundedWidth().test_fixed_dsa_even_padded_halves_rejected(
             _w2_session(raw), 1
         )
+    assert type(exc_info.value) is Failed
+    fails = [rec for rec in classification.get_records() if rec.outcome == "fail"]
+    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in fails]
+    assert fails[0].reason == "self_contradiction", fails[0].summary
+    assert fails[0].kind == "metadata", fails[0].summary
 
 
 def test_w2_no_dsa_mechanism_is_skip() -> None:
