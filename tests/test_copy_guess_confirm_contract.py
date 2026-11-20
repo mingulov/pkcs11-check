@@ -264,6 +264,50 @@ def test_guess_legs_send_distinct_templates(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
+def test_inventory_object_set_unfiltered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-review 4: the inventory template carries no filter (token objects visible)."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    seen: list[Any] = []
+
+    def _find(_raw: Any, _sh: int, tmpl: Any) -> list[int]:
+        seen.append(tmpl)
+        return [9]
+
+    monkeypatch.setattr(km, "find_objects_exhaustive", _find)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    handles, rv = km._inventory_object_set(rs, label="t")
+    assert (handles, rv) == ({9}, None)
+    assert len(seen) == 1 and seen[0].count == 0, "filtered inventory hides token objects"
+
+
+def test_guess_legs_token_object_delta_proves_creation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-review 4: a token-object delta across a refused copy proves creation."""
+    import pkcs11_check.testcases.test_keymgmt as km
+
+    pages = iter([[9], [9, 200], [9], [9]])
+
+    def _find(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        return next(pages)
+
+    def _refuse(_raw: Any, _sh: int, _handle: int, _attrs: Any) -> int:
+        raise CkrAssertionError("copy refused", CKR_ATTRIBUTE_READ_ONLY)
+
+    monkeypatch.setattr(km, "find_objects_exhaustive", _find)
+    monkeypatch.setattr(km, "copy_object", _refuse)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    _cx, _wx, _cu, _wu, created, _rvs = km._run_guess_legs(
+        rs,
+        100,
+        CKA_VALUE,
+        (b"correct-guess", b"wrong-guess"),
+        b"baseline",
+        lambda *a: _use(True),
+        label="t",
+    )
+    assert created == (True, False), created
+
+
 def test_created_single_leg_names_leg_and_rv(
     captures: dict[str, list[tuple[str, dict[str, Any]]]],
 ) -> None:
