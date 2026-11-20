@@ -88,6 +88,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._adoption import OwnershipUnprovedError, adopt_correlated_output
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -355,20 +356,26 @@ def _baseline_or_void(rs: Any, *, label: str) -> list[int]:
 
 
 def _adopt_staged(
+    rs: Any,
     claimed: int,
     *,
     label: str,
     producer_operation: str,
     before: Collection[int],
     siblings: Collection[int],
+    expect_label: str | bytes,
+    expect_token: bool,
 ) -> int:
-    """Adopt a staged output only with proved ownership (R3F2).
+    """Adopt a staged output only with proved ownership (R3F2, R4-F1).
 
     A null handle, an already-staged sibling (alias), or a handle
     predating the baseline is a proved provider contradiction: fail
     WITHOUT staging it, or shared cleanup would destroy a foreign
-    object (or the same object twice). Returns the adopted handle;
-    never returns an unproved one.
+    object (or the same object twice). A novel handle is adopted only
+    with attempt correlation (label plus session-ness; staged fixtures
+    never judge shape): a mismatch fails WITHOUT staging it, and an
+    unreadable identity xfails unproved-effect WITHOUT staging it.
+    Returns the adopted handle; never returns an unproved one.
     """
     if not claimed:
         cause = "a null handle"
@@ -377,6 +384,32 @@ def _adopt_staged(
     elif claimed in set(before):
         cause = "a pre-existing handle"
     else:
+        try:
+            adopt_correlated_output(
+                rs,
+                claimed,
+                label=label,
+                operation=producer_operation,
+                expect_label=expect_label,
+                expect_token=expect_token,
+                expect_class=None,
+                expect_key_type=None,
+            )
+        except OwnershipUnprovedError as exc:
+            fields = ", ".join(f"{name}: {why}" for name, why in exc.fields.items())
+            C.xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=producer_operation,
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                summary=(
+                    f"{label}: {producer_operation} output ownership unproved "
+                    f"({fields}); refusing to stage it"
+                ),
+                detail={"disposition": "unproved-effect", "handle": claimed},
+            )
         return claimed
     C.fail_as(
         "self_contradiction",
@@ -393,6 +426,7 @@ def _adopt_staged(
 
 
 def _append_staged(
+    rs: Any,
     staged: list[tuple[int, str, str]],
     claimed: int,
     leg_label: str,
@@ -400,25 +434,86 @@ def _append_staged(
     *,
     before: Collection[int],
     extra: Collection[int] = (),
+    expect_label: str | bytes,
+    expect_token: bool,
 ) -> None:
     """Adopt *claimed* into *staged* (R3F2: null/alias/pre-existing fail).
 
     *extra* covers live adopted handles outside *staged* (a derive
     base, unwrap transient keys): an output aliasing any of them is
-    the same proved contradiction.
+    the same proved contradiction. A novel handle is correlated
+    against *expect_label*/*expect_token* before staging (R4-F1).
     """
     staged.append(
         (
             _adopt_staged(
+                rs,
                 claimed,
                 label=leg_label,
                 producer_operation=producer,
                 before=before,
                 siblings=[*[h for h, _, _ in staged], *extra],
+                expect_label=expect_label,
+                expect_token=expect_token,
             ),
             leg_label,
             producer,
         )
+    )
+
+
+def _append_keypair_halves(
+    rs: Any,
+    staged: list[tuple[int, str, str]],
+    pub: int,
+    priv: int,
+    pub_label: str,
+    priv_label: str,
+    producer: str,
+    *,
+    before: Collection[int],
+    expect_pub_label: str | bytes,
+    expect_priv_label: str | bytes,
+) -> None:
+    """Adopt a generated pair: pair-aliasing fails before correlation (R4-F1).
+
+    The halves share one producer return, so an aliased pair is a
+    proved contradiction even when the handle itself is unreadable
+    (per-half adoption would void on the first half before the alias
+    manifests). Each half then correlates like any staged output.
+    """
+    if pub and pub == priv:
+        C.fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=pub_label,
+            operation=producer,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(
+                f"{pub_label}: {producer} returned aliased halves ({pub}); refusing to stage them"
+            ),
+            detail={"halves": [pub, priv]},
+        )
+    _append_staged(
+        rs,
+        staged,
+        pub,
+        pub_label,
+        producer,
+        before=before,
+        expect_label=expect_pub_label,
+        expect_token=False,
+    )
+    _append_staged(
+        rs,
+        staged,
+        priv,
+        priv_label,
+        producer,
+        before=before,
+        expect_label=expect_priv_label,
+        expect_token=False,
     )
 
 
@@ -441,13 +536,31 @@ def _stage_created_objects(rs: Any) -> list[tuple[int, str, str]]:
             },
         )
         _append_staged(
-            staged, data, "CKA_UNIQUE_ID:created data object", "C_CreateObject", before=before
+            rs,
+            staged,
+            data,
+            "CKA_UNIQUE_ID:created data object",
+            "C_CreateObject",
+            before=before,
+            expect_label="qc7c-created-data",
+            expect_token=False,
         )
         secret = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, bytes(range(16)), attrs={CKA_LABEL: "qc7c-created-aes"}
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(range(16)),
+            attrs={CKA_LABEL: "qc7c-created-aes", CKA_TOKEN: False},
         )
         _append_staged(
-            staged, secret, "CKA_UNIQUE_ID:imported AES key", "C_CreateObject", before=before
+            rs,
+            staged,
+            secret,
+            "CKA_UNIQUE_ID:imported AES key",
+            "C_CreateObject",
+            before=before,
+            expect_label="qc7c-created-aes",
+            expect_token=False,
         )
         numbers = rsa.generate_private_key(65537, 2048).public_key().public_numbers()
         rsa_pub = create_object(
@@ -464,11 +577,14 @@ def _stage_created_objects(rs: Any) -> list[tuple[int, str, str]]:
             },
         )
         _append_staged(
+            rs,
             staged,
             rsa_pub,
             "CKA_UNIQUE_ID:imported RSA public key",
             "C_CreateObject",
             before=before,
+            expect_label="qc7c-created-rsa",
+            expect_token=False,
         )
     except BaseException:
         _destroy_all(rs, [h for h, _, _ in staged])
@@ -481,31 +597,54 @@ def _stage_generated_objects(rs: Any) -> list[tuple[int, str, str]]:
     staged: list[tuple[int, str, str]] = []
     try:
         first = gen_aes_key_or_xfail(
-            rs, bits=128, attrs={CKA_LABEL: "qc7c-gen-aes-1"}, purpose="QC7c generated IDs"
+            rs,
+            bits=128,
+            attrs={CKA_LABEL: "qc7c-gen-aes-1", CKA_TOKEN: False},
+            purpose="QC7c generated IDs",
         )
         _append_staged(
-            staged, first, "CKA_UNIQUE_ID:generated AES key 1", "C_GenerateKey", before=before
+            rs,
+            staged,
+            first,
+            "CKA_UNIQUE_ID:generated AES key 1",
+            "C_GenerateKey",
+            before=before,
+            expect_label="qc7c-gen-aes-1",
+            expect_token=False,
         )
         second = gen_aes_key_or_xfail(
-            rs, bits=128, attrs={CKA_LABEL: "qc7c-gen-aes-2"}, purpose="QC7c generated IDs"
+            rs,
+            bits=128,
+            attrs={CKA_LABEL: "qc7c-gen-aes-2", CKA_TOKEN: False},
+            purpose="QC7c generated IDs",
         )
         _append_staged(
-            staged, second, "CKA_UNIQUE_ID:generated AES key 2", "C_GenerateKey", before=before
+            rs,
+            staged,
+            second,
+            "CKA_UNIQUE_ID:generated AES key 2",
+            "C_GenerateKey",
+            before=before,
+            expect_label="qc7c-gen-aes-2",
+            expect_token=False,
         )
-        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
-        _append_staged(
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            public_attrs={CKA_LABEL: "qc7c-gen-rsa-pub", CKA_TOKEN: False},
+            private_attrs={CKA_LABEL: "qc7c-gen-rsa-priv", CKA_TOKEN: False},
+        )
+        _append_keypair_halves(
+            rs,
             staged,
             pub,
-            "CKA_UNIQUE_ID:generated RSA public half",
-            "C_GenerateKeyPair",
-            before=before,
-        )
-        _append_staged(
-            staged,
             priv,
+            "CKA_UNIQUE_ID:generated RSA public half",
             "CKA_UNIQUE_ID:generated RSA private half",
             "C_GenerateKeyPair",
             before=before,
+            expect_pub_label="qc7c-gen-rsa-pub",
+            expect_priv_label="qc7c-gen-rsa-priv",
         )
     except BaseException:
         _destroy_all(rs, [h for h, _, _ in staged])
@@ -596,11 +735,14 @@ def _stage_derived_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Class
     except CkrAssertionError as exc:
         return _note_staging_refusal(exc, leg="derive", operation="C_CreateObject")
     base = _adopt_staged(
+        rs,
         raw_base,
         label="CKA_UNIQUE_ID:derive base",
         producer_operation="C_CreateObject",
         before=before,
         siblings=[h for h, _, _ in into],
+        expect_label="qc7c-derive-base",
+        expect_token=False,
     )
     pending: C.Classification | None = None
     try:
@@ -626,12 +768,15 @@ def _stage_derived_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Class
                 pending = _note_staging_refusal(exc, leg="derive", operation="C_DeriveKey")
                 break
             _append_staged(
+                rs,
                 into,
                 derived,
                 f"CKA_UNIQUE_ID:derived key {index}",
                 "C_DeriveKey",
                 before=before,
                 extra=[base],
+                expect_label=f"qc7c-derived-{index}",
+                expect_token=False,
             )
     finally:
         if base:
@@ -675,11 +820,14 @@ def _stage_unwrapped_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Cla
         except CkrAssertionError as exc:
             return _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
         kek = _adopt_staged(
+            rs,
             raw_kek,
             label="CKA_UNIQUE_ID:unwrap KEK",
             producer_operation="C_CreateObject",
             before=before,
             siblings=[h for h, _, _ in into],
+            expect_label="qc7c-unwrap-kek",
+            expect_token=False,
         )
         transient.append(kek)
         try:
@@ -697,11 +845,14 @@ def _stage_unwrapped_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Cla
         except CkrAssertionError as exc:
             return _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
         target = _adopt_staged(
+            rs,
             raw_target,
             label="CKA_UNIQUE_ID:unwrap target",
             producer_operation="C_CreateObject",
             before=before,
             siblings=[*[h for h, _, _ in into], kek],
+            expect_label="qc7c-unwrap-target",
+            expect_token=False,
         )
         transient.append(target)
         try:
@@ -728,12 +879,15 @@ def _stage_unwrapped_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Cla
                 pending = _note_staging_refusal(exc, leg="unwrap", operation="C_UnwrapKey")
                 break
             _append_staged(
+                rs,
                 into,
                 unwrapped,
                 f"CKA_UNIQUE_ID:unwrapped key {index}",
                 "C_UnwrapKey",
                 before=before,
                 extra=transient,
+                expect_label=f"qc7c-unwrapped-{index}",
+                expect_token=False,
             )
     finally:
         _destroy_all(rs, transient)
@@ -769,13 +923,19 @@ class TestUniqueIdGeneration:
         _require_unique_id_applicable(rs)
         before = _baseline_or_void(rs, label="CKA_UNIQUE_ID copy-ID staging")
         source = _adopt_staged(
+            rs,
             gen_aes_key_or_xfail(
-                rs, bits=128, attrs={CKA_LABEL: "qc7c-copy-source"}, purpose="QC7c copy ID"
+                rs,
+                bits=128,
+                attrs={CKA_LABEL: "qc7c-copy-source", CKA_TOKEN: False},
+                purpose="QC7c copy ID",
             ),
             label="CKA_UNIQUE_ID:copy source",
             producer_operation="C_GenerateKey",
             before=before,
             siblings=[],
+            expect_label="qc7c-copy-source",
+            expect_token=False,
         )
         copied = 0
         try:
@@ -787,11 +947,14 @@ class TestUniqueIdGeneration:
                 )
                 raise
             copied = _adopt_staged(
+                rs,
                 raw_copied,
                 label="CKA_UNIQUE_ID:copied object",
                 producer_operation="C_CopyObject",
                 before=before,
                 siblings=[source],
+                expect_label="qc7c-copy-source",
+                expect_token=False,
             )
             records: list[C.Classification] = []
             source_id, source_records = _read_unique_id(
@@ -867,7 +1030,14 @@ class TestUniqueIdGeneration:
                 )
                 raise
             _append_staged(
-                staged, copied, "CKA_UNIQUE_ID:copied object", "C_CopyObject", before=copy_before
+                rs,
+                staged,
+                copied,
+                "CKA_UNIQUE_ID:copied object",
+                "C_CopyObject",
+                before=copy_before,
+                expect_label="qc7c-created-data",
+                expect_token=False,
             )
             # R2C2: derive/unwrap transfer each accepted handle into
             # STAGED as it lands and defer vendor/undefined terminals:
@@ -899,8 +1069,16 @@ class TestUniqueIdGeneration:
                 int(CKM_ML_KEM_KEY_PAIR_GEN),
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, int(CKP_ML_KEM_512))],
                 priv_base=[],
-                public_attrs={CKA_TOKEN: False, CKA_ENCAPSULATE: True},
-                private_attrs={CKA_TOKEN: False, CKA_DECAPSULATE: True},
+                public_attrs={
+                    CKA_TOKEN: False,
+                    CKA_ENCAPSULATE: True,
+                    CKA_LABEL: "qc7c-kem-pub",
+                },
+                private_attrs={
+                    CKA_TOKEN: False,
+                    CKA_DECAPSULATE: True,
+                    CKA_LABEL: "qc7c-kem-priv",
+                },
                 pub_skip={CKA_PARAMETER_SET},
             )
         except AssertionError as exc:
@@ -918,23 +1096,25 @@ class TestUniqueIdGeneration:
             CKA_EXTRACTABLE: True,
         }
         try:
-            _append_staged(
+            _append_keypair_halves(
+                rs,
                 staged,
                 pub,
-                "CKA_UNIQUE_ID:ML-KEM public half",
-                "C_GenerateKeyPair",
-                before=kem_before,
-            )
-            _append_staged(
-                staged,
                 priv,
+                "CKA_UNIQUE_ID:ML-KEM public half",
                 "CKA_UNIQUE_ID:ML-KEM private half",
                 "C_GenerateKeyPair",
                 before=kem_before,
+                expect_pub_label="qc7c-kem-pub",
+                expect_priv_label="qc7c-kem-priv",
             )
             try:
                 encapsulated, ciphertext = encapsulate_key(
-                    rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=secret_attrs
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_ML_KEM,
+                    attrs={**secret_attrs, CKA_LABEL: "qc7c-kem-encapped"},
                 )
             except AssertionError as exc:
                 xfail_if_known_ckr(
@@ -942,15 +1122,23 @@ class TestUniqueIdGeneration:
                 )
                 raise
             _append_staged(
+                rs,
                 staged,
                 encapsulated,
                 "CKA_UNIQUE_ID:encapsulated secret",
                 "C_EncapsulateKey",
                 before=kem_before,
+                expect_label="qc7c-kem-encapped",
+                expect_token=False,
             )
             try:
                 decapsulated = decapsulate_key(
-                    rs.raw, rs.sh, priv, CKM_ML_KEM, ciphertext, attrs=secret_attrs
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_ML_KEM,
+                    ciphertext,
+                    attrs={**secret_attrs, CKA_LABEL: "qc7c-kem-decapped"},
                 )
             except AssertionError as exc:
                 xfail_if_known_ckr(
@@ -958,11 +1146,14 @@ class TestUniqueIdGeneration:
                 )
                 raise
             _append_staged(
+                rs,
                 staged,
                 decapsulated,
                 "CKA_UNIQUE_ID:decapsulated secret",
                 "C_DecapsulateKey",
                 before=kem_before,
+                expect_label="qc7c-kem-decapped",
+                expect_token=False,
             )
             _raise_strongest(_collect_ids(rs, staged))
         finally:

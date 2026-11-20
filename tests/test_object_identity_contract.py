@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -205,7 +206,10 @@ class _IdentityRaw:
     def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
         self.attr_reads.append(int(handle))
         stored = self.objects.get(int(handle))
-        assert stored is not None, f"read from unknown handle {handle}"
+        if stored is None:
+            # R4-F1: a real provider answers HANDLE_INVALID for unknown
+            # handles; asserting here would hide unproved-ownership paths.
+            return int(CKR_OBJECT_HANDLE_INVALID)
         row_rvs: list[int] = []
         for i in range(count):
             attr = int(tmpl[i].type)
@@ -993,14 +997,14 @@ def test_created_staging_preexisting_output_fails_without_destroy() -> None:
 
 
 def test_generated_keypair_aliased_halves_fail() -> None:
-    """R3F2: keypair halves sharing one handle fail; the single object is cleaned once."""
+    """R4-F1: keypair halves sharing one handle fail; the unproved handle is untouched."""
     fake = _IdentityRaw()
     fake.ok_keypair_handles = (203, 203)
     with pytest.raises(Failed, match="alias"):
         identity_case.TestUniqueIdGeneration().test_generated_objects_have_distinct_unique_ids(
             _rs(fake)
         )
-    assert fake.destroyed == [201, 202, 203], fake.destroyed
+    assert fake.destroyed == [201, 202], fake.destroyed
 
 
 def test_cross_creator_copy_alias_fails_without_second_destroy() -> None:
@@ -1040,12 +1044,12 @@ def test_cross_creator_unwrapped_alias_fails_without_second_destroy() -> None:
 
 
 def test_kem_keypair_aliased_halves_fail() -> None:
-    """R3F2: ML-KEM halves sharing one handle fail; the single object is cleaned once."""
+    """R4-F1: ML-KEM halves sharing one handle fail; the unproved handle is untouched."""
     fake = _IdentityRaw()
     fake.ok_keypair_handles = (201, 201)
     with pytest.raises(Failed, match="alias"):
         identity_case.TestUniqueIdGeneration().test_kem_outputs_have_unique_ids(_rs(fake))
-    assert fake.destroyed == [201], fake.destroyed
+    assert fake.destroyed == [], fake.destroyed
 
 
 def test_staging_refused_baseline_xfails_unproved() -> None:
@@ -1070,3 +1074,170 @@ def test_staging_undefined_baseline_rv_fails() -> None:
             _rs(fake)
         )
     assert type(exc_info.value) is Failed, exc_info.value
+
+
+class _AdoptRaw:
+    """Identity reads over a scripted handle->attrs map (R4-F1)."""
+
+    def __init__(self, objects: dict[int, dict[int, bytes]]) -> None:
+        self.objects = objects
+
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        obj = self.objects.get(int(handle))
+        if obj is None:
+            return int(CKR_OBJECT_HANDLE_INVALID)
+        for i in range(int(count)):
+            blob = obj.get(int(tmpl[i].type))
+            if blob is None:
+                tmpl[i].ulValueLen = _UNAVAILABLE
+                return int(CKR_ATTRIBUTE_TYPE_INVALID)
+            if tmpl[i].pValue is None:
+                tmpl[i].ulValueLen = len(blob)
+            else:
+                ctypes.memmove(tmpl[i].pValue, blob, len(blob))
+                tmpl[i].ulValueLen = len(blob)
+        return _OK
+
+
+def _adopt_rs(objects: dict[int, dict[int, bytes]]) -> Any:
+    return SimpleNamespace(raw=_AdoptRaw(objects), sh=1)
+
+
+def test_adopt_staged_match_returns() -> None:
+    """R4-F1: a novel handle with the attempt identity adopts."""
+    rs = _adopt_rs({9: {int(CKA_LABEL): b"L", int(CKA_TOKEN): b"\x00"}})
+    assert (
+        identity_case._adopt_staged(
+            rs,
+            9,
+            label="L",
+            producer_operation="op",
+            before=set(),
+            siblings=(),
+            expect_label="L",
+            expect_token=False,
+        )
+        == 9
+    )
+
+
+def test_adopt_staged_mismatch_fails() -> None:
+    """R4-F1: a novel handle with foreign identity fails without staging."""
+    from _pytest.outcomes import Failed
+
+    rs = _adopt_rs({9: {int(CKA_LABEL): b"foreign", int(CKA_TOKEN): b"\x01"}})
+    with pytest.raises(Failed, match="not the attempt"):
+        identity_case._adopt_staged(
+            rs,
+            9,
+            label="L",
+            producer_operation="op",
+            before=set(),
+            siblings=(),
+            expect_label="L",
+            expect_token=False,
+        )
+
+
+def test_adopt_staged_unproved_xfails() -> None:
+    """R4-F1: a novel handle with unreadable identity xfails unproved-effect."""
+    from _pytest.outcomes import XFailed
+
+    rs = _adopt_rs({})
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case._adopt_staged(
+            rs,
+            9,
+            label="L",
+            producer_operation="op",
+            before=set(),
+            siblings=(),
+            expect_label="L",
+            expect_token=False,
+        )
+    (record,) = [rec for rec in C.get_records() if rec.outcome == "xfail"]
+    assert record.reason == "honest_deviation", record.summary
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+
+
+def test_created_staging_unproved_output_xfails_untouched() -> None:
+    """R4-F1: an unreadable create output xfails; nothing staged or destroyed."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["create"] = 299
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_created_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert 299 not in fake.destroyed, fake.destroyed
+
+
+def test_generated_staging_unproved_output_xfails_untouched() -> None:
+    """R4-F1: an unreadable generate output xfails; earlier staged keys still clean."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["generate"] = 299
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_generated_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert 299 not in fake.destroyed, fake.destroyed
+
+
+def test_keypair_staging_unproved_halves_xfail_untouched() -> None:
+    """R4-F1: unreadable keypair halves xfail; earlier staged keys still clean."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_keypair_handles = (299, 300)
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_generated_objects_have_distinct_unique_ids(
+            _rs(fake)
+        )
+    assert 299 not in fake.destroyed and 300 not in fake.destroyed, fake.destroyed
+
+
+def test_copy_staging_unproved_output_xfails_untouched() -> None:
+    """R4-F1: an unreadable copy output xfails; staged objects still clean."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["copy"] = 299
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert 299 not in fake.destroyed, fake.destroyed
+
+
+def test_derive_staging_unproved_output_xfails_untouched() -> None:
+    """R4-F1: an unreadable derive output xfails; staged objects still clean."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["derive"] = 299
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert 299 not in fake.destroyed, fake.destroyed
+
+
+def test_unwrap_staging_unproved_output_xfails_untouched() -> None:
+    """R4-F1: an unreadable unwrap output xfails; staged objects still clean."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_handle_by_op["unwrap"] = 299
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_unique_ids_distinct_across_creators(_rs(fake))
+    assert 299 not in fake.destroyed, fake.destroyed
+
+
+def test_kem_staging_unproved_halves_xfail_untouched() -> None:
+    """R4-F1: unreadable KEM halves xfail; nothing staged or destroyed."""
+    from _pytest.outcomes import XFailed
+
+    fake = _IdentityRaw()
+    fake.ok_keypair_handles = (299, 300)
+    with pytest.raises(XFailed, match="ownership unproved"):
+        identity_case.TestUniqueIdGeneration().test_kem_outputs_have_unique_ids(_rs(fake))
+    assert 299 not in fake.destroyed and 300 not in fake.destroyed, fake.destroyed
