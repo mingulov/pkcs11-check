@@ -2086,11 +2086,14 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
                     fence_live=True,
                 )
             )
-        except durability._DeferProducerError:
-            # A pid recycled between the proof above and the adoption
-            # makes postmortem recovery untestable; anything else is a
-            # genuine adoption failure and must stay loud.
-            if durability._pid_exists(writer_pid):
+        except durability._DeferProducerError as exc:
+            # Only a writer-liveness deferral for this writer excuses
+            # the test (#88R33-6): a pid recycled between the proof
+            # above and the adoption makes postmortem recovery
+            # untestable. Any other deferral (an unreadable slot, a
+            # divergent rewrite) is a genuine adoption failure and
+            # must stay loud instead of masking as a skip.
+            if exc.pid == writer_pid:
                 pytest.skip(f"writer pid {writer_pid} recycled before adoption")
             raise
         assert merged is not None

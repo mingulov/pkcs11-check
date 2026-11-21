@@ -2366,15 +2366,27 @@ class _DeferProducerError(Exception):
     coherently. Carries the producer uuid, the live writer pid (None
     for I/O deferrals), and the unreadable file name for the warning.
     Reason ``"outstanding"`` names unflushed spawn children (pid when
-    the first one carries a usable pid, else None).
+    the first one carries a usable pid, else None). ``unit`` carries a
+    validated sidecar unit for deferrals raised before adoption (the
+    orphan loop cannot re-read it without racing the writer); it stays
+    out of the ``args`` tuple so existing constructions match.
     """
 
-    def __init__(self, uuid: str, pid: int | None, source: str = "", reason: str = "") -> None:
+    def __init__(
+        self,
+        uuid: str,
+        pid: int | None,
+        source: str = "",
+        reason: str = "",
+        *,
+        unit: str | None = None,
+    ) -> None:
         super().__init__(uuid, pid, source, reason)
         self.uuid = uuid
         self.pid = pid
         self.source = source
         self.reason = reason
+        self.unit = unit
 
     @property
     def detail(self) -> str:
@@ -2383,6 +2395,10 @@ class _DeferProducerError(Exception):
             if self.pid is not None:
                 return f"unflushed probe child (pid {self.pid}) still live"
             return "unflushed probe children outstanding"
+        if self.reason == "live-writer":
+            if self.pid is not None:
+                return f"live sidecar writer (pid {self.pid}) still running"
+            return f"writer liveness undecidable ({self.source or 'unknown file'})"
         if self.pid is not None:
             return f"live probe writer (pid {self.pid}) unfenceable"
         if self.reason == "rewrite":
@@ -2440,6 +2456,64 @@ def _marker_identity_verdict(
     if marker_unit is not None and producer_unit is not None and marker_unit != producer_unit:
         return "cross_unit"
     return None
+
+
+def _probe_spawn_identity(
+    root: Path,
+    worker_uuid: str,
+    seq: int,
+    slot_name: str,
+    sidecar: Any | None,
+) -> tuple[int, int | None] | None:
+    """Resolve a pid-less probe snapshot's writer via spawn records (#88R33-4).
+
+    Unions parent-side sidecar records with child-side spawn files
+    (mirroring :func:`_unflushed_live_spawns`): entries matching this
+    probe's seq whose slot names this file identify the writer. A
+    unique writer resolves to ``(pid, birth-or-None)`` (same pid from
+    both sources merges, preferring a stamped birth); anything else
+    reads None (no match, ambiguous writers or births, a
+    content-mute file hinting this seq, a malformed parent-side
+    record). A slot mismatch on the only seq match also reads None
+    (an aliased slot's writer is undecidable). Callers treat None as
+    quiescence-unprovable and defer. Never raises except the
+    spawn-reader's own enum-spawn deferral (an unlistable spawn dir
+    hides launches).
+    """
+    writers: dict[int, set[int | None]] = {}
+    if isinstance(sidecar, dict):
+        records = sidecar.get("spawned_children")
+        if isinstance(records, list):
+            for entry in records:
+                if not _spawn_entry_valid(entry):
+                    return None
+                assert isinstance(entry, dict)
+                if entry.get("probe_seq") != seq:
+                    continue
+                if Path(str(entry.get("slot"))).name != slot_name:
+                    return None
+                writers.setdefault(entry["pid"], set()).add(entry.get("birth_token"))
+        elif records is not None:
+            return None
+    for path, entry, _digest in _read_spawn_file_records(root, worker_uuid):
+        if entry is None:
+            parsed = _parse_spawn_filename(path.name)
+            if parsed is not None and parsed[1] == seq:
+                return None
+            continue
+        if entry.get("probe_seq") != seq:
+            continue
+        if Path(str(entry.get("slot"))).name != slot_name:
+            return None
+        assert isinstance(entry["pid"], int)
+        writers.setdefault(entry["pid"], set()).add(entry.get("birth_token"))
+    if len(writers) != 1:
+        return None
+    pid, births = next(iter(writers.items()))
+    stamped = {birth for birth in births if isinstance(birth, int)}
+    if len(stamped) > 1:
+        return None
+    return (pid, next(iter(stamped)) if stamped else None)
 
 
 def _adopt_probe_orphans(
@@ -3364,7 +3438,18 @@ def _adopt_probe_orphans(
             froze_alias = True
             _skip_covered_orphan(path, child_uuid, seq, "sits on an aliased slot")
             continue
-        if fence_live and orphan_pid is not None:
+        gate_pid, gate_birth = orphan_pid, orphan_birth
+        if gate_pid is None:
+            # Pid-less probe snapshot (#88R33-4): quiescence comes from
+            # the matching spawn record; when that proof is
+            # unavailable the writer is undecided (handled per path
+            # below: fence defers, covered skips, uncovered defers).
+            resolved = _probe_spawn_identity(root, worker_uuid, seq, path.name, sidecar)
+            if resolved is not None:
+                gate_pid, gate_birth = resolved
+        if fence_live:
+            if gate_pid is None:
+                raise _DeferProducerError(worker_uuid, None, source=path.name, reason="live-writer")
             # Quiescence (#88R3): on postmortem paths a stamped live
             # writer is fenced first (its test died with its parent, so
             # its tail is moot; the fence names it in-flight). Only a
@@ -3379,12 +3464,12 @@ def _adopt_probe_orphans(
             # signaling is forbidden without an incarnation binding,
             # so a live-or-unverifiable pid defers; only a
             # proven-dead pid proceeds.
-            if orphan_birth is None:
+            if gate_birth is None:
                 # Proven death only (#88R32-4): an I/O fault defers.
-                if not _pid_dead_proven(orphan_pid):
-                    raise _DeferProducerError(worker_uuid, orphan_pid)
-            elif not _terminate_verified(orphan_pid, orphan_birth, 5.0):
-                raise _DeferProducerError(worker_uuid, orphan_pid)
+                if not _pid_dead_proven(gate_pid):
+                    raise _DeferProducerError(worker_uuid, gate_pid)
+            elif not _terminate_verified(gate_pid, gate_birth, 5.0):
+                raise _DeferProducerError(worker_uuid, gate_pid)
         # A live marker's hold covers its whole slot (#88R18-2): the
         # baseline and rewrite tmps wait with the marker instead of
         # folding or pruning around a writer that may still complete.
@@ -3403,18 +3488,14 @@ def _adopt_probe_orphans(
         # else with a live writer -- uncovered or durable-covered --
         # carries no snapshot to detect an advance, so it defers the
         # whole producer instead (loud and honest; convergence awaits
-        # the delta-reunion design) (#88R16-4). Unstamped orphans
-        # cannot be gated (no identity to check): they proceed to the
-        # rereads, and the fold-time reread skips-or-defers them on
-        # any advance.
-        if (
-            not fence_live
-            and orphan_pid is not None
-            and _incarnation_alive(orphan_pid, orphan_birth)
-        ):
+        # the delta-reunion design) (#88R16-4).
+        if not fence_live and (gate_pid is None or _incarnation_alive(gate_pid, gate_birth)):
             if (child_uuid, seq) not in coverage_snapshots:
-                raise _DeferProducerError(worker_uuid, orphan_pid)
-            _skip_covered_orphan(path, child_uuid, seq, f"has a live writer (pid {orphan_pid})")
+                raise _DeferProducerError(worker_uuid, gate_pid)
+            if gate_pid is None:
+                _skip_covered_orphan(path, child_uuid, seq, "has an undecided writer")
+            else:
+                _skip_covered_orphan(path, child_uuid, seq, f"has a live writer (pid {gate_pid})")
             continue
         # Re-read after quiescence (#88R8-1): a writer that replaced
         # the file during the fence invalidates the pre-fence rows. Any
@@ -4170,7 +4251,12 @@ def _list_tmp_paths(directory: Path, prefix: str) -> list[Path] | None:
 
 
 def _prune_sidecar_tmps(
-    path: Path, listed: Mapping[str, str] | None = None
+    path: Path,
+    listed: Mapping[str, str] | None = None,
+    *,
+    baseline_missing_observed: bool = False,
+    held_tmps: Container[str] | None = None,
+    preserved_out: set[str] | None = None,
 ) -> tuple[int, int, bool]:
     """Delete a sidecar's rewrite tmps except unadjudicable ones (#88R3).
 
@@ -4184,6 +4270,18 @@ def _prune_sidecar_tmps(
     retains and holds its baseline instead of deleting unread
     (#88R13-2). Markers also cover their original slot's tmps (a
     marker rename orphans the slot glob otherwise).
+    When the baseline was observed missing (``baseline_missing_observed``),
+    a reappearing baseline must not authorize deletion: complete
+    returns tmps without a digest match retain and hold the baseline,
+    preserving the unadjudicated rewrite with the held family for
+    operator adjudication (#88R33-1). Torn and return-less tmps still
+    prune as proved debris, and digest-matched tmps prune normally
+    (their own bytes bind the authorization, independent of the blink).
+    ``held_tmps`` carries staged preservation holds across passes: a
+    listed tmp holds the same way (its returns were preserved
+    unadjudicated by an earlier pass), and every tmp preserved this
+    pass is reported via ``preserved_out`` for staging. Held tmp names
+    carry the family uuid, so the barrier sweep-excludes their owners.
     Returns ``(removed, retained, hold_baseline)``: authoritative
     callers (the sweep) hold the baseline while any tmp unlink failed
     or any tmp stayed unreadable (#88R5-6/#88R6-3: a baseline removed
@@ -4263,9 +4361,25 @@ def _prune_sidecar_tmps(
                 retained.append(tmp.name)
                 hold_baseline = True
             continue
-        if _tmp_has_return_rows(payload) and not baseline_usable:
-            retained.append(tmp.name)
-            continue
+        if _tmp_has_return_rows(payload):
+            if listed is None and (
+                baseline_missing_observed or (held_tmps is not None and str(tmp) in held_tmps)
+            ):
+                # The baseline blinked, or an earlier pass preserved
+                # this tmp, and no digest binds it: its returns are
+                # unadjudicated, so preserve it with the held family
+                # instead of deleting unread, and report it for
+                # staging (#88R33-1). (Reaching here with ``listed``
+                # means the tmp matched its staged digest above,
+                # authorizing normal pruning.)
+                retained.append(tmp.name)
+                hold_baseline = True
+                if preserved_out is not None:
+                    preserved_out.add(str(tmp))
+                continue
+            if not baseline_usable:
+                retained.append(tmp.name)
+                continue
         if _unlink_counted(tmp):
             removed += 1
         else:
@@ -4288,6 +4402,9 @@ def _consume_producer_files(
     digests: Mapping[str, str] | None = None,
     proved_absent: Container[str] | None = None,
     ghosts: Container[str] | None = None,
+    *,
+    held_tmps: Container[str] | None = None,
+    preserved_tmps_out: set[str] | None = None,
 ) -> list[Path]:
     """Delete collected/committed evidence files (best effort, never raises).
 
@@ -4463,7 +4580,16 @@ def _consume_producer_files(
             and path.name.endswith(PROBE_FILE_SUFFIX)
         ):
             listed = digests
-        _, _, hold = _prune_sidecar_tmps(path, listed)
+        # skip_unlink here ⟺ the first check observed absence (the
+        # re-verify has not run yet): a reappearing baseline must not
+        # authorize deleting unadjudicated rewrite tmps (#88R33-1).
+        _, _, hold = _prune_sidecar_tmps(
+            path,
+            listed,
+            baseline_missing_observed=skip_unlink,
+            held_tmps=held_tmps,
+            preserved_out=preserved_tmps_out,
+        )
         if not hold and digests is not None and key in digests:
             # Re-verify immediately before the unlink (#88R32): bytes
             # that landed strictly after the first digest check hold
@@ -5891,6 +6017,25 @@ def _deferred_unit_from_registry(reg_dir: Path, uuid: str) -> str | None:
     return unit
 
 
+def _resolve_deferred_unit(reg_dir: Path, uuid: str, carried_unit: str | None) -> str | None:
+    """Narrate an orphan-adopt deferral from registry or sidecar (#88R33-3).
+
+    The registry stays authoritative when it parses; a carried sidecar
+    unit (validated at adopt time) fills the gap when no registry
+    does. A conflict between the two refuses (None): one of them is
+    torn, and a misdirected deferral would leave the live unit
+    eligible. None overall refuses admission as before. Never raises.
+    """
+    reg_unit = _deferred_unit_from_registry(reg_dir, uuid)
+    if reg_unit is not None and carried_unit is not None and reg_unit != carried_unit:
+        return None
+    if reg_unit is not None:
+        return reg_unit
+    if isinstance(carried_unit, str) and carried_unit:
+        return carried_unit
+    return None
+
+
 def _spawn_entry_valid(entry: Any) -> bool:
     """Whether a spawn record has the strict launch shape (#88R22-4/#88R23-1).
 
@@ -6107,7 +6252,8 @@ def _adopt_orphan_sidecar(
     if not is_worker_uuid(uuid) or uuid in seen:
         return None
     assert isinstance(uuid, str)
-    if not isinstance(sidecar.get("unit"), str) or not sidecar.get("unit"):
+    unit = sidecar.get("unit")
+    if not isinstance(unit, str) or not unit:
         return None
     pid = sidecar.get("pid")
     if not _is_nonneg_int(pid):
@@ -6117,18 +6263,25 @@ def _adopt_orphan_sidecar(
         # case above), never adopt blind. Production always stamps
         # pid (0.3.0+), so only torn or hand-crafted sidecars land here.
         raise _DeferProducerError(uuid, None, source=sidecar_path.name)
-    # Quiescence (#88R2, strict #88R3): without a birth anchor the
-    # only sound question is proven death -- a pid that names anything
-    # alive (or unreadable: EPERM proves existence too, and an I/O
-    # fault proves nothing either way, #88R32-4) may still
-    # be the producer, so the sidecar retains for a later pass
-    # instead of folding (and naming losses) under a live writer.
-    # Only a proven-dead pid (lookup failure) adopts; recycled
-    # slots delay one pass, never misfold.
+    # Quiescence (#88R2, strict #88R3, loud #88R33-3): a live or
+    # undecidable writer defers with its unit instead of skipping
+    # silently -- a silent skip leaves the live unit eligible to
+    # rerun and lets a sibling-credited sweep delete its files. Only
+    # a dead incarnation (proven dead, or a birth mismatch proving
+    # recycle) adopts; recycled slots adopt at once (their writer is
+    # gone), never misfold, never strand. The unit rides the
+    # deferral (validated above) so the orphan loop can skip it
+    # without re-reading the file.
     assert isinstance(pid, int)
-    if not _pid_dead_proven(pid):
-        return None
-    return (uuid, sidecar)
+    if not _incarnation_alive(pid, sidecar.get("birth_token")):
+        return (uuid, sidecar)
+    raise _DeferProducerError(
+        uuid,
+        pid if _pid_exists(pid) else None,
+        source=sidecar_path.name,
+        reason="live-writer",
+        unit=unit,
+    )
 
 
 def _read_journal_lines(journal_path: Path) -> tuple[list[str], str | None]:
@@ -6655,7 +6808,9 @@ def sweep_orphans(
             continue
         run_id = content["run_id"]
         if run_id in collected_runs and run_id != current_run:
-            if verify_producer(content) == "alive":
+            # Run credit requires proved death (#88R33-3): unknown
+            # liveness retains like a live producer.
+            if verify_producer(content) != "dead":
                 retained += len([p for p in _producer_files(content, registry_path)])
             else:
                 _remove_with_tmps(_producer_files(content, registry_path), _sidecar_tmps(content))
@@ -6726,6 +6881,19 @@ def sweep_orphans(
             else:
                 _remove([sidecar_path])
         elif sidecar.get("run_id") in collected_runs and sidecar.get("run_id") != current_run:
+            # Run credit requires proved death (#88R33-3): the sidecar's
+            # incarnation gates removal (a missing pid is undecidable
+            # and retains); only a dead incarnation removes.
+            sidecar_pid = sidecar.get("pid")
+            if not _is_nonneg_int(sidecar_pid):
+                retained += 1
+                _count_if_present(journal_path)
+                continue
+            assert isinstance(sidecar_pid, int)
+            if _incarnation_alive(sidecar_pid, sidecar.get("birth_token")):
+                retained += 1
+                _count_if_present(journal_path)
+                continue
             _remove_with_tmps(
                 [sidecar_path, journal_path],
                 _list_tmp_paths(sidecar_path.parent, f"{sidecar_path.name}.tmp-"),
@@ -6903,6 +7071,7 @@ def _write_barrier_staging(
     targets: Collection[tuple[str, str]],
     skip_held: Collection[str] = (),
     disposition: Mapping[str, str] | None = None,
+    held_tmps: Collection[str] = (),
 ) -> bool:
     """Persist the collected barrier plan atomically (never raises).
 
@@ -6911,7 +7080,10 @@ def _write_barrier_staging(
     adjudicating (and re-emitting) the evidence again (#88R9-4).
     ``targets`` carries the exact adjudicated probe cleanup targets as
     ``(path, sha256)`` pairs: a retry adopts only listed, byte-identical
-    slots, never newly discovered ones (#88R11-6). ``skip_held``
+    slots, never newly discovered ones (#88R11-6). ``held_tmps``
+    carries rewrite-tmp paths preserved unadjudicated: a retry retains
+    and holds them instead of pruning under a usable baseline
+    (#88R33-1). ``skip_held``
     carries the uuids whose parents a skip retained for a live writer:
     a retry reunites them (never skip-adopts) so the association
     survives until the writer exits (#88R14-1). ``disposition`` maps
@@ -6936,6 +7108,7 @@ def _write_barrier_staging(
                     "disposition": {
                         uuid: value for uuid, value in sorted((disposition or {}).items())
                     },
+                    "held_tmps": sorted(set(held_tmps)),
                 }
             ),
             encoding="utf-8",
@@ -6964,8 +7137,9 @@ def _load_barrier_staging(
     frozenset[tuple[str, str]],
     frozenset[str],
     dict[str, str],
+    frozenset[str],
 ]:
-    """Load retained staging (records, consumed, collected, targets, holds, disposition).
+    """Load retained staging (records, consumed, collected, targets, holds, disposition, tmps).
 
     Absent reads empty. Torn or misshapen staging warns loudly (staged
     recovery evidence may be lost: atomic writes make this
@@ -6988,12 +7162,12 @@ def _load_barrier_staging(
     path = root / BARRIER_STAGING_FILENAME
     staging_state = _path_state(path)
     if staging_state == "missing":
-        return {}, 0, frozenset(), frozenset(), frozenset(), {}
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset()
     if staging_state == "unreadable":
         raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
     status, raw = _read_json_evidence(path)
     if status == "gone":
-        return {}, 0, frozenset(), frozenset(), frozenset(), {}
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset()
     if status == "unreadable":
         raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
     if status == "torn" or not isinstance(raw, dict):
@@ -7014,7 +7188,7 @@ def _load_barrier_staging(
             path.unlink(missing_ok=True)
         except OSError:
             pass
-        return {}, 0, frozenset(), frozenset(), frozenset(), {}
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset()
     collected: frozenset[str] = frozenset()
     claimed_clean = True
     if isinstance(raw, dict):
@@ -7097,7 +7271,19 @@ def _load_barrier_staging(
                 UserWarning,
                 stacklevel=2,
             )
-    return records, consumed, collected, targets, skip_held, disposition
+    held_tmps: frozenset[str] = frozenset()
+    if isinstance(raw, dict) and "held_tmps" in raw:
+        claimed_tmps = raw["held_tmps"]
+        if isinstance(claimed_tmps, list) and all(isinstance(entry, str) for entry in claimed_tmps):
+            held_tmps = frozenset(claimed_tmps)
+        else:
+            warnings.warn(
+                f"counter barrier staging {path} has malformed held_tmps; "
+                "preserved rewrites not trusted from this staging",
+                UserWarning,
+                stacklevel=2,
+            )
+    return records, consumed, collected, targets, skip_held, disposition, held_tmps
 
 
 def discard_barrier_staging(root: Path | str) -> bool:
@@ -7707,6 +7893,7 @@ def prepare_resume(
             staged_targets,
             staged_skip_held,
             staged_disposition,
+            staged_held_tmps,
         ) = _load_barrier_staging(root)
     except CounterPersistenceError as exc:
         # Unreadable barrier memory fails the barrier without
@@ -7725,6 +7912,7 @@ def prepare_resume(
         and not staged_skip_held
         and staged_targets
         and all(_path_state(Path(target_path)) == "missing" for target_path, _ in staged_targets)
+        and not any(_path_state(Path(held_tmp)) != "missing" for held_tmp in staged_held_tmps)
     ):
         # Spent staging retires silently (#88R26-7): it named held
         # deletes and every one resolved, with nothing publishable
@@ -7733,10 +7921,13 @@ def prepare_resume(
         # targets at all) still alarm below: collected-with-nothing
         # was never cleanup. Unreadable targets are NOT spent (retry
         # stays blind); a failed discard simply retries next pass.
+        # Present preserved tmps also block retirement (#88R33-1):
+        # discarding would silently unprotect them.
         if discard_barrier_staging(root):
             staged_records, staged_consumed, staged_collected = {}, 0, frozenset()
             staged_targets, staged_skip_held = frozenset(), frozenset()
             staged_disposition = {}
+            staged_held_tmps = frozenset()
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
@@ -8407,6 +8598,9 @@ def prepare_resume(
         plan["unresolved"].append(uuid)
         retained_runs.add(content["run_id"])
         skipped_live_units.add(content["unit"])
+        # Undecided liveness sweep-excludes its producer (#88R33-3).
+        if uuid not in plan["retained_uuids"]:
+            plan["retained_uuids"].append(uuid)
     sidecar_files = _list_evidence_files(root, "", SIDECAR_SUFFIX)
     if sidecar_files is None:
         # Same refusal for the sidecar inventory: a hidden live
@@ -8428,8 +8622,9 @@ def prepare_resume(
                 UserWarning,
                 stacklevel=2,
             )
-            plan["unresolved"].append(exc.uuid)
-            deferred_unit = _deferred_unit_from_registry(reg_dir, exc.uuid)
+            if exc.uuid not in plan["unresolved"]:
+                plan["unresolved"].append(exc.uuid)
+            deferred_unit = _resolve_deferred_unit(reg_dir, exc.uuid, exc.unit)
             if deferred_unit is None:
                 # No trusted evidence names the affected unit: the
                 # deferral cannot narrow to a rerun, so the resume
@@ -8444,6 +8639,13 @@ def prepare_resume(
                 _release_barrier_seal(root)
                 return plan
             deferred_units.add(deferred_unit)
+            if exc.pid is not None:
+                skipped_live_units.add(deferred_unit)
+            # Undecided evidence sweep-excludes its producer (#88R33-3):
+            # a sibling-credited sweep must not delete files the
+            # barrier refused to adjudicate.
+            if exc.uuid not in plan["retained_uuids"]:
+                plan["retained_uuids"].append(exc.uuid)
             continue
         if adopted is None:
             continue
@@ -8736,7 +8938,22 @@ def prepare_resume(
     # missing) stage nothing: the previous staging retires as spent
     # instead of being rewritten bare (#88R29-1).
     pending_present = any(_path_state(path) != "missing" for path in to_consume)
-    if plan["cache_records"] or skip_held_now or pending_present:
+    staged_this_pass = False
+    preserved_now: set[str] = set()
+    carried_held_tmps: set[str] = set()
+    unresolved_now = set(plan["unresolved"])
+    # A fresh committed wait triggers a staging write by itself
+    # (#88R33-2): a deferral-only pass (no sibling records, nothing
+    # pending) would otherwise leave no routing for the next pass,
+    # which gap-heals committed evidence. Only waits missing from
+    # staged dispositions trigger; already-staged waits persist in
+    # the old file without a rewrite.
+    fresh_waits = {
+        uuid
+        for uuid in unresolved_now
+        if uuid in session_uuids and staged_disposition.get(uuid) != "committed"
+    }
+    if plan["cache_records"] or skip_held_now or pending_present or fresh_waits:
         collected_union = collected_now | set(validated_cleanup)
         disposition_union = dict(routed_now)
         # Unresolved routing carries independently of cleanup-target
@@ -8753,7 +8970,6 @@ def prepare_resume(
         # persists. Only fresh deferrals persist (no blind carry):
         # evidence that resolves or vanishes stops deferring and its
         # routing retires with it.
-        unresolved_now = set(plan["unresolved"])
         for uuid, disp in staged_disposition.items():
             if uuid in collected_union or (disp == "committed" and uuid in unresolved_now):
                 disposition_union.setdefault(uuid, disp)
@@ -8828,6 +9044,10 @@ def prepare_resume(
         # staging: a pass that never revisits the producer (deferred
         # elsewhere) must not silently drop its hold (#88R14-1).
         skip_held_union = skip_held_now | set(staged_skip_held)
+        # Preserved rewrites carry while present (#88R33-1): a missing
+        # entry resolved (consumed or cleaned), so only present ones
+        # ride into the new staging.
+        carried_held_tmps = {tmp for tmp in staged_held_tmps if _path_state(Path(tmp)) != "missing"}
         if not _write_barrier_staging(
             root,
             plan["cache_records"],
@@ -8836,6 +9056,7 @@ def prepare_resume(
             probe_targets,
             skip_held_union,
             disposition_union,
+            carried_held_tmps,
         ):
             warnings.warn(
                 f"counter resume barrier cannot stage recovery evidence in {root}; "
@@ -8846,7 +9067,52 @@ def prepare_resume(
             plan["barrier_ok"] = False
             _release_barrier_seal(root)
             return plan
-    held = _consume_producer_files(to_consume, read_digests, proved_absent_now, ghost_now)
+        staged_this_pass = True
+    held = _consume_producer_files(
+        to_consume,
+        read_digests,
+        proved_absent_now,
+        ghost_now,
+        held_tmps=carried_held_tmps,
+        preserved_tmps_out=preserved_now,
+    )
+    if preserved_now and staged_this_pass:
+        # Preservation holds discovered while deleting need their own
+        # atomic update (#88R33-1): the first write predates consume
+        # by design, so without this the next pass would prune the
+        # preserved rewrites under a usable baseline.
+        if not _write_barrier_staging(
+            root,
+            plan["cache_records"],
+            plan["consumed"],
+            collected_union,
+            probe_targets,
+            skip_held_union,
+            disposition_union,
+            carried_held_tmps | preserved_now,
+        ):
+            warnings.warn(
+                f"counter resume barrier cannot stage preserved tmp holds in {root}; "
+                "preserved rewrites stay on disk unrecorded for retry",
+                UserWarning,
+                stacklevel=2,
+            )
+            plan["barrier_ok"] = False
+            _release_barrier_seal(root)
+            return plan
+    lingering = {
+        tmp for tmp in carried_held_tmps if _path_state(Path(tmp)) != "missing"
+    } - preserved_now
+    if lingering:
+        # Carried but unvisited: no baseline triaged these this pass
+        # (orphaned by a converged baseline), so they linger for
+        # forensic review instead of pruning silently (#88R33-1).
+        shown = ", ".join(sorted(Path(tmp).name for tmp in lingering))
+        warnings.warn(
+            f"retained {len(lingering)} preserved rewrite tmp(s) awaiting adjudication: {shown}",
+            UserWarning,
+            stacklevel=2,
+        )
     for held_path in held:
         owner = _held_owner_uuid(str(held_path))
         if owner is not None and owner not in plan["retained_uuids"]:
