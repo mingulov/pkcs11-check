@@ -12,6 +12,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -2046,11 +2047,37 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         assert total == 3, "child must flush its 3-unit prefix before the kill"
         proc.kill()
         proc.wait(timeout=30)
-        if durability._pid_exists(proc.pid):
-            # The killed pid was recycled (or reads live) before adoption:
-            # postmortem recovery is untestable against a live pid, and the
-            # outcome would be environmental, not behavioral. Loud skip.
-            pytest.skip(f"killed pid {proc.pid} recycled before adoption")
+        # The launcher may split PIDs (a Windows venv shim runs the
+        # script in a child of the Popen handle): the slot's writer
+        # pid -- not the wrapper -- gates postmortem adoption. Fence
+        # the writer and prove it dead so no external teardown can
+        # race the adoption below (#88R32-sigkill).
+        try:
+            writer_stamp = json.loads(slot.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pytest.skip("slot unreadable before adoption")
+        writer_pid = writer_stamp.get("pid")
+        writer_birth = writer_stamp.get("birth_token")
+        if not isinstance(writer_pid, int) or not isinstance(writer_birth, int):
+            pytest.skip("slot lacks verifiable writer identity")
+        if durability._pid_exists(writer_pid):
+            live_birth = durability.birth_token_for_pid(writer_pid)
+            if live_birth is None:
+                pytest.skip(f"writer pid {writer_pid} alive but unverifiable")
+            if live_birth == writer_birth:
+                try:
+                    os.kill(writer_pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    pytest.skip(f"writer pid {writer_pid} unsignalable")
+                deadline = time.monotonic() + 30.0
+                while durability._pid_exists(writer_pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                if durability._pid_exists(writer_pid):
+                    pytest.skip(f"writer pid {writer_pid} still alive; postmortem untestable")
+            # else: recycled occupant -- the writer is dead; the
+            # adoption's own birth check proves it and proceeds.
         payload = json.loads(slot.read_text(encoding="utf-8"))
         assert payload["probe_seq"] == 0
         assert payload["parent_uuid"] == parent

@@ -310,6 +310,14 @@ def _flush_locked() -> None:
             {"parent_uuid": parent, "probe_seq": seq} for parent, seq in sorted(_lost_keys)
         ],
     }
+    # Birth bind for verified liveness (#88R31-4): the barrier's
+    # unreadable-registry fallback verifies (pid, birth) against the
+    # live process. Omitted when unverifiable (macOS), so legacy
+    # shapes stay byte-identical there; the fallback then refuses
+    # instead of deferring (identity unprovable).
+    birth = birth_token_for_pid(os.getpid())
+    if birth is not None:
+        payload["birth_token"] = birth
     if _spawned_children:
         payload["spawned_children"] = [dict(entry) for entry in _spawned_children]
     write_sidecar_atomic(_registration.sidecar_path, payload)

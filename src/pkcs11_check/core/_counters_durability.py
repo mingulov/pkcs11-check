@@ -484,6 +484,32 @@ def _windows_creation_time(pid: int) -> int | None:
         kernel32.CloseHandle(handle)
 
 
+def _pid_dead_proven(pid: int) -> bool:
+    """Whether pid is proven dead (lookup failure), else False (#88R31-5).
+
+    Fence and suppression decisions trust only this, never the generic
+    existence check: ESRCH proves absence on POSIX, EINVAL proves the
+    pid value itself is invalid (macOS emits it for out-of-range
+    pids -- nothing to signal behind it either), and on win32 a
+    missing-or-terminated handle proves it. Every other outcome
+    (alive, EPERM, EIO, unrepresentable) reads unproven so the pinning
+    backend decides (or the caller retains). Never raises.
+    """
+    if not _pid_representable(pid):
+        return False
+    if sys.platform == "win32":
+        return not _pid_exists(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError as exc:
+        return exc.errno == errno.EINVAL
+    except OverflowError:
+        return False
+    return False
+
+
 def _pid_exists(pid: int) -> bool:
     """Whether ``pid`` currently names a live process (no signaling)."""
     if pid < 0:
@@ -707,27 +733,49 @@ def read_registry_file(path: Path | str) -> dict[str, Any] | None:
     return _parse_registry_content(resolved.name, raw)
 
 
+def _read_registry_file_strict(path: Path) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Read one registry file with failure classification (#88R31-4).
+
+    Returns ``(status, content, digest)`` with status ``"ok"``,
+    ``"unreadable"`` (an I/O fault that persisted across retries and
+    must never authorize deletion or silent skipping),
+    ``"torn"`` (undecodable or invalid content: deterministic, never
+    retried), or ``"gone"`` (missing mid-pass: nothing to decide).
+    The digest binds the bytes actually parsed, so held parent files
+    stage as retryable cleanup targets (#88R27-3). Reads bytes
+    (never text mode: newline translation would bind different bytes
+    than the retry re-verifies). Never raises.
+    """
+    try:
+        data = _read_bytes_with_retry(path)
+    except FileNotFoundError:
+        return ("gone", None, None)
+    except OSError:
+        return ("unreadable", None, None)
+    except ValueError:
+        return ("torn", None, None)
+    try:
+        raw = data.decode("utf-8")
+    except ValueError:
+        return ("torn", None, None)
+    content = _parse_registry_content(path.name, raw)
+    if content is None:
+        return ("torn", None, None)
+    return ("ok", content, hashlib.sha256(data).hexdigest())
+
+
 def _read_registry_file_digested(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Read one registry file plus the digest of its exact bytes (#88R27-3).
 
     Same validation as :func:`read_registry_file`, but the digest binds
     the bytes actually parsed (single read: no adjudication-vs-hash
     race), so held parent files stage as retryable cleanup targets.
-    Reads bytes (never text mode: newline translation would bind
-    different bytes than the retry re-verifies).
+    Delegates to the strict reader: transient faults retry, while a
+    persistent fault still reads as absent (the collection path keeps
+    its R2 skip contract for healed registries).
     """
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None, None
-    try:
-        raw = data.decode("utf-8")
-    except ValueError:
-        return None, None
-    content = _parse_registry_content(path.name, raw)
-    if content is None:
-        return None, None
-    return content, hashlib.sha256(data).hexdigest()
+    _status, content, digest = _read_registry_file_strict(path)
+    return content, digest
 
 
 def read_json_file(path: Path | str) -> Any | None:
@@ -970,12 +1018,14 @@ def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
         # termination reads unproven and the caller retains the
         # evidence (#88R26-4).
         return False
-    if not _pid_exists(pid):
+    if _pid_dead_proven(pid):
         # Already dead on any platform (#88R31-MAC1): nothing to signal
         # and no incarnation to verify. (The pidfd/handle arms below
         # re-derive this themselves; the fallthrough cannot, so the
         # check lives here. A recycled occupant is never signaled on
-        # the fallthrough path -- and it never wrote this evidence.)
+        # the fallthrough path -- and it never wrote this evidence.
+        # Proven means lookup-failure only (#88R31-5): an I/O fault is
+        # unproven, so the backend below still decides.)
         return True
     backend = _pinning_backend()
     if backend == "pidfd":
@@ -1044,13 +1094,15 @@ def _incarnation_alive(pid: int, birth: int | None) -> bool:
                 os.close(fd)
             except OSError:
                 pass
-    if not _pid_exists(pid):
-        # Unreadable birth proves nothing either way -- but a dead pid
-        # proves death anyway (it names no incarnation at all), and the
-        # existence check comes first so a terminated-but-openable
-        # Windows pid can never match its own stale birth below
-        # (#88R31-WIN1). (The pidfd arm above needs no such check: its
-        # fd already proved existence.)
+    if _pid_dead_proven(pid):
+        # Unreadable birth proves nothing either way -- but a proven-dead
+        # pid proves death anyway (it names no incarnation at all), and
+        # the check comes first so a terminated-but-openable Windows pid
+        # can never match its own stale birth below (#88R31-WIN1). Only
+        # lookup failure proves it (#88R31-5): an I/O fault falls
+        # through to the birth compare (unknown when unreadable). (The
+        # pidfd arm above needs no such check: its fd already proved
+        # existence.)
         return False
     if birth is not None:
         current = birth_token_for_pid(pid)
@@ -1111,8 +1163,13 @@ def _terminate_handle(pid: int, birth: int, timeout_s: float) -> bool:
 
     Mirrors the pidfd narrowing: only a lookup failure (OpenProcess
     reporting no-such-pid) or a birth mismatch proves the target gone;
-    every other failure (access-denied open, unreadable times, refused
-    terminate, unmet wait) is unresolved, never assumed quiescent.
+    access-denied opens, unreadable times, and unmet waits stay
+    unresolved, never assumed quiescent. The terminate call itself is
+    never the verdict (#88R32-sigkill): TerminateProcess fails on an
+    already-terminating process (racing an external teardown), so an
+    already-signaled handle proves death without signaling, and
+    otherwise the post-signal wait verifies the goal -- a death the
+    wait observes counts however it was caused.
     """
     kernel32 = _kernel32()
     handle = kernel32.OpenProcess(
@@ -1126,8 +1183,9 @@ def _terminate_handle(pid: int, birth: int, timeout_s: float) -> bool:
             return False
         if creation != birth:
             return True
-        if not kernel32.TerminateProcess(handle, 1):
-            return False
+        if kernel32.WaitForSingleObject(handle, 0) == _WAIT_OBJECT_0:
+            return True
+        kernel32.TerminateProcess(handle, 1)
         wait_ms = max(int(timeout_s * 1000), 0)
         return bool(kernel32.WaitForSingleObject(handle, wait_ms) == _WAIT_OBJECT_0)
     finally:
@@ -4248,34 +4306,45 @@ def _consume_producer_files(
     barrier reports them so application keeps the staging that
     authorizes their retry instead of discarding it (#88R10-4c).
 
-    Family rule (#88R30-3): a digest-listed journal that no longer
-    verifies pins its whole parent family (registry + sidecar +
-    journal), as does a ghost at a proved-absent journal path.
+    Family rule (#88R30-3, dynamics #88R32): journals and ghosts
+    consume first; whenever one holds, its whole parent family pins
+    (registry + sidecar + journal) and the remaining members skip.
     Journals are discovered via their sidecar, so consuming verified
     parents while holding their journal orphans the hold: the next
     pass never re-adjudicates it and the sweep deletes it as debris.
-    Pinned families re-adjudicate next pass. (Held parents pin
-    nothing: a held parent stays present, so the retry route through
-    it survives; only the journal direction orphans.) Known residual
-    (#88R31-I2): a ghost landing strictly inside this consume call --
-    after its own path's check -- is unobservable by construction;
-    its parents consume unpinned and the orphaned ghost falls to the
-    sweep one pass later. Closing it needs journal-first discovery
-    (the deferred R30-3 option (b)); every ghost visible at any check
-    holds loudly.
+    Ghosts pin for the staging-context route instead: a ghost whose
+    verified siblings are removed loses the digested staging its
+    hold re-derives from, and the next retry consumes it as legacy
+    (#88R31-1). Pinned families re-adjudicate next pass. (Other
+    held members pin nothing: a held parent stays present, so the
+    retry route through it survives; only the journal and ghost
+    directions orphan.)
+    Digested baselines re-verify after pruning, immediately before
+    the unlink (#88R32): bytes landing mid-cleanup hold instead of
+    deleting unadjudicated. Known residuals: a ghost landing after
+    its own unlink is unobservable by construction (nothing left to
+    check it against), and unlisted files keep legacy
+    prune-then-unlink semantics (no baseline exists to re-verify).
     """
-    pinned: set[str] = set()
-    if digests is not None or proved_absent is not None or ghosts is not None:
-        for scan in paths:
-            if not scan.name.endswith(JOURNAL_SUFFIX):
-                continue
-            owner = _held_owner_uuid(str(scan))
-            if owner is not None and _journal_pins_family(
-                scan, str(scan), digests, proved_absent, ghosts
-            ):
-                pinned.add(owner)
+    ghost_paths: Container[str] = ghosts if ghosts is not None else frozenset()
+
+    def _first_group(path: Path) -> bool:
+        return path.name.endswith(JOURNAL_SUFFIX) or str(path) in ghost_paths
+
+    ordered = sorted(paths, key=lambda path: not _first_group(path))
+    pinned: dict[str, str] = {}
     held: list[Path] = []
-    for path in paths:
+
+    def _hold(held_path: Path) -> None:
+        held.append(held_path)
+        held_key = str(held_path)
+        if held_path.name.endswith(JOURNAL_SUFFIX) or held_key in ghost_paths:
+            holder = _held_owner_uuid(held_key)
+            if holder is not None:
+                reason = "unstaged file" if held_key in ghost_paths else "held journal"
+                pinned.setdefault(holder, reason)
+
+    for path in ordered:
         key = str(path)
         if proved_absent is not None and key in proved_absent:
             if _path_state(path) != "missing":
@@ -4287,7 +4356,7 @@ def _consume_producer_files(
                     UserWarning,
                     stacklevel=2,
                 )
-                held.append(path)
+                _hold(path)
             # A proved-absent path has nothing legitimate to prune or
             # unlink: the retry proof already established absence, so
             # any present bytes are a ghost (held above) and any tmp
@@ -4300,27 +4369,32 @@ def _consume_producer_files(
             # Never staged under digested staging (#88R31-I2): the file
             # appeared after adjudication, so nothing legitimate
             # deletes it. It holds loudly and re-derives every pass (a
-            # ghost carries no adjudicated identity to re-stage); a
-            # ghost journal pins its family via the pre-check.
+            # ghost carries no adjudicated identity to re-stage).
             warnings.warn(
                 f"cleanup target {path.name} was never staged; held",
                 UserWarning,
                 stacklevel=2,
             )
-            held.append(path)
+            _hold(path)
             continue
         owner = _held_owner_uuid(key)
-        if owner is not None and owner in pinned and not path.name.endswith(JOURNAL_SUFFIX):
-            # Pinned with a held journal (#88R30-3): the parents stay
-            # so the hold keeps its retry discovery route. The journal
-            # itself flows through the per-path checks below (its own
-            # hold warning fires there).
+        if (
+            owner is not None
+            and owner in pinned
+            and not path.name.endswith(JOURNAL_SUFFIX)
+            and key not in ghost_paths
+        ):
+            # Pinned with a held family member (#88R30-3): the parents
+            # stay so the hold keeps its retry route (discovery for
+            # journals, staging context for ghosts). Journals and
+            # ghosts themselves always flow through the per-path
+            # checks below (their own hold warning fires there).
             warnings.warn(
-                f"cleanup target {path.name} retained with held journal; held",
+                f"cleanup target {path.name} retained with {pinned[owner]}; held",
                 UserWarning,
                 stacklevel=2,
             )
-            held.append(path)
+            _hold(path)
             continue
         if digests is not None and key in digests:
             state = _path_state(path)
@@ -4331,7 +4405,7 @@ def _consume_producer_files(
                     UserWarning,
                     stacklevel=2,
                 )
-                held.append(path)
+                _hold(path)
                 continue
             # Descriptor-verified hash: a FIFO swapped in after the
             # proof reads None (held) instead of blocking the barrier
@@ -4342,7 +4416,7 @@ def _consume_producer_files(
                     UserWarning,
                     stacklevel=2,
                 )
-                held.append(path)
+                _hold(path)
                 continue
         elif (
             digests is not None
@@ -4357,7 +4431,7 @@ def _consume_producer_files(
                 UserWarning,
                 stacklevel=2,
             )
-            held.append(path)
+            _hold(path)
             continue
         listed: Mapping[str, str] | None = None
         if (
@@ -4367,6 +4441,21 @@ def _consume_producer_files(
         ):
             listed = digests
         _, _, hold = _prune_sidecar_tmps(path, listed)
+        if not hold and digests is not None and key in digests:
+            # Re-verify immediately before the unlink (#88R32): bytes
+            # that landed strictly after the first digest check hold
+            # instead of deleting unadjudicated. Same voice as the
+            # first check: both compare against the adjudicated
+            # digest, differing only in discovery timing.
+            reverified = _sha256_regular_file_hex(path)
+            if _path_state(path) != "missing" and reverified != digests[key]:
+                warnings.warn(
+                    f"cleanup target {path.name} changed since adjudication; held",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                _hold(path)
+                continue
         if not hold:
             try:
                 path.unlink(missing_ok=True)
@@ -4375,7 +4464,7 @@ def _consume_producer_files(
         if _path_state(path) != "missing":
             # Present means the unlink failed; unreadable means gone is
             # unprovable. Either way the target stays held (#88R24-1).
-            held.append(path)
+            _hold(path)
     return held
 
 
@@ -4943,20 +5032,60 @@ def _torn_registry_shields_live(root: Path, uuid: str) -> bool:
     return False
 
 
-def _unreadable_registry_evidence(root: Path, uuid: str) -> tuple[str | None, str]:
+def _sidecar_pid_verified_live(pid: int, stamped_birth: Any) -> bool:
+    """Whether ``pid`` is provably the sidecar's stamped producer (#88R31-4).
+
+    Present is not proven: a reused pid names the wrong process, so
+    liveness needs the live birth token to match the stamped one.
+    Unverifiable (no live token, no usable stamp) reads not-live --
+    the caller treats it as undecidable, never dead. Never raises.
+    """
+    if not _pid_exists(pid):
+        return False
+    if not _is_nonneg_int(stamped_birth):
+        return False
+    assert isinstance(stamped_birth, int)
+    try:
+        live_birth = birth_token_for_pid(pid)
+    except (OSError, ValueError):
+        return False
+    return live_birth is not None and live_birth == stamped_birth
+
+
+def _unreadable_registry_evidence(
+    root: Path, uuid: str, *, registry_faulted: bool
+) -> tuple[str | None, str]:
     """Unit + liveness for a registry whose content is unusable (#88R31-I3).
 
-    Scans ``{uuid}-*.partial.json`` sidecars. Returns ``(unit, liveness)``
-    with the first readable non-empty string unit (trusted evidence for
-    the deferral, mirroring R30-5's registry lookup) and liveness one of
-    ``"live"`` (a sidecar names a present pid), ``"maybe"`` (an unreadable
-    sidecar, a listing fault, or no sidecar at all: no information), or
-    ``"dead"`` (every match torn, gone, dead-pid, or pid-less). The
-    pid-less/dead-pid rule mirrors the orphan adopt exactly (a sidecar
-    the adopt would take is not live evidence here either), so static
-    content can never livelock the deferral. Never raises.
+    Scans ``{uuid}-*.partial.json`` sidecars. Only attributable
+    sidecars (content ``worker_uuid`` matching ``uuid``) are evidence
+    for this producer: foreign sidecars impersonate freely under a
+    colliding name, so they feed neither the unit nor liveness
+    (#88R31-4). Ambiguous units (distinct non-empty units across
+    attributable sidecars) establish nothing: the unit reads None and
+    the caller refuses rather than deferring the wrong unit.
+
+    When the registry faulted (``registry_faulted``), death is
+    unverifiable -- the authoritative liveness record is hidden, and a
+    live producer is indistinguishable from a dead one with stale
+    sidecars -- so liveness is never ``"dead"`` and a unit is trusted
+    only from an attributable sidecar whose stamped pid is verified
+    live (present + birth match), with no other present-but-unverified
+    attributable pid in play (a reused pid or an impersonator the
+    fallback cannot untangle). Anything weaker reads
+    ``(None, "maybe")`` and the caller refuses admission. When the
+    registry is torn (readable but invalid), liveness keeps the I3
+    scale (``"live"`` needs only a present pid: the deferral never
+    fences, so proportionate evidence suffices) with ``"dead"``
+    requiring attributable all-dead evidence; unattributable matches
+    alone read ``"maybe"``. Never raises.
     """
     unit: str | None = None
+    ambiguous = False
+    live_unit: str | None = None
+    live_ambiguous = False
+    present_unit: str | None = None
+    present_ambiguous = False
     try:
         matches = sorted(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}"))
     except OSError:
@@ -4964,7 +5093,10 @@ def _unreadable_registry_evidence(root: Path, uuid: str) -> tuple[str | None, st
     if not matches:
         return None, "maybe"
     live = False
+    present = False
+    present_unverified = False
     maybe = False
+    seen_attributable = False
     for match in matches:
         status, payload = _read_json_evidence(match)
         if status == "unreadable":
@@ -4972,18 +5104,52 @@ def _unreadable_registry_evidence(root: Path, uuid: str) -> tuple[str | None, st
             continue
         if status != "ok" or not isinstance(payload, dict):
             continue
-        if unit is None:
-            candidate = payload.get("unit")
-            if isinstance(candidate, str) and candidate:
+        if payload.get("worker_uuid") != uuid:
+            continue
+        seen_attributable = True
+        candidate = payload.get("unit")
+        if isinstance(candidate, str) and candidate:
+            if unit is None:
                 unit = candidate
+            elif unit != candidate:
+                ambiguous = True
         pid = payload.get("pid")
-        if _is_nonneg_int(pid):
-            assert isinstance(pid, int)
-            if _pid_exists(pid):
-                live = True
-    if live:
-        return unit, "live"
-    if maybe:
+        if not _is_nonneg_int(pid):
+            continue
+        assert isinstance(pid, int)
+        # The narrated unit always comes from the evidence the
+        # liveness rides on: a dead sidecar's unit never answers for
+        # a live writer, and distinct live writers establish nothing.
+        verified = _sidecar_pid_verified_live(pid, payload.get("birth_token"))
+        if verified:
+            live = True
+            if isinstance(candidate, str) and candidate:
+                if live_unit is None:
+                    live_unit = candidate
+                elif live_unit != candidate:
+                    live_ambiguous = True
+        if verified or _pid_exists(pid):
+            present = True
+            if isinstance(candidate, str) and candidate:
+                if present_unit is None:
+                    present_unit = candidate
+                elif present_unit != candidate:
+                    present_ambiguous = True
+            if not verified:
+                present_unverified = True
+        elif registry_faulted:
+            # A dead-or-unverifiable pid proves nothing when the
+            # authoritative record is hidden: not live, not dead.
+            maybe = True
+    if registry_faulted:
+        if live and not live_ambiguous and not present_unverified:
+            return live_unit, "live"
+        return None, "maybe"
+    if present or live:
+        return (None if present_ambiguous else present_unit), "live"
+    if ambiguous:
+        unit = None
+    if maybe or not seen_attributable:
         return unit, "maybe"
     return unit, "dead"
 
@@ -6937,34 +7103,6 @@ def _held_owner_uuid(path_str: str) -> str | None:
     return head if is_worker_uuid(head) else None
 
 
-def _journal_pins_family(
-    path: Path,
-    key: str,
-    digests: Mapping[str, str] | None,
-    proved_absent: Container[str] | None,
-    ghosts: Container[str] | None = None,
-) -> bool:
-    """Whether a journal holds its whole parent family (#88R30-3).
-
-    True when the journal is digest-listed but no longer verifies
-    (evolved or unreadable), when a ghost stands at a proved-absent
-    journal path, or when the journal is a never-staged ghost
-    (#88R31-I2). A listed-but-missing journal pins nothing (resolved
-    since adjudication: its parents converge normally). Never raises.
-    """
-    if proved_absent is not None and key in proved_absent:
-        return _path_state(path) != "missing"
-    if ghosts is not None and key in ghosts:
-        return _path_state(path) != "missing"
-    if digests is not None and key in digests:
-        state = _path_state(path)
-        if state == "unreadable":
-            return True
-        if state == "present":
-            return _sha256_regular_file_hex(path) != digests[key]
-    return False
-
-
 def _staged_target_owner_hint(path_str: str) -> str | None:
     """Parent identity hint embedded in a staged target path (#88R26-7).
 
@@ -7584,13 +7722,6 @@ def prepare_resume(
     plan["consumed"] += staged_consumed
     collected_now: set[str] = set()
     routed_now: dict[str, str] = {}
-    # Committed dispositions deferred this pass (#88R30-2): unresolved
-    # routing persists through rewrites independently of cleanup-target
-    # validity, so a stale target can never evaporate the wait for the
-    # authorizing session into a false fresh heal. Only fresh deferrals
-    # persist (no blind carry): evidence that resolves or vanishes
-    # stops deferring and its routing retires with it.
-    deferred_routing: dict[str, str] = {}
     to_consume: list[Path] = []
     proved_absent_now: set[str] = set()
     ghost_now: set[str] = set()
@@ -7883,62 +8014,95 @@ def prepare_resume(
         _release_barrier_seal(root)
         return plan
     for registry_path in registry_files:
-        content, registry_digest = _read_registry_file_digested(registry_path)
+        reg_status, content, registry_digest = _read_registry_file_strict(registry_path)
         if content is not None and registry_digest is not None:
             # Bind the adjudicated bytes (#88R27-3): a held registry
             # stages as a retryable cleanup target.
             read_digests.setdefault(str(registry_path), registry_digest)
         if content is None:
-            # #88R2: unreadable is never torn (see collect_unit): reserve
-            # the filename uuid so the torn-sidecar sweep cannot adopt a
-            # live producer's evidence this pass. #88R3: the reservation
-            # rides the plan so the post-barrier sweep keeps its hands
-            # off too (its run may still credit collected via siblings).
-            reserved = _unreadable_registry_uuid(registry_path)
-            if reserved is not None:
+            registry_faulted = reg_status == "unreadable"
+            if registry_faulted:
+                # Fault memory (#88R31-4): the fault persisted across
+                # retries, so no later re-read may silently clear it
+                # into a skip (a transient healing between probes left
+                # the producer unprocessed with barrier_ok). Reserve by
+                # filename -- no read needed -- and narrate below.
+                held_uuid = parse_registry_filename(registry_path.name)
+                if held_uuid is None:
+                    warnings.warn(
+                        f"registry {registry_path.name} unreadable "
+                        "(I/O fault, unparsable name; retained)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    continue
                 warnings.warn(
                     f"unreadable registry {registry_path.name} retained "
                     "(I/O failure, not torn content; its sidecar waits a later pass)",
                     UserWarning,
                     stacklevel=2,
                 )
-                seen_uuids.add(reserved)
-                plan["retained_uuids"].append(reserved)
-            reaped = _reap_torn_registry(root, registry_path)
-            shielded: str | None = None
-            if not reaped and reserved is None:
-                # #88R3-F5: a torn registry the reap declined still
-                # shields a live producer's sidecar -- but only the
-                # presence-shield knows that. Reserve the filename uuid
-                # so the post-barrier sweep skips it too (a sibling may
-                # still credit its run collected). Deliberately NOT in
-                # seen_uuids: the dead case must still converge through
-                # the orphan-sidecar loop below. #88R4-F5a: reservation
-                # needs a live-possible sidecar (readable or unreadable);
-                # proved mutual debris reserves nothing, so the sweep
-                # converges it instead of re-skipping it every cycle.
-                claimed = parse_registry_filename(registry_path.name)
-                if claimed is not None and _torn_registry_shields_live(root, claimed):
+                seen_uuids.add(held_uuid)
+                plan["retained_uuids"].append(held_uuid)
+            else:
+                # #88R2: unreadable is never torn (see collect_unit): reserve
+                # the filename uuid so the torn-sidecar sweep cannot adopt a
+                # live producer's evidence this pass. #88R3: the reservation
+                # rides the plan so the post-barrier sweep keeps its hands
+                # off too (its run may still credit collected via siblings).
+                reserved = _unreadable_registry_uuid(registry_path)
+                registry_faulted = reserved is not None
+                if reserved is not None:
                     warnings.warn(
-                        f"torn registry {registry_path.name} retained "
-                        "(its sidecar waits a later pass; sweep skips it too)",
+                        f"unreadable registry {registry_path.name} retained "
+                        "(I/O failure, not torn content; its sidecar waits a later pass)",
                         UserWarning,
                         stacklevel=2,
                     )
-                    plan["retained_uuids"].append(claimed)
-                    shielded = claimed
-            held_uuid = reserved if reserved is not None else shielded
+                    seen_uuids.add(reserved)
+                    plan["retained_uuids"].append(reserved)
+                reaped = _reap_torn_registry(root, registry_path)
+                shielded: str | None = None
+                if not reaped and reserved is None:
+                    # #88R3-F5: a torn registry the reap declined still
+                    # shields a live producer's sidecar -- but only the
+                    # presence-shield knows that. Reserve the filename uuid
+                    # so the post-barrier sweep skips it too (a sibling may
+                    # still credit its run collected). Deliberately NOT in
+                    # seen_uuids: the dead case must still converge through
+                    # the orphan-sidecar loop below. #88R4-F5a: reservation
+                    # needs a live-possible sidecar (readable or unreadable);
+                    # proved mutual debris reserves nothing, so the sweep
+                    # converges it instead of re-skipping it every cycle.
+                    claimed = parse_registry_filename(registry_path.name)
+                    if claimed is not None and _torn_registry_shields_live(root, claimed):
+                        warnings.warn(
+                            f"torn registry {registry_path.name} retained "
+                            "(its sidecar waits a later pass; sweep skips it too)",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+                        plan["retained_uuids"].append(claimed)
+                        shielded = claimed
+                held_uuid = reserved if reserved is not None else shielded
             if held_uuid is not None:
                 # A registry whose content is unusable leaves its unit
                 # unnarrated (#88R31-I3): when its sidecar shows a live
                 # or undecidable producer, the unit defers (resolved
-                # from the readable sidecar, mirroring R30-5) instead
+                # from attributable sidecars, mirroring R30-5) instead
                 # of staying silently eligible; when no trusted
                 # evidence names the unit, the barrier refuses
-                # admission. Dead-verified evidence keeps waiting for
-                # the registry to heal (reserved) or converging through
-                # the orphan loop (torn, never in seen_uuids).
-                sidecar_unit, liveness = _unreadable_registry_evidence(root, held_uuid)
+                # admission. Behind a fault, death is unverifiable, so
+                # only a verified-live unit defers and everything else
+                # refuses (#88R31-4, overruling the I3 fail-open wait:
+                # a live producer with stale sidecars is
+                # indistinguishable from a dead one). Torn registries
+                # keep the I3 scale, with unattributable evidence
+                # reading undecidable and the dead case converging
+                # through the orphan loop (never in seen_uuids).
+                sidecar_unit, liveness = _unreadable_registry_evidence(
+                    root, held_uuid, registry_faulted=registry_faulted
+                )
                 if liveness in ("live", "maybe"):
                     plan["unresolved"].append(held_uuid)
                     if sidecar_unit is None:
@@ -8027,10 +8191,10 @@ def prepare_resume(
             # gates every branch below (fence, skip-held and
             # unsettled-spawn reunion): nothing kills or collects
             # undecidable evidence (#88R29-2).
-            if committed_waiting:
-                # Unresolved routing persists through rewrites
-                # independently of cleanup-target validity (#88R30-2).
-                deferred_routing[uuid] = "committed"
+            # Unresolved routing persists through rewrites
+            # independently of cleanup-target validity (#88R30-2,
+            # centralized #88R31-3): the unresolved append below keys
+            # the carry, so no per-site recording is needed.
             deferral = _DeferProducerError(
                 uuid, None, source=registry_path.name, reason="committed-session"
             )
@@ -8323,10 +8487,10 @@ def prepare_resume(
             # loop): gates every branch below including skip-held
             # and unsettled-spawn reunion (#88R29-2). Committed waits
             # even when validated (#88R30-1).
-            if committed_waiting:
-                # Unresolved routing persists through rewrites
-                # independently of cleanup-target validity (#88R30-2).
-                deferred_routing[uuid] = "committed"
+            # Unresolved routing persists through rewrites
+            # independently of cleanup-target validity (#88R30-2,
+            # centralized #88R31-3): the unresolved append below keys
+            # the carry, so no per-site recording is needed.
             deferral = _DeferProducerError(
                 uuid, None, source=sidecar_path.name, reason="committed-session"
             )
@@ -8555,17 +8719,24 @@ def prepare_resume(
     if plan["cache_records"] or skip_held_now or pending_present:
         collected_union = collected_now | set(validated_cleanup)
         disposition_union = dict(routed_now)
-        for uuid, disp in staged_disposition.items():
-            if uuid in collected_union:
-                disposition_union.setdefault(uuid, disp)
         # Unresolved routing carries independently of cleanup-target
         # validity (#88R30-2): a deferral re-records its committed
         # wait even when its targets went stale and its uuid left the
-        # collected union. Deferred uuids stay OUT of collected (no
-        # suppression authority is granted); the gate re-fires from the
-        # disposition alone while evidence persists.
-        for uuid, disp in deferred_routing.items():
-            disposition_union.setdefault(uuid, disp)
+        # collected union. Centrally keyed on this pass's fresh
+        # deferrals (#88R31-3): the missing-session gate is not the
+        # only wait -- a committed reunion that defers mid-pass
+        # (faulted journal, unreadable baseline, live writer) holds
+        # the same wait, and dropping it lets the next sessionless
+        # pass gap-heal committed evidence. Deferred uuids stay OUT
+        # of collected (no suppression authority is granted); the
+        # gate re-fires from the disposition alone while evidence
+        # persists. Only fresh deferrals persist (no blind carry):
+        # evidence that resolves or vanishes stops deferring and its
+        # routing retires with it.
+        unresolved_now = set(plan["unresolved"])
+        for uuid, disp in staged_disposition.items():
+            if uuid in collected_union or (disp == "committed" and uuid in unresolved_now):
+                disposition_union.setdefault(uuid, disp)
         # Self-healing count (#88R11-5): the staged invariant is
         # consumed == len(collected_uuids); a corrupt staged count
         # recomputes from the validated union instead of persisting.
@@ -8589,13 +8760,21 @@ def prepare_resume(
             parent, name = str(Path(path_str).parent), Path(path_str).name
             return str(Path(parent) / name.split(".tmp-", 1)[0])
 
+        # Ghost exhibits never stage (#88R31-1): a ghost carries no
+        # adjudicated identity (it appeared after adjudication), so
+        # staging its bytes would mint cleanup authority for
+        # unadjudicated evidence. Ghosts re-derive every pass instead
+        # and hold loudly; the family pin keeps their retry context.
         probe_targets = sorted(
             {
                 (path_str, digest)
                 for path_str, digest in read_digests.items()
-                if path_str in consumed_set
-                or _tmp_base(path_str) in consumed_set
-                or _tmp_base(path_str) in slot_bases
+                if path_str not in ghost_now
+                and (
+                    path_str in consumed_set
+                    or _tmp_base(path_str) in consumed_set
+                    or _tmp_base(path_str) in slot_bases
+                )
             }
             | {
                 # Carry forward still-valid staged authority (#88R25-4):
@@ -8604,7 +8783,7 @@ def prepare_resume(
                 # of expiring into an unlisted stranger.
                 (path_str, digest)
                 for path_str, digest in staged_targets
-                if _staged_target_carries(Path(path_str), digest)
+                if path_str not in ghost_now and _staged_target_carries(Path(path_str), digest)
             }
         )
         # Skip-holds persist until a clean application discards the
