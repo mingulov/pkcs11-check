@@ -202,11 +202,31 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     from pkcs11_check.testcases.acvp.aes.base_cts import get_cts_detection
 
     module_path = config.getoption("p11_module")
+    # Resolve pin/slot/interface through the same CLI > env > TOML merge
+    # the runtime session fixtures use (#89): the probe predicts the
+    # runtime session, so reading raw CLI options here logs the probe
+    # out whenever the pin comes from P11TEST_PIN or pkcs11_check.toml
+    # (FreeHSM then refuses the probe import with
+    # CKR_USER_NOT_LOGGED_IN and every vector skips). The module stays
+    # CLI-only by design (fixtures skip without --p11-module).
+    from pkcs11_check.config import P11TestConfig
+
+    cli: dict[str, Any] = {}
+    slot_raw = config.getoption("p11_slot", default=None)
+    if slot_raw is not None:
+        cli["slot"] = slot_raw
+    pin_raw = config.getoption("p11_pin", default=None)
+    if pin_raw is not None:
+        cli["pin"] = pin_raw
+    interface_raw = config.getoption("p11_interface", default=None)
+    if interface_raw:
+        cli["interface"] = interface_raw
+    merged = P11TestConfig(module=Path(module_path), **cli)
     # The plugin default is None ("auto" is only documentation); every other
     # consumer coerces None, so do the same instead of crashing load_module.
-    interface = config.getoption("p11_interface", default="auto") or "auto"
-    slot_opt = config.getoption("p11_slot", default=None)
-    pin = config.getoption("p11_pin", default=None)
+    interface = merged.interface or "auto"
+    slot_opt = merged.slot
+    pin = merged.pin.get_secret_value() if merged.pin else None
 
     p11 = load_module(Path(module_path), interface=interface)
     raw = p11.raw
