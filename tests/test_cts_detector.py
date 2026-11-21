@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,10 +12,13 @@ from pkcs11_check import classification
 from pkcs11_check.raw.recipes import ImplausibleModuleLengthError
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKM_AES_CTS,
     CKR_FUNCTION_FAILED,
     CKR_KEY_SIZE_RANGE,
     CKR_USER_NOT_LOGGED_IN,
+    CKU_USER,
 )
 from pkcs11_check.testcases.acvp.aes import base_cts
 from tests._skip_assert import assert_skips
@@ -643,6 +647,161 @@ def test_cts_probe_coerces_missing_interface_to_auto(
 
     assert captured["interface"] == "auto"
     assert result.status is base_cts.CtsDetectionStatus.ABSENT
+
+
+def _install_collection_probe_stubs(
+    monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]
+) -> None:
+    """Stub the provider surface behind the collection CTS probe."""
+
+    def fake_load_module(path: object, interface: object = None) -> Any:
+        captured["module"] = path
+        captured["interface"] = interface
+        return SimpleNamespace(raw=object())
+
+    def fake_open_session(raw: Any, slot: int, flags: int) -> int:
+        captured["slot"] = slot
+        return 1234
+
+    def fake_login(raw: Any, sh: int, user: int, pin: bytes) -> None:
+        captured.setdefault("logins", []).append((sh, user, pin))
+
+    def fake_detected(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
+
+    monkeypatch.setattr("pkcs11_check.core.loader.load_module", fake_load_module)
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.get_slot_ids", lambda raw: [7, 8])
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.get_mechanism_list", lambda raw, slot: [CKM_AES_CTS]
+    )
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.get_mechanism_info",
+        lambda raw, slot, mech: {"flags": int(CKF_ENCRYPT) | int(CKF_DECRYPT)},
+    )
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.open_session", fake_open_session)
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.login_user", fake_login)
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.logout_quietly", lambda *a: None)
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.close_session_quietly", lambda *a: None)
+    monkeypatch.setattr(base_cts, "get_cts_detection", fake_detected)
+
+
+def _collection_config(opts: dict[str, Any]) -> Any:
+    values = {"p11_module": "/fake/module.so", **opts}
+    return SimpleNamespace(getoption=lambda name, default=None: values.get(name, default))
+
+
+def _isolate_pin_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Drop ambient pin/slot/interface layers; TOML reads from an empty dir."""
+    monkeypatch.delenv("P11TEST_PIN", raising=False)
+    monkeypatch.delenv("P11TEST_SLOT", raising=False)
+    monkeypatch.delenv("P11TEST_INTERFACE", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+
+def test_cts_collection_probe_logs_in_with_env_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#89: a P11TEST_PIN env pin must log the collection probe in, like runtime."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+def test_cts_collection_probe_cli_pin_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CLI > env for the collection probe pin, matching runtime precedence."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({"p11_pin": "clipin"}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") == [(1234, CKU_USER, b"clipin")]
+
+
+def test_cts_collection_probe_logs_in_with_toml_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#89: a TOML pin must log the collection probe in, like runtime."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    (tmp_path / "pkcs11_check.toml").write_text('pin = "tomlpin"\n', encoding="utf-8")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") == [(1234, CKU_USER, b"tomlpin")]
+
+
+def test_cts_collection_probe_no_pin_no_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No pin on any layer: the probe stays logged out (unchanged behavior)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") is None
+
+
+def test_cts_collection_probe_uses_merged_slot_and_interface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#89: slot/interface resolve through the same layers as runtime."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "1")
+    monkeypatch.setenv("P11TEST_INTERFACE", "pkcs11")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("slot") == 8
+    assert captured.get("interface") == "pkcs11"
+
+
+def test_cts_collection_probe_cli_wins_over_env_for_slot_and_interface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CLI > env for collection slot/interface, matching runtime precedence."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "1")
+    monkeypatch.setenv("P11TEST_INTERFACE", "pkcs11")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    config = _collection_config({"p11_slot": 0, "p11_interface": "auto"})
+    result = aes_conftest._detect_variant_via_pkcs11(config)
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("slot") == 7
+    assert captured.get("interface") == "auto"
 
 
 def test_cts_detector_propagates_hostile_length_report(
