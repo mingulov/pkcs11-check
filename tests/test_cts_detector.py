@@ -637,10 +637,18 @@ def test_cts_probe_coerces_missing_interface_to_auto(
     monkeypatch.setattr("pkcs11_check.core.loader.load_module", fake_load_module)
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.get_slot_ids", lambda raw: [7])
     monkeypatch.setattr("pkcs11_check.raw.recipes.get_mechanism_list", lambda raw, slot: [])
-    # The plugin defines --p11-interface with default None, so getoption
-    # returns None (its `default` kwarg only applies to unknown options).
+    # Mirror the real plugin: known options return their plugin defaults
+    # (--p11-interface defaults to None); the `default` kwarg only applies
+    # to unknown options.
+    plugin_defaults = {
+        "p11_module": "/fake/module.so",
+        "p11_key_inject": "off",
+        "p11_wrap_key_source": "bootstrap",
+        "p11_wrap_rsa_bits": 2048,
+        "p11_wrap_oaep_hash": "auto",
+    }
     config = SimpleNamespace(
-        getoption=lambda name, default=None: "/fake/module.so" if name == "p11_module" else None
+        getoption=lambda name, default=None: plugin_defaults.get(name, default)
     )
 
     result = aes_conftest._detect_variant_via_pkcs11(config)
@@ -801,6 +809,73 @@ def test_cts_collection_probe_cli_wins_over_env_for_slot_and_interface(
 
     assert result.status is base_cts.CtsDetectionStatus.DETECTED
     assert captured.get("slot") == 7
+    assert captured.get("interface") == "auto"
+
+
+def test_cts_collection_probe_rejects_invalid_slot_like_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R32-5: an out-of-range slot fails cleanly instead of silently remapping."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    for bad_slot in ("-1", "2"):
+        _isolate_pin_env(monkeypatch, tmp_path)
+        monkeypatch.setenv("P11TEST_SLOT", bad_slot)
+        captured: dict[str, Any] = {}
+        _install_collection_probe_stubs(monkeypatch, captured)
+        with pytest.raises(pytest.UsageError, match="slot"):
+            aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+        assert "slot" not in captured, "no session opens on a rejected slot"
+        assert captured.get("logins") is None, "no login on a rejected slot"
+
+
+def test_cts_collection_probe_shares_full_cli_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R32-6: CLI settings beyond pin/slot reach the probe (no env leak)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_KEY_INJECT", "bogus")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    config = _collection_config({"p11_key_inject": "unwrap"})
+    result = aes_conftest._detect_variant_via_pkcs11(config)
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+
+
+def test_cts_collection_probe_surfaces_invalid_config_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R32-6: genuinely invalid settings fail as config errors, not tracebacks."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_KEY_INJECT", "bogus")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    with pytest.raises(pytest.UsageError, match="key_inject|configuration"):
+        aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+
+def test_cts_collection_probe_honors_explicit_empty_interface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R32-6: an explicit empty CLI override wins over env, like runtime."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.1")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    config = _collection_config({"p11_interface": ""})
+    result = aes_conftest._detect_variant_via_pkcs11(config)
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
     assert captured.get("interface") == "auto"
 
 
