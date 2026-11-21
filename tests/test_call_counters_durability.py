@@ -1556,7 +1556,9 @@ class TestProbeChannel:
         assert len(registries) == 1
         content = json.loads(registries[0].read_text(encoding="utf-8"))
         content["pid"] = pid
-        content["birth_token"] = birth
+        # Birth 0 on unverifiable platforms, like register_worker writes
+        # (a null birth_token is not a valid registry).
+        content["birth_token"] = birth if birth is not None else 0
         registries[0].write_text(json.dumps(content), encoding="utf-8")
         call_counters.reset_for_tests()
         records = _collect_crashed88(engaged, tmp_path / "child.jsonl")
@@ -2273,6 +2275,20 @@ def _dead_pid_with_birth() -> tuple[int, int | None]:
     proc.wait(timeout=30)
     assert proc.poll() is not None
     return pid, birth
+
+
+def _require_dead_producer(planted: dict[str, Any]) -> None:
+    """Skip when a planted dead pid recycled before the pass under test.
+
+    Postmortem/retry tests need a dead producer; on busy CI boxes the
+    just-freed pid can be recycled (on Windows the recycled occupant
+    may even be unqueryable, reading unknown instead of dead). The
+    outcome then would be environmental, not behavioral: skip loudly
+    instead of asserting a premise that no longer holds.
+    """
+    content = json.loads(Path(planted["registry"]).read_text(encoding="utf-8"))
+    if durability.verify_producer(content) != "dead":
+        pytest.skip(f"planted pid {content.get('pid')} recycled before the pass")
 
 
 class TestCollection:
@@ -4789,6 +4805,7 @@ class TestSweepAndFence:
             return real_adopt(*args, **kwargs)
 
         monkeypatch.setattr(durability, "_adopted_staged_probe_targets", _swap_then_delegate)
+        _require_dead_producer(planted)
         with pytest.warns(UserWarning, match="changed since adjudication"):
             plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert swapped == ["journal"]
@@ -4964,6 +4981,7 @@ class TestSweepAndFence:
             return real_adopt_sidecar(*args, **kwargs)
 
         monkeypatch.setattr(durability, "_adopt_orphan_sidecar", _swap_then_delegate)
+        _require_dead_producer(planted)
         with pytest.warns(UserWarning, match="changed since adjudication"):
             plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert swapped == ["sidecar"]
@@ -6060,6 +6078,17 @@ class TestSweepAndFence:
         pid, _ = _dead_pid_with_birth()
         assert durability._terminate_verified(pid, 424243, 0.1) is True
         assert durability._terminate_verified(os.getpid(), 424243, 0.1) is False
+
+    def test_regular_file_hash_matches_read_bytes_with_crlf(self, tmp_path: Path) -> None:
+        """#88R31-WIN3: fd-verified hashing reads binary (no CRLF translation)."""
+        target = tmp_path / "victim.windows.jsonl"
+        target.write_bytes(b'{"a": 1}\r\n{"b": 2}\r\n')
+        import hashlib
+
+        assert (
+            durability._sha256_regular_file_hex(target)
+            == hashlib.sha256(target.read_bytes()).hexdigest()
+        )
 
     def test_identity_scan_reports_completeness(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch

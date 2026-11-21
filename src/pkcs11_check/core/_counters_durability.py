@@ -7033,7 +7033,10 @@ def _sha256_regular_file_hex(path: Path) -> str | None:
     of blocking the barrier. FIFOs, sockets, dirs, devices, and
     unreadable or vanished paths all read None. Never raises.
     """
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    # O_BINARY (#88R31-WIN3): on Windows os.open defaults to text mode,
+    # which translates CRLF and breaks every digest comparison against
+    # read_bytes. No-op elsewhere.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         fd = os.open(path, flags)
     except OSError:

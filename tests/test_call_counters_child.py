@@ -2046,6 +2046,11 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         assert total == 3, "child must flush its 3-unit prefix before the kill"
         proc.kill()
         proc.wait(timeout=30)
+        if durability._pid_exists(proc.pid):
+            # The killed pid was recycled (or reads live) before adoption:
+            # postmortem recovery is untestable against a live pid, and the
+            # outcome would be environmental, not behavioral. Loud skip.
+            pytest.skip(f"killed pid {proc.pid} recycled before adoption")
         payload = json.loads(slot.read_text(encoding="utf-8"))
         assert payload["probe_seq"] == 0
         assert payload["parent_uuid"] == parent
