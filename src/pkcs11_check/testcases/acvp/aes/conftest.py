@@ -181,12 +181,15 @@ class _MinimalSession:
 
 def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     """Load module, open session, detect CTS variant, clean up."""
+    from tomllib import TOMLDecodeError
+
     from pkcs11_check.core.loader import load_module
     from pkcs11_check.raw.bootstrap import (
         close_session_quietly,
         get_slot_ids,
         login_user,
         logout_quietly,
+        resolve_slot_id,
     )
     from pkcs11_check.raw.bootstrap import open_session as raw_open_session
     from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
@@ -202,19 +205,39 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     from pkcs11_check.testcases.acvp.aes.base_cts import get_cts_detection
 
     module_path = config.getoption("p11_module")
-    # The plugin default is None ("auto" is only documentation); every other
-    # consumer coerces None, so do the same instead of crashing load_module.
-    interface = config.getoption("p11_interface", default="auto") or "auto"
-    slot_opt = config.getoption("p11_slot", default=None)
-    pin = config.getoption("p11_pin", default=None)
+    # Resolve settings through the same CLI > env > TOML merge the runtime
+    # session fixtures use (#89, #88R32-6): the probe predicts the runtime
+    # session, so reading raw CLI options here logs the probe out whenever
+    # the pin comes from P11TEST_PIN or pkcs11_check.toml (FreeHSM then
+    # refuses the probe import with CKR_USER_NOT_LOGGED_IN and every vector
+    # skips). The module stays CLI-only by design (fixtures skip without
+    # --p11-module). Only forwarding a subset would leak env/TOML values
+    # that CLI overrides at runtime, so the full shared resolver runs.
+    from pydantic import ValidationError
+
+    from pkcs11_check.fixtures import resolve_cli_settings
+
+    try:
+        merged = resolve_cli_settings(Path(module_path), config.getoption)
+    except (ValidationError, TOMLDecodeError) as exc:
+        raise pytest.UsageError(f"invalid pkcs11-check configuration: {exc}") from exc
+    # The interface arrives validated and normalized (the resolver owns
+    # it for both paths); the pin unwraps only when configured.
+    interface = merged.interface
+    pin = merged.pin.get_secret_value() if merged.pin else None
 
     p11 = load_module(Path(module_path), interface=interface)
     raw = p11.raw
     slots = get_slot_ids(raw)
     if not slots:
         pytest.skip("module exposes no PKCS#11 slots")
-    slot_idx = slot_opt if slot_opt is not None else 0
-    slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
+    try:
+        slot_id = resolve_slot_id(slots, merged.slot)
+    except (IndexError, ValueError) as exc:
+        # An operator-named slot that runtime would reject must fail here
+        # too (#88R32-5): silently remapping would probe (and log in to)
+        # a token the operator never asked for.
+        raise pytest.UsageError(str(exc)) from exc
 
     # Build mechanism name set
     mechs = get_mechanism_list(raw, slot_id)

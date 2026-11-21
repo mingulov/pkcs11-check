@@ -128,6 +128,51 @@ def test_ingest_non_dict_payload_returns_false_raw(tmp_path: Path) -> None:
     assert call_counters.serialize_current()["total_calls"] == 0
 
 
+def _fake_popen_factory(
+    *,
+    on_spawn: Any = None,
+    stdout: str = "",
+    stderr: str = "",
+    returncode: int = 0,
+    pid: int = 424242,
+) -> Any:
+    """Build a subprocess.Popen double honoring the runner's call shape."""
+
+    class _FakePopen:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.pid = pid
+            self.returncode: int | None = None
+            if on_spawn is not None:
+                on_spawn(*args, **kwargs)
+
+        def __enter__(self) -> _FakePopen:
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            self.wait()
+            return False
+
+        def communicate(self, timeout: Any = None) -> tuple[str, str]:
+            if self.returncode is None:
+                self.returncode = returncode
+            return (stdout, stderr)
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout: Any = None) -> int:
+            if self.returncode is None:
+                self.returncode = returncode
+            return self.returncode
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    return _FakePopen
+
+
 @pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
 def test_ingest_finalized_only_file_returns_false(ingest: _IngestFn, tmp_path: Path) -> None:
     cov = _write_coverage_file(tmp_path / "cov.json", {"python_finalized": True})
@@ -343,11 +388,10 @@ def test_run_probe_exports_registered_run_not_ambient(
     monkeypatch.setenv(RUN_ID_ENV, "unknown")
     captured: dict[str, str] = {}
 
-    def _fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _capture(cmd: Any, **kwargs: Any) -> None:
         captured.update(kwargs["env"])
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_capture))
     try:
         run_probe("_echo", {"module_path": "/nonexistent.so"}, timeout=30)
     finally:
@@ -1445,12 +1489,14 @@ def test_run_probe_deep_coverage_json_is_lost_not_abrupt(
     drain_process_observations()
     poison = _nested_poison_json()
 
-    def _fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _poison_cov(args: list[str], **kwargs: Any) -> None:
         cov_path = str(kwargs["env"]["_P11CHECK_SUBPROCESS_COVERAGE"])
         Path(cov_path).write_text(poison, encoding="utf-8")
-        return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_poison_cov),
+    )
     result = run_probe("_echo", {"module_path": "/x.so"})
     assert result.returncode == 0
     assert SUBPROCESS_ABRUPT_EXIT_MARKER not in result.stderr
@@ -1469,8 +1515,8 @@ def test_run_probe_empty_coverage_without_traceback_stays_abrupt(
 
     drain_process_observations()
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *a, **k: subprocess.CompletedProcess([], 0, "", ""),
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(),
     )
     result = run_probe("_echo", {"module_path": "/x.so"})
     assert result.returncode == 0
@@ -1509,12 +1555,14 @@ def test_run_probe_poisoned_trace_keeps_valid_counters(
     drain_subprocess_rv_trace()
     drain_process_observations()
 
-    def _fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _write_cov(args: list[str], **kwargs: Any) -> None:
         cov_path = str(kwargs["env"]["_P11CHECK_SUBPROCESS_COVERAGE"])
         Path(cov_path).write_text(json.dumps(_child_payload()), encoding="utf-8")
-        return subprocess.CompletedProcess(args, 0, f"{RV_TRACE_MARKER}{poison}\n", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_write_cov, stdout=f"{RV_TRACE_MARKER}{poison}\n"),
+    )
     try:
         result = run_probe("_echo", {"module_path": "/x.so"})
     finally:
@@ -1998,19 +2046,63 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         assert total == 3, "child must flush its 3-unit prefix before the kill"
         proc.kill()
         proc.wait(timeout=30)
+        # The launcher may split PIDs (a Windows venv shim runs the
+        # script in a child of the Popen handle): the slot's writer
+        # pid -- not the wrapper -- gates postmortem adoption. When the
+        # writer is the joined Popen process, the join itself proves
+        # death (no birth needed); when it differs, only the
+        # incarnation-pinned backend may signal it -- an unpinned
+        # os.kill could strike a recycled occupant (#88R32-7).
+        try:
+            writer_stamp = json.loads(slot.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pytest.skip("slot unreadable before adoption")
+        writer_pid = writer_stamp.get("pid")
+        writer_birth = writer_stamp.get("birth_token")
+        if not isinstance(writer_pid, int):
+            pytest.skip("slot lacks writer pid")
+        if writer_pid == proc.pid:
+            if not isinstance(writer_birth, int) and not durability._pid_dead_proven(writer_pid):
+                pytest.skip(f"joined pid {writer_pid} recycled; postmortem untestable")
+        elif not isinstance(writer_birth, int):
+            pytest.skip("split writer lacks verifiable identity")
+        elif not durability._terminate_verified(writer_pid, writer_birth, 30.0):
+            pytest.skip(f"writer pid {writer_pid} unfenceable; postmortem untestable")
         payload = json.loads(slot.read_text(encoding="utf-8"))
         assert payload["probe_seq"] == 0
         assert payload["parent_uuid"] == parent
-        merged, claimed, consumed, recovered, _keys, _adopted = durability._adopt_probe_orphans(
-            root,
-            worker_uuid=parent,
-            sidecar=None,
-            journal_lines=[],
-            claims={},
-            known_uuids={parent},
-            producer_run="R1",
-            producer_unit="a.py",
-        )
+        try:
+            merged, claimed, consumed, recovered, _keys, _adopted, _skipped, _froze = (
+                durability._adopt_probe_orphans(
+                    root,
+                    worker_uuid=parent,
+                    sidecar=None,
+                    journal_lines=[],
+                    claims={},
+                    known_uuids={parent},
+                    known_complete=True,
+                    producer_run="R1",
+                    producer_unit="a.py",
+                    fence_live=True,
+                )
+            )
+        except durability._DeferProducerError as exc:
+            # Only a PROVEN recycle excuses the test (#88R33-6,
+            # hardened #88R34-8): a deferral naming this writer, a
+            # valid pre-kill birth, and a different incarnation still
+            # live in the pid slot. Any other deferral (an unreadable
+            # slot, a divergent rewrite) -- or a dead slot behind a
+            # refused fence -- is a genuine adoption failure and must
+            # stay loud instead of masking as a skip.
+            if exc.pid == writer_pid and durability.is_birth_token(writer_birth):
+                current_birth = durability.birth_token_for_pid(writer_pid)
+                if (
+                    current_birth is not None
+                    and current_birth != writer_birth
+                    and durability._incarnation_running_proven(writer_pid, current_birth)
+                ):
+                    pytest.skip(f"writer pid {writer_pid} recycled before adoption")
+            raise
         assert merged is not None
         assert merged["total_calls"] == 3
         assert claimed == [{"worker_uuid": payload["worker_uuid"], "probe_seq": 0}]
@@ -2023,3 +2115,181 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=30)
+
+
+@pytest.mark.timeout(300)
+def test_sigkill_fence_refusal_stays_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R34-8: a refused adoption fence surfaces, never skips as recycled."""
+    from pkcs11_check.core import _counters_durability as durability
+    from pkcs11_check.core.counters_schema import is_birth_token
+
+    real_terminate = durability._terminate_verified
+
+    def _refuse_adoption(pid: int, birth: int, timeout_s: float) -> bool:
+        # The 30s call is the scenario's own pre-check fence
+        # (split-writer shims); only the 5s adoption fence refuses.
+        if timeout_s == 30.0:
+            return real_terminate(pid, birth, timeout_s)
+        return False
+
+    monkeypatch.setattr(durability, "_terminate_verified", _refuse_adoption)
+    try:
+        test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path)
+    except durability._DeferProducerError:
+        return
+    except pytest.skip.Exception as exc:
+        # Only a proven live-different occupant (genuine recycle) or
+        # a premise failure (unreadable slot) excuses a skip here; an
+        # unproven "recycled before adoption" skip is the R34-8 mask.
+        slot = tmp_path / "counters" / f"probe-{'c' * 8}-0-feedface.json"
+        try:
+            stamp = json.loads(slot.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pytest.skip(f"environmental: {exc}")
+        stamp_pid = stamp.get("pid")
+        stamp_birth = stamp.get("birth_token")
+        current = durability.birth_token_for_pid(stamp_pid) if isinstance(stamp_pid, int) else None
+        if is_birth_token(stamp_birth) and current is not None and current != stamp_birth:
+            pytest.skip(f"environmental: {exc}")
+        pytest.fail(f"refused fence masked as skip: {exc}")
+    pytest.fail("a refused adoption fence must surface, not adopt")
+
+
+@pytest.mark.timeout(300)
+def test_sigkill_zombie_reuse_refusal_stays_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R35-8: a zombie occupant never proves recycle."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    if durability._pinning_backend() != "pidfd":
+        pytest.skip("pinned proof needs pidfd")
+    zombie = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        zb = durability.birth_token_for_pid(zombie.pid)
+        assert zb is not None, "an unreaped zombie keeps a readable birth"
+        # Starttime ticks in jiffies: separate the zombie's fork from
+        # the inner writer's by several ticks so their births differ
+        # deterministically (same-tick births would mask the reuse).
+        # The wait also lands the exit as an unreaped zombie (nobody
+        # waits here), so the reuse models a dead incarnation.
+        for _ in range(300):
+            state = (
+                Path(f"/proc/{zombie.pid}/stat")
+                .read_text(encoding="utf-8")
+                .rsplit(")", 1)[1]
+                .split()[0]
+            )
+            if state == "Z":
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("the child never reached zombie state")
+        time.sleep(0.05)
+        real_terminate = durability._terminate_verified
+        real_birth = durability.birth_token_for_pid
+        refused: list[bool] = []
+
+        def _refuse_adoption(pid: int, birth: int, timeout_s: float) -> bool:
+            if timeout_s == 30.0:
+                return real_terminate(pid, birth, timeout_s)
+            refused.append(True)
+            return False
+
+        def _reuse(pid: int) -> int | None:
+            # After the fence refuses, dead slots read as the zombie's
+            # birth (models a recycle the incarnation check reads dead).
+            current = real_birth(pid)
+            if current is None and refused:
+                return zb
+            return current
+
+        monkeypatch.setattr(durability, "_terminate_verified", _refuse_adoption)
+        monkeypatch.setattr(durability, "birth_token_for_pid", _reuse)
+        try:
+            test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path)
+        except durability._DeferProducerError:
+            return
+        except pytest.skip.Exception as exc:
+            pytest.fail(f"zombie reuse masked as skip: {exc}")
+        pytest.fail("a refused fence under zombie reuse must surface, not adopt")
+    finally:
+        zombie.wait(timeout=30)
+
+
+def test_own_spawn_writes_launch_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: the child announces its own launch before doing anything."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    parent = "a" * 32
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    slot = counters / "probe-aaaaaaaa-3-bead01.json"
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(slot))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "3")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, parent)
+    monkeypatch.setenv(durability.PROBE_RUN_ENV, "R9")
+    monkeypatch.setenv(durability.PROBE_UNIT_ENV, "u.py")
+    monkeypatch.setenv(durability.PROBE_ATTEMPT_ENV, "1")
+    written = call_counters.note_own_probe_spawn()
+    assert written is not None
+    files = sorted(counters.glob("spawn-*.json"))
+    assert files == [Path(written)]
+    assert files[0].name.startswith("spawn-aaaaaaaa-3-")
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["parent_uuid"] == parent
+    assert payload["probe_seq"] == 3
+    assert payload["slot"] == str(slot)
+    assert payload["pid"] == os.getpid()
+    birth = durability.birth_token_for_pid(os.getpid())
+    if birth is None:
+        assert "birth_token" not in payload
+    else:
+        assert payload["birth_token"] == birth
+    assert payload["run_id"] == "R9"
+    assert payload["unit"] == "u.py"
+    assert payload["attempt"] == 1
+
+
+def test_own_spawn_disengaged_is_silent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: no probe env means no spawn record (manual runs unaffected)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    for key in (
+        durability.PROBE_SIDECAR_ENV,
+        durability.PROBE_SEQ_ENV,
+        durability.PROBE_PARENT_ENV,
+    ):
+        monkeypatch.delenv(key, raising=False)
+    assert call_counters.note_own_probe_spawn() is None
+    assert list(tmp_path.glob("spawn-*.json")) == []
+
+
+def test_own_spawn_malformed_env_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: engaged-but-broken spawn env fails closed (never runs mute)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(counters / "probe.json"))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "not-an-int")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, "a" * 32)
+    with pytest.raises(ValueError, match="probe_seq"):
+        call_counters.note_own_probe_spawn()
+    assert list(counters.glob("spawn-*.json")) == []
+
+
+def test_own_spawn_write_failure_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R23-1: an unrecordable launch must not run (fail closed, loud)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    missing = tmp_path / "no-such-dir" / "probe.json"
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(missing))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "0")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, "b" * 32)
+    with pytest.raises(durability.CounterPersistenceError):
+        call_counters.note_own_probe_spawn()

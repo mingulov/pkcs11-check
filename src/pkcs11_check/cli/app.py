@@ -44,7 +44,17 @@ def callback(
     setup_logging(level=log_level, trace=trace)
 
 
-app.command("test")(test_command)
+app.command(
+    "test",
+    epilog=(
+        "Examples:\n\n"
+        "  pkcs11-check doctor --module <module> --slot 0 --pin 1234\n\n"
+        "  pkcs11-check test --module <module> --slot 0 --pin 1234 --marker smoke\n\n"
+        "  pkcs11-check test --module <module> --slot 0 --pin 1234 --skip-slow\n\n"
+        "  pkcs11-check fetch-data all && "
+        "pkcs11-check test --module <module> --slot 0 --pin 1234"
+    ),
+)(test_command)
 app.command("doctor")(doctor_command)
 app.command("info")(info_command)
 app.command("list")(list_command)

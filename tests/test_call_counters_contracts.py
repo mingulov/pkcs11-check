@@ -350,6 +350,32 @@ class TestShapePredicates:
         assert schema.is_sidecar_partial(self._partial(role=None)) is False
         assert schema.is_sidecar_partial(self._partial(isolation=5)) is False
 
+    def test_sidecar_partial_in_flight_rows(self) -> None:
+        """#88: named in-flight rows ride the partial (shape fail-closed)."""
+        good = self._partial(
+            in_flight=[{"module": "m", "bucket": "test", "fn": "C_Digest", "count": 2}]
+        )
+        assert schema.is_sidecar_partial(good) is True
+        unknown_module = self._partial(
+            in_flight=[{"module": "", "bucket": "test", "fn": "C_Digest", "count": 1}]
+        )
+        assert schema.is_sidecar_partial(unknown_module) is True
+        assert schema.is_sidecar_partial(self._partial(in_flight=[])) is True
+        assert schema.is_sidecar_partial(self._partial(in_flight=None)) is False
+        assert schema.is_sidecar_partial(self._partial(in_flight=[{}])) is False
+        assert (
+            schema.is_sidecar_partial(
+                self._partial(in_flight=[{"module": "m", "bucket": "test", "fn": "f", "count": 0}])
+            )
+            is False
+        )
+        assert (
+            schema.is_sidecar_partial(
+                self._partial(in_flight=[{"module": "m", "bucket": "test", "fn": "", "count": 1}])
+            )
+            is False
+        )
+
     def test_preflight_synth_accepts_only_preflight_content(self) -> None:
         sparse = _session_record(
             100,

@@ -1310,11 +1310,14 @@ class TestCensusEngagement:
             "barrier_ok",
             "fenced",
             "unresolved",
+            "retained_uuids",
             "skipped_units",
+            "skipped_live",
             "cache_records",
             "collected_runs",
             "consumed",
             "counters_dir",
+            "cleanup_held",
         }
 
     def test_stale_seal_resume_unseals_before_census(

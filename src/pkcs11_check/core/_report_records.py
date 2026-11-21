@@ -459,7 +459,7 @@ def _saved_process_observations(state_file: Path) -> list[dict[str, Any]]:
     """Read saved outer observations without making run-state a module dependency."""
     try:
         raw = json.loads(state_file.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+    except (FileNotFoundError, OSError, json.JSONDecodeError, RecursionError):
         return []
     observations = raw.get("process_observations", []) if isinstance(raw, dict) else []
     if not isinstance(observations, list):
@@ -470,7 +470,7 @@ def _saved_process_observations(state_file: Path) -> list[dict[str, Any]]:
 def _saved_process_observations_complete(state_file: Path) -> bool:
     try:
         raw = json.loads(state_file.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+    except (FileNotFoundError, OSError, json.JSONDecodeError, RecursionError):
         return False
     observations = raw.get("process_observations") if isinstance(raw, dict) else None
     return (
