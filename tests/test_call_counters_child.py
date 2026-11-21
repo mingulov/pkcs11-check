@@ -2052,11 +2052,11 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         def _procinfo(_p: object) -> None:
             try:
                 _o = _spmod.run(
-                    ["wmic", "process", "where", f"ProcessId={_p}",
-                     "get", "ParentProcessId,CommandLine", "/format:list"],
-                    capture_output=True, text=True, timeout=15,
+                    ["pwsh", "-NoProfile", "-Command",
+                     f"Get-CimInstance Win32_Process -Filter 'ProcessId={_p}' | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | Format-List | Out-String"],
+                    capture_output=True, text=True, timeout=30,
                 )
-                print(f"DIAG procinfo({_p}):", _o.stdout.strip()[:280].replace("\n", " | "))
+                print(f"DIAG procinfo({_p}):", (_o.stdout.strip() or _o.stderr.strip())[:400].replace("\n", " | "))
             except Exception as exc:  # noqa: BLE001 - diagnostics only
                 print(f"DIAG procinfo({_p}) failed: {exc!r}")
 
