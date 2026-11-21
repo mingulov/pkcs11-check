@@ -4210,16 +4210,55 @@ def _consume_producer_files(
     Returns the targets still present afterwards (held): the resume
     barrier reports them so application keeps the staging that
     authorizes their retry instead of discarding it (#88R10-4c).
+
+    Family rule (#88R30-3): a digest-listed journal that no longer
+    verifies pins its whole parent family (registry + sidecar +
+    journal), as does a ghost at a proved-absent journal path.
+    Journals are discovered via their sidecar, so consuming verified
+    parents while holding their journal orphans the hold: the next
+    pass never re-adjudicates it and the sweep deletes it as debris.
+    Pinned families re-adjudicate next pass. (Held parents pin
+    nothing: a held parent stays present, so the retry route through
+    it survives; only the journal direction orphans.)
     """
+    pinned: set[str] = set()
+    if digests is not None or proved_absent is not None:
+        for scan in paths:
+            if not scan.name.endswith(JOURNAL_SUFFIX):
+                continue
+            owner = _held_owner_uuid(str(scan))
+            if owner is not None and _journal_pins_family(scan, str(scan), digests, proved_absent):
+                pinned.add(owner)
     held: list[Path] = []
     for path in paths:
         key = str(path)
-        if proved_absent is not None and key in proved_absent and _path_state(path) != "missing":
-            # Proved absent at retry time but present now: a ghost
-            # landed after the proof -- hold it for reunion instead
-            # of deleting unadjudicated bytes (#88R28-3).
+        if proved_absent is not None and key in proved_absent:
+            if _path_state(path) != "missing":
+                # Proved absent at retry time but present now: a ghost
+                # landed after the proof -- hold it for reunion instead
+                # of deleting unadjudicated bytes (#88R28-3).
+                warnings.warn(
+                    f"cleanup target {path.name} appeared after being proved absent; held",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                held.append(path)
+            # A proved-absent path has nothing legitimate to prune or
+            # unlink: the retry proof already established absence, so
+            # any present bytes are a ghost (held above) and any tmp
+            # under it landed post-proof (unadjudicated debris, never
+            # pruned). Skipping both closes the check-to-unlink race
+            # where a ghost landing during pruning was silently
+            # deleted (#88R30-4).
+            continue
+        owner = _held_owner_uuid(key)
+        if owner is not None and owner in pinned and not path.name.endswith(JOURNAL_SUFFIX):
+            # Pinned with a held journal (#88R30-3): the parents stay
+            # so the hold keeps its retry discovery route. The journal
+            # itself flows through the per-path checks below (its own
+            # hold warning fires there).
             warnings.warn(
-                f"cleanup target {path.name} appeared after being proved absent; held",
+                f"cleanup target {path.name} retained with held journal; held",
                 UserWarning,
                 stacklevel=2,
             )
@@ -5552,6 +5591,24 @@ def _registry_claims_orphan(reg_dir: Path, uuid: str) -> bool:
     return read_registry_file(reg_dir / f"{uuid}.json") is not None
 
 
+def _deferred_unit_from_registry(reg_dir: Path, uuid: str) -> str | None:
+    """Recover a deferred orphan's unit from its registry (#88R30-5).
+
+    Trusted evidence only: the registry must be present and parsing
+    (the same bar as :func:`_registry_claims_orphan`) and carry a
+    non-empty string unit. Anything else reads None: the deferral
+    cannot narrow to a rerun, so the barrier refuses admission
+    instead of leaving a live producer's unit eligible. Never raises.
+    """
+    content = read_registry_file(reg_dir / f"{uuid}.json")
+    if not isinstance(content, dict):
+        return None
+    unit = content.get("unit")
+    if not isinstance(unit, str) or not unit:
+        return None
+    return unit
+
+
 def _spawn_entry_valid(entry: Any) -> bool:
     """Whether a spawn record has the strict launch shape (#88R22-4/#88R23-1).
 
@@ -6777,6 +6834,30 @@ def _held_owner_uuid(path_str: str) -> str | None:
     return head if is_worker_uuid(head) else None
 
 
+def _journal_pins_family(
+    path: Path,
+    key: str,
+    digests: Mapping[str, str] | None,
+    proved_absent: Container[str] | None,
+) -> bool:
+    """Whether a journal holds its whole parent family (#88R30-3).
+
+    True when the journal is digest-listed but no longer verifies
+    (evolved or unreadable) or when a ghost stands at a proved-absent
+    journal path. A listed-but-missing journal pins nothing (resolved
+    since adjudication: its parents converge normally). Never raises.
+    """
+    if proved_absent is not None and key in proved_absent:
+        return _path_state(path) != "missing"
+    if digests is not None and key in digests:
+        state = _path_state(path)
+        if state == "unreadable":
+            return True
+        if state == "present":
+            return _sha256_regular_file_hex(path) != digests[key]
+    return False
+
+
 def _staged_target_owner_hint(path_str: str) -> str | None:
     """Parent identity hint embedded in a staged target path (#88R26-7).
 
@@ -6890,6 +6971,51 @@ def _sha256_regular_file_hex(path: Path) -> str | None:
         except OSError:
             pass
     return hashlib.sha256(b"".join(chunks)).hexdigest()
+
+
+def _verify_strict_retry_files(
+    files: list[Path],
+    staged_digests: dict[str, str],
+) -> tuple[list[Path], dict[str, str], set[str], list[tuple[Path, str]]]:
+    """Split strict-retry files into verified / held (#88R30-4).
+
+    Returns ``(verified, seeds, absent, held)``. Every path with a
+    staged digest must still match it (evolved or faulted files hold
+    for operator adjudication: dead-verified producers cannot
+    legitimately rewrite their evidence, so evolution means tamper or
+    corruption, and reunion is forbidden (a ghost would fold and
+    discard under the gate (R13-2))). Missing files seed the
+    absent set (a ghost appearing later holds instead of deleting);
+    files without a staged digest proceed unverified (pre-digest
+    legacy staging converges with 0.3.0 semantics). Held files carry
+    a reason (``"changed"`` or ``"unreadable"``); the consume path
+    voices the warning. Never raises.
+    """
+    verified: list[Path] = []
+    seeds: dict[str, str] = {}
+    absent: set[str] = set()
+    held: list[tuple[Path, str]] = []
+    for path in files:
+        key = str(path)
+        expected = staged_digests.get(key)
+        state = _path_state(path)
+        if expected is None:
+            if state == "missing":
+                absent.add(key)
+            verified.append(path)
+        elif state == "missing":
+            absent.add(key)
+            verified.append(path)
+        elif state == "unreadable":
+            held.append((path, "unreadable"))
+        else:
+            actual = _sha256_regular_file_hex(path)
+            if actual is not None and actual == expected:
+                seeds[key] = expected
+                verified.append(path)
+            else:
+                held.append((path, "changed"))
+    return verified, seeds, absent, held
 
 
 def _staged_parent_link(
@@ -7339,8 +7465,44 @@ def prepare_resume(
     plan["consumed"] += staged_consumed
     collected_now: set[str] = set()
     routed_now: dict[str, str] = {}
+    # Committed dispositions deferred this pass (#88R30-2): unresolved
+    # routing persists through rewrites independently of cleanup-target
+    # validity, so a stale target can never evaporate the wait for the
+    # authorizing session into a false fresh heal. Only fresh deferrals
+    # persist (no blind carry): evidence that resolves or vanishes
+    # stops deferring and its routing retires with it.
+    deferred_routing: dict[str, str] = {}
     to_consume: list[Path] = []
     proved_absent_now: set[str] = set()
+
+    def _consume_verified_retry(files: list[Path]) -> None:
+        """Consume strict-retry files verified against staged digests (#88R30-4).
+
+        Verified files seed consume (assignment wins: proved bytes beat
+        later scans) and missing ones seed the absent set. Evolved or
+        unreadable files re-bind their staged digest (#88R30-3): the
+        rewrite re-stages the exhibit, so the tamper-hold persists
+        across passes instead of evaporating into legacy-unverified
+        consume -- and family-aware consume holds the whole parent set
+        while any listed journal is unverifiable (a held journal
+        without its parents has no retry discovery route). Warnings and
+        hold reporting ride the consume path (single voice). Reunion
+        stays forbidden for strict retries (R13-2).
+        """
+        verified, v_seeds, v_absent, v_held = _verify_strict_retry_files(
+            files, staged_digest_by_path
+        )
+        for seed_path, seed_digest in v_seeds.items():
+            read_digests[seed_path] = seed_digest
+        proved_absent_now.update(v_absent)
+        held_paths = []
+        for held_path, _hold_reason in v_held:
+            staged = staged_digest_by_path.get(str(held_path))
+            if staged is not None:
+                read_digests.setdefault(str(held_path), staged)
+            held_paths.append(held_path)
+        to_consume.extend([*verified, *held_paths])
+
     skip_retained: list[Path] = []
     skip_held_now: set[str] = set()
     # First read wins (#88R14-2): every recording uses setdefault so a
@@ -7443,7 +7605,13 @@ def prepare_resume(
         if uuid in validated_collected or any(uuid.startswith(hint) for hint in target_hints)
     )
     staged_digest_by_path = dict(staged_targets)
-    dropped_claims = sorted(staged_collected - validated_cleanup)
+    # Committed-routed uuids keep their wait through deferral rewrites
+    # (#88R30-2): they neither re-collect nor need the alarm below (the
+    # per-pass deferral warning already names them).
+    committed_routed = {
+        uuid for uuid in staged_collected if staged_disposition.get(uuid) == "committed"
+    }
+    dropped_claims = sorted(staged_collected - validated_cleanup - committed_routed)
     if dropped_claims:
         warnings.warn(
             f"counter barrier staging claims {len(dropped_claims)} collected uuid(s) "
@@ -7459,10 +7627,19 @@ def prepare_resume(
     deferred_units: set[str] = set()
     skipped_live_units: set[str] = set()
     seen_uuids: set[str] = set()
+    # Units with an unresolved record emitted THIS pass (#88R30-6):
+    # rerun eligibility derives from this pass's liveness and
+    # deferrals only, never from retained historical losses (those
+    # stay in cache_records for reporting).
+    fresh_unresolved_units: set[str] = set()
 
     def _emit(unit: str, records: list[dict[str, Any]]) -> None:
         if records:
             plan["cache_records"].setdefault(unit, []).extend(records)
+            if any(
+                isinstance(rec, dict) and rec.get("end_state") == "unresolved" for rec in records
+            ):
+                fresh_unresolved_units.add(unit)
 
     def _emit_key_delta(
         unit: str,
@@ -7626,7 +7803,7 @@ def prepare_resume(
                 # digest-gated adoption below. Anything not proven dead
                 # reunites normally (a live writer needs fencing), as does
                 # anything a skip held for a live writer (#88R14-1).
-                to_consume.extend(_producer_files(content, registry_path))
+                _consume_verified_retry(_producer_files(content, registry_path))
                 continue
             proved, seed_digests, seed_absent = _cleanup_retry_proved(
                 uuid,
@@ -7650,29 +7827,38 @@ def prepare_resume(
                 proved_absent_now.update(seed_absent)
                 to_consume.extend(_producer_files(content, registry_path))
                 continue
-        if (
+        committed_waiting = (
+            staged_disposition.get(uuid) == "committed" and uuid not in session_uuids
+        )
+        legacy_waiting = (
             uuid in staged_collected
             and uuid not in validated_collected
-            and (
-                staged_disposition.get(uuid) == "committed"
-                or (staged_disposition.get(uuid) is None and uuid in validated_cleanup)
-            )
-        ):
+            and staged_disposition.get(uuid) is None
+            and uuid in validated_cleanup
+        )
+        if committed_waiting or legacy_waiting:
             # Silence without reunion authority (#88R28-2/#88R29-1): this
             # uuid was collected with no staged records, so gap fallback
             # would falsely heal committed evidence (or double-emit
-            # it). Non-strict implies sessionless (strict is
-            # records-or-session), so a committed disposition waits for
-            # its authorizing session instead -- as does a legacy
-            # (disposition-less) uuid with staged targets naming it,
-            # whose silence could be either. Bare legacy claims (no
-            # targets at all) still re-collect loud below: no natural
-            # write emits them, so they stay R10-4b alarms, never
-            # silent waits. Gap disposition reunites below: vacuous
-            # silence has nothing unpublished, so gap reunion is its
-            # first and only adjudication. This gates every branch
-            # below (fence, skip-held and unsettled-spawn reunion):
-            # nothing kills or collects undecidable evidence (#88R29-2).
+            # it). A committed disposition waits for its authorizing
+            # session -- even when staged records independently
+            # establish publication authority (#88R30-1): validated
+            # uuids bypassed this before, fencing live writers
+            # sessionless. A legacy (disposition-less) uuid with staged
+            # targets naming it waits too, its silence could be either
+            # (dev-transient: no released staging lacks dispositions).
+            # Bare legacy claims (no targets at all) still re-collect
+            # loud below: no natural write emits them, so they stay
+            # R10-4b alarms, never silent waits. Gap disposition
+            # reunites below: vacuous silence has nothing unpublished,
+            # so gap reunion is its first and only adjudication. This
+            # gates every branch below (fence, skip-held and
+            # unsettled-spawn reunion): nothing kills or collects
+            # undecidable evidence (#88R29-2).
+            if committed_waiting:
+                # Unresolved routing persists through rewrites
+                # independently of cleanup-target validity (#88R30-2).
+                deferred_routing[uuid] = "committed"
             deferral = _DeferProducerError(
                 uuid, None, source=registry_path.name, reason="committed-session"
             )
@@ -7887,6 +8073,21 @@ def prepare_resume(
                 stacklevel=2,
             )
             plan["unresolved"].append(exc.uuid)
+            deferred_unit = _deferred_unit_from_registry(reg_dir, exc.uuid)
+            if deferred_unit is None:
+                # No trusted evidence names the affected unit: the
+                # deferral cannot narrow to a rerun, so the resume
+                # refuses admission instead of leaving a possibly
+                # live producer's unit eligible (#88R30-5).
+                warnings.warn(
+                    f"producer {exc.uuid} deferred: {exc.detail}; unit unidentifiable; refusing",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["barrier_ok"] = False
+                _release_barrier_seal(root)
+                return plan
+            deferred_units.add(deferred_unit)
             continue
         if adopted is None:
             continue
@@ -7919,7 +8120,7 @@ def prepare_resume(
                 # proven by the adoption gate above. Skip-held producers
                 # reunite below instead (#88R15-2), as do producers with
                 # unflushed spawn children (#88R22-4).
-                to_consume.extend([sidecar_path, journal_path])
+                _consume_verified_retry([sidecar_path, journal_path])
                 continue
             proved, seed_digests, seed_absent = _cleanup_retry_proved(
                 uuid,
@@ -7936,17 +8137,24 @@ def prepare_resume(
                 proved_absent_now.update(seed_absent)
                 to_consume.extend([sidecar_path, journal_path])
                 continue
-        if (
+        committed_waiting = (
+            staged_disposition.get(uuid) == "committed" and uuid not in session_uuids
+        )
+        legacy_waiting = (
             uuid in staged_collected
             and uuid not in validated_collected
-            and (
-                staged_disposition.get(uuid) == "committed"
-                or (staged_disposition.get(uuid) is None and uuid in validated_cleanup)
-            )
-        ):
+            and staged_disposition.get(uuid) is None
+            and uuid in validated_cleanup
+        )
+        if committed_waiting or legacy_waiting:
             # Silence without reunion authority (see the registry
             # loop): gates every branch below including skip-held
-            # and unsettled-spawn reunion (#88R29-2).
+            # and unsettled-spawn reunion (#88R29-2). Committed waits
+            # even when validated (#88R30-1).
+            if committed_waiting:
+                # Unresolved routing persists through rewrites
+                # independently of cleanup-target validity (#88R30-2).
+                deferred_routing[uuid] = "committed"
             deferral = _DeferProducerError(
                 uuid, None, source=sidecar_path.name, reason="committed-session"
             )
@@ -8147,14 +8355,10 @@ def prepare_resume(
     adoption_retained = [*retained_probes, *retained_spawns]
     plan["fenced"].sort()
     plan["unresolved"].sort()
-    plan["skipped_units"] = sorted(
-        {
-            unit
-            for unit, records in plan["cache_records"].items()
-            if any(rec.get("end_state") == "unresolved" for rec in records)
-        }
-        | deferred_units
-    )
+    # Rerun eligibility derives from this pass's liveness (fresh
+    # unresolved records) and deferrals only (#88R30-6): a healed unit
+    # whose historical loss still reports must not stay skipped.
+    plan["skipped_units"] = sorted(fresh_unresolved_units | deferred_units)
     # The live subset of skipped units (#88R8-5): the runner reports
     # these as still-running producers and every other skip as
     # undecided evidence, so a quiescent rewrite conflict never reads
@@ -8182,6 +8386,14 @@ def prepare_resume(
         for uuid, disp in staged_disposition.items():
             if uuid in collected_union:
                 disposition_union.setdefault(uuid, disp)
+        # Unresolved routing carries independently of cleanup-target
+        # validity (#88R30-2): a deferral re-records its committed
+        # wait even when its targets went stale and its uuid left the
+        # collected union. Deferred uuids stay OUT of collected (no
+        # suppression authority is granted); the gate re-fires from the
+        # disposition alone while evidence persists.
+        for uuid, disp in deferred_routing.items():
+            disposition_union.setdefault(uuid, disp)
         # Self-healing count (#88R11-5): the staged invariant is
         # consumed == len(collected_uuids); a corrupt staged count
         # recomputes from the validated union instead of persisting.
