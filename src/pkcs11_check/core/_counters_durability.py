@@ -2264,7 +2264,9 @@ def _replay_probe_tmp_rows(
     orphan_birth: int | None = None,
     producer_uuid: str,
     digests: dict[str, str] | None = None,
-    skipped_out: set[str] | None = None,
+    seen_out: dict[str, str] | None = None,
+    quarantined_out: set[str] | None = None,
+    bound_out: set[str] | None = None,
 ) -> tuple[list[Any], bool, bool]:
     """Replay the best same-probe rewrite tmp into orphan rows (#88).
 
@@ -2282,9 +2284,12 @@ def _replay_probe_tmp_rows(
     loss keys/scalar always win (a tmp's marginal loss evidence stays
     dropped, as before -- counters-only replay). Raises
     ``_DeferProducerError`` on a persistently unreadable candidate.
-    Gated-out and refused tmp paths append to ``skipped_out`` when
-    given, so the final revalidation treats adjudicated skips as
-    known instead of new evidence (#88R36-4).
+    Gated-out and refused tmp digests record in ``seen_out`` when
+    given, so the final revalidation re-hashes adjudicated skips
+    instead of trusting them blind (#88R38-4); this pass's own
+    quarantine moves record in ``quarantined_out`` so the
+    disappearance check does not mistake an intentional move for a
+    vanished tmp.
     Returns ``(rows, divergent, refused_garbage)``: a held conflict
     the caller must not silently clear when the baseline is covered
     (#88R8-2), plus whether any gated tmp refused for malformed rows
@@ -2293,7 +2298,8 @@ def _replay_probe_tmp_rows(
     ``digests`` records ``{path: sha256}`` for torn candidates and
     gated ones only (None discards: live ingest has no staging to
     bind to): a rejected replacement must never inherit cleanup
-    authorization from the read that refused it (#88R16-3).
+    authorization from the read that refused it (#88R16-3). Bound
+    paths record in ``bound_out`` when given (#88R38-2).
     """
     quarantined = _list_tmp_paths(path.parent, f"{path.name}.quarantined-")
     if quarantined is None:
@@ -2331,10 +2337,12 @@ def _replay_probe_tmp_rows(
             # informational scan of the same tmp (#88R15-3)).
             if digest is not None and digests is not None:
                 digests[str(tmp)] = digest
+                if bound_out is not None:
+                    bound_out.add(str(tmp))
             continue
         if not _gates(payload):
-            if skipped_out is not None:
-                skipped_out.add(str(tmp))
+            if seen_out is not None and digest is not None:
+                seen_out[str(tmp)] = digest
             continue
         assert isinstance(payload, dict)
         if _probe_rows_garbage_count(payload["counters"]) > 0:
@@ -2349,8 +2357,8 @@ def _replay_probe_tmp_rows(
                 UserWarning,
                 stacklevel=2,
             )
-            if skipped_out is not None:
-                skipped_out.add(str(tmp))
+            if seen_out is not None and digest is not None:
+                seen_out[str(tmp)] = digest
             continue
         if not _probes_lost_wellformed(payload):
             # A mistyped loss scalar taints the whole tmp (#88R23-5):
@@ -2363,11 +2371,13 @@ def _replay_probe_tmp_rows(
                 UserWarning,
                 stacklevel=2,
             )
-            if skipped_out is not None:
-                skipped_out.add(str(tmp))
+            if seen_out is not None and digest is not None:
+                seen_out[str(tmp)] = digest
             continue
         if digest is not None and digests is not None:
             digests[str(tmp)] = digest
+            if bound_out is not None:
+                bound_out.add(str(tmp))
         gated.append((tmp, payload["counters"]))
     if quarantined and _divergence_vetoed(quarantined, _gates, producer_uuid):
         # A previous pass already judged this probe divergent but died
@@ -2375,6 +2385,11 @@ def _replay_probe_tmp_rows(
         # conflict without replaying (#88R4-F3). The orphan rows win.
         # Only a same-child, same-seq quarantine vetoes (#88R5-3).
         kept, dropped = _quarantine_all([tmp for tmp, _ in gated])
+        if quarantined_out is not None:
+            for kept_name in kept:
+                quarantined_out.add(
+                    str(path.parent / kept_name.replace(".quarantined-", ".tmp-", 1))
+                )
         prior = ", ".join(path.name for path in quarantined)
         detail = f"quarantined: {prior}"
         if kept:
@@ -2400,6 +2415,11 @@ def _replay_probe_tmp_rows(
     )
     if divergent:
         kept, dropped = _quarantine_all([tmp for tmp, _ in gated])
+        if quarantined_out is not None:
+            for kept_name in kept:
+                quarantined_out.add(
+                    str(path.parent / kept_name.replace(".quarantined-", ".tmp-", 1))
+                )
         warnings.warn(
             f"divergent probe tmps for {path.name} quarantined: "
             f"{', '.join(kept)} (irreconcilable rewrites; the orphan rows win)"
@@ -2627,7 +2647,7 @@ def _probe_spawn_identity(
     seq: int,
     slot_name: str,
     sidecar: Any | None,
-) -> tuple[int, int | None] | None:
+) -> tuple[int, int | None, bool] | None:
     """Resolve a pid-less probe snapshot's writer via spawn records (#88R33-4).
 
     Unions parent-side sidecar records with child-side spawn files
@@ -2635,17 +2655,23 @@ def _probe_spawn_identity(
     probe's seq whose slot spelling identifies this root slot
     (full-path identity via :func:`_spawn_slot_in_root`, never
     basename) identify the writer. A
-    unique writer resolves to ``(pid, birth-or-None)`` (same pid from
-    both sources merges, preferring a stamped birth); anything else
-    reads None (no match, ambiguous writers or births, a
-    content-mute file hinting this seq, a malformed parent-side
+    unique writer resolves to ``(pid, birth-or-None, certain)`` (same
+    pid from both sources merges, preferring a stamped birth);
+    anything else reads None (no match, ambiguous writers or births,
+    a content-mute file hinting this seq, a malformed parent-side
     record). A slot mismatch on the only seq match also reads None
     (an aliased slot's writer is undecidable). Callers treat None as
-    quiescence-unprovable and defer. Never raises except the
+    quiescence-unprovable and defer. The certainty flag travels with
+    the resolution (#88R38-1): certain iff every merged record carries
+    an absolute spelling, so a fence gate deciding from this
+    resolution never re-scans (a record vanishing between the two
+    reads would vacuous-True the fence into signaling a writer its
+    own observation no longer supports). Never raises except the
     spawn-reader's own enum-spawn deferral (an unlistable spawn dir
     hides launches).
     """
     writers: dict[int, set[int | None]] = {}
+    certain = True
     if isinstance(sidecar, dict):
         records = sidecar.get("spawned_children")
         if isinstance(records, list):
@@ -2657,6 +2683,8 @@ def _probe_spawn_identity(
                     continue
                 if _spawn_slot_in_root(root, str(entry.get("slot"))) != slot_name:
                     return None
+                if not os.path.isabs(str(entry.get("slot", ""))):
+                    certain = False
                 writers.setdefault(entry["pid"], set()).add(entry.get("birth_token"))
         elif records is not None:
             return None
@@ -2670,6 +2698,8 @@ def _probe_spawn_identity(
             continue
         if _spawn_slot_in_root(root, str(entry.get("slot"))) != slot_name:
             return None
+        if not os.path.isabs(str(entry.get("slot", ""))):
+            certain = False
         assert isinstance(entry["pid"], int)
         writers.setdefault(entry["pid"], set()).add(entry.get("birth_token"))
     if len(writers) != 1:
@@ -2678,7 +2708,7 @@ def _probe_spawn_identity(
     stamped = {birth for birth in births if isinstance(birth, int)}
     if len(stamped) > 1:
         return None
-    return (pid, next(iter(stamped)) if stamped else None)
+    return (pid, next(iter(stamped)) if stamped else None, certain)
 
 
 def _spawn_basename_matches(slot: str, slot_name: str) -> bool:
@@ -2696,44 +2726,6 @@ def _spawn_basename_matches(slot: str, slot_name: str) -> bool:
     if flat == ".." or flat.startswith("../") or "/../" in flat or flat.endswith("/.."):
         return False
     return flat.rsplit("/", 1)[-1] == slot_name
-
-
-def _slot_launches_fence_certain(
-    root: Path,
-    worker_uuid: str,
-    seq: int,
-    slot_name: str,
-    sidecar: Any | None,
-) -> bool:
-    """Whether every exact-slot launch carries an anchored spelling (#88R36-1).
-
-    A fence needs the writer's anchor: absolute spellings prove it,
-    while unversioned relatives (bare or directory-qualified — the
-    record format never defined them against any root) are hold-only
-    evidence when the launch supplies the writer identity. Vacuously
-    true when no launch matches (nothing uncertain). Never raises
-    except the spawn-reader's own enum-spawn deferral.
-    """
-    if isinstance(sidecar, dict):
-        records = sidecar.get("spawned_children")
-        if isinstance(records, list):
-            for entry in records:
-                if not isinstance(entry, dict) or entry.get("probe_seq") != seq:
-                    continue
-                if _spawn_slot_in_root(root, str(entry.get("slot"))) != slot_name:
-                    continue
-                if not os.path.isabs(str(entry.get("slot", ""))):
-                    return False
-    for path, entry, _digest in _read_spawn_file_records(root, worker_uuid):
-        if entry is None:
-            continue
-        if entry.get("probe_seq") != seq:
-            continue
-        if _spawn_slot_in_root(root, str(entry.get("slot"))) != slot_name:
-            continue
-        if not os.path.isabs(str(entry.get("slot", ""))):
-            return False
-    return True
 
 
 def _slot_has_live_claimant(
@@ -2807,25 +2799,31 @@ def _revalidate_adopted_evidence(
     sidecar: Any | None,
     consumed: list[Path],
     digests: dict[str, str] | None,
-    replay_skipped: set[str] | None = None,
+    replay_seen: dict[str, str] | None = None,
+    replay_quarantined: set[str] | None = None,
 ) -> None:
     """Revalidate adjudicated evidence before the caller publishes (#88R36-4).
 
     A launch landing after adjudication, swapped bytes, or a new
     returns-tmp must defer the producer instead of publishing through
     stale evidence. Re-hashes consumed paths with bound digests,
-    re-lists tmp inventories per consumed slot against digest-bound
-    (read or staged-verified) names plus replay-adjudicated skips, and
+    compares each consumed slot's tmp inventory against the observed
+    one in both directions -- every adjudicated tmp (bound or
+    replay-seen) must still be present and byte-identical, and every
+    surviving tmp must have been adjudicated or read debris -- and
     re-scans exact-slot launches (exact plus basename fallback).
-    Raises ``_DeferProducerError`` on any divergence; skipped silently
-    when no digest map rides (legacy direct calls). Slot derivation:
-    probe basenames directly, markers via their slot; spawn records
-    re-verify by bytes only. Torn and content-free tmps stay debris.
-    Never returns normally diverged.
+    This pass's own quarantine moves are accounted, never mistaken
+    for vanished tmps (#88R38-4). Raises ``_DeferProducerError`` on
+    any divergence; skipped silently when no digest map rides
+    (legacy direct calls). Slot derivation: probe basenames
+    directly, markers via their slot; spawn records re-verify by
+    bytes only. Torn and content-free tmps stay debris. Never
+    returns normally diverged.
     """
     if digests is None:
         return
-    known_skipped = replay_skipped if replay_skipped is not None else set()
+    seen = replay_seen if replay_seen is not None else {}
+    moved = replay_quarantined if replay_quarantined is not None else set()
     for path in consumed:
         expected = digests.get(str(path))
         if expected is None:
@@ -2841,11 +2839,24 @@ def _revalidate_adopted_evidence(
         elif path.name.startswith(PROBE_FILE_PREFIX):
             slots.add(path.name)
     for slot in slots:
+        slot_base = str(root / slot)
+        observed: dict[str, str] = {}
+        for known_path, known_digest in digests.items():
+            if known_path != slot_base and _tmp_base_str(known_path) == slot_base:
+                observed[known_path] = known_digest
+        for seen_path, seen_digest in seen.items():
+            if seen_path != slot_base and _tmp_base_str(seen_path) == slot_base:
+                observed.setdefault(seen_path, seen_digest)
+        for known_path, known_digest in observed.items():
+            if known_path in moved:
+                continue
+            if _sha256_regular_file_hex(Path(known_path)) != known_digest:
+                raise _DeferProducerError(worker_uuid, None, source=Path(known_path).name)
         fresh = _list_tmp_paths(root, f"{slot}.tmp-")
         if fresh is None:
             raise _DeferProducerError(worker_uuid, None, source=slot)
         for tmp in fresh:
-            if str(tmp) in digests or str(tmp) in known_skipped:
+            if str(tmp) in observed and str(tmp) not in moved:
                 continue
             tmp_status, tmp_payload = _read_json_evidence(tmp)
             if tmp_status == "gone":
@@ -2873,6 +2884,7 @@ def _adopt_probe_orphans(
     heal_orphans: bool = True,
     fence_live: bool,
     digests: dict[str, str] | None = None,
+    bound_out: set[str] | None = None,
 ) -> tuple[
     dict[str, Any] | None,
     list[dict[str, Any]],
@@ -2895,7 +2907,8 @@ def _adopt_probe_orphans(
     ``{path: sha256}`` for every
     probe file read (None discards): the barrier stages them so a
     retry proves byte-identity before acting on the old adjudication
-    (#88R13-2).
+    (#88R13-2). Replay-bound tmp paths record in ``bound_out`` when
+    given (#88R38-2).
 
     ``heal_orphans`` is False on the committed path (a live session is
     authoritative): an uncovered orphan was never absorbed, so healing
@@ -2980,7 +2993,8 @@ def _adopt_probe_orphans(
     seq_slots: dict[int, set[str]] = {}
     rewrite_held_slots: set[str] = set()
     observed_slot_tmps: dict[str, set[str]] = {}
-    replay_skipped: set[str] = set()
+    replay_seen: dict[str, str] = {}
+    replay_quarantined: set[str] = set()
     slot_owners: dict[str, set[tuple[str, int] | None]] = {}
     receipt_first_snapshot: dict[
         tuple[str, int], tuple[list[Any], frozenset[tuple[str, int]], int]
@@ -3080,7 +3094,7 @@ def _adopt_probe_orphans(
         names accumulate monotonically; the reconcile clears
         adjudicated slots.
         """
-        presence = _slot_tmp_presence(root, slot, digests)
+        presence = _slot_tmp_presence(root, slot, digests, bound_out)
         if presence is None:
             rewrite_held_slots.add(slot)
             return
@@ -3359,7 +3373,9 @@ def _adopt_probe_orphans(
                 scan_snapshot_birth, scan_resolved[1]
             ):
                 if _incarnation_alive(scan_resolved[0], scan_resolved[1]):
-                    live_writers.setdefault((scan_child, scan_seq), []).append(scan_resolved)
+                    live_writers.setdefault((scan_child, scan_seq), []).append(
+                        (scan_resolved[0], scan_resolved[1])
+                    )
                     live_marker_names.add(scan_path.name)
             else:
                 undecided_writer_receipts.add((scan_child, scan_seq))
@@ -3486,6 +3502,7 @@ def _adopt_probe_orphans(
         marker_gate_pid = marker_pid
         marker_gate_birth = validated_birth
         marker_spawn_resolved = False
+        marker_spawn_certain = False
         marker_undecided = False
         if not (type(marker_gate_pid) is int and marker_gate_pid > 0):
             # Pid-less/invalid-pid markers resolve their writer through
@@ -3507,6 +3524,7 @@ def _adopt_probe_orphans(
                     marker_resolved[1] if is_birth_token(marker_resolved[1]) else None
                 )
                 marker_spawn_resolved = True
+                marker_spawn_certain = marker_resolved[2]
             else:
                 marker_undecided = True
         marker_live_now = (
@@ -3606,15 +3624,11 @@ def _adopt_probe_orphans(
                 # Proven death only (#88R32-4): an I/O fault defers.
                 if not _pid_dead_proven(marker_gate_pid):
                     raise _DeferProducerError(worker_uuid, marker_gate_pid)
-            elif (
-                marker_spawn_resolved
-                and marker_slot_name is not None
-                and not _slot_launches_fence_certain(
-                    root, worker_uuid, marker_seq, marker_slot_name, sidecar
-                )
-            ):
+            elif marker_spawn_resolved and not marker_spawn_certain:
                 # Unanchored spawn identity never authorizes a fence
-                # (#88R36-1).
+                # (#88R36-1): the certainty travels with the resolution
+                # itself (#88R38-1), never via a re-scan a vanishing
+                # record could vacuous-True.
                 raise _DeferProducerError(worker_uuid, marker_gate_pid)
             elif not _terminate_verified(marker_gate_pid, marker_gate_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, marker_gate_pid)
@@ -3884,6 +3898,7 @@ def _adopt_probe_orphans(
             continue
         gate_pid, gate_birth = orphan_pid, orphan_birth
         gate_spawn_resolved = False
+        gate_spawn_certain = False
         if gate_pid is None:
             # Pid-less probe snapshot (#88R33-4): quiescence comes from
             # the matching spawn record; when that proof is
@@ -3895,7 +3910,7 @@ def _adopt_probe_orphans(
             # nothing (#88R34-6).
             resolved = _probe_spawn_identity(root, worker_uuid, seq, path.name, sidecar)
             if resolved is not None and _spawn_births_agree(orphan_birth, resolved[1]):
-                gate_pid, gate_birth = resolved
+                gate_pid, gate_birth, gate_spawn_certain = resolved
                 gate_spawn_resolved = True
         if gate_birth is not None and not is_birth_token(gate_birth):
             # Malformed-as-missing for signaling (#88R34-4): only a
@@ -3935,13 +3950,13 @@ def _adopt_probe_orphans(
                 # Proven death only (#88R32-4): an I/O fault defers.
                 if not _pid_dead_proven(gate_pid):
                     raise _DeferProducerError(worker_uuid, gate_pid)
-            elif gate_spawn_resolved and not _slot_launches_fence_certain(
-                root, worker_uuid, seq, path.name, sidecar
-            ):
+            elif gate_spawn_resolved and not gate_spawn_certain:
                 # Unanchored spawn identity never authorizes a fence
                 # (#88R36-1): the launch supplies the writer but no
                 # verifiable anchor, so the pass defers instead of
-                # signaling a possibly-foreign pid.
+                # signaling a possibly-foreign pid. The certainty
+                # travels with the resolution itself (#88R38-1), never
+                # via a re-scan a vanishing record could vacuous-True.
                 raise _DeferProducerError(worker_uuid, gate_pid)
             elif not _terminate_verified(gate_pid, gate_birth, 5.0):
                 raise _DeferProducerError(worker_uuid, gate_pid)
@@ -4016,7 +4031,9 @@ def _adopt_probe_orphans(
             orphan_birth=orphan_birth,
             producer_uuid=worker_uuid,
             digests=digests,
-            skipped_out=replay_skipped,
+            seen_out=replay_seen,
+            quarantined_out=replay_quarantined,
+            bound_out=bound_out,
         )
         if replay_refused_garbage:
             receipt_evidence_dirty.add((child_uuid, seq))
@@ -4111,7 +4128,9 @@ def _adopt_probe_orphans(
                 raise _DeferProducerError(
                     worker_uuid, None, source=cand_path.name, reason="live-writer"
                 )
-            cand_pid, cand_birth_valid = cand_fresh
+            cand_pid, cand_birth_valid, cand_certain = cand_fresh
+        else:
+            cand_certain = False
         if (
             type(cand_pid) is int
             and cand_pid > 0
@@ -4134,6 +4153,12 @@ def _adopt_probe_orphans(
                 # Proven death only (#88R32-4): an I/O fault defers.
                 if not _pid_dead_proven(cand_pid):
                     raise _DeferProducerError(worker_uuid, cand_pid)
+            elif cand_resolved and not cand_certain:
+                # Unanchored spawn identity never authorizes a fence
+                # (#88R36-1/#88R38-1): the fresh resolution's own
+                # certainty gates the finalization signal, never a
+                # re-scan.
+                raise _DeferProducerError(worker_uuid, cand_pid)
             elif not _terminate_verified(cand_pid, cand_birth_valid, 5.0):
                 raise _DeferProducerError(worker_uuid, cand_pid)
         cand_group = receipt_slots.get(cand_key, set()) | seq_slots.get(cand_seq, set())
@@ -4344,7 +4369,15 @@ def _adopt_probe_orphans(
         assert isinstance(spawn_pid, int)
         if not _incarnation_alive(spawn_pid, spawn_birth if isinstance(spawn_birth, int) else None):
             consumed.append(spawn_path)
-    _revalidate_adopted_evidence(root, worker_uuid, sidecar, consumed, digests, replay_skipped)
+    _revalidate_adopted_evidence(
+        root,
+        worker_uuid,
+        sidecar,
+        consumed,
+        digests,
+        replay_seen=replay_seen,
+        replay_quarantined=replay_quarantined,
+    )
     adopted = sum(adopted_lost)
     skipped_live = len(skipped) > 0
     if merged["total_calls"] == 0:
@@ -4425,13 +4458,17 @@ def _gap_for_producer(
     journal_lines: list[str],
     committed_entries: set[tuple[str, str]],
     worker_uuid: str,
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
-    """Compute one dead producer's gap ``(block, receipts, conflict)``.
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool, bool]:
+    """Compute one dead producer's gap ``(block, receipts, conflict, included)``.
 
     ``block`` is None when nothing recoverable remains (no partial is
     emitted, only the lost record); ``conflict`` marks evidence that
     cannot be reconciled and must surface as a ``conflict`` end state
-    rather than invented or doubled counts. n counts content-valid journal
+    rather than invented or doubled counts; ``included`` reports
+    whether the sidecar snapshot folded into the block (a stale
+    subsumed snapshot, or no block at all, includes nothing --
+    duplicates under it must never bind through another window's
+    aggregate cover, #88R38-3). n counts content-valid journal
     windows anywhere in the file; tears only flag (an unparseable tail is
     the benign crash-mid-append shape; anything else unparseable, or a
     parseable line with invalid window content, flags conflict while valid
@@ -4445,33 +4482,37 @@ def _gap_for_producer(
     receipts: list[dict[str, Any]] = []
     if sidecar is None:
         if not journal_lines:
-            return None, [], False
-        return None, [], True
+            return None, [], False, False
+        return None, [], True, False
     if not isinstance(sidecar, dict):
-        return None, [], True
+        return None, [], True, False
     in_progress = sidecar.get("in_progress")
     if not is_module_first_block(in_progress):
-        return None, [], True
+        return None, [], True, False
     receipts.extend(_valid_receipts(sidecar.get("receipts")))
     windows, parse_conflict = _valid_journal_windows(journal_lines)
     conflict = parse_conflict
     n = len(windows)
     seq = sidecar.get("journal_seq")
     gap = {"total_calls": 0, "by_module": {}}
+    included = False
     if not journal_lines:
         if _is_nonneg_int(seq) and seq != 0:
             # A mark with no journal means every append vanished.
-            return None, receipts, True
+            return None, receipts, True, False
         merge_module_first(gap, in_progress)
+        included = True
     elif not _is_nonneg_int(seq):
         merge_module_first(gap, in_progress)
         conflict = True
+        included = True
     else:
         assert isinstance(seq, int)
         if seq > n:
-            return None, receipts, True
+            return None, receipts, True, False
         if seq == n:
             merge_module_first(gap, in_progress)
+            included = True
         # Else (seq < n): the stale snapshot is subsumed by the first valid
         # window beyond the mark — fold every valid window, exclude it.
         for window in windows:
@@ -4482,10 +4523,10 @@ def _gap_for_producer(
             receipts.extend(_valid_receipts(window.get("receipts")))
             merge_module_first(gap, window["block"])
     if gap["total_calls"] == 0:
-        return None, receipts, conflict
+        return None, receipts, conflict, False
     if not is_module_first_block(gap):
-        return None, receipts, True
-    return gap, receipts, conflict
+        return None, receipts, True, False
+    return gap, receipts, conflict, included
 
 
 def _journal_for_sidecar(sidecar_path: Path) -> Path:
@@ -4578,7 +4619,10 @@ def _marker_slot_name(marker_name: str) -> str | None:
 
 
 def _slot_tmp_presence(
-    root: Path, slot_name: str, digests: dict[str, str] | None = None
+    root: Path,
+    slot_name: str,
+    digests: dict[str, str] | None = None,
+    bound_out: set[str] | None = None,
 ) -> tuple[set[str], set[str]] | None:
     """Present and return-carrying rewrite tmp names at a slot (#88R22-3).
 
@@ -4586,7 +4630,8 @@ def _slot_tmp_presence(
     enumeration itself faults. Debris digests record exactly as the
     unresolved check below (torn or returnless reads only); a tmp
     carrying returns never inherits cleanup authorization from this
-    informational scan (#88R17-3). Never raises.
+    informational scan (#88R17-3). Debris paths record in
+    ``bound_out`` when given (#88R38-2). Never raises.
     """
     tmps = _list_tmp_paths(root, f"{slot_name}.tmp-")
     if tmps is None:
@@ -4601,6 +4646,8 @@ def _slot_tmp_presence(
         if status == "torn":
             if digest is not None and digests is not None:
                 digests.setdefault(str(tmp), digest)
+                if bound_out is not None:
+                    bound_out.add(str(tmp))
             continue
         if status != "ok":
             return None
@@ -4609,11 +4656,16 @@ def _slot_tmp_presence(
             continue
         if digest is not None and digests is not None:
             digests.setdefault(str(tmp), digest)
+            if bound_out is not None:
+                bound_out.add(str(tmp))
     return (present, with_returns)
 
 
 def _slot_rewrite_unresolved(
-    root: Path, slot_name: str, digests: dict[str, str] | None = None
+    root: Path,
+    slot_name: str,
+    digests: dict[str, str] | None = None,
+    bound_out: set[str] | None = None,
 ) -> bool:
     """Whether a slot keeps an undecided rewrite tmp (#88R10-2).
 
@@ -4624,9 +4676,10 @@ def _slot_rewrite_unresolved(
     until the slot's latest word is provable. ``digests`` records
     debris only (torn or returnless reads): a tmp carrying returns the
     replay gate refused must never inherit cleanup authorization from
-    this informational scan (#88R17-3). None discards.
+    this informational scan (#88R17-3). Debris paths record in
+    ``bound_out`` when given (#88R38-2). None discards.
     """
-    presence = _slot_tmp_presence(root, slot_name, digests)
+    presence = _slot_tmp_presence(root, slot_name, digests, bound_out)
     return presence is None or len(presence[1]) > 0
 
 
@@ -4846,13 +4899,13 @@ def _seed_staged_tmp_digests(
     """Seed byte-verified staged rewrite-tmp digests for retry consume (#88R34-1).
 
     A tmp whose digest an earlier pass bound (its reunion published
-    every field) but whose prune faulted stages via the tmp-base rule;
-    the retry inherits that authority only after byte-verifying (an
-    evolved tmp never inherits cleanup authority, #88R31-1), so
-    transient prune faults converge instead of holding forever.
-    First-wins: this pass's own bindings beat carried staging. Only
-    tmps under verified-present bases seed (parentless tmps have no
-    prune to authorize). Never raises.
+    every field) but whose prune faulted re-stages via the
+    carried-authority rule; the retry inherits that authority only
+    after byte-verifying (an evolved tmp never inherits cleanup
+    authority, #88R31-1), so transient prune faults converge instead
+    of holding forever. First-wins: this pass's own bindings beat
+    carried staging. Only tmps under verified-present bases seed
+    (parentless tmps have no prune to authorize). Never raises.
     """
     for stage_path, stage_digest in staged_digests.items():
         if ".tmp-" not in Path(stage_path).name:
@@ -5627,7 +5680,7 @@ def collect_unit(
         if verify_producer(content) != "dead":
             continue
         try:
-            records, consumed, skipped_live, tmp_reports = _collect_dead_producer(
+            records, consumed, skipped_live, tmp_reports, _checkpoint = _collect_dead_producer(
                 content,
                 entries,
                 uuid,
@@ -5771,9 +5824,28 @@ def collect_unit(
             continue
         if unit_routed_committed:
             torn_stamp_role, torn_stamp_isolation = _sidecar_stamp(sidecar)
-            replayed_loss, held_tmps, bound_tmps, loss_infos = _committed_tmp_loss(
-                root, uuid, tmp_reports, orphan_keys, read_digests
-            )
+            try:
+                replayed_loss, held_tmps, bound_tmps, loss_infos = _committed_tmp_loss(
+                    root,
+                    uuid,
+                    tmp_reports,
+                    orphan_keys,
+                    read_digests,
+                    None,
+                    sidecar.get("run_id") if isinstance(sidecar, dict) else None,
+                    sidecar.get("unit") if isinstance(sidecar, dict) else None,
+                    sidecar.get("attempt") if isinstance(sidecar, dict) else None,
+                )
+            except _DeferProducerError as exc:
+                # A scan-only tmp fault defers like an adoption fault
+                # (#88R38-7): the claim waits a coherent retry, nothing
+                # publishes and nothing consumes.
+                warnings.warn(
+                    f"producer {exc.uuid} deferred: {exc.detail}; evidence retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
             consumed.extend(bound_tmps)
             if held_tmps:
                 _warn_held_loss_tmps(held_tmps, loss_infos)
@@ -5798,7 +5870,9 @@ def collect_unit(
                     _consume_producer_files([sidecar_path, journal_path], read_digests)
                 _consume_producer_files(consumed, read_digests)
             continue
-        block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+        block, receipts, conflict, _included = _gap_for_producer(
+            sidecar, journal_lines, entries, uuid
+        )
         conflict = conflict or froze_alias or divergent_tmps
         _mark_reports_discarded_by_journal(sidecar, journal_lines, tmp_reports)
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -6356,6 +6430,8 @@ def _bind_accounted_tmp_digests(
     staged_targets: dict[str, str],
     emission_form: str,
     digests: dict[str, str] | None,
+    bound_out: set[str] | None = None,
+    published: Mapping[str, str] | None = None,
 ) -> None:
     """Promote replayed-tmp digests with final-accounting authority (#88R34-1).
 
@@ -6366,12 +6442,16 @@ def _bind_accounted_tmp_digests(
     in a way counts are not, #88R36-2). Full emission binds on durable
     aggregate cover; delta emission binds only tmp-authorized digests
     (bound by a publishing pass and staged byte-identical) or
-    base-staged duplicates whose staged records cover every field (a
-    staged baseline proves identity, never publication). Full loss and
-    scalar sit inside durable loss; full coverage sits inside durable
-    receipts only (loss keys never cover a suppression claim, #88R35-2).
-    Failed replay gates never bind. Binding assigns (replay wins,
-    #88R15-3). None discards. Never raises.
+    duplicates of a proved-published checkpoint whose staged records
+    cover every field (``published`` maps checkpoint paths to the
+    exact baseline bytes a staged full emission folded; a staged
+    pathname alone proves identity, never publication, #88R38-3).
+    Full loss and scalar sit inside durable loss; full coverage sits
+    inside durable receipts only (loss keys never cover a suppression
+    claim, #88R35-2). Failed replay gates never bind. Binding assigns
+    (replay wins, #88R15-3) and records the path in ``bound_out``
+    when given (the barrier's staging predicate stages bound tmps
+    only, #88R38-2). None discards. Never raises.
     """
     if digests is None:
         return
@@ -6428,6 +6508,8 @@ def _bind_accounted_tmp_digests(
         verdict = report.get("verdict")
         if verdict == "debris":
             digests[str(path)] = digest
+            if bound_out is not None:
+                bound_out.add(str(path))
             continue
         if verdict != "candidate":
             continue
@@ -6444,14 +6526,22 @@ def _bind_accounted_tmp_digests(
         if emission_form == "delta":
             if staged_targets.get(path) != digest:
                 # No prior pass authorized this exact tmp: only a
-                # base-staged duplicate whose staged records cover
-                # every field converges here.
+                # duplicate of a proved-published checkpoint whose
+                # staged records cover every field converges here.
+                # The base must match a publication proof
+                # byte-identically: a staged pathname proves
+                # identity, never publication, and a staged
+                # aggregate can coincide with unpublished returns
+                # (#88R37-3/#88R38-3).
                 vector = report.get("vector")
                 staged_returns = staged_cover.get("returns", {})
+                base = _tmp_base_str(path)
+                proved = published.get(base) if published is not None else None
                 if (
                     not isinstance(vector, dict)
                     or vector
-                    or _tmp_base_str(path) not in staged_targets
+                    or proved is None
+                    or digests.get(base) != proved
                     or not isinstance(staged_returns, dict)
                     or any(
                         staged_returns.get(key, 0) < count for key, count in full_returns.items()
@@ -6470,6 +6560,8 @@ def _bind_accounted_tmp_digests(
         if not isinstance(full_coverage, set) or not full_coverage <= durable_coverage:
             continue
         digests[str(path)] = digest
+        if bound_out is not None:
+            bound_out.add(str(path))
 
 
 def _replay_orphan_tmps(
@@ -6602,6 +6694,12 @@ def _replay_orphan_tmps(
         merged_sides.append(merged)
         vector = _block_returns_diff(merged.get("in_progress"), committed_prog)
         vectors.append(vector)
+        if not _coverage_keyset(payload) <= _coverage_keyset(committed):
+            # Coverage-refused: the replay took nothing (a suppression
+            # checkpoint must never publish through its duplicate's
+            # aggregate, #88R38-6). Labeled refused, never candidate.
+            reports.append({"path": str(tmp), "digest": read_digest, "verdict": "refused"})
+            continue
         side_prog = payload.get("in_progress")
         merged_prog = merged.get("in_progress")
         side_scalar = payload.get("probes_lost")
@@ -6621,6 +6719,7 @@ def _replay_orphan_tmps(
                 "dropped": _block_returns_diff(side_prog, merged_prog),
                 "full_returns": full_returns,
                 "full_loss": _loss_keyset(payload),
+                "approved_loss": _loss_keyset(merged) - _loss_keyset(committed),
                 "full_scalar": side_scalar if _is_nonneg_int(side_scalar) else None,
                 "full_coverage": _coverage_keyset(payload),
             }
@@ -7377,16 +7476,26 @@ def _replay_orphan_sidecar(
 
 
 def _parentless_tmp_loss_infos(
-    root: Path, uuid: str
+    root: Path,
+    uuid: str,
+    producer_run: str | None = None,
+    producer_unit: str | None = None,
+    producer_attempt: int | None = None,
 ) -> tuple[set[tuple[str, int]], list[dict[str, Any]]]:
     """Fold parentless rewrite-tmp loss for committed claims (#88R36-6).
 
     Returns ``(keys, infos)``: the union of wellformed loss keys from
-    filename- and body-attributed parentless tmps, plus per-tmp infos
-    (path, digest, keys, scalar, scalar-ok, count-bearing) for the
-    loss-only binding decision. Torn, foreign, and malformed bodies
-    skip (debris or another producer's); unreadable tmps defer (an
-    I/O fault is never a skip). Never returns normally on fault.
+    session-bound parentless tmps, plus per-tmp infos (path, digest,
+    keys, approved, scalar, scalar-ok, count-bearing, receipt-bearing,
+    malformed) for the loss-only binding decision. Only genuinely
+    parentless tmps scan: a present baseline means the replay
+    verdict governs (candidate, refused, or debris -- never a second
+    opinion here). Publication needs the filename and the body bound
+    to the same authoritative session (uuid, run, unit, attempt);
+    anything else skips as foreign or stale (#88R38-6). Torn,
+    foreign-session, and malformed bodies skip (debris, another
+    session's, or undecidable); unreadable tmps defer (an I/O fault
+    is never a skip). Never returns normally on fault.
     """
     keys: set[tuple[str, int]] = set()
     infos: list[dict[str, Any]] = []
@@ -7395,6 +7504,11 @@ def _parentless_tmp_loss_infos(
         raise _DeferProducerError(uuid, None, source=root.name, reason="enum-tmp")
     for tmp in candidates:
         if ".tmp-" not in tmp.name:
+            continue
+        if _path_state(Path(_tmp_base_str(str(tmp)))) != "missing":
+            # A present baseline owns this rewrite: the replay
+            # verdict governs it, so the parentless scan stands
+            # down instead of reconsidering a refused rewrite.
             continue
         status, payload, digest = _read_json_evidence_digested(tmp)
         if status == "gone":
@@ -7405,39 +7519,75 @@ def _parentless_tmp_loss_infos(
             continue
         if payload.get("worker_uuid") != uuid:
             continue
+        if not _tmp_session_bound(payload, producer_run, producer_unit, producer_attempt):
+            continue
         tmp_keys = _loss_keyset(payload)
         scalar = payload.get("probes_lost")
-        block = payload.get("in_progress")
-        total_calls = block.get("total_calls") if isinstance(block, dict) else None
-        count_bearing = (
-            isinstance(total_calls, int) and not isinstance(total_calls, bool) and total_calls > 0
+        in_progress = payload.get("in_progress")
+        counters = payload.get("counters")
+        malformed = (in_progress is not None and not is_module_first_block(in_progress)) or (
+            isinstance(counters, list) and _probe_rows_garbage_count(counters) > 0
         )
         infos.append(
             {
                 "path": str(tmp),
                 "digest": digest,
                 "keys": tmp_keys,
+                "approved": set(tmp_keys),
                 "scalar": scalar if _is_nonneg_int(scalar) else None,
                 "scalar_ok": scalar is None or _is_nonneg_int(scalar),
-                "count_bearing": count_bearing,
+                "count_bearing": _tmp_has_return_rows(payload),
+                "has_receipts": bool(_coverage_keyset(payload)),
+                "malformed": malformed,
             }
         )
         keys |= tmp_keys
     return keys, infos
 
 
+def _tmp_session_bound(
+    payload: dict[str, Any],
+    producer_run: str | None,
+    producer_unit: str | None,
+    producer_attempt: int | None,
+) -> bool:
+    """Whether a tmp body binds to the producer's session (#88R38-6).
+
+    Filename prefix plus body uuid alone misattribute stale rewrites
+    from another run, unit, or attempt of the same producer: the body
+    must carry the same run, unit, and attempt stamps. Unknown
+    producer stamps bind nothing (fail closed). Never raises.
+    """
+    if not isinstance(producer_run, str) or payload.get("run_id") != producer_run:
+        return False
+    if not isinstance(producer_unit, str) or payload.get("unit") != producer_unit:
+        return False
+    body_attempt = payload.get("attempt")
+    return (
+        _is_nonneg_int(producer_attempt)
+        and type(body_attempt) is int
+        and body_attempt == producer_attempt
+    )
+
+
 def _bind_committed_loss_tmps(
     infos: list[dict[str, Any]],
     claim_orphan_keys: set[tuple[str, int]],
     digests: dict[str, str] | None,
+    bound_out: set[str] | None = None,
 ) -> tuple[list[str], list[Path]]:
     """Bind loss-only tmps a committed claim covers (#88R36-6).
 
-    Returns ``(held, bound)``: count-bearing, scalar-tainted, and
-    remainder-carrying tmps never bind (no durable idempotent form
-    for unkeyed loss; the caller warns and retains); keyed loss binds
-    only inside the claim's orphan_keys. Binding assigns. Bound paths
-    ride the caller's consume list. Never raises.
+    Returns ``(held, bound)``: count-bearing, receipt-bearing,
+    malformed, scalar-tainted, and remainder-carrying tmps never bind
+    (no durable idempotent form for unkeyed loss or unaccounted
+    receipts; the caller warns and retains); approved keyed loss
+    binds only inside the claim's orphan_keys (vacuous by
+    construction today -- approved keys always ride the union --
+    retained as a guard if the sources ever diverge). Binding
+    assigns and records the path in ``bound_out`` when given
+    (#88R38-2). Bound paths ride the caller's consume list. Never
+    raises.
     """
     held: list[str] = []
     bound: list[Path] = []
@@ -7447,18 +7597,26 @@ def _bind_committed_loss_tmps(
         keys = info.get("keys")
         if not isinstance(path, str) or not isinstance(digest, str) or not isinstance(keys, set):
             continue
+        approved = info.get("approved")
+        if not isinstance(approved, set):
+            held.append(path)
+            continue
         scalar = info.get("scalar")
         remainder = max(0, scalar - len(keys)) if isinstance(scalar, int) else 0
         if (
             info.get("count_bearing")
+            or info.get("has_receipts")
+            or info.get("malformed")
             or not info.get("scalar_ok", True)
             or remainder > 0
-            or not keys <= claim_orphan_keys
+            or not approved <= claim_orphan_keys
         ):
             held.append(path)
             continue
         if digests is not None:
             digests[path] = digest
+        if bound_out is not None:
+            bound_out.add(path)
         bound.append(Path(path))
     return held, bound
 
@@ -7469,15 +7627,22 @@ def _committed_tmp_loss(
     tmp_reports: list[dict[str, Any]],
     orphan_keys: set[tuple[str, int]],
     digests: dict[str, str] | None,
+    bound_out: set[str] | None = None,
+    producer_run: str | None = None,
+    producer_unit: str | None = None,
+    producer_attempt: int | None = None,
 ) -> tuple[set[tuple[str, int]], list[str], list[Path], list[dict[str, Any]]]:
     """Fold replayed + parentless tmp loss for a committed claim (#88R36-6).
 
     Returns ``(replayed_loss_keys, held_paths, bound_paths, infos)``:
-    candidate report loss plus filename/body-attributed parentless tmp
+    replay-approved candidate loss plus session-bound parentless tmp
     loss ride the claim's orphan_keys; loss-only tmps covered there
     bind (their paths ride the caller's consume list) while
-    count-bearing and unkeyed remainders hold (warned + retained by
-    the caller). Raises ``_DeferProducerError`` on unreadable
+    count-bearing, receipt-bearing, malformed, and unkeyed remainders
+    hold (warned + retained by the caller). Publication unions only
+    replay-approved loss (raw fields decide retention, never
+    publication, #88R38-6). Bound paths record in ``bound_out`` when
+    given (#88R38-2). Raises ``_DeferProducerError`` on unreadable
     parentless tmps.
     """
     replayed_loss: set[tuple[str, int]] = set()
@@ -7485,25 +7650,33 @@ def _committed_tmp_loss(
     for report in tmp_reports:
         if not isinstance(report, dict) or report.get("verdict") != "candidate":
             continue
+        approved = report.get("approved_loss")
+        if not isinstance(approved, set):
+            continue
+        replayed_loss |= approved
         keys = report.get("full_loss")
         if not isinstance(keys, set):
             continue
-        replayed_loss |= keys
         return_rows = report.get("full_returns")
         loss_infos.append(
             {
                 "path": report.get("path"),
                 "digest": report.get("digest"),
                 "keys": keys,
+                "approved": approved,
                 "scalar": report.get("full_scalar"),
                 "scalar_ok": True,
                 "count_bearing": isinstance(return_rows, dict) and bool(return_rows),
             }
         )
-    parentless_keys, parentless_infos = _parentless_tmp_loss_infos(root, uuid)
+    parentless_keys, parentless_infos = _parentless_tmp_loss_infos(
+        root, uuid, producer_run, producer_unit, producer_attempt
+    )
     replayed_loss |= parentless_keys
     loss_infos.extend(parentless_infos)
-    held, bound = _bind_committed_loss_tmps(loss_infos, set(orphan_keys) | replayed_loss, digests)
+    held, bound = _bind_committed_loss_tmps(
+        loss_infos, set(orphan_keys) | replayed_loss, digests, bound_out
+    )
     return replayed_loss, held, bound, loss_infos
 
 
@@ -7544,21 +7717,27 @@ def _collect_dead_producer(
     claims: dict[str, set[tuple[str, int]]],
     heal_orphans: bool = True,
     digests: dict[str, str] | None = None,
-) -> tuple[list[dict[str, Any]], list[Path], bool, list[dict[str, Any]]]:
+    bound_out: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[Path], bool, list[dict[str, Any]], tuple[str, str] | None]:
     """Build the partial+lost records for one dead producer (reads orphans only).
 
-    Returns ``(records, consumed_orphans, skipped_live, tmp_reports)``:
-    the caller's append-then-delete consumes the orphan files only
-    after the records land in the JSONL, and retains the parent files
-    while any probe evidence waits for a later pass (mirroring the
-    committed route: unresolved evidence keeps its retry route)
-    (#88R19-6). ``tmp_reports`` carries the sidecar replay's
-    accounting evidence; the caller binds digests at emission time
-    via ``_bind_accounted_tmp_digests`` (#88R34-1).
+    Returns ``(records, consumed_orphans, skipped_live, tmp_reports,
+    checkpoint)``: the caller's append-then-delete consumes the
+    orphan files only after the records land in the JSONL, and
+    retains the parent files while any probe evidence waits for a
+    later pass (mirroring the committed route: unresolved evidence
+    keeps its retry route) (#88R19-6). ``tmp_reports`` carries the
+    sidecar replay's accounting evidence; the caller binds digests at
+    emission time via ``_bind_accounted_tmp_digests`` (#88R34-1).
+    ``checkpoint`` is the folded sidecar snapshot's ``(path, sha256)``
+    file identity, or None when the gap excluded it: a full emission
+    stages it as the publication proof duplicates match against
+    (#88R38-3).
     """
     sidecar_raw = str(content.get("sidecar", ""))
     sidecar_path = Path(sidecar_raw)
     sidecar: Any | None = None
+    sidecar_digest: str | None = None
     if sidecar_raw:
         status, raw_sidecar, sidecar_digest = _read_json_evidence_digested(sidecar_path)
         if status == "ok" and sidecar_digest is not None and digests is not None:
@@ -7609,7 +7788,9 @@ def _collect_dead_producer(
             digests.setdefault(str(_journal_for_sidecar(sidecar_path)), journal_digest)
     else:
         journal_lines = []
-    block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+    block, receipts, conflict, snapshot_included = _gap_for_producer(
+        sidecar, journal_lines, entries, uuid
+    )
     conflict = conflict or divergent_tmps
     _mark_reports_discarded_by_journal(sidecar, journal_lines, tmp_reports)
     scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -7647,6 +7828,7 @@ def _collect_dead_producer(
         heal_orphans=heal_orphans,
         fence_live=True,
         digests=digests,
+        bound_out=bound_out,
     )
     conflict = conflict or froze_alias
     if orphan_block is not None:
@@ -7690,7 +7872,13 @@ def _collect_dead_producer(
     )
     if lost is not None:
         records.append(lost)
-    return records, consumed, skipped_live, tmp_reports
+    checkpoint: tuple[str, str] | None = None
+    if snapshot_included and sidecar_raw and sidecar_digest is not None:
+        # The folded snapshot's file identity (#88R38-3): the caller
+        # stages it as a publication proof only alongside a full
+        # emission carrying these returns.
+        checkpoint = (str(sidecar_path), sidecar_digest)
+    return records, consumed, skipped_live, tmp_reports, checkpoint
 
 
 def _committed_claim_records(
@@ -7759,6 +7947,7 @@ def _collect_committed_producer(
     claims: dict[str, set[tuple[str, int]]],
     digests: dict[str, str] | None = None,
     preserved_out: set[str] | None = None,
+    bound_out: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[Path], bool]:
     """Adopt one committed producer's probe orphans (claim-only partial, never lost).
 
@@ -7833,9 +8022,18 @@ def _collect_committed_producer(
         heal_orphans=False,
         fence_live=False,
         digests=digests,
+        bound_out=bound_out,
     )
     replayed_loss, held_tmps, bound_tmps, loss_infos = _committed_tmp_loss(
-        root, uuid, tmp_reports, orphan_keys, digests
+        root,
+        uuid,
+        tmp_reports,
+        orphan_keys,
+        digests,
+        bound_out,
+        content["run_id"],
+        content["unit"],
+        content["attempt"],
     )
     consumed.extend(bound_tmps)
     for held_tmp in held_tmps:
@@ -7923,21 +8121,32 @@ def _inspect_sidecar_rewrites(sidecar_path: Path) -> tuple[bool, dict[str, str]]
     return False, inspected
 
 
-def _registry_body_mismatched(sidecar_path: Path, uuid: str) -> bool:
-    """Whether a registry sidecar body misidentifies its producer (#88R36-5).
+#: Veto verdicts for a registry sidecar body (#88R36-5/#88R38-5).
+_BodyVerdict = Literal["ok", "mismatch", "unreadable"]
 
-    True for a recognized filename whose present dict body names
-    another producer (or nothing at all). Missing, torn, unreadable,
-    and garbage-named sidecars read False (existing debris and fault
-    paths handle them; no extra stat calls, so shield lookups keep
-    their order). Never raises.
+
+def _registry_body_verdict(sidecar_path: Path, uuid: str) -> _BodyVerdict:
+    """Veto verdict for a registry sidecar body (#88R36-5/#88R38-5).
+
+    ``"mismatch"`` for a recognized filename whose present dict body
+    names another producer (or nothing at all); ``"unreadable"`` when
+    the body persistently fails to read (an I/O fault never proves
+    debris, and a stat-present file can still be body-unreadable --
+    THAT is the hole a stat-guarded unlink cannot see); ``"ok"``
+    otherwise (missing, torn, garbage-named: existing debris and
+    fault paths handle them). Read-based, never :func:`_path_state`,
+    so shield lookups keep their order. Never raises.
     """
-    if _uuid_from_evidence_name(sidecar_path.name) is None:
-        return False
     status, body = _read_json_evidence(sidecar_path)
+    if status == "unreadable":
+        return "unreadable"
+    if _uuid_from_evidence_name(sidecar_path.name) is None:
+        return "ok"
     if status != "ok" or not isinstance(body, dict):
-        return False
-    return body.get("worker_uuid") != uuid
+        return "ok"
+    if body.get("worker_uuid") != uuid:
+        return "mismatch"
+    return "ok"
 
 
 def _sweep_verified_debris(sidecar_path: Path) -> dict[str, str] | None:
@@ -8141,9 +8350,17 @@ def sweep_orphans(
         uuid = content["worker_uuid"]
         if uuid in committed_uuids:
             veto_raw = str(content.get("sidecar", ""))
-            if veto_raw and _registry_body_mismatched(Path(veto_raw), uuid):
+            body_verdict: _BodyVerdict = (
+                _registry_body_verdict(Path(veto_raw), uuid) if veto_raw else "ok"
+            )
+            if body_verdict != "ok":
+                reason = (
+                    "body contradicts its registry"
+                    if body_verdict == "mismatch"
+                    else "is unreadable"
+                )
                 warnings.warn(
-                    f"sidecar {Path(veto_raw).name} body contradicts its registry; retained",
+                    f"sidecar {Path(veto_raw).name} {reason}; retained",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -8165,9 +8382,15 @@ def sweep_orphans(
                 retained += len([p for p in _producer_files(content, registry_path)])
             else:
                 veto_raw = str(content.get("sidecar", ""))
-                if veto_raw and _registry_body_mismatched(Path(veto_raw), uuid):
+                body_verdict = _registry_body_verdict(Path(veto_raw), uuid) if veto_raw else "ok"
+                if body_verdict != "ok":
+                    reason = (
+                        "body contradicts its registry"
+                        if body_verdict == "mismatch"
+                        else "is unreadable"
+                    )
                     warnings.warn(
-                        f"sidecar {Path(veto_raw).name} body contradicts its registry; retained",
+                        f"sidecar {Path(veto_raw).name} {reason}; retained",
                         UserWarning,
                         stacklevel=2,
                     )
@@ -8226,6 +8449,18 @@ def sweep_orphans(
         if status == "gone":
             continue
         if uuid in committed_uuids:
+            if status == "unreadable":
+                # An I/O fault never authorizes removal (#88R38-5):
+                # the committed arm runs before the unreadable branch
+                # below, so it needs its own verdict.
+                warnings.warn(
+                    f"sidecar {sidecar_path.name} is unreadable; retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                _count_if_present(journal_path)
+                continue
             if isinstance(sidecar, dict) and sidecar.get("worker_uuid") != uuid:
                 warnings.warn(
                     f"sidecar {sidecar_path.name} body contradicts its filename; retained",
@@ -8417,6 +8652,19 @@ def sweep_orphans(
                 continue
             parent = payload["parent_uuid"]
             assert isinstance(parent, str)
+            hinted = _parse_spawn_filename(spawn_path.name)
+            if hinted is not None and not parent.startswith(hinted[0]):
+                # Filename/body contradiction (#88R38-5): a launch
+                # record attributing two producers is forensics, never
+                # debris. Unparseable names carry no hint to
+                # contradict.
+                warnings.warn(
+                    f"spawn file {spawn_path.name} body contradicts its filename; retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                retained += 1
+                continue
             if _path_state(reg_dir / f"{parent}.json") != "missing":
                 retained += 1
                 continue
@@ -8485,6 +8733,7 @@ def _write_barrier_staging(
     skip_held: Collection[str] = (),
     disposition: Mapping[str, str] | None = None,
     held_tmps: Collection[str] = (),
+    published: Collection[tuple[str, str, str]] = (),
 ) -> bool:
     """Persist the collected barrier plan atomically (never raises).
 
@@ -8503,6 +8752,10 @@ def _write_barrier_staging(
     each collected uuid to its routing (``"committed"`` or ``"gap"``):
     a retry honors the committed-vs-gap decision instead of
     re-deriving it from a possibly absent prior (#88R28-1/#88R28-2).
+    ``published`` carries ``(uuid, path, sha256)`` checkpoint proofs:
+    sidecar snapshots a staged full emission folded, which a delta
+    duplicate matches byte-identically before binding through cover
+    (#88R38-3).
     """
     path = root / BARRIER_STAGING_FILENAME
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -8522,6 +8775,10 @@ def _write_barrier_staging(
                         uuid: value for uuid, value in sorted((disposition or {}).items())
                     },
                     "held_tmps": sorted(set(held_tmps)),
+                    "published_checkpoints": [
+                        {"uuid": proof_uuid, "path": proof_path, "sha256": proof_digest}
+                        for proof_uuid, proof_path, proof_digest in sorted(set(published))
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -8551,8 +8808,10 @@ def _load_barrier_staging(
     frozenset[str],
     dict[str, str],
     frozenset[str],
+    frozenset[tuple[str, str, str]],
 ]:
-    """Load retained staging (records, consumed, collected, targets, holds, disposition, tmps).
+    """Load retained staging (records, consumed, collected, targets, holds, disposition, tmps,
+    proofs).
 
     Absent reads empty. Torn or misshapen staging warns loudly (staged
     recovery evidence may be lost: atomic writes make this
@@ -8575,12 +8834,12 @@ def _load_barrier_staging(
     path = root / BARRIER_STAGING_FILENAME
     staging_state = _path_state(path)
     if staging_state == "missing":
-        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset(), frozenset()
     if staging_state == "unreadable":
         raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
     status, raw = _read_json_evidence(path)
     if status == "gone":
-        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset(), frozenset()
     if status == "unreadable":
         raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
     if status == "torn" or not isinstance(raw, dict):
@@ -8601,7 +8860,7 @@ def _load_barrier_staging(
             path.unlink(missing_ok=True)
         except OSError:
             pass
-        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}, frozenset(), frozenset()
     collected: frozenset[str] = frozenset()
     claimed_clean = True
     if isinstance(raw, dict):
@@ -8696,7 +8955,29 @@ def _load_barrier_staging(
                 UserWarning,
                 stacklevel=2,
             )
-    return records, consumed, collected, targets, skip_held, disposition, held_tmps
+    published: frozenset[tuple[str, str, str]] = frozenset()
+    if isinstance(raw, dict) and "published_checkpoints" in raw:
+        claimed_proofs = raw["published_checkpoints"]
+        if isinstance(claimed_proofs, list) and all(
+            isinstance(entry, dict)
+            and isinstance(entry.get("uuid"), str)
+            and isinstance(entry.get("path"), str)
+            and isinstance(entry.get("sha256"), str)
+            and len(entry["sha256"]) == 64
+            and all(char in "0123456789abcdef" for char in entry["sha256"])
+            for entry in claimed_proofs
+        ):
+            published = frozenset(
+                (entry["uuid"], entry["path"], entry["sha256"]) for entry in claimed_proofs
+            )
+        else:
+            warnings.warn(
+                f"counter barrier staging {path} has malformed published_checkpoints; "
+                "delta duplicates hold without proof",
+                UserWarning,
+                stacklevel=2,
+            )
+    return records, consumed, collected, targets, skip_held, disposition, held_tmps, published
 
 
 def discard_barrier_staging(root: Path | str) -> bool:
@@ -8933,6 +9214,7 @@ def _adopted_staged_probe_targets(
     validated: frozenset[str],
     staged_targets: frozenset[tuple[str, str]],
     digests: dict[str, str] | None = None,
+    bound_out: set[str] | None = None,
 ) -> tuple[list[Path], list[Path]]:
     """Cleanup targets for parentless probes of collected parents (#88R10-4c).
 
@@ -8954,10 +9236,11 @@ def _adopted_staged_probe_targets(
     a marker whose original slot keeps an undecided rewrite stays
     until the slot resolves. Quarantined forensics never adopt (the
     glob excludes them). ``digests`` records ``{path: sha256}`` for
-    every probe file read (None discards). Returns ``(adopted,
-    retained)``: retained paths ride ``cleanup_held`` so staging
-    survives for their retry instead of expiring underneath them
-    (#88R24-3). Never raises.
+    every probe file read (None discards). Debris-proven slot tmps
+    record in ``bound_out`` when given (#88R38-2). Returns
+    ``(adopted, retained)``: retained paths ride ``cleanup_held`` so
+    staging survives for their retry instead of expiring underneath
+    them (#88R24-3). Never raises.
     """
     adopted: list[Path] = []
     retained: list[Path] = []
@@ -9053,7 +9336,7 @@ def _adopted_staged_probe_targets(
         slot_tmps: list[Path] = []
         if _parse_consumed_probe_filename(probe_path.name) is not None:
             slot_name = _marker_slot_name(probe_path.name)
-            if slot_name is None or _slot_rewrite_unresolved(root, slot_name, digests):
+            if slot_name is None or _slot_rewrite_unresolved(root, slot_name, digests, bound_out):
                 warnings.warn(
                     f"staged marker {probe_path.name} keeps an unresolved rewrite; "
                     "retained for a later pass",
@@ -9307,6 +9590,7 @@ def prepare_resume(
             staged_skip_held,
             staged_disposition,
             staged_held_tmps,
+            staged_published,
         ) = _load_barrier_staging(root)
     except CounterPersistenceError as exc:
         # Unreadable barrier memory fails the barrier without
@@ -9341,6 +9625,7 @@ def prepare_resume(
             staged_targets, staged_skip_held = frozenset(), frozenset()
             staged_disposition = {}
             staged_held_tmps = frozenset()
+            staged_published = frozenset()
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
@@ -9371,9 +9656,9 @@ def prepare_resume(
         )
         for seed_path, seed_digest in v_seeds.items():
             read_digests[seed_path] = seed_digest
-        # A bound-then-faulted rewrite stages via the tmp-base rule;
-        # the retry inherits it byte-verified so transient prune
-        # faults converge (#88R34-1).
+        # A bound-then-faulted rewrite re-stages via the
+        # carried-authority rule; the retry inherits it byte-verified
+        # so transient prune faults converge (#88R34-1).
         _seed_staged_tmp_digests(
             {str(path) for path in verified} - v_absent,
             staged_digest_by_path,
@@ -9408,6 +9693,18 @@ def prepare_resume(
     # assigns: its read is the fold decision, so it wins over any
     # earlier informational scan of the same tmp (#88R15-3).
     read_digests: dict[str, str] = {}
+    # Binding authority (#88R38-2): paths whose digests an
+    # adjudication bound (replay folds, final accounting, loss
+    # binding) -- the only rewrite tmps that may stage as cleanup
+    # targets. Discovery digests (merely read) never land here, so a
+    # retained base cannot launder them into staged authority.
+    bound_now: set[str] = set()
+    # Publication proofs (#88R38-3): ``(uuid, checkpoint path) ->
+    # sha256`` for sidecar snapshots a full emission folded this
+    # pass. A delta duplicate binds through the carve-out only
+    # against a proof for its byte-identical base: a pathname in
+    # staging proves identity, never publication.
+    published_now: dict[tuple[str, str], str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
     prior_lines: list[bytes] | None = None
     if prior is not None:
@@ -9493,6 +9790,9 @@ def prepare_resume(
         if hint is not None:
             target_hints.add(hint)
     staged_cover_map = _staged_durable_cover(staged_records)
+    staged_published_map: dict[str, dict[str, str]] = {}
+    for proof_uuid, proof_path, proof_digest in staged_published:
+        staged_published_map.setdefault(proof_uuid, {})[proof_path] = proof_digest
     validated_collected = frozenset(
         uuid for uuid in staged_collected if uuid in recorded_uuids or uuid in session_uuids
     )
@@ -9855,6 +10155,7 @@ def prepare_resume(
                     claims=claims,
                     digests=read_digests,
                     preserved_out=committed_held_tmps,
+                    bound_out=bound_now,
                 )
             except _DeferProducerError as exc:
                 warnings.warn(
@@ -9901,7 +10202,7 @@ def prepare_resume(
         verdict = verify_producer(content)
         if verdict == "dead":
             try:
-                records, consumed, skipped_live, tmp_reports = _collect_dead_producer(
+                records, consumed, skipped_live, tmp_reports, checkpoint = _collect_dead_producer(
                     content,
                     entries,
                     uuid,
@@ -9911,6 +10212,7 @@ def prepare_resume(
                     known_complete=known_complete,
                     claims=claims,
                     digests=read_digests,
+                    bound_out=bound_now,
                 )
             except _DeferProducerError as exc:
                 warnings.warn(
@@ -9944,7 +10246,12 @@ def prepare_resume(
                     staged_digest_by_path,
                     "full",
                     read_digests,
+                    bound_out=bound_now,
                 )
+                if records and checkpoint is not None:
+                    # The staged full emission carries this
+                    # checkpoint's returns (#88R38-3).
+                    published_now[(uuid, checkpoint[0])] = checkpoint[1]
             else:
                 # A reunion proving new keys after staging publishes
                 # them as a delta, exactly like the committed branch
@@ -9971,6 +10278,8 @@ def prepare_resume(
                     staged_digest_by_path,
                     "delta",
                     read_digests,
+                    bound_out=bound_now,
+                    published=staged_published_map.get(uuid, {}),
                 )
             if skipped_live:
                 # Unresolved probe evidence keeps its retry route on
@@ -9986,7 +10295,7 @@ def prepare_resume(
             continue
         if verdict == "alive" and fence_producer(content) == "fenced":
             try:
-                records, consumed, skipped_live, tmp_reports = _collect_dead_producer(
+                records, consumed, skipped_live, tmp_reports, checkpoint = _collect_dead_producer(
                     content,
                     entries,
                     uuid,
@@ -9996,6 +10305,7 @@ def prepare_resume(
                     known_complete=known_complete,
                     claims=claims,
                     digests=read_digests,
+                    bound_out=bound_now,
                 )
             except _DeferProducerError as exc:
                 warnings.warn(
@@ -10029,7 +10339,12 @@ def prepare_resume(
                     staged_digest_by_path,
                     "full",
                     read_digests,
+                    bound_out=bound_now,
                 )
+                if records and checkpoint is not None:
+                    # The staged full emission carries this
+                    # checkpoint's returns (#88R38-3).
+                    published_now[(uuid, checkpoint[0])] = checkpoint[1]
             else:
                 # Retry heals publish as deltas here too (#88R20-4).
                 _emit_key_delta(
@@ -10053,6 +10368,8 @@ def prepare_resume(
                     staged_digest_by_path,
                     "delta",
                     read_digests,
+                    bound_out=bound_now,
+                    published=staged_published_map.get(uuid, {}),
                 )
             if skipped_live:
                 # Unresolved probe evidence keeps its retry route on
@@ -10252,6 +10569,7 @@ def prepare_resume(
                 # absorbed (#88R17-1).
                 heal_orphans=not routed_committed,
                 digests=read_digests,
+                bound_out=bound_now,
             )
         except _DeferProducerError as exc:
             warnings.warn(
@@ -10271,9 +10589,35 @@ def prepare_resume(
         # frozen claim-vs-gap routing exactly.
         if routed_committed:
             barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
-            replayed_loss, held_tmps, bound_tmps, loss_infos = _committed_tmp_loss(
-                root, uuid, tmp_reports, orphan_keys, read_digests
-            )
+            try:
+                replayed_loss, held_tmps, bound_tmps, loss_infos = _committed_tmp_loss(
+                    root,
+                    uuid,
+                    tmp_reports,
+                    orphan_keys,
+                    read_digests,
+                    bound_now,
+                    sidecar.get("run_id") if isinstance(sidecar, dict) else None,
+                    sidecar.get("unit") if isinstance(sidecar, dict) else None,
+                    sidecar.get("attempt") if isinstance(sidecar, dict) else None,
+                )
+            except _DeferProducerError as exc:
+                # A scan-only tmp fault defers like an adoption fault
+                # (#88R38-7): the claim waits a coherent retry, the seal
+                # releases normally, nothing consumes.
+                warnings.warn(
+                    f"producer {exc.uuid} deferred: {exc.detail}; evidence retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["unresolved"].append(uuid)
+                if isinstance(barrier_run, str):
+                    retained_runs.add(barrier_run)
+                if isinstance(barrier_unit, str):
+                    deferred_units.add(barrier_unit)
+                    if exc.pid is not None:
+                        skipped_live_units.add(barrier_unit)
+                continue
             consumed.extend(bound_tmps)
             committed_held_tmps.update(held_tmps)
             if held_tmps:
@@ -10321,7 +10665,9 @@ def prepare_resume(
                 to_consume.extend([sidecar_path, journal_path])
             to_consume.extend(consumed)
             continue
-        block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
+        block, receipts, conflict, snapshot_included = _gap_for_producer(
+            sidecar, journal_lines, entries, uuid
+        )
         conflict = conflict or froze_alias or divergent_tmps
         _mark_reports_discarded_by_journal(sidecar, journal_lines, tmp_reports)
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -10392,7 +10738,13 @@ def prepare_resume(
                 staged_digest_by_path,
                 "full",
                 read_digests,
+                bound_out=bound_now,
             )
+            orphan_checkpoint = read_digests.get(str(sidecar_path))
+            if records and snapshot_included and orphan_checkpoint is not None:
+                # The staged full emission carries this checkpoint's
+                # returns (#88R38-3).
+                published_now[(uuid, str(sidecar_path))] = orphan_checkpoint
         else:
             # Retry heals publish as deltas here too (#88R20-4).
             _emit_key_delta(
@@ -10414,6 +10766,8 @@ def prepare_resume(
                 staged_digest_by_path,
                 "delta",
                 read_digests,
+                bound_out=bound_now,
+                published=staged_published_map.get(uuid, {}),
             )
         if skipped_live:
             # Unresolved probe evidence keeps its retry route on the
@@ -10427,7 +10781,7 @@ def prepare_resume(
     # Parentless probe adoption: probes of validated parents are
     # interrupted cleanup, never fresh evidence (#88R10-4c).
     adopted_probes, retained_probes = _adopted_staged_probe_targets(
-        root, validated_cleanup, staged_targets, read_digests
+        root, validated_cleanup, staged_targets, read_digests, bound_now
     )
     adopted_spawns, retained_spawns = _adopted_staged_spawn_targets(
         root, validated_cleanup, staged_targets, read_digests
@@ -10525,23 +10879,24 @@ def prepare_resume(
         plan["consumed"] = len(collected_union)
         # Exact cleanup targets (#88R11-6): the digests captured
         # atomically with this pass's reads, restricted to consumed
-        # files and their read rewrite tmps. Nothing is re-read here:
-        # a fresh read at stage time could digest post-adjudication
-        # ghosts, but captured bytes are exactly what reunion decided
-        # on (#88R13-2). Retained-for-retry parents ride along
-        # (#88R36-2): a bound tmp digest must persist even when its
-        # baseline holds, or the authorization evaporates and the
-        # retry can never inherit it.
+        # files, adjudicated holds, and bound rewrite tmps. Nothing
+        # is re-read here: a fresh read at stage time could digest
+        # post-adjudication ghosts, but captured bytes are exactly
+        # what reunion decided on (#88R13-2). Direct paths stage from
+        # the consume list (a publishing verdict adopted them) and
+        # from skip-retained holds (reunion-adjudicated bytes the
+        # retry needs as identity; consumption stays gated by the
+        # skip hold itself). Adoption-retained paths never stage:
+        # the adoption scan merely read them, and staging that
+        # discovery digest would mint cleanup authority for
+        # unadjudicated evidence (#88R37-2). Rewrite tmps stage only
+        # from explicit binding authority (#88R38-2): a discovery
+        # digest must never launder into a cleanup target through a
+        # retained base. Bound tmp digests persist even when their
+        # baseline holds (#88R36-2), so the retry inherits the
+        # authorization.
         consumed_set = {str(path) for path in to_consume}
         consumed_set.update(str(path) for path in skip_retained)
-        consumed_set.update(str(path) for path in adoption_retained)
-        slot_bases = set()
-        for consumed_path in consumed_set:
-            slot_name = _marker_slot_name(Path(consumed_path).name)
-            if slot_name is not None:
-                slot_bases.add(str(Path(consumed_path).parent / slot_name))
-
-        _tmp_base = _tmp_base_str
 
         # Ghost exhibits never stage (#88R31-1): a ghost carries no
         # adjudicated identity (it appeared after adjudication), so
@@ -10560,8 +10915,7 @@ def prepare_resume(
                 and path_str not in proved_absent_now
                 and (
                     path_str in consumed_set
-                    or _tmp_base(path_str) in consumed_set
-                    or _tmp_base(path_str) in slot_bases
+                    or (path_str in bound_now and _tmp_base_str(path_str) != path_str)
                 )
             }
             | {
@@ -10580,6 +10934,15 @@ def prepare_resume(
         # staging: a pass that never revisits the producer (deferred
         # elsewhere) must not silently drop its hold (#88R14-1).
         skip_held_union = skip_held_now | set(staged_skip_held)
+        # Proofs merge like records (replace per checkpoint): a fresh
+        # proof for a checkpoint supersedes the carried one, and both
+        # ride the same atomic write as the records that establish
+        # them, so a proof never outlives its publication (#88R38-3).
+        published_union: dict[tuple[str, str], str] = {
+            (proof_uuid, proof_path): proof_digest
+            for proof_uuid, proof_path, proof_digest in staged_published
+        }
+        published_union.update(published_now)
         if not _write_barrier_staging(
             root,
             plan["cache_records"],
@@ -10589,6 +10952,7 @@ def prepare_resume(
             skip_held_union,
             disposition_union,
             carried_held_tmps,
+            [(uuid, path, digest) for (uuid, path), digest in published_union.items()],
         ):
             warnings.warn(
                 f"counter resume barrier cannot stage recovery evidence in {root}; "
@@ -10626,6 +10990,7 @@ def prepare_resume(
             skip_held_union,
             disposition_union,
             (carried_held_tmps | preserved_now) - retired_now,
+            [(uuid, path, digest) for (uuid, path), digest in published_union.items()],
         ):
             warnings.warn(
                 f"counter resume barrier cannot stage preserved tmp holds in {root}; "
