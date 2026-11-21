@@ -2047,9 +2047,24 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         proc.kill()
         proc.wait(timeout=30)
         print(f"DIAG proc.pid={proc.pid} poll={proc.poll()} exists={durability._pid_exists(proc.pid)}")
+        import subprocess as _spmod
+
+        def _procinfo(_p: object) -> None:
+            try:
+                _o = _spmod.run(
+                    ["wmic", "process", "where", f"ProcessId={_p}",
+                     "get", "ParentProcessId,CommandLine", "/format:list"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                print(f"DIAG procinfo({_p}):", _o.stdout.strip()[:280].replace("\n", " | "))
+            except Exception as exc:  # noqa: BLE001 - diagnostics only
+                print(f"DIAG procinfo({_p}) failed: {exc!r}")
+
+        _procinfo(proc.pid)
         try:
             _payload = json.loads(slot.read_text(encoding="utf-8"))
             print(f"DIAG slotpid={_payload.get('pid')} slotbirth={_payload.get('birth_token')} exists={durability._pid_exists(_payload.get('pid')) if isinstance(_payload.get('pid'), int) else 'n/a'}")
+            _procinfo(_payload.get("pid"))
         except Exception as exc:
             print(f"DIAG slotread failed: {exc!r}")
         if durability._pid_exists(proc.pid):
