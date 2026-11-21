@@ -6055,7 +6055,7 @@ class TestSweepAndFence:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """#88R31-WIN1: without pidfd, a dead pid proves death (birth unreadable)."""
-        monkeypatch.setattr(os, "pidfd_open", None, raising=False)
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
         monkeypatch.setattr(durability, "birth_token_for_pid", lambda pid: None)
         pid, _ = _dead_pid_with_birth()
         assert durability._incarnation_alive(pid, 424243) is False
@@ -6065,7 +6065,7 @@ class TestSweepAndFence:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """#88R31-WIN1: existence short-circuits before the birth compare."""
-        monkeypatch.setattr(os, "pidfd_open", None, raising=False)
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
         monkeypatch.setattr(durability, "birth_token_for_pid", lambda pid: 424243)
         pid, _ = _dead_pid_with_birth()
         assert durability._incarnation_alive(pid, 424243) is False
@@ -6074,7 +6074,7 @@ class TestSweepAndFence:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """#88R31-MAC1: a dead pid needs no signal on any platform."""
-        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
         pid, _ = _dead_pid_with_birth()
         assert durability._terminate_verified(pid, 424243, 0.1) is True
         assert durability._terminate_verified(os.getpid(), 424243, 0.1) is False

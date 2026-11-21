@@ -942,6 +942,21 @@ def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> Fence
     return "unresolved"
 
 
+def _pinning_backend() -> str | None:
+    """Incarnation-pinning backend for this platform (#88R31-RF1).
+
+    ``"pidfd"`` on Linux, ``"handle"`` on win32, None elsewhere
+    (macOS). A single dispatch point so tests can simulate backends
+    by patching this one module attribute instead of process-global
+    state (``sys.platform``/``os``).
+    """
+    if sys.platform.startswith("linux"):
+        return "pidfd"
+    if sys.platform == "win32":
+        return "handle"
+    return None
+
+
 def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
     """Signal a birth-verified pid through a pinning handle; poll to prove death.
 
@@ -962,9 +977,10 @@ def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
         # check lives here. A recycled occupant is never signaled on
         # the fallthrough path -- and it never wrote this evidence.)
         return True
-    if sys.platform.startswith("linux"):
+    backend = _pinning_backend()
+    if backend == "pidfd":
         return _terminate_pidfd(pid, birth, timeout_s)
-    if sys.platform == "win32":
+    if backend == "handle":
         return _terminate_handle(pid, birth, timeout_s)
     return False
 
@@ -1002,10 +1018,9 @@ def _incarnation_alive(pid: int, birth: int | None) -> bool:
     unprovable (unreadable birth, missing pidfd, faulted lookup)
     reads alive: only proven death proceeds past a covered suppress.
     """
-    open_pidfd = getattr(os, "pidfd_open", None)
-    if open_pidfd is not None:
+    if _pinning_backend() == "pidfd":
         try:
-            fd = open_pidfd(pid, 0)
+            fd = os.pidfd_open(pid, 0)
         except ProcessLookupError:
             return False
         except OverflowError:
