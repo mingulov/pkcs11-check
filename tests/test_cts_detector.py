@@ -781,7 +781,7 @@ def test_cts_collection_probe_uses_merged_slot_and_interface(
 
     _isolate_pin_env(monkeypatch, tmp_path)
     monkeypatch.setenv("P11TEST_SLOT", "1")
-    monkeypatch.setenv("P11TEST_INTERFACE", "pkcs11")
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.1")
     captured: dict[str, Any] = {}
     _install_collection_probe_stubs(monkeypatch, captured)
 
@@ -789,7 +789,7 @@ def test_cts_collection_probe_uses_merged_slot_and_interface(
 
     assert result.status is base_cts.CtsDetectionStatus.DETECTED
     assert captured.get("slot") == 8
-    assert captured.get("interface") == "pkcs11"
+    assert captured.get("interface") == "3.1"
 
 
 def test_cts_collection_probe_cli_wins_over_env_for_slot_and_interface(
@@ -800,7 +800,7 @@ def test_cts_collection_probe_cli_wins_over_env_for_slot_and_interface(
 
     _isolate_pin_env(monkeypatch, tmp_path)
     monkeypatch.setenv("P11TEST_SLOT", "1")
-    monkeypatch.setenv("P11TEST_INTERFACE", "pkcs11")
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.1")
     captured: dict[str, Any] = {}
     _install_collection_probe_stubs(monkeypatch, captured)
 
@@ -877,6 +877,77 @@ def test_cts_collection_probe_honors_explicit_empty_interface(
 
     assert result.status is base_cts.CtsDetectionStatus.DETECTED
     assert captured.get("interface") == "auto"
+
+
+def test_resolve_cli_settings_normalizes_and_validates_interface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R33-5: the shared resolver owns interface values for both paths."""
+    from pkcs11_check.fixtures import resolve_cli_settings
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    assert (
+        resolve_cli_settings(tmp_path / "fixture.so", _collection_config({}).getoption).interface
+        == "auto"
+    )
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.1")
+    assert (
+        resolve_cli_settings(
+            tmp_path / "fixture.so", _collection_config({"p11_interface": ""}).getoption
+        ).interface
+        == "auto"
+    )
+    assert (
+        resolve_cli_settings(tmp_path / "fixture.so", _collection_config({}).getoption).interface
+        == "3.1"
+    )
+    monkeypatch.setenv("P11TEST_INTERFACE", "typo")
+    with pytest.raises(pytest.UsageError, match="Unknown interface"):
+        resolve_cli_settings(tmp_path / "fixture.so", _collection_config({}).getoption)
+
+
+def test_cts_collection_probe_rejects_unknown_interface_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R33-5: an unknown interface fails as a config error, pre-load."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_INTERFACE", "typo")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    with pytest.raises(pytest.UsageError, match="Unknown interface"):
+        aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+    assert "module" not in captured, "nothing loads on a rejected interface"
+
+
+def test_runtime_config_rejects_unknown_interface_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R33-5: runtime shares the collection interface verdict, pre-load."""
+    from pkcs11_check import fixtures
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_INTERFACE", "typo")
+    request = SimpleNamespace(config=_collection_config({}))
+    with pytest.raises(pytest.UsageError, match="Unknown interface"):
+        fixtures.p11_config.__wrapped__(request)
+
+
+def test_cts_collection_probe_surfaces_malformed_toml_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#88R33-5: malformed TOML fails as a config error, not a traceback."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    (tmp_path / "pkcs11_check.toml").write_text('pin = "unterminated', encoding="utf-8")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    with pytest.raises(pytest.UsageError, match="configuration"):
+        aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
 
 
 def test_cts_detector_propagates_hostile_length_report(

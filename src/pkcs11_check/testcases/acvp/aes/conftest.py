@@ -181,6 +181,8 @@ class _MinimalSession:
 
 def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     """Load module, open session, detect CTS variant, clean up."""
+    from tomllib import TOMLDecodeError
+
     from pkcs11_check.core.loader import load_module
     from pkcs11_check.raw.bootstrap import (
         close_session_quietly,
@@ -217,11 +219,11 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
 
     try:
         merged = resolve_cli_settings(Path(module_path), config.getoption)
-    except ValidationError as exc:
+    except (ValidationError, TOMLDecodeError) as exc:
         raise pytest.UsageError(f"invalid pkcs11-check configuration: {exc}") from exc
-    # The plugin default is None ("auto" is only documentation); every other
-    # consumer coerces None, so do the same instead of crashing load_module.
-    interface = merged.interface or "auto"
+    # The interface arrives validated and normalized (the resolver owns
+    # it for both paths); the pin unwraps only when configured.
+    interface = merged.interface
     pin = merged.pin.get_secret_value() if merged.pin else None
 
     p11 = load_module(Path(module_path), interface=interface)

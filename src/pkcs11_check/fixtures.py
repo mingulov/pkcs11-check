@@ -14,7 +14,11 @@ import pytest
 
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.call_counters import counted_bucket
-from pkcs11_check.core.loader import P11Module, load_module
+from pkcs11_check.core.loader import (
+    SUPPORTED_INTERFACES,
+    P11Module,
+    load_module,
+)
 from pkcs11_check.raw.api import RawPKCS11
 
 _RV_TRACE_TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -131,7 +135,20 @@ def resolve_cli_settings(module_path: Path | str, getoption: Callable[..., Any])
     ext_cmd = getoption("p11_external_provision_cmd", default=None)
     if ext_cmd is not None:
         kwargs["external_provision_cmd"] = ext_cmd
-    return P11TestConfig(**kwargs)
+    cfg = P11TestConfig(**kwargs)
+    # The interface validates once, here, for both paths (#88R33-5):
+    # collection and runtime must agree before either loads the
+    # module. Empty normalizes to auto (explicitly unset); anything
+    # outside the loader's set fails fast as a usage error.
+    interface = cfg.interface or "auto"
+    if interface not in SUPPORTED_INTERFACES:
+        raise pytest.UsageError(
+            f"Unknown interface {cfg.interface!r}; must be one of "
+            f"{list(SUPPORTED_INTERFACES)} (from --p11-interface, "
+            "P11TEST_INTERFACE, or pkcs11_check.toml)"
+        )
+    cfg.interface = interface
+    return cfg
 
 
 @pytest.fixture(scope="session")
