@@ -2047,6 +2047,7 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         proc.kill()
         proc.wait(timeout=30)
         print(f"DIAG proc.pid={proc.pid} poll={proc.poll()} exists={durability._pid_exists(proc.pid)}")
+        print(f"DIAG worker={__import__('os').getpid()} exe={__import__('sys').executable} slot={slot}")
         import subprocess as _spmod
 
         def _procinfo(_p: object) -> None:
