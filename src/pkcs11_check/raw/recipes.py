@@ -385,7 +385,7 @@ def _two_call_output(
             out_buf = _alloc_module_output(size, what=call_fn)
             out_len = CK_ULONG(size)
             rv = fn(*args, out_buf, byref(out_len))
-        expect_rv(rv, CKR_OK, context=call_fn)
+        expect_rv(rv, CKR_OK, context=call_fn, operation=call_fn)
         if out_len.value > len(out_buf):
             # N-003: CKR_OK claiming more bytes than capacity -- malformed
             # provider output. Surface it typed (with both lengths) instead
@@ -397,7 +397,7 @@ def _two_call_output(
     # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
-    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL, context=f"{call_fn} size query")
+    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL, context=f"{call_fn} size query", operation=call_fn)
     size = out_len.value
     out_buf = _alloc_module_output(size, what=call_fn)
     out_len = CK_ULONG(size)
@@ -409,7 +409,7 @@ def _two_call_output(
         out_buf = _alloc_module_output(size, what=call_fn)
         out_len = CK_ULONG(size)
         rv = fn(*args, out_buf, byref(out_len))
-    expect_rv(rv, CKR_OK, context=call_fn)
+    expect_rv(rv, CKR_OK, context=call_fn, operation=call_fn)
     if out_len.value > len(out_buf):
         # N-003: CKR_OK claiming more bytes than capacity -- malformed
         # provider output. Surface it typed (with both lengths) instead
@@ -915,15 +915,25 @@ def create_object(
     return handle.value
 
 
-def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> None:
-    """Destroy an object, ignoring clean teardown errors but surfacing provider faults."""
+def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> int | None:
+    """Destroy an object, returning the raw CK_RV (R3F2, R4-F2).
+
+    Still ignores clean teardown errors and surfaces provider faults;
+    returning the RV (instead of discarding it) lets owned-handle
+    cleanup observe a refused destroy rather than leak silently. A
+    harness-side failure (dead binding, bad handle shape -- anything
+    that never produced a provider RV) returns None, distinct from
+    every CK_RV: inventing CKR_FUNCTION_FAILED for it would report a
+    returned refusal the provider never made.
+    """
     try:
-        raw.C_DestroyObject(session, handle)
+        return int(raw.C_DestroyObject(session, handle))
     except OSError as exc:
         if ctypes_access_violation_code(exc) is not None:
             raise
+        return None
     except (AttributeError, ctypes.ArgumentError):
-        pass
+        return None
 
 
 def encrypt_single(
@@ -958,7 +968,7 @@ def encrypt_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_EncryptInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK, context="C_EncryptInit")
+    expect_rv(rv, CKR_OK, context="C_EncryptInit", operation="C_EncryptInit")
     in_buf = to_ubyte_buf(plaintext)
     hint = output_size_hint or ((len(plaintext) + output_overhead) if output_overhead > 0 else 0)
     try:
@@ -997,7 +1007,7 @@ def sign_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, operation="C_SignInit")
     in_buf = to_ubyte_buf(data)
     try:
         return _two_call_output(
@@ -1040,7 +1050,7 @@ def decrypt_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_DecryptInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK, context="C_DecryptInit")
+    expect_rv(rv, CKR_OK, context="C_DecryptInit", operation="C_DecryptInit")
     in_buf = to_ubyte_buf(ciphertext)
     try:
         return _two_call_output(
@@ -2010,7 +2020,7 @@ def sign_multipart(
     """Sign data in multiple parts. Returns signature."""
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, operation="C_SignInit")
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
         rv = raw.C_SignUpdate(session, in_buf, len(chunk))

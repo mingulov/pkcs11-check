@@ -2349,6 +2349,16 @@ def test_crossverify_missing_rsa_private_attrs_are_xfail(
         "destroy_quietly",
         lambda *_args, **_kwargs: None,
     )
+    from pkcs11_check.raw.recipes import AttrReadResult
+    from pkcs11_check.raw.types_std import CKA_EXTRACTABLE, CKA_SENSITIVE
+
+    def _readable_flags(*_args: object, **_kwargs: object) -> AttrReadResult:
+        result = AttrReadResult()
+        result[int(CKA_SENSITIVE)] = False
+        result[int(CKA_EXTRACTABLE)] = True
+        return result
+
+    monkeypatch.setattr(test_crossverify_extended, "read_attributes", _readable_flags)
 
     with pytest.raises(pytest.xfail.Exception, match="missing RSA private attribute"):
         test_crossverify_extended.TestRSAOAEPCrossVerify().test_rsa_oaep_encrypt_p11_decrypt_crypto(

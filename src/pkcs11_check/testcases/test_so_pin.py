@@ -26,6 +26,7 @@ from pkcs11_check.classification import (
     fail_as,
     raise_for_record,
     record_as,
+    xfail_as,
 )
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -827,9 +828,242 @@ def _run_qc11c_journey_node(
         _raise_strongest_qc11c(records1 + records2)
 
 
+def _prescan_concurrent_pin_fails(trace: token_admin.AdminTrace) -> None:
+    """FAIL-grade half of the concurrent-PIN judge (R2C5c, R19-02).
+
+    Runs before the trace gate so observed writes and logins grade
+    before any final setup refusal can hide them; xfail tiers and
+    skips stay suppressed, never raised.
+    """
+    _judge_concurrent_pin_trace(trace, fails_only=True)
+
+
+def _judge_concurrent_pin_trace(trace: token_admin.AdminTrace, *, fails_only: bool = False) -> None:
+    """Judge concurrent SetPIN linearization (#52.8 threaded leg).
+
+    Threads race user-PIN changes from the same old PIN; each tags
+    its final PIN P1..P4 (P0 is the pre-race PIN). At most one write
+    may succeed (a second success accepted a stale old PIN); exactly
+    one candidate may work at the end, and a successful write must
+    retire P0. Zero workers means corruption (unless blocked checks
+    left the tail unproved: then the winner may sit behind them and
+    the leg skips), several workers (or a failed write working) means
+    an invalid credential was accepted. A sole winner with blocked
+    alternatives xfails (uniqueness unproved, never passed). Undefined
+    RVs fail loud; with no successful write the race is untestable
+    (skip). With fails_only, only FAIL grades raise (prescan).
+    """
+    label = "QC11c concurrent PIN"
+    # Observed evidence grades BEFORE completeness (R2C5c/R3F6): a
+    # truncated tail (e.g. final_open refused) must never mask a
+    # proved double write or login contradiction with an assertion.
+    thread_rvs = {step.name: step.rv for step in trace.steps if step.name.startswith("thread:")}
+    for name, rv in sorted(thread_rvs.items()):
+        if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: {name}",
+                operation="C_SetPIN",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=f"{label}: thread step returned undefined CK_RV {ckr_name(rv)}",
+            )
+    login_idx = {
+        name.split(":")[1]
+        for name in thread_rvs
+        if name.endswith(":login") and name.count(":") == 2
+    }
+    setpin = {
+        name.split(":")[1]: rv
+        for name, rv in thread_rvs.items()
+        if name.endswith(":setpin") and name.count(":") == 2
+    }
+    final = {
+        name.rpartition(":")[2]: rv
+        for name, rv in (
+            (step.name, step.rv) for step in trace.steps if step.name.startswith("final:login:")
+        )
+    }
+    if not fails_only:
+        # Completeness belongs to the final oracle only: post-gate
+        # traces promise it (the prescan grades observed evidence on
+        # possibly truncated traces and never asserts it).
+        assert thread_rvs, f"{label}: probe contract broken (no thread steps)"
+        assert login_idx, f"{label}: probe contract broken (no thread logins)"
+        assert set(setpin) == login_idx, (
+            f"{label}: probe contract broken (setpin/login mismatch "
+            f"{sorted(setpin)} vs {sorted(login_idx)})"
+        )
+        expected_final = {"P0"} | {f"P{int(i) + 1}" for i in login_idx}
+        assert set(final) == expected_final, (
+            f"{label}: probe contract broken (final coverage {sorted(final)} "
+            f"vs {sorted(expected_final)})"
+        )
+    for tag, rv in sorted(final.items()):
+        if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: final:login:{tag}",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=f"{label}: final login returned undefined CK_RV {ckr_name(rv)}",
+            )
+    successful = {f"P{int(i) + 1}" for i, rv in setpin.items() if rv == int(CKR_OK)}
+    if not successful:
+        # A race that never ran has no fail-grade evidence: the prescan
+        # returns silently (the gate, then the judge, decides the skip).
+        if fails_only:
+            return
+        pytest.skip(f"{label}: no SetPIN succeeded; races untestable")
+    if len(successful) > 1:
+        fail_as(
+            "accepted_invalid",
+            label=label,
+            operation="C_SetPIN",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: {len(successful)} writes succeeded from the same old PIN "
+                f"({', '.join(sorted(successful))}); all but one accepted a stale PIN"
+            ),
+            detail={"successful": sorted(successful)},
+        )
+    working = {tag for tag, rv in final.items() if rv == int(CKR_OK)}
+    locked = {tag for tag, rv in final.items() if rv == int(CKR_PIN_LOCKED)}
+    # Blocked alternatives: neither working nor proved-negative
+    # (CKR_PIN_INCORRECT). A winner may sit behind them, so any
+    # uniqueness claim stays unproved while they stand.
+    unproved = {
+        tag for tag, rv in final.items() if rv != int(CKR_OK) and rv != int(CKR_PIN_INCORRECT)
+    }
+    detail = {
+        "successful": sorted(successful),
+        "working": sorted(working),
+        "locked": sorted(locked),
+        "unproved": sorted(unproved),
+        "final": {tag: ckr_name(rv) for tag, rv in sorted(final.items())},
+    }
+    if not working:
+        if not final:
+            # R4-F6: no final checks recorded (the tail never ran -- the
+            # winner-first open refused before the first final): nothing
+            # observed, nothing fail-grade. The prescan returns silently;
+            # the full judge never reaches here (completeness asserts).
+            return
+        if unproved and not fails_only:
+            pytest.skip(
+                f"{label}: no PIN works and {len(unproved)} final checks are "
+                f"unproved ({', '.join(sorted(unproved))}); "
+                "the winner may sit behind them"
+            )
+        elif not unproved:
+            fail_as(
+                "self_contradiction",
+                label=label,
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: 0 PINs work after the race "
+                    f"({', '.join(sorted(successful))} set); exactly one must"
+                ),
+                detail=detail,
+            )
+    if len(working) > 1:
+        fail_as(
+            "accepted_invalid",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: {len(working)} PINs work after the race "
+                f"({', '.join(sorted(working))}); exactly one must"
+            ),
+            detail=detail,
+        )
+    if not working:
+        # Prescan fall-through (fails_only with unproved alternatives):
+        # nothing fail-grade observed, verdict left to the gate + judge.
+        return
+    sole = next(iter(working))
+    if sole == "P0":
+        fail_as(
+            "self_contradiction",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: pre-race PIN still works after a successful write "
+                f"({', '.join(sorted(successful))}); the write had no effect"
+            ),
+            detail=detail,
+        )
+    if sole not in successful:
+        fail_as(
+            "accepted_invalid",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=f"{label}: failed-write PIN {sole} works after the race",
+            detail=detail,
+        )
+    blocked = {tag for tag in unproved if tag != sole}
+    if blocked and not fails_only:
+        xfail_as(
+            "honest_deviation",
+            label=label,
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: winner {sole} works but {len(blocked)} alternatives "
+                f"are unproved ({', '.join(sorted(blocked))}); uniqueness unproved"
+            ),
+            detail=detail,
+        )
+
+
+def _run_qc11c_concurrent_node(
+    cap: throwaway.ThrowawayCapability,
+    p11_config: Any,
+    *,
+    _session_factory: throwaway.SessionFactory = throwaway.admin_session,
+    _launch: throwaway.LaunchProbe = throwaway.launch_admin_probe,
+) -> None:
+    with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
+        rc, out, err = _launch(
+            minted, "qc11c_concurrent_pin", {}, p11_config=p11_config, timeout=60
+        )
+        # R19-02 collect-then-judge: observed writes and logins grade
+        # before the gate, so a final setup refusal can never hide a
+        # proved double write or login contradiction behind a skip.
+        raw = token_admin.parse_child_output(rc, out, err, label="QC11c concurrent PIN")
+        _prescan_concurrent_pin_fails(raw)
+        trace = token_admin.gate_child_trace(raw, label="QC11c concurrent PIN")
+        _judge_concurrent_pin_trace(trace)
+
+
 class TestSacrificialProvisioningJourney:
     """Full provisioning journey with restart re-verification (QC11c)."""
 
     def test_sacrificial_provisioning_journey(self, p11_config: Any) -> None:
         cap = throwaway.require_throwaway_capability()
         _run_qc11c_journey_node(cap, p11_config)
+
+    def test_concurrent_pin_linearization(self, p11_config: Any) -> None:
+        """QC11c (#52.8): concurrent SetPIN linearizes to exactly one PIN.
+
+        Four threads race user-PIN changes on a sacrificial token
+        (own OS-locking init in the child); exactly one candidate
+        PIN may work afterwards. No crash, hang, or undefined RV.
+        """
+        cap = throwaway.require_throwaway_capability()
+        _run_qc11c_concurrent_node(cap, p11_config)

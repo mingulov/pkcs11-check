@@ -19,6 +19,8 @@ admitted, runs the RSA-sign path with independent local verification.
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
 import inspect
 import sys
 import uuid
@@ -33,6 +35,11 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+)
 
 from pkcs11_check.classification import (
     classify,
@@ -47,6 +54,8 @@ from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.pack import (
     attr_bytes,
     attr_ulong,
+    mech_bytes,
+    mech_pss,
     mech_simple,
     mech_string_data,
     template,
@@ -59,6 +68,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encapsulate_key,
     encrypt_single,
+    gen_aes_key,
     gen_ec_keypair,
     gen_keypair,
     gen_rsa_keypair,
@@ -112,6 +122,16 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
+    CKF_SIGN,
+    CKG_MGF1_SHA1,
+    CKG_MGF1_SHA3_224,
+    CKG_MGF1_SHA3_256,
+    CKG_MGF1_SHA3_384,
+    CKG_MGF1_SHA3_512,
+    CKG_MGF1_SHA224,
+    CKG_MGF1_SHA256,
+    CKG_MGF1_SHA384,
+    CKG_MGF1_SHA512,
     CKK_AES,
     CKK_EC,
     CKK_GENERIC_SECRET,
@@ -120,7 +140,9 @@ from pkcs11_check.raw.types_std import (
     CKK_SLH_DSA,
     CKM_AES_ECB,
     CKM_AES_ECB_ENCRYPT_DATA,
+    CKM_AES_KEY_GEN,
     CKM_AES_KEY_WRAP,
+    CKM_CONCATENATE_BASE_AND_KEY,
     CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA,
     CKM_ML_DSA,
@@ -128,7 +150,37 @@ from pkcs11_check.raw.types_std import (
     CKM_ML_KEM,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_RSA_PKCS_PSS,
+    CKM_RSA_X9_31,
+    CKM_RSA_X_509,
+    CKM_SHA1_RSA_PKCS,
+    CKM_SHA1_RSA_PKCS_PSS,
+    CKM_SHA1_RSA_X9_31,
+    CKM_SHA3_224,
+    CKM_SHA3_224_RSA_PKCS,
+    CKM_SHA3_224_RSA_PKCS_PSS,
+    CKM_SHA3_256,
+    CKM_SHA3_256_RSA_PKCS,
+    CKM_SHA3_256_RSA_PKCS_PSS,
+    CKM_SHA3_384,
+    CKM_SHA3_384_RSA_PKCS,
+    CKM_SHA3_384_RSA_PKCS_PSS,
+    CKM_SHA3_512,
+    CKM_SHA3_512_RSA_PKCS,
+    CKM_SHA3_512_RSA_PKCS_PSS,
+    CKM_SHA224,
+    CKM_SHA224_RSA_PKCS,
+    CKM_SHA224_RSA_PKCS_PSS,
+    CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS_PSS,
+    CKM_SHA384,
+    CKM_SHA384_RSA_PKCS,
+    CKM_SHA384_RSA_PKCS_PSS,
+    CKM_SHA512,
+    CKM_SHA512_RSA_PKCS,
+    CKM_SHA512_RSA_PKCS_PSS,
+    CKM_SHA_1,
     CKM_SLH_DSA,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
@@ -138,8 +190,20 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
     CKP_SLH_DSA_SHA2_128S,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._adoption import (
+    OwnershipUnprovedError,
+    adopt_correlated_output,
+    compare_attempt_identity,
+    read_attempt_identity,
 )
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
@@ -147,7 +211,7 @@ from pkcs11_check.testcases._attribute_values import (
     refusal_rv_for,
 )
 from pkcs11_check.testcases._copy_mutability import (
-    POLICY_SHAPED_REFUSE_RVS,
+    KEYMGMT_POLICY_SHAPED_REFUSE_RVS,
     PROBE_PLAINTEXT,
     aes_ecb_encrypt,
     classify_rv_validity_or_none,
@@ -159,8 +223,13 @@ from pkcs11_check.testcases._copy_mutability import (
 from pkcs11_check.testcases._ec_export import split_raw_ecdsa
 from pkcs11_check.testcases._local_verify import (
     MalformedSignature,
+    ecdsa_der_local,
+    ecdsa_der_local_prehashed,
+    ecdsa_local,
+    ecdsa_local_prehashed,
     rsa_pkcs15_local,
 )
+from pkcs11_check.testcases._x931 import x931_sign_input
 from pkcs11_check.testcases.conftest import skip_unless_create_object_supported
 
 
@@ -175,16 +244,20 @@ class PolicyFunctionRow:
 
 
 #: Shared refusal-oracle note for the QC4a enforcement rows (F17): none of
-#: §§5.18.3/5.18.4/5.18.5/5.18.8/5.18.9 names a refusal RV for policy exclusion
-#: (verified against the v3.2 PDF: zero CKR_KEY_FUNCTION_NOT_PERMITTED mentions
-#: in those sections, prose or Return values). The strict singleton comes from
-#: the general CK_RV definition -- "use a key for a cryptographic purpose that
-#: the key's attributes are not set to allow it to do" -- as adjudicated for
-#: Task 16, NOT from explicit per-function normative text.
+#: §§5.18.3/5.18.4/5.18.5/5.18.8/5.18.9 names CKR_KEY_FUNCTION_NOT_PERMITTED
+#: for policy exclusion (verified against the v3.2 PDF: zero mentions in
+#: those sections, prose or Return values). That code comes from the general
+#: CK_RV definition -- "use a key for a cryptographic purpose that the key's
+#: attributes are not set to allow it to do" -- as adjudicated for Task 16,
+#: NOT from explicit per-function normative text. CKR_MECHANISM_INVALID is
+#: credited alongside because those same Return values DO name it while
+#: omitting FUNCTION_NOT_PERMITTED, and §5.1 allows return-list gaps
+#: (0.3.1 #56 adjudication: either code credited, raw preserved).
 _REFUSAL_ORACLE_NOTE = (
     "refusal oracle: CKR_KEY_FUNCTION_NOT_PERMITTED from the general CK_RV "
-    "definition, adopted as the strict singleton by Task 16 adjudication "
-    "(the function section names no refusal RV)"
+    "definition (Task 16) plus CKR_MECHANISM_INVALID, which the key-management "
+    "Return values name while omitting FUNCTION_NOT_PERMITTED (§5.1 gaps; "
+    "0.3.1 #56 adjudication credits either)"
 )
 
 POLICY_FUNCTION_TABLE: tuple[PolicyFunctionRow, ...] = (
@@ -195,6 +268,18 @@ POLICY_FUNCTION_TABLE: tuple[PolicyFunctionRow, ...] = (
         citation=(
             "PKCS#11 v3.2 §5.18.5 (C_DeriveKey hBaseKey); CKA_ALLOWED_MECHANISMS "
             "per Table 26 (Key Attributes); " + _REFUSAL_ORACLE_NOTE
+        ),
+    ),
+    PolicyFunctionRow(
+        key="derive_aux",
+        operation="C_DeriveKey",
+        constrained_role="auxiliary (second) key",
+        citation=(
+            "PKCS#11 v3.2 §5.18.5 (C_DeriveKey two-key derive, second key "
+            "object); CKA_ALLOWED_MECHANISMS per Table 26 (Key Attributes): "
+            "the auxiliary key is 'used with' the derive mechanism, so its "
+            "list must include it (pkcs11-check maintainer interpretation -- "
+            "the standard names no auxiliary-key enforcement clause); " + _REFUSAL_ORACLE_NOTE
         ),
     ),
     PolicyFunctionRow(
@@ -273,6 +358,11 @@ GENERATE_CELLS: tuple[tuple[str, str], ...] = (
     ("pqc", "swap_asym_class_secret_type"),
     ("pqc", "missing_params"),
 )
+GENKEY_CELLS: tuple[tuple[str, str], ...] = (
+    ("rsa", "swap_secret_class_asym_type"),
+    ("ec", "swap_secret_class_asym_type"),
+    ("pqc", "swap_secret_class_asym_type"),
+)
 
 #: QC4c nodes: one downstream sign leg per QC4b RSA Create malformation.
 RSA_DOWNSTREAM_MALFORMATIONS: tuple[str, ...] = (
@@ -291,6 +381,10 @@ QC4_AES_BASE = bytes(range(0x20, 0x30))
 QC4_AES_PEER = bytes(range(0x40, 0x50))
 QC4_DERIVE_DATA = b"qc4-derive-data!"
 QC4_DERIVE_LEN = 16
+
+#: Fixed known generic-secret material for the QC4a auxiliary-key derive legs.
+QC4_CONCAT_BASE = bytes(range(0xA0, 0xB0))
+QC4_CONCAT_AUX = bytes(range(0xC0, 0xD0))
 
 #: Fixed sign/verify probe data for the QC4b/QC4c asymmetric use legs.
 QC4_SIGN_DATA = b"qc4-sign-probe-data!"
@@ -641,7 +735,7 @@ def classify_excluded_refusal_rv(
     Any other standard refusal xfails as an alternate/unproved outcome with
     the RV preserved, never "restriction effective".
     """
-    if rv in POLICY_SHAPED_REFUSE_RVS:
+    if rv in KEYMGMT_POLICY_SHAPED_REFUSE_RVS:
         classify(
             "sanctioned_refusal",
             kind="policy",
@@ -650,7 +744,7 @@ def classify_excluded_refusal_rv(
             mechanism=mechanism,
             inherit_mechanism=False,
             actual=rv,
-            expected=tuple(POLICY_SHAPED_REFUSE_RVS),
+            expected=tuple(KEYMGMT_POLICY_SHAPED_REFUSE_RVS),
             spec_ref=spec_ref,
             summary=(
                 f"{label}: excluded mechanism refused with {ckr_name(rv)} (restriction effective)"
@@ -1030,21 +1124,104 @@ def _import_constrained_aes(
         void_qc4_setup_exc(exc, (), label=label, operation=operation)
 
 
-def _destroy_all(rs: Any, handles: Iterable[int | None]) -> list[BaseException]:
-    """Attempt every owned destroy, collecting raw failures (F14).
+def _import_constrained_generic(
+    rs: Any,
+    value: bytes,
+    attrs: dict[Any, Any],
+    *,
+    label: str,
+    operation: str,
+    spec_ref: str,
+) -> int:
+    """Import a known generic-secret setup key, voiding the leg on refusal."""
+    try:
+        return import_secret_key(rs.raw, rs.sh, CKK_GENERIC_SECRET, value, attrs=attrs)
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=label, operation=operation)
 
-    Each handle gets an independent attempt; a raising destroy never skips
-    the rest. Handle identity is attached to each failure via ``add_note``.
+
+def _vet_control_handles(
+    handles: Iterable[int | None],
+    *,
+    before: list[int],
+    label: str,
+    operation: str,
+    spec_ref: str,
+) -> None:
+    """Vet legal-control handles before their immediate destruction (R2C1, R3F2).
+
+    A control that is null, predates the setup, or repeats a sibling
+    handle is a proved provider defect (CKR_OK with a non-new handle):
+    fail WITHOUT destroying it, or cleanup would destroy a foreign
+    object (or the same object twice). Mirrors the attempt-side A1
+    ownership rule for the setup side.
+    """
+    seen = set(before)
+    items = list(handles)
+    bad = [
+        (handle, "null" if not handle else "pre-existing")
+        for handle in items
+        if not handle or handle in seen
+    ]
+    counts: dict[int, int] = {}
+    for handle in items:
+        if handle:
+            counts[handle] = counts.get(handle, 0) + 1
+    for handle in sorted(counts):
+        if counts[handle] > 1:
+            bad.append((handle, "aliased"))
+    if not bad:
+        return
+    causes = ", ".join(f"{handle} ({cause})" for handle, cause in bad)
+    fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        spec_ref=spec_ref,
+        summary=(
+            f"{label}: legal control succeeded with non-new handle(s) {causes}; "
+            "refusing to destroy them"
+        ),
+        detail={"handles": [handle for handle, _ in bad]},
+    )
+
+
+def _destroy_all(rs: Any, handles: Iterable[int | None]) -> list[BaseException]:
+    """Attempt every owned destroy, collecting observed failures (F14, R3F2).
+
+    Each DISTINCT handle gets one independent attempt (R3F2: a repeated
+    listing destroys once, never twice); a raising destroy never skips
+    the rest. The destroy RV is OBSERVED, not discarded: a refused
+    destroy of a proved-owned handle is a collected failure, with
+    handle identity attached via ``add_note``.
     """
     errors: list[BaseException] = []
-    for handle in handles:
-        if not handle:
-            continue
+    for handle in dict.fromkeys(h for h in handles if h):
         try:
-            destroy_quietly(rs.raw, rs.sh, handle)
+            drv = destroy_quietly(rs.raw, rs.sh, handle)
         except BaseException as exc:
             exc.add_note(f"C_DestroyObject cleanup raised for owned handle {handle}")
             errors.append(exc)
+            continue
+        if drv is None:
+            # R4-F2: harness-side teardown failure -- no provider RV was
+            # ever produced, so this is a harness error, never a refusal.
+            harness_failure = RuntimeError(
+                f"C_DestroyObject cleanup failed without a provider RV for owned handle {handle}"
+            )
+            harness_failure.add_note(f"C_DestroyObject cleanup failed for owned handle {handle}")
+            errors.append(harness_failure)
+            continue
+        if drv != int(CKR_OK):
+            failure = CkrAssertionError(
+                f"C_DestroyObject cleanup refused for owned handle {handle} ({ckr_name(drv)})",
+                drv,
+            )
+            failure.add_note(f"C_DestroyObject cleanup refused for owned handle {handle}")
+            errors.append(failure)
     return errors
 
 
@@ -1053,8 +1230,10 @@ def _cleanup_owned(rs: Any, handles: Iterable[int | None]) -> None:
 
     With a primary exception in flight the primary is preserved exactly
     and each cleanup failure is attached to it as a note (never replacing
-    it, never lost). Without a primary, a single cleanup failure raises
-    as-is and several raise grouped.
+    it, never lost) -- except an undefined destroy RV, which is fail-grade
+    on its own merit and escalates past a primary xfail/skip (R4-F2).
+    Without a primary, a single cleanup failure raises as-is and several
+    raise grouped.
     """
     errors = _destroy_all(rs, handles)
     if not errors:
@@ -1064,6 +1243,24 @@ def _cleanup_owned(rs: Any, handles: Iterable[int | None]) -> None:
         if len(errors) == 1:
             raise errors[0]
         raise BaseExceptionGroup("QC4 owned-handle cleanup failures", errors)
+    # R4-F2: an undefined destroy RV is fail-grade on its own merit -- it
+    # must not survive as a note under a primary xfail/skip. Defined
+    # teardown observations stay notes (teardown races stay non-fatal
+    # under a primary verdict).
+    fatal = [
+        error
+        for error in errors
+        if isinstance(error, CkrAssertionError)
+        and not is_standard_ckr(error.rv)
+        and not is_vendor_defined_ckr(error.rv)
+    ]
+    if fatal:
+        for error in errors:
+            if error not in fatal:
+                pending.add_note(f"cleanup also raised {type(error).__name__}: {error}")
+        if len(fatal) == 1:
+            raise fatal[0]
+        raise BaseExceptionGroup("QC4 owned-handle cleanup failures", fatal)
     for error in errors:
         pending.add_note(f"cleanup also raised {type(error).__name__}: {error}")
 
@@ -1096,6 +1293,308 @@ def _check_derived_value(value: bytes, *, label: str, spec_ref: str) -> None:
                 "oracle_match": value == expected,
             },
         )
+
+
+def _check_concat_value(value: bytes, *, label: str, spec_ref: str) -> None:
+    """The derived value must equal base || aux (local known-key oracle).
+
+    Shared by the main and control aux legs: a mismatch fails crypto
+    wrong_result on either path.
+    """
+    expected = QC4_CONCAT_BASE + QC4_CONCAT_AUX
+    if len(value) != len(expected) or value != expected:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: derived value misses the local known-key oracle "
+                f"(value_len={len(value)}, expected {len(expected)}); "
+                "crypto wrong_result"
+            ),
+            detail={
+                "value_len": len(value),
+                "expected_len": len(expected),
+                "oracle_match": value == expected,
+            },
+        )
+
+
+def _concat_param(aux: int) -> Any:
+    """Pack a CKM_CONCATENATE_BASE_AND_KEY parameter (aux key handle)."""
+    handle_ctype = CK_OBJECT_HANDLE(aux)
+    param_bytes = bytes(
+        ctypes.string_at(ctypes.addressof(handle_ctype), ctypes.sizeof(handle_ctype))
+    )
+    return mech_bytes(CKM_CONCATENATE_BASE_AND_KEY, param_bytes)
+
+
+def _assert_no_labeled_objects(
+    rs: Any,
+    tag: str,
+    *,
+    label: str,
+    operation: str,
+    spec_ref: str,
+    rv: int,
+    before: list[int],
+    expect_class: int,
+    expect_key_type: int,
+    expect_token: bool,
+    mechanism: str | None = None,
+) -> None:
+    """Prove a refused call created no object (R2A2, R3F1).
+
+    A post-attempt inventory deltas against the baseline; pages
+    collected before a refusal stay valid evidence (only a clean scan
+    proves absence). Adoption requires attempt-correlated
+    session-object evidence — the fresh handle's CKA_LABEL, CKA_TOKEN,
+    CKA_CLASS, and CKA_KEY_TYPE must all read back the attempt's
+    identity — so a same-label persistent object or a foreign delta
+    can never turn this check into foreign-object deletion. Adopted
+    handles are destroyed and fail (leak proved); every other delta
+    (uncorrelated or unreadable) is recorded unproved and left
+    alone, and the strongest record wins (validity-first throughout).
+    """
+    retained = _record_rv_validity(
+        rv, label=label, operation=operation, kind="policy", mechanism=mechanism
+    )
+    scan = _find_allowing_partial(rs)
+    after, stages, oversize = scan.handles, scan.stages, scan.oversize
+    records: list[Any] = []
+    if retained is not None:
+        records.append(retained)
+    # R4-F1: validity first -- an undefined RV at ANY stage fails under
+    # its own operation (a refused page never hides the Final RV).
+    for stage_op, stage_rv in stages:
+        if (
+            stage_rv != int(CKR_OK)
+            and not is_standard_ckr(stage_rv)
+            and not is_vendor_defined_ckr(stage_rv)
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=stage_op,
+                inherit_mechanism=False,
+                actual=stage_rv,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: post-attempt inventory {stage_op} returned "
+                    f"undefined CK_RV {ckr_name(stage_rv)}"
+                ),
+            )
+    for stage_op, stage_rv in stages:
+        if stage_rv != int(CKR_OK):
+            inventory_retained = _record_rv_validity(
+                stage_rv,
+                label=f"{label}: inventory",
+                operation=stage_op,
+                kind="policy",
+            )
+            if inventory_retained is not None:
+                records.append(inventory_retained)
+    stopped = next(((op, srv) for op, srv in stages if srv != int(CKR_OK)), None)
+    clean_scan = stopped is None and oversize is None
+
+    def _fail_oversize() -> NoReturn:
+        assert oversize is not None
+        count, capacity = oversize
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: post-attempt inventory C_FindObjects claimed CKR_OK "
+                f"with count {count} on a {capacity}-element buffer"
+            ),
+            detail={"count": count, "capacity": capacity},
+        )
+
+    before_set = set(before)
+    new = [int(handle) for handle in after if int(handle) not in before_set]
+    if not new:
+        # R4-F1: a lying page fails even with no delta (proved metadata
+        # defect); earlier-page leaks grade before it below.
+        if oversize is not None:
+            _fail_oversize()
+        if not clean_scan:
+            assert stopped is not None
+            stop_op, stop_rv = stopped
+            void = record_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=rv,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: refused with {ckr_name(rv)} but the post-attempt "
+                    f"inventory {stop_op} failed with {ckr_name(stop_rv)}; "
+                    "zero-delta unproved"
+                ),
+                detail={
+                    "disposition": "unproved-effect",
+                    "refusal_rv": ckr_name(rv),
+                    "inventory_rv": ckr_name(stop_rv),
+                    "inventory_operation": stop_op,
+                },
+            )
+            records.append(void)
+            raise_for_record(_strongest_record(records))
+        if retained is not None:
+            raise_for_record(retained)
+        return
+    owned: list[int] = []
+    uncorrelated: list[int] = []
+    unreadable: list[int] = []
+    for handle in new:
+        try:
+            read = read_attributes(
+                rs.raw, rs.sh, handle, [CKA_LABEL, CKA_TOKEN, CKA_CLASS, CKA_KEY_TYPE]
+            )
+        except CkrAssertionError as exc:
+            rec = _record_rv_validity(
+                exc.rv,
+                label=f"{label}: identity readback",
+                operation="C_GetAttributeValue",
+                kind="policy",
+            )
+            if rec is not None:
+                records.append(rec)
+            unreadable.append(handle)
+            continue
+        claimed = attr_or_record(
+            read,
+            CKA_LABEL,
+            label=f"{label}: identity readback",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        token = attr_or_record(
+            read,
+            CKA_TOKEN,
+            label=f"{label}: identity readback",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        obj_class = attr_or_record(
+            read,
+            CKA_CLASS,
+            label=f"{label}: identity readback",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        key_type = attr_or_record(
+            read,
+            CKA_KEY_TYPE,
+            label=f"{label}: identity readback",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        if (
+            claimed is MISSING_ATTRIBUTE
+            or not isinstance(claimed, (bytes, str))
+            or token is MISSING_ATTRIBUTE
+            or not isinstance(token, bool)
+            or obj_class is MISSING_ATTRIBUTE
+            or not isinstance(obj_class, int)
+            or isinstance(obj_class, bool)
+            or key_type is MISSING_ATTRIBUTE
+            or not isinstance(key_type, int)
+            or isinstance(key_type, bool)
+        ):
+            unreadable.append(handle)
+        elif (
+            (claimed == tag.encode() or claimed == tag)
+            and token == expect_token
+            and obj_class == expect_class
+            and key_type == expect_key_type
+        ):
+            owned.append(handle)
+        else:
+            uncorrelated.append(handle)
+    if owned:
+        # F14: the established contradiction is RECORDED BEFORE cleanup
+        # runs (leak evidence first, then destroy); a destroy failure is
+        # attached to the terminal but never replaces it.
+        record = record_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: refused {operation} created {len(owned)} session object(s) "
+                "matching the attempt identity"
+            ),
+            detail={"handles": owned},
+        )
+        errors = _destroy_all(rs, owned)
+        try:
+            records.append(record)
+            raise_for_record(_strongest_record(records))
+        except BaseException as terminal:
+            for error in errors:
+                terminal.add_note(f"cleanup also raised {type(error).__name__}: {error}")
+            raise
+    # R4-F1: earlier pages graded (a leak failed above); a lying page
+    # now fails before any void can soften it.
+    if oversize is not None:
+        _fail_oversize()
+    if uncorrelated:
+        records.append(
+            record_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=rv,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: refused {operation} saw {len(uncorrelated)} new object(s) "
+                    "outside the attempt identity; left alone, ownership unproved"
+                ),
+                detail={"disposition": "unproved-effect", "handles": uncorrelated},
+            )
+        )
+    if unreadable:
+        records.append(
+            record_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=rv,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: refused {operation} saw {len(unreadable)} "
+                    "object(s) with unreadable identity; effect unproved"
+                ),
+                detail={"disposition": "unproved-effect", "handles": unreadable},
+            )
+        )
+    if records:
+        raise_for_record(_strongest_record(records))
 
 
 def _run_derive_policy_leg(rs: Any, leg: str, use: str) -> None:
@@ -1298,6 +1797,292 @@ def _run_derive_policy_leg(rs: Any, leg: str, use: str) -> None:
             _cleanup_owned(rs, [derived])
     finally:
         _cleanup_owned(rs, [control, base])
+
+
+def _run_derive_aux_policy_leg(rs: Any, leg: str) -> None:
+    row = row_by_key("derive_aux")
+    label = f"C_DeriveKey ALLOWED_MECHANISMS aux {leg}"
+    if not rs.has_mechanism("CONCATENATE_BASE_AND_KEY"):
+        pytest.skip("CKM_CONCATENATE_BASE_AND_KEY not supported")
+    derive_mech = int(CKM_CONCATENATE_BASE_AND_KEY)
+    excluded = leg == "excluded"
+    base_attrs: dict[Any, Any] = {
+        CKA_DERIVE: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_LABEL: f"qc4a-derive-aux-{leg}-base",
+        CKA_ALLOWED_MECHANISMS: [derive_mech],
+    }
+    base = _import_constrained_generic(
+        rs,
+        QC4_CONCAT_BASE,
+        base_attrs,
+        label=label,
+        operation="C_CreateObject",
+        spec_ref=row.citation,
+    )
+    aux_attrs: dict[Any, Any] = {
+        CKA_DERIVE: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_LABEL: f"qc4a-derive-aux-{leg}-aux",
+        CKA_ALLOWED_MECHANISMS: [derive_mech] if not excluded else [int(CKM_AES_ECB)],
+    }
+    control_attrs: dict[Any, Any] = {
+        CKA_DERIVE: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_LABEL: f"qc4a-derive-aux-{leg}-control",
+    }
+    if excluded:
+        control_attrs[CKA_ALLOWED_MECHANISMS] = [derive_mech]
+    aux = 0
+    control = 0
+    try:
+        aux = _import_constrained_generic(
+            rs,
+            QC4_CONCAT_AUX,
+            aux_attrs,
+            label=label,
+            operation="C_CreateObject",
+            spec_ref=row.citation,
+        )
+        control = _import_constrained_generic(
+            rs,
+            QC4_CONCAT_AUX,
+            control_attrs,
+            label=label,
+            operation="C_CreateObject",
+            spec_ref=row.citation,
+        )
+        read_constrained_claim(
+            rs,
+            base,
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=derive_mech,
+            expect_include=True,
+            spec_ref=row.citation,
+        )
+        read_constrained_claim(
+            rs,
+            aux,
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=derive_mech,
+            expect_include=not excluded,
+            spec_ref=row.citation,
+        )
+        if excluded:
+            read_constrained_claim(
+                rs,
+                control,
+                label=f"{label} control",
+                operation="C_DeriveKey",
+                mechanism=derive_mech,
+                expect_include=True,
+                spec_ref=row.citation,
+            )
+        derive_template: dict[Any, Any] = {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE_LEN: len(QC4_CONCAT_BASE) + len(QC4_CONCAT_AUX),
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_LABEL: f"qc4a-derive-aux-{leg}-control-derived",
+        }
+        try:
+            ctrl_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(
+                exc, (), label=f"{label} control: inventory", operation="C_FindObjects"
+            )
+        try:
+            control_derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base,
+                CKM_CONCATENATE_BASE_AND_KEY,
+                attrs=derive_template,
+                mech_param=_concat_param(control),
+            )
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(
+                exc,
+                (),
+                label=f"{label} control",
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+            )
+        if not int(control_derived) or int(control_derived) in set(ctrl_before):
+            # R2A2/R3F1: a null or pre-existing success handle fails
+            # WITHOUT touching it (A1, control path).
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=f"{label} control",
+                operation="C_DeriveKey",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=row.citation,
+                summary=(
+                    f"{label}: control derive succeeded with a non-new handle "
+                    f"({int(control_derived)}); refusing to use or destroy it"
+                ),
+                detail={"handle": int(control_derived)},
+            )
+        # R4-F1: novelty is not ownership -- the handle's identity must
+        # match before use/destroy. Controls prove ownership only
+        # (label plus session-ness); shape stays out of setup verdicts.
+        _adopt_qc4_output_or_xfail(
+            rs,
+            int(control_derived),
+            label=f"{label} control",
+            operation="C_DeriveKey",
+            spec_ref=row.citation,
+            expect_label=derive_template[CKA_LABEL],
+            expect_token=bool(derive_template[CKA_TOKEN]),
+            expect_class=None,
+            expect_key_type=None,
+        )
+        # F5: the control runs the SAME value/oracle checks as the
+        # main leg before its negative oracle is admitted.
+        try:
+            control_value = read_secret_or_unproved(
+                rs,
+                control_derived,
+                label=f"{label} control",
+                operation="C_DeriveKey",
+                spec_ref=row.citation,
+                control=True,
+            )
+            _check_concat_value(control_value, label=f"{label} control", spec_ref=row.citation)
+        finally:
+            _cleanup_owned(rs, [control_derived])
+        derive_template[CKA_LABEL] = f"qc4a-derive-aux-{leg}-derived"
+        try:
+            aux_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(exc, (), label=f"{label}: inventory", operation="C_FindObjects")
+        try:
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base,
+                CKM_CONCATENATE_BASE_AND_KEY,
+                attrs=derive_template,
+                mech_param=_concat_param(aux),
+            )
+        except CkrAssertionError as exc:
+            # R2A2: no terminating classify here; the sweep records
+            # validity non-terminating and grades it against the
+            # independently collected object effect.
+            _assert_no_labeled_objects(
+                rs,
+                derive_template[CKA_LABEL],
+                label=label,
+                operation="C_DeriveKey",
+                spec_ref=row.citation,
+                rv=exc.rv,
+                before=aux_before,
+                expect_class=int(derive_template[CKA_CLASS]),
+                expect_key_type=int(derive_template[CKA_KEY_TYPE]),
+                expect_token=bool(derive_template[CKA_TOKEN]),
+                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+            )
+            if not excluded:
+                classify_included_refusal_rv(
+                    exc.rv,
+                    label=label,
+                    operation="C_DeriveKey",
+                    mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+                    spec_ref=row.citation,
+                )
+                return
+            classify_excluded_refusal_rv(
+                exc.rv,
+                label=label,
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+                spec_ref=row.citation,
+            )
+            return
+        if not int(derived) or int(derived) in set(aux_before):
+            # R2A2/R3F1: a null or pre-existing success handle fails
+            # WITHOUT touching it (A1, target path).
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_DeriveKey",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=row.citation,
+                summary=(
+                    f"{label}: derive succeeded with a non-new handle "
+                    f"({int(derived)}); refusing to use or destroy it"
+                ),
+                detail={"handle": int(derived)},
+            )
+        # R4-F1: novelty is not ownership -- the handle's identity must
+        # match the attempt before use/destroy.
+        _adopt_qc4_output_or_xfail(
+            rs,
+            int(derived),
+            label=label,
+            operation="C_DeriveKey",
+            spec_ref=row.citation,
+            expect_label=derive_template[CKA_LABEL],
+            expect_token=bool(derive_template[CKA_TOKEN]),
+            expect_class=int(derive_template[CKA_CLASS]),
+            expect_key_type=int(derive_template[CKA_KEY_TYPE]),
+        )
+        try:
+            value = read_secret_or_unproved(
+                rs, derived, label=label, operation="C_DeriveKey", spec_ref=row.citation
+            )
+            _check_concat_value(value, label=label, spec_ref=row.citation)
+            if not excluded:
+                emit_qc4_pass(
+                    label=label,
+                    operation="C_DeriveKey",
+                    mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+                    spec_ref=row.citation,
+                    summary=(
+                        f"{label}: included aux mechanism completed; derived key oracle-verified"
+                    ),
+                    detail={
+                        "derived_len": len(value),
+                        "oracle_match": True,
+                    },
+                )
+                return
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=row.citation,
+                summary=(
+                    f"{label}: excluded aux mechanism completed and the derived "
+                    "key was independently verified (policy bypass)"
+                ),
+                detail={
+                    "derived_len": len(value),
+                    "oracle_match": True,
+                },
+            )
+        finally:
+            _cleanup_owned(rs, [derived])
+    finally:
+        _cleanup_owned(rs, [control, aux, base])
 
 
 def _run_wrap_policy_leg(rs: Any, leg: str, use: str) -> None:
@@ -2451,9 +3236,11 @@ def _contradicts(use_kind: str, readback: tuple[int, int], pqc_type: int = 0) ->
     """True when a coherent *use_kind* contradicts the readback identity."""
     obj_class, key_type = readback
     if use_kind == "aes":
-        return not (
-            obj_class == int(CKO_SECRET_KEY) and key_type in (int(CKK_AES), int(CKK_GENERIC_SECRET))
-        )
+        # R2C1: AES-ECB requires an AES key (Solaris softEncryptUtil.c and
+        # NSS softoken pkcs11c.c both return CKR_KEY_TYPE_INCONSISTENT for
+        # any non-AES key type). A verified AES use under a reported
+        # CKK_GENERIC_SECRET is a cross-type contradiction, never coherent.
+        return not (obj_class == int(CKO_SECRET_KEY) and key_type == int(CKK_AES))
     if use_kind == "rsa_encrypt":
         return not (
             key_type == int(CKK_RSA) and obj_class in (int(CKO_PUBLIC_KEY), int(CKO_PRIVATE_KEY))
@@ -2597,6 +3384,7 @@ def _adjudicate_uses(
                 "use_rvs": use_rvs,
             },
         )
+    use_attempted = any(outcome.attempted for outcome in outcomes)
     xfail_as(
         "honest_deviation",
         kind="policy",
@@ -2608,13 +3396,16 @@ def _adjudicate_uses(
         summary=(
             f"{label}: accepted malformed template; material inspected and "
             f"unusable under {readback_names[0]}/{readback_names[1]}"
+            if use_attempted
+            else f"{label}: accepted malformed template; material inspected, "
+            "usability unproved (no use attempted)"
         ),
         detail={
-            "disposition": "inspected-unusable",
+            "disposition": "inspected-unusable" if use_attempted else "inspected-unproved",
             "readback_class": readback_names[0],
             "readback_type": readback_names[1],
             "identity_kept": readback == requested,
-            "use_attempted": any(outcome.attempted for outcome in outcomes),
+            "use_attempted": use_attempted,
             "use_rvs": use_rvs,
         },
     )
@@ -2696,6 +3487,138 @@ def _find_all(rs: Any) -> list[int]:
     return _run_inventory(rs, None, 0, record_label="full inventory")
 
 
+@dataclass
+class _PartialInventory:
+    """Handles plus per-stage evidence from a possibly-refused scan (R4-F1).
+
+    ``stages`` carries (operation, RV) for every stage that ran, in run
+    order: Init always, then the last Find call's RV when pagination ran,
+    then Final whenever it was attempted (always after a successful
+    Init -- a refused page never discards the Final RV). ``oversize``
+    carries (count, capacity) when a page lied about its count; the
+    lying page's handles are never read (buffer garbage past capacity)
+    and earlier pages stay valid evidence for the caller to grade.
+    """
+
+    handles: list[int]
+    stages: list[tuple[str, int]]
+    oversize: tuple[int, int] | None = None
+
+
+def _find_allowing_partial(rs: Any) -> _PartialInventory:
+    """Inventory, retaining pages collected before a refusal (R3F1, R4-F1).
+
+    Pages observed before a refusal stay valid evidence (a post-attempt
+    delta against a complete baseline still proves creation); only a
+    clean scan proves absence. Every stage RV rides along for the
+    caller to grade under its own operation (an undefined Final behind
+    a standard page refusal fails there, never hides). An over-capacity
+    count is returned as an observation (the caller grades earlier-page
+    leaks before the metadata defect); the lying page itself is never
+    read.
+    """
+    stages: list[tuple[str, int]] = []
+    rv = int(rs.raw.C_FindObjectsInit(rs.sh, None, 0))
+    stages.append(("C_FindObjectsInit", rv))
+    if rv != int(CKR_OK):
+        return _PartialInventory([], stages)
+    out: list[int] = []
+    oversize: tuple[int, int] | None = None
+    find_rv = int(CKR_OK)
+    try:
+        while True:
+            handles = (CK_OBJECT_HANDLE * _FIND_PAGE_SIZE)()
+            found = CK_ULONG(0)
+            rv = int(rs.raw.C_FindObjects(rs.sh, handles, _FIND_PAGE_SIZE, byref(found)))
+            find_rv = rv
+            if rv != int(CKR_OK):
+                break
+            raw_count = int(found.value)
+            if raw_count > _FIND_PAGE_SIZE:
+                oversize = (raw_count, _FIND_PAGE_SIZE)
+                break
+            out.extend(int(handles[i]) for i in range(raw_count))
+            if raw_count == 0:
+                break
+    finally:
+        try:
+            final_rv = int(rs.raw.C_FindObjectsFinal(rs.sh))
+        except AttributeError:
+            final_rv = int(CKR_OK)
+    stages.append(("C_FindObjects", find_rv))
+    stages.append(("C_FindObjectsFinal", final_rv))
+    return _PartialInventory(out, stages, oversize)
+
+
+def _adopt_qc4_output_or_xfail(
+    rs: Any,
+    handle: int,
+    *,
+    label: str,
+    operation: str,
+    spec_ref: str,
+    expect_label: str | bytes | None,
+    expect_token: bool | None,
+    expect_class: int | None,
+    expect_key_type: int | None,
+) -> None:
+    """Adopt a novel QC4 success handle; xfail unproved-effect when unproved (R4-F1).
+
+    A read-back identity that differs from the attempt fails loud WITHOUT
+    touching the handle; an unprovable identity xfails visibly (the handle
+    is never used nor destroyed).
+    """
+    try:
+        adopt_correlated_output(
+            rs,
+            handle,
+            label=label,
+            operation=operation,
+            expect_label=expect_label,
+            expect_token=expect_token,
+            expect_class=expect_class,
+            expect_key_type=expect_key_type,
+            spec_ref=spec_ref,
+        )
+    except OwnershipUnprovedError as exc:
+        fields = ", ".join(f"{name}: {why}" for name, why in exc.fields.items())
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: accepted output ownership unproved ({fields}); "
+                "refusing to use or destroy it"
+            ),
+            detail={"disposition": "unproved-effect", "handle": handle},
+        )
+
+
+def _half_correlated(
+    rs: Any,
+    half: int,
+    *,
+    label: str,
+    attempt_label: str,
+) -> bool:
+    """Whether a novel keypair half matches its attempt identity (R4-F1).
+
+    Never fails on mismatch or unproved shapes (the halves contradiction
+    already failed; this only filters cleanup); validity findings inside
+    the reads still fail loud. Label plus session-ness only (the
+    malformation owns shape verdicts downstream).
+    """
+    expected: dict[str, Any] = {"label": attempt_label, "token": False}
+    observed = read_attempt_identity(
+        rs, half, label=label, operation="C_GenerateKeyPair", fields=tuple(expected)
+    )
+    return compare_attempt_identity(observed, expected) == "match"
+
+
 def _record_rv_validity(
     rv: int,
     *,
@@ -2753,6 +3676,39 @@ def _strongest_record(records: list[Any]) -> Any:
     return records[0]
 
 
+#: Expected refusals per malformed-cell kind (R3F9, §5.18.1-literal).
+#: A swap (incompatible class or type) is specified
+#: CKR_TEMPLATE_INCONSISTENT; a missing required attribute is specified
+#: CKR_TEMPLATE_INCOMPLETE. Only the cell's own codes sanction the pass
+#: -- near or confused codes (a use-time CKR_KEY_TYPE_INCONSISTENT,
+#: domain params on AES, an operational failure) leave the malformation
+#: unadjudicated and xfail with the proved zero delta, never pass.
+_SWAP_REJECTION_RVS = frozenset({int(CKR_TEMPLATE_INCONSISTENT)})
+_MISSING_REJECTION_RVS = frozenset({int(CKR_TEMPLATE_INCOMPLETE)})
+_MISSING_PARAMS_EXTRA_RVS = frozenset({int(CKR_DOMAIN_PARAMS_INVALID)})
+#: Cells where a missing-params template may also legitimately refuse
+#: CKR_DOMAIN_PARAMS_INVALID (R4-F9): EC domain material only. A missing
+#: PQC parameter-set SELECTOR is an incomplete template (INCOMPLETE);
+#: letting DOMAIN_PARAMS sanction it would launder an EC-domain code
+#: onto a selector omission. Keyed by (operation, family, row) and
+#: fail-closed: unlisted cells stay INCOMPLETE-only.
+_DOMAIN_PARAMS_EXTRA_CELLS = frozenset(
+    {
+        ("C_CreateObject", "ec", "missing_params"),
+        ("C_GenerateKeyPair", "ec", "missing_params"),
+    }
+)
+
+
+def _malformed_rejection_rvs(operation: str, family: str, malformation: str) -> frozenset[int]:
+    """Expected refusal set for one malformed cell (R3F9, R4-F9)."""
+    if (operation, family, malformation) in _DOMAIN_PARAMS_EXTRA_CELLS:
+        return _MISSING_REJECTION_RVS | _MISSING_PARAMS_EXTRA_RVS
+    if malformation.startswith("missing_"):
+        return _MISSING_REJECTION_RVS
+    return _SWAP_REJECTION_RVS
+
+
 def _adjudicate_malformed_refusal(
     rs: Any,
     rv: int,
@@ -2764,7 +3720,9 @@ def _adjudicate_malformed_refusal(
     error_handles: Iterable[int] = (),
     attempt_templates: Iterable[dict[Any, Any]] = (),
     identities: Iterable[tuple[int, int]] = (),
+    allowed_rvs: frozenset[int] | None = None,
 ) -> None:
+    # allowed_rvs=None is a caller bug (fail-closed: nothing passes).
     """Rejection leg: record validity, inventory, terminate strongest (N7).
 
     The refusal RV's validity defect (undefined/vendor) is RECORDED FIRST
@@ -2898,6 +3856,33 @@ def _adjudicate_malformed_refusal(
                 "refusal_rv": ckr_name(rv),
                 "inventory_delta": len(delta),
                 "unproved_new_handles": unproved,
+                **({"error_output_handles": outputs} if outputs else {}),
+            },
+        )
+    expected = sorted(ckr_name(code) for code in (allowed_rvs or frozenset()))
+    if allowed_rvs is None or rv not in allowed_rvs:
+        # R3F9: a zero delta proves nothing was created, but only the
+        # cell's own codes attest that the provider judged THIS
+        # malformation (anything else -- near, confused, or
+        # operational -- leaves it unadjudicated).
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: refused with {ckr_name(rv)} (expected "
+                f"{', '.join(expected) or 'none'}); malformation unadjudicated, "
+                "zero delta proved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "refusal_rv": ckr_name(rv),
+                "expected_rvs": expected,
+                "inventory_delta": 0,
                 **({"error_output_handles": outputs} if outputs else {}),
             },
         )
@@ -3718,6 +4703,10 @@ def _use_pqc_sign_admitted(
 
 
 _QC4B_SPEC = "PKCS#11 v3.2 §5.7.1/§5.18.4/§5.18.2 mandatory template attributes"
+_QC4B_GENKEY_SPEC = (
+    "PKCS#11 v3.2 C_GenerateKey: the template must be coherent; "
+    "secret class with an asymmetric key type is malformed"
+)
 
 
 def _create_rsa_templates(malformation: str, label: str) -> tuple[dict[Any, Any], tuple[int, int]]:
@@ -3945,6 +4934,9 @@ def _create_pqc_templates(
                 CKA_VERIFY: True,
                 CKA_TOKEN: False,
                 CKA_LABEL: label,
+                # R4-F9: the selector stays supplied so the swap is the
+                # only malformation (the control supplies it too).
+                CKA_PARAMETER_SET: family.param_set,
             },
             (secret, family.key_type),
         )
@@ -3957,6 +4949,9 @@ def _create_pqc_templates(
                 CKA_VERIFY: True,
                 CKA_TOKEN: False,
                 CKA_LABEL: label,
+                # R4-F9: the selector stays supplied so the swap is the
+                # only malformation (the control supplies it too).
+                CKA_PARAMETER_SET: family.param_set,
             },
             (public, int(CKK_AES)),
         )
@@ -4095,9 +5090,22 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 control_attrs = _create_pqc_control(attempt_attrs, pqc, ctrl_label)
             rsa_priv = None
         try:
+            ctrl_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(
+                exc, (), label=f"{label} control: inventory", operation="C_FindObjects"
+            )
+        try:
             control = create_object(rs.raw, rs.sh, control_attrs)
         except CkrAssertionError as exc:
             void_qc4_setup_exc(exc, (), label=f"{label} legal control", operation="C_CreateObject")
+        _vet_control_handles(
+            [control],
+            before=ctrl_before,
+            label=f"{label} legal control",
+            operation="C_CreateObject",
+            spec_ref=_QC4B_SPEC,
+        )
         _cleanup_owned(rs, [control])
         try:
             before = _find_all(rs)
@@ -4114,6 +5122,7 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 operation="C_CreateObject",
                 before=before,
                 spec_ref=_QC4B_SPEC,
+                allowed_rvs=_malformed_rejection_rvs("C_CreateObject", family, malformation),
                 error_handles=(int(handle.value),),
                 attempt_templates=(attempt_attrs,),
                 identities=_swap_coherent_identities(
@@ -4530,6 +5539,12 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
         attempt_attrs, requested = _unwrap_templates(family_type, malformation, attempt_label)
         control_attrs = _unwrap_control_template(family_type, ctrl_label)
         try:
+            ctrl_before = _find_all(rs)
+        except CkrAssertionError as exc:
+            void_qc4_setup_exc(
+                exc, (), label=f"{label} control: inventory", operation="C_FindObjects"
+            )
+        try:
             control = unwrap_key(rs.raw, rs.sh, kek, blob, CKM_AES_KEY_WRAP, control_attrs)
         except CkrAssertionError as exc:
             void_qc4_setup_exc(
@@ -4539,6 +5554,13 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 operation="C_UnwrapKey",
                 mechanism="CKM_AES_KEY_WRAP",
             )
+        _vet_control_handles(
+            [control],
+            before=ctrl_before,
+            label=f"{label} legal control",
+            operation="C_UnwrapKey",
+            spec_ref=_QC4B_SPEC,
+        )
         _cleanup_owned(rs, [control])
         try:
             before = _find_all(rs)
@@ -4566,6 +5588,7 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 operation="C_UnwrapKey",
                 before=before,
                 spec_ref=_QC4B_SPEC,
+                allowed_rvs=_malformed_rejection_rvs("C_UnwrapKey", family, malformation),
                 error_handles=(int(handle.value),),
                 attempt_templates=(attempt_attrs,),
                 identities=_swap_coherent_identities(
@@ -4810,6 +5833,252 @@ def _generate_templates(
     raise KeyError(malformation)
 
 
+def _genkey_templates(
+    family_type: int, label: str, malformation: str
+) -> tuple[dict[Any, Any], tuple[int, int]]:
+    """Secret-class/asymmetric-type C_GenerateKey attempt + requested identity."""
+    if malformation != "swap_secret_class_asym_type":
+        raise KeyError(malformation)
+    return (
+        {
+            CKA_CLASS: int(CKO_SECRET_KEY),
+            CKA_KEY_TYPE: family_type,
+            CKA_VALUE_LEN: 16,
+            CKA_ENCRYPT: True,
+            CKA_DECRYPT: True,
+            CKA_EXTRACTABLE: True,
+            CKA_TOKEN: False,
+            CKA_LABEL: label,
+        },
+        (int(CKO_SECRET_KEY), family_type),
+    )
+
+
+def _aes_width_or_none(value: bytes, *, label: str) -> bytes | None:
+    """Admit a read key to the local AES oracle only at AES widths (B5).
+
+    The oracle models AES-128/192/256; any other width leaves the use
+    unverifiable (mirroring the create/unwrap/generate callers' inline
+    guards), never a raw local exception.
+    """
+    if len(value) not in (16, 24, 32):
+        _note_qc4_observation(
+            f"{label}: read key width {len(value)} outside AES widths; use unverifiable",
+            "QC4b #56.2 use adjudication",
+        )
+        return None
+    return value
+
+
+def _genkey_acceptance_uses(
+    rs: Any, handle: int, *, label: str, spec_ref: str
+) -> list[_UseOutcome]:
+    """Probe AES-ECB use of an admitted generated object.
+
+    The generated material is unknown, so its value is read first and the
+    local oracle applies to the read bytes; an unreadable value still gets
+    a use attempt whose success is unverifiable (never assumed coherent).
+    """
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv, label=label, operation="C_GetAttributeValue", kind="policy"
+        )
+        value = None
+    else:
+        record_count = len(get_records())
+        claimed = attr_or_record(
+            attrs,
+            CKA_VALUE,
+            label=label,
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+            sensitive_is_conformant=True,
+        )
+        if claimed is MISSING_ATTRIBUTE:
+            # Refusal-with-data is RECORDED by the plain call above: a
+            # proved module self-contradiction fails loud (F9 fail-fast),
+            # never noted-and-passed into the unproved arm below.
+            _raise_for_fresh_fail(record_count)
+            value = None
+        elif not isinstance(claimed, bytes) or not claimed:
+            value = None
+        else:
+            value = _aes_width_or_none(claimed, label=label)
+    if value is None:
+        outcome = _UseOutcome(use_kind="aes", attempted=True, rvs=[])
+        assert outcome.rvs is not None
+        try:
+            observed = encrypt_single(rs.raw, rs.sh, handle, CKM_AES_ECB, PROBE_PLAINTEXT)
+        except CkrAssertionError as exc:
+            classify_rv_validity_or_none(exc.rv, label=label, operation="C_Encrypt", kind="policy")
+            outcome.rvs.append(ckr_name(exc.rv))
+            return [outcome]
+        if len(observed) != len(PROBE_PLAINTEXT):
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation="C_GenerateKey",
+                mechanism="CKM_AES_ECB",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: successful ECB use of the admitted object is malformed "
+                    f"(observed_len={len(observed)}); crypto wrong_result"
+                ),
+                detail={"observed_len": len(observed)},
+            )
+        outcome.unverifiable = True
+        return [outcome]
+    return [
+        _use_aes_oracle(
+            rs,
+            handle,
+            key_bytes=value,
+            label=label,
+            operation="C_GenerateKey",
+            spec_ref=spec_ref,
+        )
+    ]
+
+
+def _run_genkey_malformed_cell(rs: Any, family: str, malformation: str) -> None:
+    label = f"C_GenerateKey malformed {family}/{malformation}"
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("CKM_AES_KEY_GEN not supported")
+    pqc: PqcFamily | None = resolve_pqc_family(rs) if family == "pqc" else None
+    family_type = {"rsa": int(CKK_RSA), "ec": int(CKK_EC)}.get(family, pqc.key_type if pqc else 0)
+    if family == "pqc":
+        assert pqc is not None
+    attempt_label = malformed_label("genkey", family, malformation)
+    ctrl_label = control_label("genkey", family, malformation)
+    attempt_attrs, requested = _genkey_templates(family_type, attempt_label, malformation)
+    try:
+        ctrl_before = _find_all(rs)
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=f"{label} control: inventory", operation="C_FindObjects")
+    try:
+        control = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_TOKEN: False, CKA_LABEL: ctrl_label, CKA_EXTRACTABLE: True},
+        )
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=f"{label} legal control", operation="C_GenerateKey")
+    _vet_control_handles(
+        [control],
+        before=ctrl_before,
+        label=f"{label} legal control",
+        operation="C_GenerateKey",
+        spec_ref=_QC4B_GENKEY_SPEC,
+    )
+    # R4-F1: vetting is not ownership -- the control's identity must
+    # match before it is destroyed (label plus session-ness; controls
+    # never judge shape).
+    _adopt_qc4_output_or_xfail(
+        rs,
+        int(control),
+        label=f"{label} legal control",
+        operation="C_GenerateKey",
+        spec_ref=_QC4B_GENKEY_SPEC,
+        expect_label=ctrl_label,
+        expect_token=False,
+        expect_class=None,
+        expect_key_type=None,
+    )
+    _cleanup_owned(rs, [control])
+    try:
+        before = _find_all(rs)
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=f"{label}: inventory", operation="C_FindObjects")
+    tmpl = template(*pack_attrs(attempt_attrs))
+    mech = mech_simple(CKM_AES_KEY_GEN)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+    if rv != int(CKR_OK):
+        _adjudicate_malformed_refusal(
+            rs,
+            rv,
+            label=label,
+            operation="C_GenerateKey",
+            before=before,
+            spec_ref=_QC4B_GENKEY_SPEC,
+            allowed_rvs=_malformed_rejection_rvs("C_GenerateKey", family, malformation),
+            error_handles=(int(handle.value),),
+            attempt_templates=(attempt_attrs,),
+            identities=(
+                requested,
+                (int(CKO_SECRET_KEY), int(CKK_AES)),
+            ),
+        )
+        return
+    if not handle.value or int(handle.value) in set(before):
+        # A1: a success handle that is null or predates the attempt is a
+        # proved contradiction; fail WITHOUT touching it, or cleanup
+        # would destroy a foreign object.
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_GenerateKey",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=_QC4B_GENKEY_SPEC,
+            summary=(
+                f"{label}: C_GenerateKey succeeded with a non-new handle "
+                f"({int(handle.value)}); refusing to use or destroy it"
+            ),
+            detail={"handle": int(handle.value)},
+        )
+    # R4-F1: novelty is not ownership. Class/type stay out of the
+    # adoption (the malformation owns them; downstream adjudication
+    # grades the readback) -- label plus session-ness prove the handle.
+    _adopt_qc4_output_or_xfail(
+        rs,
+        int(handle.value),
+        label=label,
+        operation="C_GenerateKey",
+        spec_ref=_QC4B_GENKEY_SPEC,
+        expect_label=attempt_label,
+        expect_token=False,
+        expect_class=None,
+        expect_key_type=None,
+    )
+    try:
+        readback = _inspect_identity(
+            rs,
+            handle.value,
+            label=label,
+            operation="C_GenerateKey",
+            spec_ref=_QC4B_GENKEY_SPEC,
+        )
+        outcomes = _genkey_acceptance_uses(
+            rs,
+            handle.value,
+            label=label,
+            spec_ref=_QC4B_GENKEY_SPEC,
+        )
+        for outcome in outcomes:
+            outcome.performer = readback
+            outcome.handle = handle.value
+        _adjudicate_uses(
+            outcomes,
+            readback=readback,
+            requested=requested,
+            pqc_type=pqc.key_type if pqc else 0,
+            label=label,
+            operation="C_GenerateKey",
+            spec_ref=_QC4B_GENKEY_SPEC,
+        )
+    finally:
+        _cleanup_owned(rs, [handle.value])
+
+
 def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> None:
     label = f"C_GenerateKeyPair malformed {family}/{malformation}"
     if family == "rsa" and not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -4823,7 +6092,36 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
         family, pqc, malformation, attempt_label
     )
     family_type = {"rsa": int(CKK_RSA), "ec": int(CKK_EC)}.get(family, pqc.key_type if pqc else 0)
+    try:
+        ctrl_before = _find_all(rs)
+    except CkrAssertionError as exc:
+        void_qc4_setup_exc(exc, (), label=f"{label} control: inventory", operation="C_FindObjects")
     ctrl_pub, ctrl_priv = _generate_family_source(rs, family, pqc, label=ctrl_label)
+    _vet_control_handles(
+        [ctrl_pub, ctrl_priv],
+        before=ctrl_before,
+        label=f"{label} legal control",
+        operation="C_GenerateKeyPair",
+        spec_ref=_QC4B_SPEC,
+    )
+    # R4-F1: vetting is not ownership -- each control half's identity
+    # must match before it is destroyed (label plus session-ness;
+    # controls never judge shape).
+    for half, half_label in (
+        (ctrl_pub, f"{ctrl_label}-src-pub"),
+        (ctrl_priv, f"{ctrl_label}-src-priv"),
+    ):
+        _adopt_qc4_output_or_xfail(
+            rs,
+            int(half),
+            label=f"{label} legal control",
+            operation="C_GenerateKeyPair",
+            spec_ref=_QC4B_SPEC,
+            expect_label=half_label,
+            expect_token=False,
+            expect_class=None,
+            expect_key_type=None,
+        )
     _cleanup_owned(rs, [ctrl_pub, ctrl_priv])
     try:
         before = _find_all(rs)
@@ -4852,6 +6150,7 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             operation="C_GenerateKeyPair",
             before=before,
             spec_ref=_QC4B_SPEC,
+            allowed_rvs=_malformed_rejection_rvs("C_GenerateKeyPair", family, malformation),
             error_handles=(int(pub_handle.value), int(priv_handle.value)),
             attempt_templates=(pub_attrs, priv_attrs),
             identities=(
@@ -4861,6 +6160,67 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             ),
         )
         return
+    _halves = (int(pub_handle.value), int(priv_handle.value))
+    _halves_bad = (
+        not all(_halves) or _halves[0] == _halves[1] or any(half in set(before) for half in _halves)
+    )
+    if _halves_bad:
+        # A1: success halves must be nonzero, distinct, and newly live.
+        # Ownership is per half: correlation-proved halves are destroyed
+        # so one invalid output never strands a proved sibling; null,
+        # pre-existing, foreign, and unproved halves are refused
+        # untouched (R4-F1: novelty alone never authorizes cleanup). Use
+        # is refused for both halves either way.
+        if not all(_halves):
+            _cause = "null"
+        elif _halves[0] == _halves[1]:
+            _cause = "aliased"
+        else:
+            _cause = "pre-existing"
+        _candidates = sorted({half for half in _halves if half and half not in set(before)})
+        _owned = [
+            half
+            for half in _candidates
+            if _half_correlated(rs, half, label=label, attempt_label=attempt_label)
+        ]
+        # F14: the halves contradiction is RECORDED BEFORE cleanup runs;
+        # a destroy failure is attached to the terminal, never replaces it.
+        record = record_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_GenerateKeyPair",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=_QC4B_SPEC,
+            summary=(
+                f"{label}: C_GenerateKeyPair succeeded with {_cause} halves "
+                f"{list(_halves)}; refusing to use them"
+            ),
+            detail={"halves": list(_halves), "cause": _cause, "destroyed_owned": _owned},
+        )
+        errors = _destroy_all(rs, _owned)
+        try:
+            raise_for_record(record)
+        except BaseException as terminal:
+            for error in errors:
+                terminal.add_note(f"cleanup also raised {type(error).__name__}: {error}")
+            raise
+    # R4-F1: novelty is not ownership. Both halves correlate on label
+    # plus session-ness only (the malformation owns shape verdicts;
+    # downstream adjudication grades the class/type readback).
+    for half in (int(pub_handle.value), int(priv_handle.value)):
+        _adopt_qc4_output_or_xfail(
+            rs,
+            half,
+            label=label,
+            operation="C_GenerateKeyPair",
+            spec_ref=_QC4B_SPEC,
+            expect_label=attempt_label,
+            expect_token=False,
+            expect_class=None,
+            expect_key_type=None,
+        )
     try:
         readback = _inspect_identity(
             rs,
@@ -5222,6 +6582,399 @@ def _run_rsa_sign_downstream(rs: Any, malformation: str) -> None:
                 f"(sig_len={len(signature)}); crypto wrong_result"
             ),
             detail={"sig_len": len(signature)},
+        )
+    finally:
+        _cleanup_owned(rs, [handle.value])
+
+
+#: SignInit refusals that evidence the Init defense (R2-wording): the
+#: module judged the mismatched key/use. Any other standard refusal is
+#: opaque (an operational failure, not a judgment) and stays unproved.
+_INIT_DEFENSE_RVS = frozenset(
+    {
+        int(CKR_KEY_TYPE_INCONSISTENT),
+        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        int(CKR_MECHANISM_INVALID),
+    }
+)
+
+
+@dataclass(frozen=True)
+class RsaSignMech:
+    """One RSA signing mechanism for the wrong-algorithm legs (#56.3)."""
+
+    name: str
+    mech: int
+    oracle_hash: hashes.HashAlgorithm | None
+    pss_params: tuple[int, int, int] | None = None
+
+
+#: RSA signing mechs exercised against the EC-material franken object.
+#: oracle_hash is the ECDSA oracle hash (the operation's hash); None means
+#: UNPROVED-only on CKR_OK (raw RSA_PKCS/X_509 carry no hash to verify
+#: under). X9_31 attempts SHA1 (the X9.31 classic; a miss lands UNPROVED,
+#: never passed). pss_params is (hash_mech, mgf, salt_len) for the PSS
+#: family: base PSS signs its named digest; the combined rows hash the
+#: plain probe internally. Each row is capability-gated (a provider
+#: advertising only a combined PSS row still gets PSS coverage); a
+#: param-mismatch refusal lands on the honest init-refused path.
+_RSA_SIGN_MECHS: tuple[RsaSignMech, ...] = (
+    RsaSignMech("RSA_PKCS", int(CKM_RSA_PKCS), None),
+    RsaSignMech("SHA1_RSA_PKCS", int(CKM_SHA1_RSA_PKCS), hashes.SHA1()),  # nosec B303
+    RsaSignMech("SHA224_RSA_PKCS", int(CKM_SHA224_RSA_PKCS), hashes.SHA224()),
+    RsaSignMech("SHA256_RSA_PKCS", int(CKM_SHA256_RSA_PKCS), hashes.SHA256()),
+    RsaSignMech("SHA384_RSA_PKCS", int(CKM_SHA384_RSA_PKCS), hashes.SHA384()),
+    RsaSignMech("SHA512_RSA_PKCS", int(CKM_SHA512_RSA_PKCS), hashes.SHA512()),
+    # R4-F8: the four SHA-3 PKCS#1 v1.5 rows complete the advertised-applicable matrix.
+    RsaSignMech("SHA3_224_RSA_PKCS", int(CKM_SHA3_224_RSA_PKCS), hashes.SHA3_224()),
+    RsaSignMech("SHA3_256_RSA_PKCS", int(CKM_SHA3_256_RSA_PKCS), hashes.SHA3_256()),
+    RsaSignMech("SHA3_384_RSA_PKCS", int(CKM_SHA3_384_RSA_PKCS), hashes.SHA3_384()),
+    RsaSignMech("SHA3_512_RSA_PKCS", int(CKM_SHA3_512_RSA_PKCS), hashes.SHA3_512()),
+    RsaSignMech(
+        "RSA_PKCS_PSS",
+        int(CKM_RSA_PKCS_PSS),
+        hashes.SHA256(),
+        (int(CKM_SHA256), int(CKG_MGF1_SHA256), 32),
+    ),
+    RsaSignMech(
+        "SHA1_RSA_PKCS_PSS",
+        int(CKM_SHA1_RSA_PKCS_PSS),
+        hashes.SHA1(),  # nosec B303
+        (int(CKM_SHA_1), int(CKG_MGF1_SHA1), 20),
+    ),
+    RsaSignMech(
+        "SHA256_RSA_PKCS_PSS",
+        int(CKM_SHA256_RSA_PKCS_PSS),
+        hashes.SHA256(),
+        (int(CKM_SHA256), int(CKG_MGF1_SHA256), 32),
+    ),
+    RsaSignMech(
+        "SHA384_RSA_PKCS_PSS",
+        int(CKM_SHA384_RSA_PKCS_PSS),
+        hashes.SHA384(),
+        (int(CKM_SHA384), int(CKG_MGF1_SHA384), 48),
+    ),
+    RsaSignMech(
+        "SHA512_RSA_PKCS_PSS",
+        int(CKM_SHA512_RSA_PKCS_PSS),
+        hashes.SHA512(),
+        (int(CKM_SHA512), int(CKG_MGF1_SHA512), 64),
+    ),
+    RsaSignMech(
+        "SHA224_RSA_PKCS_PSS",
+        int(CKM_SHA224_RSA_PKCS_PSS),
+        hashes.SHA224(),
+        (int(CKM_SHA224), int(CKG_MGF1_SHA224), 28),
+    ),
+    RsaSignMech(
+        "SHA3_224_RSA_PKCS_PSS",
+        int(CKM_SHA3_224_RSA_PKCS_PSS),
+        hashes.SHA3_224(),
+        (int(CKM_SHA3_224), int(CKG_MGF1_SHA3_224), 28),
+    ),
+    RsaSignMech(
+        "SHA3_256_RSA_PKCS_PSS",
+        int(CKM_SHA3_256_RSA_PKCS_PSS),
+        hashes.SHA3_256(),
+        (int(CKM_SHA3_256), int(CKG_MGF1_SHA3_256), 32),
+    ),
+    RsaSignMech(
+        "SHA3_384_RSA_PKCS_PSS",
+        int(CKM_SHA3_384_RSA_PKCS_PSS),
+        hashes.SHA3_384(),
+        (int(CKM_SHA3_384), int(CKG_MGF1_SHA3_384), 48),
+    ),
+    RsaSignMech(
+        "SHA3_512_RSA_PKCS_PSS",
+        int(CKM_SHA3_512_RSA_PKCS_PSS),
+        hashes.SHA3_512(),
+        (int(CKM_SHA3_512), int(CKG_MGF1_SHA3_512), 64),
+    ),
+    RsaSignMech("RSA_X9_31", int(CKM_RSA_X9_31), hashes.SHA1()),  # nosec B303
+    RsaSignMech("SHA1_RSA_X9_31", int(CKM_SHA1_RSA_X9_31), hashes.SHA1()),  # nosec B303
+    RsaSignMech("RSA_X_509", int(CKM_RSA_X_509), None),
+)
+
+
+def _wrong_algo_mech_param(entry: RsaSignMech) -> Any:
+    """Valid mechanism parameters for a wrong-algorithm leg."""
+    if entry.pss_params is not None:
+        hash_mech, mgf, salt_len = entry.pss_params
+        return mech_pss(entry.mech, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
+    return mech_simple(entry.mech)
+
+
+def _wrong_algo_message(entry: RsaSignMech) -> bytes:
+    """Valid sign input per mechanism (C1).
+
+    Raw mechanisms sign encoded input directly: base PSS takes the
+    SHA-256 digest its parameters name (a 20-byte probe would invite
+    input-length refusals misread as held defenses), and raw X9_31
+    takes digest || trailer-ID (a bare digest is invalid input per
+    the repo's X9.31 rule). Combined mechanisms hash the plain probe
+    internally, so they (and X_509) take the plain probe message.
+    """
+    if entry.mech == int(CKM_RSA_PKCS_PSS):
+        return hashlib.sha256(QC4_SIGN_DATA, usedforsecurity=False).digest()
+    if entry.mech == int(CKM_RSA_X9_31):
+        return x931_sign_input(QC4_SIGN_DATA, "sha1")
+    return QC4_SIGN_DATA
+
+
+def _run_rsa_sign_wrong_algo(rs: Any, mech_name: str) -> None:
+    label = f"RSA wrong-algorithm sign {mech_name} on EC-material object"
+    if not rs.has_mechanism(mech_name):
+        pytest.skip(f"CKM_{mech_name} not supported")
+    if not rs.has_mechanism_flag(mech_name, int(CKF_SIGN)):
+        # R4-F8: presence is not signing capability -- a verify-only
+        # row legitimately refuses C_SignInit with MECHANISM_INVALID,
+        # which must skip as inapplicable, never report "defense held".
+        pytest.skip(f"CKM_{mech_name} not sign-capable (CKF_SIGN unset); row inapplicable")
+    entry = next((item for item in _RSA_SIGN_MECHS if item.name == mech_name), None)
+    assert entry is not None, f"unknown wrong-algorithm mechanism {mech_name}"
+    spec_ref = (
+        "PKCS#11 v3.2 §5.13.1 (C_SignInit must refuse a key whose class does "
+        "not fit the mechanism); a CKR_OK signature must be of the requested "
+        "mechanism (#56.3)"
+    )
+    skip_unless_create_object_supported(rs)
+    ec_priv = ec.generate_private_key(ec.SECP256R1())
+    pkcs8 = ec_priv.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+    attempt_attrs = {
+        CKA_CLASS: int(CKO_SECRET_KEY),
+        CKA_KEY_TYPE: int(CKK_RSA),
+        CKA_SIGN: True,
+        CKA_VERIFY: True,
+        CKA_VALUE: pkcs8,
+        CKA_TOKEN: False,
+        CKA_LABEL: f"qc4c-rsa-wrongalgo-{mech_name}",
+    }
+    tmpl = template(*pack_attrs(attempt_attrs))
+    handle = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+    if rv != int(CKR_OK):
+        # F13: only STANDARD refusals skip as inapplicable; undefined fails
+        # the metadata contract and vendor takes the visible alternate xfail.
+        classify_rv_validity_or_none(rv, label=label, operation="C_CreateObject", kind="policy")
+        pytest.skip("inapplicable: franken object correctly refused; row not exercised")
+    try:
+        mech = _wrong_algo_mech_param(entry)
+        rv_init = int(rs.raw.C_SignInit(rs.sh, mech.byref(), handle.value))
+        if rv_init != int(CKR_OK):
+            classify_rv_validity_or_none(
+                rv_init,
+                label=label,
+                operation="C_SignInit",
+                kind="policy",
+                mechanism=f"CKM_{mech_name}",
+            )
+            # Only a use-shaped refusal evidences the Init defense (the
+            # module judged the mismatched key); an opaque refusal says
+            # nothing about dispatch and stays unproved, mirroring the
+            # Sign-stage rule below.
+            held = rv_init in _INIT_DEFENSE_RVS
+            xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation="C_SignInit",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=rv_init,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: init refused with {ckr_name(rv_init)}; "
+                    + ("defense held at init" if held else "dispatch unproved at init")
+                ),
+            )
+        msg = _wrong_algo_message(entry)
+        msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
+        sig_buf = (ctypes.c_ubyte * 512)()
+        sig_len = CK_ULONG(512)
+        # R2B4: the passed Init is evidence before the Sign stage runs, so
+        # the vendor/undefined Sign-RV terminals below retain it. R4-F8:
+        # stream it to the notes before Sign (a Sign crash keeps the
+        # counters' durable Init return; the note keeps it in-report).
+        init_detail = {"init_rv": ckr_name(rv_init)}
+        note(
+            f"{label}: C_SignInit passed ({ckr_name(rv_init)}) for CKM_{mech_name}; running C_Sign",
+            ComplianceLevel.STANDARD,
+            spec_ref,
+        )
+        rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
+        detail_base = {**init_detail, "sign_rv": ckr_name(rv_sign)}
+        if rv_sign != int(CKR_OK):
+            classify_rv_validity_or_none(
+                rv_sign,
+                label=label,
+                operation="C_Sign",
+                kind="policy",
+                mechanism=f"CKM_{mech_name}",
+                detail=init_detail,
+            )
+            # NOTE: an opaque refusal (e.g. GENERAL_ERROR) after a missed
+            # Init refusal is suspicious but unproved (no spec hook
+            # distinguishes it from other clean refusals), so per the
+            # never-fail-unproved doctrine it xfails with the RV preserved
+            # rather than failing as uncontrolled dispatch. The summary
+            # states the stage and RV with dispatch unproved -- never
+            # "defense held", which an opaque refusal cannot evidence.
+            xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=rv_sign,
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: sign refused with {ckr_name(rv_sign)} after init "
+                    "passed (stage: use; dispatch unproved)"
+                ),
+                detail=detail_base,
+            )
+        if int(sig_len.value) > 512:
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                expected="sign length <= 512",
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: C_Sign claimed CKR_OK with length "
+                    f"{int(sig_len.value)} on a 512-byte buffer"
+                ),
+                detail={**detail_base, "sig_len": int(sig_len.value), "capacity": 512},
+            )
+        signature = bytes(sig_buf[: sig_len.value])
+        if entry.oracle_hash is None:
+            xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: CKR_OK ({len(signature)} bytes) under hash-less "
+                    f"{mech_name}; no hash to verify under (algorithm unproved)"
+                ),
+                detail={
+                    **detail_base,
+                    "disposition": "unproved-effect",
+                    "sig_len": len(signature),
+                },
+            )
+        pub = ec_priv.public_key()
+        if ecdsa_der_local(pub, msg, signature, entry.oracle_hash):
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {mech_name} returned an ECDSA signature verifying "
+                    "under the EC counterpart (proved wrong-algorithm dispatch)"
+                ),
+                detail={**detail_base, "sig_len": len(signature), "encoding": "der"},
+            )
+        if len(signature) == 64 and ecdsa_local(pub, msg, signature, entry.oracle_hash, 32):
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {mech_name} returned a raw ECDSA signature verifying "
+                    "under the EC counterpart (proved wrong-algorithm dispatch)"
+                ),
+                detail={**detail_base, "sig_len": len(signature), "encoding": "raw"},
+            )
+        # R2B4: the CKM_ECDSA-style arm. A module that signs the supplied
+        # digest directly (no hash step) escapes the hashing oracles above,
+        # which hash the digest a second time. Only digest-sized inputs
+        # qualify; anything else stays with the hashing oracle.
+        if len(msg) == entry.oracle_hash.digest_size and ecdsa_der_local_prehashed(
+            pub, msg, signature, entry.oracle_hash
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {mech_name} returned an ECDSA signature over the "
+                    "supplied digest without hashing (proved wrong-algorithm dispatch)"
+                ),
+                detail={
+                    **detail_base,
+                    "sig_len": len(signature),
+                    "encoding": "der",
+                    "prehashed": True,
+                },
+            )
+        if (
+            len(signature) == 64
+            and len(msg) == entry.oracle_hash.digest_size
+            and ecdsa_local_prehashed(pub, msg, signature, entry.oracle_hash, 32)
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                spec_ref=spec_ref,
+                summary=(
+                    f"{label}: {mech_name} returned a raw ECDSA signature over the "
+                    "supplied digest without hashing (proved wrong-algorithm dispatch)"
+                ),
+                detail={
+                    **detail_base,
+                    "sig_len": len(signature),
+                    "encoding": "raw",
+                    "prehashed": True,
+                },
+            )
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation="C_Sign",
+            mechanism=f"CKM_{mech_name}",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: CKR_OK signature ({len(signature)} bytes) does not "
+                "verify as ECDSA (algorithm unproved)"
+            ),
+            detail={
+                **detail_base,
+                "disposition": "unproved-effect",
+                "sig_len": len(signature),
+            },
         )
     finally:
         _cleanup_owned(rs, [handle.value])

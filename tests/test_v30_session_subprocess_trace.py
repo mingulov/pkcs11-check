@@ -42,10 +42,38 @@ def test_session_cancel_subprocess_failure_records_child_rv_trace(
             "AssertionError: C_OpenSession: 0x000000b1"
         )
 
-    def _fake_run(args: list[str], **_kwargs: Any) -> _Result:
-        return _Result()
+    def _fake_popen(args: list[str], **_kwargs: Any) -> Any:
+        result = _Result()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+        class _Proc:
+            pid = 424242
+            returncode: int | None = None
+
+            def __enter__(self) -> _Proc:
+                return self
+
+            def __exit__(self, *exc: Any) -> bool:
+                self.wait()
+                return False
+
+            def communicate(self, timeout: Any = None) -> tuple[str, str]:
+                self.returncode = result.returncode
+                return (result.stdout, result.stderr)
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout: Any = None) -> int:
+                if self.returncode is None:
+                    self.returncode = result.returncode
+                return self.returncode
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen)
 
     test_case = test_v30_session.TestSessionCancel()
     p11_config = type(
@@ -87,11 +115,39 @@ def test_session_cancel_subprocess_launches_probe_with_teardown(
             "AssertionError: C_OpenSession: 0x000000b1"
         )
 
-    def _fake_run(args: list[str], **_kwargs: Any) -> _Result:
+    def _fake_popen(args: list[str], **_kwargs: Any) -> Any:
         captured["args"] = args
-        return _Result()
+        result = _Result()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+        class _Proc:
+            pid = 424242
+            returncode: int | None = None
+
+            def __enter__(self) -> _Proc:
+                return self
+
+            def __exit__(self, *exc: Any) -> bool:
+                self.wait()
+                return False
+
+            def communicate(self, timeout: Any = None) -> tuple[str, str]:
+                self.returncode = result.returncode
+                return (result.stdout, result.stderr)
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout: Any = None) -> int:
+                if self.returncode is None:
+                    self.returncode = result.returncode
+                return self.returncode
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen)
 
     test_case = test_v30_session.TestSessionCancel()
     p11_config = type(

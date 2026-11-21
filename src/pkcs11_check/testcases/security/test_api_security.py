@@ -17,7 +17,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import (
+    classify,
+    fail_as,
+    raise_for_record,
+    record_as,
+    xfail_as,
+)
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -95,6 +101,7 @@ from pkcs11_check.testcases._copy_mutability import (
     SEALED_WRAP_REFUSE_RV,
     SET_FORBIDDEN_REFUSE_RVS,
     TABLE_PROBES,
+    _record_rv_validity,
     aes_ecb_encrypt,
     check_cbc_oracle_or_fail,
     check_ecb_baseline_or_fail,
@@ -974,6 +981,7 @@ _QC3B_LABEL_UPDATED = "qc3b-updated"
 #: exercised with single-part SHA256-RSA-PKCS sign operations.
 _QC3B_RSA_BITS = 2048
 _QC3B_RSA_SIG_LEN = _QC3B_RSA_BITS // 8
+_QC3B_INJECTED_EXPONENT = bytes((0xC3 + i) % 256 for i in range(_QC3B_RSA_SIG_LEN))
 _QC3B_REAUTH_SIGN_MSG = b"qc3b-reauth-probe"
 
 
@@ -1324,9 +1332,10 @@ def _table_source_attrs(probe: str) -> dict[Any, Any]:
         return {**base, CKA_ALLOWED_MECHANISMS: [int(CKM_AES_ECB)]}
     if probe == "allowed_mechanisms_narrow":
         return {**base, CKA_ALLOWED_MECHANISMS: [int(CKM_AES_ECB), int(CKM_AES_CBC)]}
-    # NOTE: "always_authenticate" has no AES source: it uses the QC3-local
-    # RSA setup (_import_reauth_source) in the runners (F7/I1). Falling
-    # through to the KeyError below on misuse is intentional.
+    # NOTE: "always_authenticate" and "private_exponent" have no AES source:
+    # they use the QC3-local RSA setups (_import_reauth_source /
+    # _import_exponent_source) in the runners (F7/I1). Falling through to
+    # the KeyError below on misuse is intentional.
     if probe == "sensitive_downgrade":
         return {**base, CKA_SENSITIVE: True}
     if probe == "extractable_escalate":
@@ -1352,6 +1361,8 @@ def _table_template(probe: str) -> dict[Any, Any]:
         return {CKA_SENSITIVE: False}
     if probe == "extractable_escalate":
         return {CKA_EXTRACTABLE: True}
+    if probe == "private_exponent":
+        return {CKA_PRIVATE_EXPONENT: _QC3B_INJECTED_EXPONENT}
     if probe == "label_control":
         return {CKA_LABEL: _QC3B_LABEL_UPDATED}
     raise KeyError(probe)
@@ -1581,7 +1592,56 @@ def _check_table_premise(rs: Any, src: int, probe: str, *, label: str) -> None:
             label=f"{label}: premise",
         )
     # NOTE: "always_authenticate" premises via _check_reauth_premise (I1: RSA
-    # sign-based), dispatched directly from the runners.
+    # sign-based), "private_exponent" via _check_exponent_premise (pre-change
+    # readback), both dispatched directly from the runners.
+
+
+def _check_exponent_premise(rs: Any, src: int, *, label: str) -> bytes:
+    """Read the pre-change private exponent the mutation proof needs.
+
+    A sealed (unreadable-exponent) source voids the leg: without the
+    original bytes, an accepted change can prove neither ignore nor
+    mutation.
+    """
+    try:
+        read = read_attributes(rs.raw, rs.sh, src, [CKA_PRIVATE_EXPONENT])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: premise",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: premise",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(
+                f"{label}: exponent unreadable pre-change ({ckr_name(exc.rv)}); mutation proof void"
+            ),
+        )
+    original = attr_or_record(
+        read,
+        CKA_PRIVATE_EXPONENT,
+        label=f"{label}: premise",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if original is MISSING_ATTRIBUTE or not isinstance(original, bytes) or not original:
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: premise",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=(f"{label}: exponent readback is not usable key material; mutation proof void"),
+        )
+    return original
 
 
 def _check_set_sealing_premise(
@@ -2792,6 +2852,216 @@ def _classify_control_refusal(exc: CkrAssertionError, *, label: str, operation: 
     )
 
 
+def _verify_private_exponent_accept(
+    rs: Any,
+    target: int,
+    original_d: bytes,
+    *,
+    spec_ref: str,
+    label: str,
+    operation: str,
+) -> None:
+    """Verdict for an accepted CKA_PRIVATE_EXPONENT change: readback decides.
+
+    The exponent was readable pre-change (premise). An unchanged integer
+    proves ignore; the injected integer present proves a rewrite (integer
+    identity is direct evidence here -- the fixture is deliberately
+    unsealed, unlike the value probe which must argue functionally
+    because sealed values are unreadable); any other integer proves an
+    alteration. Encoding-only differences (leading zeros) never count
+    as a change. Refused, absent, or unusable post-change readbacks
+    are unproved-effect xfails, mirroring the value probe: the effect
+    is observed but its nature is not proved.
+    """
+    assert original_d, "exponent comparisons need a nonempty original"
+    try:
+        read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: post-change readback",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: post-change readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: exponent readable pre-change but refused "
+                f"post-change with {ckr_name(exc.rv)} (unproved-effect)"
+            ),
+            detail={"disposition": "unproved-effect", "original_len": len(original_d)},
+        )
+    current = attr_or_record(
+        read,
+        CKA_PRIVATE_EXPONENT,
+        label=f"{label}: post-change readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes) or not current:
+        xfail_as(
+            "not_operational",
+            kind="policy",
+            label=f"{label}: post-change readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: exponent readable pre-change but absent or unusable "
+                "post-change (unproved-effect)"
+            ),
+            detail={"disposition": "unproved-effect", "original_len": len(original_d)},
+        )
+    current_int = int.from_bytes(current, "big")
+    if current_int == int.from_bytes(original_d, "big"):
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(f"{label}: accepted exponent change ignored (exponent preserved)"),
+            detail={"matches_injected": False},
+        )
+    if current_int == int.from_bytes(_QC3B_INJECTED_EXPONENT, "big"):
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            spec_ref=spec_ref,
+            summary=(f"{label}: accepted exponent change rewrote key material"),
+            detail={"matches_injected": True, "original_len": len(original_d)},
+        )
+    fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        spec_ref=spec_ref,
+        summary=(f"{label}: accepted exponent change altered key material"),
+        detail={"matches_injected": False, "original_len": len(original_d)},
+    )
+
+
+def _verify_exponent_unchanged_after_refusal(
+    rs: Any,
+    target: int,
+    original_d: bytes,
+    *,
+    spec_ref: str,
+    label: str,
+    operation: str,
+    refusal_rv: int,
+) -> None:
+    """Post-refusal readback for the readable exponent premise (B4).
+
+    Runs after a sanctioned forbidden-change refusal: a refusal that
+    still rewrote the readable exponent is a refusal-after-mutation
+    contradiction and fails. Unreadable post-refusal state voids the
+    no-change proof (the sanctioned refusal record stands, the effect
+    is unproved).
+    """
+    assert original_d, "exponent comparisons need a nonempty original"
+    # R3F7: the producer refusal grades alongside the post-read, never
+    # after it: record its validity without terminating so an undefined
+    # producer RV still fails when the post-read voids.
+    producer_retained = _record_rv_validity(
+        refusal_rv, label=label, operation=operation, kind="policy"
+    )
+    try:
+        read = read_attributes(rs.raw, rs.sh, target, [CKA_PRIVATE_EXPONENT])
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: post-refusal readback",
+            operation="C_GetAttributeValue",
+            kind="policy",
+        )
+        void = record_as(
+            "honest_deviation",
+            kind="policy",
+            label=f"{label}: post-refusal readback",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(refusal_rv)} but the "
+                f"exponent is unreadable post-refusal ({ckr_name(exc.rv)}); "
+                "no-change unproved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "refusal_rv": ckr_name(refusal_rv),
+                "readback_rv": ckr_name(exc.rv),
+            },
+        )
+        if producer_retained is not None and producer_retained.outcome == "fail":
+            raise_for_record(producer_retained)
+        raise_for_record(void)
+    current = attr_or_record(
+        read,
+        CKA_PRIVATE_EXPONENT,
+        label=f"{label}: post-refusal readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if current is MISSING_ATTRIBUTE or not isinstance(current, bytes) or not current:
+        void = record_as(
+            "honest_deviation",
+            kind="policy",
+            label=f"{label}: post-refusal readback",
+            operation=operation,
+            inherit_mechanism=False,
+            actual=refusal_rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(refusal_rv)} but the "
+                "exponent is absent post-refusal; no-change unproved"
+            ),
+            detail={"disposition": "unproved-effect", "refusal_rv": ckr_name(refusal_rv)},
+        )
+        if producer_retained is not None and producer_retained.outcome == "fail":
+            raise_for_record(producer_retained)
+        raise_for_record(void)
+    if int.from_bytes(current, "big") != int.from_bytes(original_d, "big"):
+        fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=refusal_rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(refusal_rv)} yet the "
+                "readable exponent changed (refusal-after-mutation)"
+            ),
+            detail={
+                "refusal_rv": ckr_name(refusal_rv),
+                "original_len": len(original_d),
+                "current_len": len(current),
+            },
+        )
+
+
 def _verify_table_accept(
     rs: Any,
     target: int,
@@ -2833,6 +3103,11 @@ def _verify_table_accept(
         assert wrapper != 0, "extractable probe requires a wrapping key"
         _verify_extractable_accept(
             rs, target, wrapper, spec_ref=row_citation, label=label, operation=operation
+        )
+    elif probe == "private_exponent":
+        assert baseline is not None, "exponent probe requires a pre-change readback"
+        _verify_private_exponent_accept(
+            rs, target, baseline, spec_ref=row_citation, label=label, operation=operation
         )
     elif probe == "label_control":
         _verify_label_accept(rs, target, label=label, operation=operation)
@@ -2935,37 +3210,106 @@ def _import_reauth_source(rs: Any, *, label: str) -> tuple[int, int]:
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
+def _import_exponent_source(rs: Any, *, label: str) -> tuple[int, int]:
+    """QC3-local RSA-2048 setup (pub, priv) for the exponent legs.
+
+    Mirrors ``_import_reauth_source`` minus the re-auth flag: the private
+    half requests SIGN + explicit non-sealed storage (F1-style explicit
+    CKA_SENSITIVE/CKA_EXTRACTABLE for false-default providers) plus
+    CKA_COPYABLE for the copy leg, since the mutation proof needs a
+    readable pre-change exponent. Cleanup stays with the runners.
+    """
+    try:
+        return _raw_gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            _QC3B_RSA_BITS,
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={
+                CKA_SIGN: True,
+                CKA_PRIVATE: True,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_COPYABLE: True,
+            },
+        )
+    except CkrAssertionError as exc:
+        # F8: validity first (undefined -> metadata FAIL; vendor -> alternate).
+        classify_rv_validity_or_none(
+            exc.rv,
+            label=f"{label}: RSA setup",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            kind="metadata",
+        )
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=f"{label}: RSA setup",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(f"{label}: RSA keygen refused with {ckr_name(exc.rv)}; exponent leg void"),
+        )
+
+
 def _run_copy_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
     """Attempt one table change via C_CopyObject and adjudicate the outcome."""
     row = row_by_key(PROBE_ROW[probe])
     label = f"C_CopyObject {row.attr_name} {probe} (QC3b table)"
     src_pub = 0
-    if probe == "always_authenticate":
+    if probe in ("always_authenticate", "private_exponent"):
         _skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
-        _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
-        if get_pin_bytes(p11_config) is None:
-            pytest.skip("Requires PIN to test context-specific re-auth (QC3b re-auth leg void)")
-        src_pub, src = _import_reauth_source(rs, label=label)
+        if probe == "always_authenticate":
+            _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+            if get_pin_bytes(p11_config) is None:
+                pytest.skip("Requires PIN to test context-specific re-auth (QC3b re-auth leg void)")
+            src_pub, src = _import_reauth_source(rs, label=label)
+        else:
+            src_pub, src = _import_exponent_source(rs, label=label)
     else:
         _skip_unless_mechanism(rs, "AES_ECB")
         if probe in ("allowed_mechanisms_widen", "allowed_mechanisms_narrow"):
             _skip_unless_mechanism(rs, "AES_CBC")
         src = _import_table_source(rs, probe)
     wrapper = _import_table_wrapper(rs) if probe == "extractable_escalate" else 0
+    original_d: bytes | None = None
     try:
         if probe == "always_authenticate":
             _check_reauth_premise(
                 rs, src_pub, src, label=label, operation="C_CopyObject", p11_config=p11_config
             )
+        elif probe == "private_exponent":
+            original_d = _check_exponent_premise(rs, src, label=label)
         else:
             _check_table_premise(rs, src, probe, label=label)
-        baseline = _table_baseline_or_xfail(rs, src, label=label) if probe == "value" else None
+        if probe == "value":
+            baseline = _table_baseline_or_xfail(rs, src, label=label)
+        elif probe == "private_exponent":
+            assert original_d is not None, "exponent probe requires a pre-change readback"
+            baseline = original_d
+        else:
+            baseline = None
         try:
             copy = copy_object(rs.raw, rs.sh, src, _table_template(probe))
         except CkrAssertionError as exc:
             if probe == "label_control":
                 _classify_control_refusal(exc, label=label, operation="C_CopyObject")
                 return
+            if probe == "private_exponent":
+                # R2B3: read before classifying — a proved change fails
+                # before any alternate verdict can mask it.
+                assert original_d is not None, "exponent probe requires a pre-change readback"
+                _verify_exponent_unchanged_after_refusal(
+                    rs,
+                    src,
+                    original_d,
+                    spec_ref=row.citation,
+                    label=label,
+                    operation="C_CopyObject",
+                    refusal_rv=exc.rv,
+                )
             classify_forbidden_change_refusal(
                 exc,
                 COPY_FORBIDDEN_REFUSE_RVS,
@@ -2999,18 +3343,22 @@ def _run_set_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
     row = row_by_key(PROBE_ROW[probe])
     label = f"C_SetAttributeValue {row.attr_name} {probe} (QC3b table)"
     src_pub = 0
-    if probe == "always_authenticate":
+    if probe in ("always_authenticate", "private_exponent"):
         _skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
-        _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
-        if get_pin_bytes(p11_config) is None:
-            pytest.skip("Requires PIN to test context-specific re-auth (QC3b re-auth leg void)")
-        src_pub, src = _import_reauth_source(rs, label=label)
+        if probe == "always_authenticate":
+            _skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+            if get_pin_bytes(p11_config) is None:
+                pytest.skip("Requires PIN to test context-specific re-auth (QC3b re-auth leg void)")
+            src_pub, src = _import_reauth_source(rs, label=label)
+        else:
+            src_pub, src = _import_exponent_source(rs, label=label)
     else:
         _skip_unless_mechanism(rs, "AES_ECB")
         if probe in ("allowed_mechanisms_widen", "allowed_mechanisms_narrow"):
             _skip_unless_mechanism(rs, "AES_CBC")
         src = _import_table_source(rs, probe)
     wrapper = _import_table_wrapper(rs) if probe == "extractable_escalate" else 0
+    original_d: bytes | None = None
     try:
         if probe == "always_authenticate":
             _check_reauth_premise(
@@ -3021,18 +3369,39 @@ def _run_set_table_probe(rs: Any, probe: str, p11_config: Any) -> None:
                 operation="C_SetAttributeValue",
                 p11_config=p11_config,
             )
+        elif probe == "private_exponent":
+            original_d = _check_exponent_premise(rs, src, label=label)
         else:
             _check_table_premise(rs, src, probe, label=label)
         _check_set_sealing_premise(
             rs, src, probe, wrapper=wrapper, label=label, spec_ref=row.citation
         )
-        baseline = _table_baseline_or_xfail(rs, src, label=label) if probe == "value" else None
+        if probe == "value":
+            baseline = _table_baseline_or_xfail(rs, src, label=label)
+        elif probe == "private_exponent":
+            assert original_d is not None, "exponent probe requires a pre-change readback"
+            baseline = original_d
+        else:
+            baseline = None
         try:
             set_attributes(rs.raw, rs.sh, src, _table_template(probe))
         except CkrAssertionError as exc:
             if probe == "label_control":
                 _classify_control_refusal(exc, label=label, operation="C_SetAttributeValue")
                 return
+            if probe == "private_exponent":
+                # R2B3: read before classifying — a proved change fails
+                # before any alternate verdict can mask it.
+                assert original_d is not None, "exponent probe requires a pre-change readback"
+                _verify_exponent_unchanged_after_refusal(
+                    rs,
+                    src,
+                    original_d,
+                    spec_ref=row.citation,
+                    label=label,
+                    operation="C_SetAttributeValue",
+                    refusal_rv=exc.rv,
+                )
             classify_forbidden_change_refusal(
                 exc,
                 SET_FORBIDDEN_REFUSE_RVS,

@@ -100,7 +100,7 @@ def ensure_failed_collection_report(
                         if raw_line.strip():
                             try:
                                 parsed = json.loads(raw_line)
-                            except json.JSONDecodeError:
+                            except (json.JSONDecodeError, RecursionError):
                                 completion.invalidate()
                             else:
                                 if isinstance(parsed, dict):

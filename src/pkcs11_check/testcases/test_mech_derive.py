@@ -27,9 +27,10 @@ import os
 import uuid
 from collections.abc import Sized
 from ctypes import byref
-from typing import Any, NamedTuple, NoReturn
+from typing import Any, Literal, NamedTuple, NoReturn
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check import classification as C  # noqa: N812
@@ -110,12 +111,21 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
-from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
+from pkcs11_check.testcases._copy_mutability import (
+    _record_rv_validity,
+    classify_rv_validity_or_none,
+)
 from pkcs11_check.testcases._ec_export import (
+    ConventionalECPoint,
     read_conventional_ec_point_or_xfail,
     select_ecdh_point_form,
 )
-from pkcs11_check.testcases._exact_search import check_exact_and_changed_search, flip_last_byte
+from pkcs11_check.testcases._exact_search import (
+    check_exact_and_changed_search,
+    flip_last_byte,
+    raise_for_exact_search_records,
+    separate_search_records,
+)
 from pkcs11_check.testcases.conftest import (
     IMPORT_STORAGE_SHAPE_REJECTS,
     import_secret_key_negotiated,
@@ -1311,7 +1321,7 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
             CKA_KEY_TYPE: CKK_EC,
             CKA_TOKEN: False,
         }
-        derived_pub = derive_key(
+        candidate = derive_key(
             rs.raw,
             rs.sh,
             priv_a,
@@ -1319,7 +1329,9 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
             attrs=derive_attrs,
             mech_param=derive_mech,
         )
-        assert derived_pub != 0, f"{entry.mech_name}: derive returned handle 0"
+        derived_pub = _adopt_derived_pub(
+            candidate, pub_a=pub_a, priv_a=priv_a, label=entry.mech_name
+        )
         # Verify the derived object is a public key
         result = read_attributes(rs.raw, rs.sh, derived_pub, [CKA_CLASS])
         before = len(C.get_records())
@@ -1477,6 +1489,57 @@ class TestMechDerive:
                 return
 
 
+def _fail_on_derive_alias(derived: int, source: int, *, label: str, role: str = "source") -> None:
+    """Fail when a derive returns an input handle (C2).
+
+    An aliased derive would vacuo-pass every membership check and
+    double-destroy on cleanup; the success handle must be newly live.
+    """
+    if derived != source:
+        return
+    C.fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation="C_DeriveKey",
+        mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        summary=(
+            f"{label}: derive returned the {role} handle ({derived}); "
+            "search membership would vacuo-pass"
+        ),
+        detail={"derived": derived, "source": source, "role": role},
+    )
+
+
+def _adopt_derived_pub(candidate: int, *, pub_a: int, priv_a: int, label: str) -> int:
+    """Adopt a derived public handle after alias validation (R2B5).
+
+    The candidate is checked against BOTH the comparison public handle
+    and the derive input handle BEFORE adoption: adopting first would
+    double-destroy the aliased handle in the ``finally`` cleanup when
+    the guard fires.
+    """
+    if candidate == 0:
+        # R3F10: a null success handle is a classified CKR_OK
+        # contradiction, never a raw assertion.
+        C.fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(f"{label}: derive returned handle 0; refusing to adopt it"),
+            detail={"candidate": candidate},
+        )
+    _fail_on_derive_alias(candidate, pub_a, label=label, role="comparison public")
+    _fail_on_derive_alias(candidate, priv_a, label=label, role="derive input")
+    return candidate
+
+
 def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str) -> NoReturn:
     """Route a derived-EC staging refusal: clean RV xfail, undefined fail."""
     classify_rv_validity_or_none(exc.rv, label=label, operation=operation, kind="metadata")
@@ -1492,6 +1555,89 @@ def _qc6a_staging_refusal(exc: CkrAssertionError, *, label: str, operation: str)
             "the derived-EC search premise never established"
         ),
     )
+
+
+def _qc6a_staging_record(exc: CkrAssertionError, *, label: str, operation: str) -> Any:
+    """Non-raising twin of _qc6a_staging_refusal (R3F10).
+
+    Mirrors the refusal mapping exactly (undefined fails, vendor
+    xfails, standard operational refusals xfail) but RETURNS the
+    record so the separate-search node can run the sibling leg before
+    grading.
+    """
+    rec = _record_rv_validity(exc.rv, label=label, operation=operation, kind="metadata")
+    if rec is not None:
+        return rec
+    return C.record_as(
+        "not_operational",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        inherit_mechanism=False,
+        actual=exc.rv,
+        summary=(
+            f"{label}: {operation} refused with {ckr_name(exc.rv)}; "
+            "the derived-EC search premise never established"
+        ),
+    )
+
+
+def _read_ec_params_bytes(
+    rs: Any, handle: int, *, label: str, role: Literal["derived", "original"]
+) -> bytes:
+    """Read validated CKA_EC_PARAMS bytes for a derived-EC search leg."""
+    if role == "derived":
+        producer_operation = "C_DeriveKey"
+        producer_mechanism = "CKM_PUB_KEY_FROM_PRIV_KEY"
+    elif role == "original":
+        producer_operation = "C_GenerateKeyPair"
+        producer_mechanism = "CKM_EC_KEY_PAIR_GEN"
+    else:
+        raise ValueError(f"unknown EC params role {role!r}")
+    try:
+        params_result = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_PARAMS])
+    except CkrAssertionError as exc:
+        _qc6a_staging_refusal(exc, label=label, operation="C_GetAttributeValue")
+    before = len(C.get_records())
+    params_raw = attr_or_record(
+        params_result,
+        CKA_EC_PARAMS,
+        label=f"{label}: {role} CKA_EC_PARAMS",
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    if params_raw is MISSING_ATTRIBUTE:
+        records = C.get_records()
+        if len(records) > before:
+            C.raise_for_record(records[-1])
+        C.xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=f"{label}: {role} CKA_EC_PARAMS",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=f"{label}: {role} CKA_EC_PARAMS unavailable",
+        )
+    if type(params_raw) is not bytes or not params_raw:
+        record = C.record_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"{label}: {role} CKA_EC_PARAMS",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            detail={
+                "attribute": int(CKA_EC_PARAMS),
+                "expected": "non-empty bytes",
+                "actual_type": type(params_raw).__name__,
+                "actual_len": (len(params_raw) if isinstance(params_raw, bytes) else None),
+                "producer_operation": producer_operation,
+                "producer_mechanism": producer_mechanism,
+            },
+            summary=f"{label}: {role} CKA_EC_PARAMS is malformed",
+        )
+        C.raise_for_record(record)
+    return params_raw
 
 
 class TestDerivedECPublicSearch:
@@ -1545,7 +1691,7 @@ class TestDerivedECPublicSearch:
                 CKA_LABEL: search_label,
             }
             try:
-                derived_pub = derive_key(
+                candidate = derive_key(
                     rs.raw,
                     rs.sh,
                     priv_a,
@@ -1555,7 +1701,7 @@ class TestDerivedECPublicSearch:
                 )
             except CkrAssertionError as exc:
                 _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
-            assert derived_pub != 0, f"{label}: derive returned handle 0"
+            derived_pub = _adopt_derived_pub(candidate, pub_a=pub_a, priv_a=priv_a, label=label)
 
             derived_point = read_conventional_ec_point_or_xfail(
                 rs,
@@ -1589,49 +1735,7 @@ class TestDerivedECPublicSearch:
                     },
                 )
 
-            try:
-                params_result = read_attributes(rs.raw, rs.sh, derived_pub, [CKA_EC_PARAMS])
-            except CkrAssertionError as exc:
-                _qc6a_staging_refusal(exc, label=label, operation="C_GetAttributeValue")
-            before = len(C.get_records())
-            params_raw = attr_or_record(
-                params_result,
-                CKA_EC_PARAMS,
-                label=f"{label}: derived CKA_EC_PARAMS",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if params_raw is MISSING_ATTRIBUTE:
-                records = C.get_records()
-                if len(records) > before:
-                    C.raise_for_record(records[-1])
-                C.xfail_as(
-                    "not_operational",
-                    kind="metadata",
-                    label=f"{label}: derived CKA_EC_PARAMS",
-                    operation="C_GetAttributeValue",
-                    inherit_mechanism=False,
-                    summary=f"{label}: derived CKA_EC_PARAMS unavailable",
-                )
-            if type(params_raw) is not bytes or not params_raw:
-                record = C.record_as(
-                    "wrong_result",
-                    kind="metadata",
-                    label=f"{label}: derived CKA_EC_PARAMS",
-                    operation="C_GetAttributeValue",
-                    inherit_mechanism=False,
-                    detail={
-                        "attribute": int(CKA_EC_PARAMS),
-                        "expected": "non-empty bytes",
-                        "actual_type": type(params_raw).__name__,
-                        "actual_len": (len(params_raw) if isinstance(params_raw, bytes) else None),
-                        "producer_operation": "C_DeriveKey",
-                        "producer_mechanism": "CKM_PUB_KEY_FROM_PRIV_KEY",
-                    },
-                    summary=f"{label}: derived CKA_EC_PARAMS is malformed",
-                )
-                C.raise_for_record(record)
+            params_raw = _read_ec_params_bytes(rs, derived_pub, label=label, role="derived")
 
             exact_template = {
                 CKA_LABEL: search_label,
@@ -1651,6 +1755,160 @@ class TestDerivedECPublicSearch:
                 expected_handle=derived_pub,
                 label="Derived EC exact params+point search",
             )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_a)
+            destroy_quietly(rs.raw, rs.sh, priv_a)
+            if derived_pub != 0:
+                destroy_quietly(rs.raw, rs.sh, derived_pub)
+
+    def test_derived_ec_public_search_by_separate_params_and_point(
+        self, p11_module_session: RawSession
+    ) -> None:
+        """Search params and point separately; both keys must match shared bytes.
+
+        Each attribute is searched alone with exact provider bytes and no
+        label filter: a key must be found by its own read-back bytes, and
+        when both keys' provider bytes agree, BOTH handles must appear
+        (the generated key is the control). Changed-value controls (flipped
+        last byte) must exclude both keys. All legs run; the strongest
+        verdict wins.
+        """
+        rs = p11_module_session
+        label = "CKM_PUB_KEY_FROM_PRIV_KEY derived EC separate search"
+        if not _PUB_KEY_FROM_PRIV_KEY_ID:
+            pytest.skip("CKM_PUB_KEY_FROM_PRIV_KEY not in types_std")
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+            pytest.skip("EC_KEY_PAIR_GEN not available")
+        if not rs.has_mechanism("PUB_KEY_FROM_PRIV_KEY"):
+            pytest.skip("CKM_PUB_KEY_FROM_PRIV_KEY not supported")
+
+        search_label = f"pkcs11-check-qc6a-ec-sep-{uuid.uuid4().hex[:8]}"
+        pub_a, priv_a = 0, 0
+        derived_pub: int = 0
+        try:
+            try:
+                pub_a, priv_a = gen_ec_keypair(
+                    rs.raw,
+                    rs.sh,
+                    _P256_OID,
+                    private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+                )
+            except CkrAssertionError as exc:
+                _qc6a_staging_refusal(exc, label=label, operation="C_GenerateKeyPair")
+            derive_attrs: dict[int, Any] = {
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_EC,
+                CKA_TOKEN: False,
+                CKA_LABEL: search_label,
+            }
+            try:
+                candidate = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv_a,
+                    CKM(_PUB_KEY_FROM_PRIV_KEY_ID),
+                    attrs=derive_attrs,
+                    mech_param=mech_simple(CKM(_PUB_KEY_FROM_PRIV_KEY_ID)),
+                )
+            except CkrAssertionError as exc:
+                _qc6a_staging_refusal(exc, label=label, operation="C_DeriveKey")
+            derived_pub = _adopt_derived_pub(candidate, pub_a=pub_a, priv_a=priv_a, label=label)
+
+            # R3F10 collect-then-judge: each attribute leg reads
+            # WITHOUT terminating, both searches run on whatever bytes
+            # are available, and the strongest record wins. A refused
+            # point read voids only the point-dependent legs -- the
+            # params stimulus still runs.
+            deferred: list[Any] = []
+
+            def _read_point_captured(handle: int, role: str) -> ConventionalECPoint | None:
+                before = len(C.get_records())
+                try:
+                    return read_conventional_ec_point_or_xfail(
+                        rs,
+                        handle,
+                        ec.SECP256R1(),
+                        label=f"{label}: {role} CKA_EC_POINT",
+                    )
+                except (Failed, XFailed):
+                    deferred.extend(C.get_records()[before:])
+                    return None
+                except CkrAssertionError as exc:
+                    deferred.append(
+                        _qc6a_staging_record(exc, label=label, operation="C_GetAttributeValue")
+                    )
+                    return None
+
+            def _read_params_captured(
+                handle: int, role: Literal["derived", "original"]
+            ) -> bytes | None:
+                before = len(C.get_records())
+                try:
+                    if role == "derived":
+                        return _read_ec_params_bytes(rs, handle, label=label, role="derived")
+                    return _read_ec_params_bytes(rs, handle, label=label, role="original")
+                except (Failed, XFailed):
+                    deferred.extend(C.get_records()[before:])
+                    return None
+                except CkrAssertionError as exc:
+                    deferred.append(
+                        _qc6a_staging_record(exc, label=label, operation="C_GetAttributeValue")
+                    )
+                    return None
+
+            derived_point = _read_point_captured(derived_pub, "derived")
+            original_point = _read_point_captured(pub_a, "original")
+            derived_params = _read_params_captured(derived_pub, "derived")
+            original_params = _read_params_captured(pub_a, "original")
+            if derived_point is not None and original_point is not None:
+                if derived_point.public_key.public_numbers() != (
+                    original_point.public_key.public_numbers()
+                ):
+                    deferred.append(
+                        C.record_as(
+                            "wrong_result",
+                            kind="crypto",
+                            label=label,
+                            operation="C_DeriveKey",
+                            mechanism="CKM_PUB_KEY_FROM_PRIV_KEY",
+                            inherit_mechanism=False,
+                            summary=(
+                                f"{label}: derived public point does not equal "
+                                "the original public key"
+                            ),
+                            detail={
+                                "curve": "secp256r1",
+                                "derived_point_len": len(derived_point.provider_bytes),
+                                "original_point_len": len(original_point.provider_bytes),
+                            },
+                        )
+                    )
+
+            records = list(deferred)
+            legs: list[tuple[str, int, bytes, bytes]] = []
+            if derived_params is not None and original_params is not None:
+                legs.append(("params", CKA_EC_PARAMS, derived_params, original_params))
+            if derived_point is not None and original_point is not None:
+                legs.append(
+                    (
+                        "point",
+                        CKA_EC_POINT,
+                        derived_point.provider_bytes,
+                        original_point.provider_bytes,
+                    )
+                )
+            for attr_name, attr, derived_bytes, original_bytes in legs:
+                records.extend(
+                    separate_search_records(
+                        rs,
+                        attr=attr,
+                        attr_name=attr_name,
+                        derived=(derived_pub, derived_bytes),
+                        original=(pub_a, original_bytes),
+                        label=label,
+                    )
+                )
+            raise_for_exact_search_records(records)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
             destroy_quietly(rs.raw, rs.sh, priv_a)

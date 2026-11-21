@@ -85,6 +85,7 @@ PARTIAL_OPTIONAL_KEYS = frozenset(
         "lost_keys",
         "recovered_keys",
         "orphan_keys",
+        "in_flight",
     }
 )
 PARTIAL_ALLOWED_KEYS = PARTIAL_REQUIRED_KEYS | PARTIAL_OPTIONAL_KEYS
@@ -486,7 +487,30 @@ def is_sidecar_partial(value: object) -> TypeGuard[dict[str, Any]]:
     isolation = value.get("isolation")
     if isolation is not None and not isinstance(isolation, str):
         return False
-    return "receipts" not in value or _receipts_valid(value["receipts"])
+    if "receipts" in value and not _receipts_valid(value["receipts"]):
+        return False
+    return "in_flight" not in value or _in_flight_valid(value["in_flight"])
+
+
+def _in_flight_valid(value: object) -> bool:
+    """Whether ``value`` is a valid named in-flight row list (#88)."""
+    if not isinstance(value, list):
+        return False
+    for row in value:
+        if not isinstance(row, dict):
+            return False
+        if set(row) != {"module", "bucket", "fn", "count"}:
+            return False
+        if not isinstance(row["module"], str):
+            return False
+        if not row["bucket"] or not isinstance(row["bucket"], str):
+            return False
+        if not row["fn"] or not isinstance(row["fn"], str):
+            return False
+        count = row["count"]
+        if not _is_nonneg_int(count) or count == 0:
+            return False
+    return True
 
 
 def is_preflight_synth_record(value: object) -> TypeGuard[dict[str, Any]]:

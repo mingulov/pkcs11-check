@@ -170,7 +170,7 @@ src/pkcs11_check/
 ## Key features
 
 - **`pkcs11_check.raw`** - pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
-- **`--isolation file`** mode runs each test file in its own subprocess - crashes don't kill the suite
+- **Crash-safe by default** - `--isolation auto` runs each test unit in its own subprocess, so a provider crash is recorded as that unit's result instead of killing the suite. `disabled-tests` files are for hangs/crashes you deliberately exclude up front, not a crash workaround
 - **`--ckr-strict`** mode enforces exact OASIS spec CKR codes (not just "any error")
 - **Wycheproof + ACVP vectors** - cross-verification against C2SP and NIST test vectors
 
@@ -183,6 +183,7 @@ src/pkcs11_check/
 - `docs/test-universe.md` - collected product-test counts by group
 - `docs/mechanism-output-parameters.md` - generated IV/nonce/tag output-parameter coverage
 - `docs/file-isolation.md` - isolation runner design
+- `docs/running-under-tracer.md` - running under an external tracer/profiler/observer
 - `docs/providers.md` - PKCS#11 implementations pkcs11-check is exercised against
 - `docs/platform-support.md` - OS support matrix (Linux / Windows / macOS / FreeBSD)
 - `docs/roadmap.md` - planned and considered work

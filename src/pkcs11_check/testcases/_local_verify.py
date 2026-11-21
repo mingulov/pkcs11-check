@@ -5,6 +5,8 @@ They are intentionally strict:
 - PSS salt length is passed in exactly (never AUTO / PKCS1v15).
 - ECDSA uses curve-aware coord_len via split_raw_ecdsa.
 - MalformedSignature from split_raw_ecdsa is NOT caught here; callers map it.
+- ecdsa_der_local is the deliberate exception: DER from a confused module
+  may be garbage, so unparseable bytes verify as False (unproved output).
 """
 
 from __future__ import annotations
@@ -135,6 +137,26 @@ def rsa_pss_local_recover_mgf(
     return None
 
 
+def ecdsa_der_local(
+    pub: ec.EllipticCurvePublicKey,
+    data: bytes,
+    sig_der: bytes,
+    hash_alg: hashes.HashAlgorithm,
+) -> bool:
+    """Verify a DER-encoded ECDSA signature over *data*.
+
+    Unlike :func:`ecdsa_local` (raw ``r || s`` with a strict length
+    contract), DER inputs from a confused module may be truncated or
+    garbage: unparseable bytes verify as False (never raise), so callers
+    can treat them as unproved output rather than a harness error.
+    """
+    try:
+        pub.verify(sig_der, data, ec.ECDSA(hash_alg))
+        return True
+    except (InvalidSignature, ValueError):
+        return False
+
+
 def ecdsa_local(
     pub: ec.EllipticCurvePublicKey,
     data: bytes,
@@ -154,6 +176,49 @@ def ecdsa_local(
     der = utils.encode_dss_signature(r, s)
     try:
         pub.verify(der, data, ec.ECDSA(hash_alg))
+        return True
+    except InvalidSignature:
+        return False
+
+
+def ecdsa_der_local_prehashed(
+    pub: ec.EllipticCurvePublicKey,
+    digest: bytes,
+    sig_der: bytes,
+    hash_alg: hashes.HashAlgorithm,
+) -> bool:
+    """Verify a DER ECDSA signature over an already-hashed *digest*.
+
+    The CKM_ECDSA-style confusion arm: a module that signs the supplied
+    digest bytes directly (no hash step, PKCS#11 v3.2 §6.3.1) escapes
+    the hashing oracle, which hashes the digest a second time. Only
+    callers whose input length equals the digest size may use this arm;
+    anything else is not a digest and stays with the hashing oracle.
+    Unparseable bytes verify as False, mirroring :func:`ecdsa_der_local`.
+    """
+    try:
+        pub.verify(sig_der, digest, ec.ECDSA(utils.Prehashed(hash_alg)))
+        return True
+    except (InvalidSignature, ValueError):
+        return False
+
+
+def ecdsa_local_prehashed(
+    pub: ec.EllipticCurvePublicKey,
+    digest: bytes,
+    sig_raw: bytes,
+    hash_alg: hashes.HashAlgorithm,
+    coord_len: int,
+) -> bool:
+    """Verify a raw (r || s) ECDSA signature over an already-hashed *digest*.
+
+    Same contract as :func:`ecdsa_der_local_prehashed` for raw-encoded
+    signatures; malformed coordinate splits propagate like :func:`ecdsa_local`.
+    """
+    r, s = split_raw_ecdsa(sig_raw, coord_len)
+    der = utils.encode_dss_signature(r, s)
+    try:
+        pub.verify(der, digest, ec.ECDSA(utils.Prehashed(hash_alg)))
         return True
     except InvalidSignature:
         return False

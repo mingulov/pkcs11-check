@@ -15,15 +15,18 @@ from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from pkcs11_check.classification import fail_as
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm, mech_oaep, mech_pss
 from pkcs11_check.raw.recipes import (
+    RSAUsage,
     decrypt_single,
     destroy_quietly,
     encrypt_single,
     gen_rsa_keypair,
+    read_attributes,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
@@ -40,7 +43,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA_1,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import (
     read_rsa_private_key_or_xfail,
@@ -266,6 +273,134 @@ class TestRSAPSSCrossVerify:
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
+def _flag_detail(value: Any) -> bool | str:
+    """Render a protection-flag readback for structured detail (R2C3).
+
+    Only Boolean values, presence, and shape are recorded: raw bytes
+    and the missing sentinel never enter the detail mapping, so it
+    always serializes.
+    """
+    if value is MISSING_ATTRIBUTE:
+        return "missing"
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, bytes):
+        return f"bytes:{len(value)}"
+    return type(value).__name__
+
+
+def _gen_readable_rsa_or_xfail(rs: Any, bits: int, *, label: str) -> tuple[int, int]:
+    """Generate an RSA pair with a readable private half, or void honestly.
+
+    The cross-verify leg decrypts with cryptography, so it needs the
+    private components in the clear (SENSITIVE False + EXTRACTABLE True).
+    The template declares decrypt-only purpose so single-purpose
+    providers are not refused on the multi-purpose default. A refusal
+    of the submitted template voids the leg with the template and RV
+    named, never an inferred cause. The stored flags are read back:
+    a module that normalizes them voids the leg (export would fail).
+    Any other outcome propagates unchanged.
+    """
+    try:
+        pub, priv = gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits,
+            usage=RSAUsage.DECRYPT,
+            private_attrs={
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+            },
+        )
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv, label=label, operation="C_GenerateKeyPair", kind="policy"
+        )
+        if exc.rv in (int(CKR_TEMPLATE_INCONSISTENT), int(CKR_ATTRIBUTE_READ_ONLY)):
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=label,
+                operation="C_GenerateKeyPair",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: decrypt-purpose readable private-key template "
+                    f"(SENSITIVE False + EXTRACTABLE True) refused with "
+                    f"{ckr_name(exc.rv)}; export untestable"
+                ),
+            )
+        raise
+    # R2C3: the pair is owned here until vetted return. Every terminal
+    # below destroys both halves first: exiting before the caller
+    # receives the handles would otherwise strand them (the caller's
+    # finally never runs).
+    try:
+        try:
+            read = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+        except CkrAssertionError as exc:
+            classify_rv_validity_or_none(
+                exc.rv,
+                label=f"{label}: protection flags",
+                operation="C_GetAttributeValue",
+                kind="policy",
+            )
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: protection flags",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                summary=(
+                    f"{label}: stored protection flags unreadable ({ckr_name(exc.rv)}); "
+                    "readability unproved, export void"
+                ),
+            )
+        sensitive = attr_or_record(
+            read,
+            CKA_SENSITIVE,
+            label=f"{label}: protection flags",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        extractable = attr_or_record(
+            read,
+            CKA_EXTRACTABLE,
+            label=f"{label}: protection flags",
+            reason="not_operational",
+            kind="policy",
+            inherit_mechanism=False,
+        )
+        if (
+            sensitive is MISSING_ATTRIBUTE
+            or extractable is MISSING_ATTRIBUTE
+            or sensitive is not False
+            or extractable is not True
+        ):
+            xfail_as(
+                "not_operational",
+                kind="policy",
+                label=f"{label}: protection flags",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: stored protection flags differ from the readable request; "
+                    "export void"
+                ),
+                detail={
+                    "sensitive": _flag_detail(sensitive),
+                    "extractable": _flag_detail(extractable),
+                },
+            )
+    except BaseException:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+        raise
+    return pub, priv
+
+
 class TestRSAOAEPCrossVerify:
     """Cross-verify RSA-OAEP against cryptography library."""
 
@@ -275,15 +410,7 @@ class TestRSAOAEPCrossVerify:
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("RSA-OAEP not supported")
 
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            private_attrs={
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-            },
-        )
+        pub, priv = _gen_readable_rsa_or_xfail(rs, 2048, label="RSA-OAEP cross-verify keygen")
         try:
             plaintext = b"OAEP cross-verify"
             oaep = mech_oaep(

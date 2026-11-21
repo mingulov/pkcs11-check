@@ -217,3 +217,38 @@ def test_raw_session_ordinary_load_error_is_harness_error(
     raw_session.probe_main_raw(lambda _ctx, _extra: pytest.fail("probe must not run"))
 
     assert "HARNESS_ERROR:CDLL load" in capsys.readouterr().out
+
+
+def test_raw_session_announces_spawn_before_module_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R23-1: the raw path announces its launch before CDLL load too."""
+    from pkcs11_check.core import _counters_durability as durability
+    from pkcs11_check.core import call_counters
+
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(counters / "probe-aaaaaaaa-5-bead01.json"))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "5")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, "a" * 32)
+    order: list[str] = []
+    real_note = call_counters.note_own_probe_spawn
+
+    def _note() -> object:
+        order.append("spawn")
+        return real_note()
+
+    def _load_cdll(path: str) -> object:
+        order.append("load")
+        return object()
+
+    def _reject(_lib: object, module: str = "") -> tuple[None, int]:
+        return (None, int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
+    monkeypatch.setattr(raw_session, "_load_cdll", _load_cdll)
+    monkeypatch.setattr(raw_session, "_get_function_list", _reject)
+    monkeypatch.setattr(raw_session, "note_own_probe_spawn", _note, raising=False)
+    raw_session.probe_main_raw(lambda _ctx, _extra: pytest.fail("probe must not run"))
+    assert order == ["spawn", "load"]
+    assert len(list(counters.glob("spawn-*.json"))) == 1

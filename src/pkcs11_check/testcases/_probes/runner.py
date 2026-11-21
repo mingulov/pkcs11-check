@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,11 @@ from pkcs11_check.core._counters_durability import (
     PROBE_SIDECAR_ENV,
     PROBE_UNIT_ENV,
     CounterPersistenceError,
+    _DeferProducerError,
+    _prune_sidecar_tmps,
+    _replay_probe_tmp_rows,
+    _snapshot_covered_by,
+    birth_token_for_pid,
     durability_dir,
     mark_probe_consumed,
     validate_probe_receipt,
@@ -53,11 +59,14 @@ from pkcs11_check.core.call_counters import (
     assign_probe_seq,
     ensure_registered,
     flush_counters,
+    forget_probe_spawn,
     get_worker_uuid,
     ingest_child_evidence,
     note_lost_probe,
+    note_probe_spawned,
+    registration_info,
 )
-from pkcs11_check.core.counters_schema import mint_filename_nonce
+from pkcs11_check.core.counters_schema import is_lost_key, is_worker_uuid, mint_filename_nonce
 from pkcs11_check.core.loader import SUPPORTED_INTERFACES
 from pkcs11_check.core.process_observation import (
     SUBPROCESS_ABRUPT_EXIT_MARKER,
@@ -194,15 +203,37 @@ def _read_probe_json(path: str | None) -> dict[str, Any] | None | _UnreadableEvi
     return data if isinstance(data, dict) else None
 
 
-def _delete_probe_sidecar(path: str | None) -> bool:
-    """Remove a probe sidecar (never raises). True when gone or absent.
+def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool:
+    """Remove a probe sidecar and its adjudicated rewrite tmps (never raises).
 
-    A missing file counts as deleted: the sidecar writer suppresses I/O
-    failures, so valid coverage may arrive with no sidecar at all, and
-    that must not escalate into a consumed-marker rename of nothing.
+    True when the sidecar is gone or absent. A missing file counts as
+    deleted: the sidecar writer suppresses I/O failures, so valid
+    coverage may arrive with no sidecar at all, and that must not
+    escalate into a consumed-marker rename of nothing. Rewrite tmps
+    triage through the shared collector prune (#88R3): unreadable
+    tmps and complete-with-returns tmps without a usable baseline
+    retain for retry/forensics (named loudly), everything else goes
+    with the sidecar. ``force_tmps`` deletes tmps unconditionally
+    for superseded evidence (a receipt-bound exit coverage already
+    subsumes every mid-run tmp).
     """
     if not path:
         return True
+    if force_tmps:
+        parent = os.path.dirname(path) or "."
+        try:
+            names = os.listdir(parent)
+        except OSError:
+            names = []
+        prefix = os.path.basename(path) + ".tmp-"
+        for name in names:
+            if name.startswith(prefix):
+                try:
+                    os.unlink(os.path.join(parent, name))
+                except OSError:
+                    pass
+    else:
+        _prune_sidecar_tmps(Path(path))
     try:
         os.unlink(path)
     except FileNotFoundError:
@@ -212,7 +243,202 @@ def _delete_probe_sidecar(path: str | None) -> bool:
     return True
 
 
-def _commit_probe_sidecar(path: str | None) -> None:
+def _legacy_subsumption_proof(
+    body: dict[str, Any], seq: int, absorbed_rows: list[Any]
+) -> tuple[tuple[str, int], list[dict[str, Any]]] | None:
+    """(receipt, keys) when a stamped body is proved subsumed, else None (#88R10-4a).
+
+    A stamped sidecar beside receipt-less exit coverage for the same
+    probe is subsumed when its stamp validates against the caller seq,
+    its unkeyed scalar is falsy (unkeyed remainders are unmatchable
+    across the version gap: absorbing them additively double-counts on
+    overlap and dropping them loses on disjointness), every stated
+    loss key parses (anything stated-but-unparseable fails closed),
+    and its rows subset the absorbed exit rows (the slot nonce plus
+    the seq bind one probe execution, so a row-subset is a proved
+    prefix, never a coincidental match). Callers absorb the returned
+    keys with the coverage (idempotent union), record the receipt as
+    a consumed probe (the anti-double-fold proof rides the same
+    transaction, so a later commit failure cannot double-fold the
+    retained copy (#88R11-4)), and retire the body at commit; a swap
+    between absorb and commit still retains loudly, and the absorbed
+    keys cannot double. The caller owns the launcher-clash check
+    (foreign bodies never contribute).
+    """
+    validated = validate_probe_receipt(
+        {"worker_uuid": body.get("worker_uuid"), "probe_seq": body.get("probe_seq")},
+        seq,
+    )
+    if validated is None:
+        return None
+    if body.get("probes_lost"):
+        return None
+    raw_keys = body.get("lost_keys", [])
+    if "lost_keys" not in body:
+        keys: list[dict[str, Any]] = []
+    elif isinstance(raw_keys, list) and all(is_lost_key(entry) for entry in raw_keys):
+        keys = [dict(entry) for entry in raw_keys]
+    else:
+        return None
+    rows = body.get("counters")
+    if not isinstance(rows, list):
+        return None
+    if not _snapshot_covered_by(rows, frozenset(), 0, list(absorbed_rows), frozenset(), 0):
+        return None
+    return validated, keys
+
+
+def _fallback_body_is_debris(fallback: Any) -> bool:
+    """Whether a fallback sidecar body is safe to delete unabsorbed (#88R11-3).
+
+    Only missing/torn bodies (no parsed content) and unstamped
+    payload-free debris (no receipt, no counters, no loss) delete: a
+    stated receipt or any evidence retains loudly for file collection
+    to adjudicate under the body's own identity.
+    """
+    if fallback is None or isinstance(fallback, _UnreadableEvidence):
+        return fallback is None
+    if not isinstance(fallback, dict):
+        return True
+    if fallback.get("worker_uuid") is not None or fallback.get("probe_seq") is not None:
+        return False
+    counters = fallback.get("counters")
+    if isinstance(counters, (list, tuple)):
+        if len(counters) > 0:
+            return False
+    elif counters is not None:
+        return False
+    return not fallback.get("probes_lost") and not fallback.get("lost_keys")
+
+
+def _commit_sidecar_owned(
+    path: str,
+    expected: tuple[str, int] | None,
+    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]], tuple[str, int] | None]
+    | None = None,
+) -> bool:
+    """Whether the sidecar at commit time is provably this execution's (#88R8-3).
+
+    A stale or foreign sidecar can reach the commit: deleting it would
+    destroy foreign evidence and marking it would mint an unclaimable
+    marker. Launcher stamps must agree when stated (both-sides rule);
+    the child receipt must validate against the receipt the ingest
+    just absorbed: an exact match proceeds, a mismatch/partial/garbage
+    receipt retains, and version-incoherent shapes (evidence-bearing
+    but unstamped bodies beside stamped coverage, or stamped bodies
+    beside legacy-quiet coverage) retain for file collection to
+    adjudicate -- only fully-quiet legacy pairs proceed by slot
+    freshness. The one proved exception is legacy subsumption
+    (#88R10-4a): when ``absorbed`` carries the exit coverage just
+    folded, a stamped body proved to be its prefix (stamp, lossless
+    scalar, parsed keys, row-subset) retires -- its counts already
+    sit in the parent checkpoint and its keys were absorbed with the
+    coverage. Missing or torn files proceed, as do unstamped
+    payload-free files (nothing attributable to protect); any stated
+    receipt validates first, even on a payload-free body -- an empty
+    baseline must never authorize deleting a foreign rewrite
+    (#88R10-3, #88R11-3). Unreadable bodies retain loudly.
+    """
+    fallback = _read_probe_json(path)
+    if fallback is None:
+        return True
+    if isinstance(fallback, _UnreadableEvidence):
+        warnings.warn(
+            f"probe sidecar {path} unreadable at commit; evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    clash = _fallback_identity_clash(fallback, get_worker_uuid(), registration_info())
+    if clash is not None:
+        warnings.warn(
+            f"probe sidecar {path} contradicts the launcher ({clash}); evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    worker = fallback.get("worker_uuid")
+    pseq = fallback.get("probe_seq")
+    if worker is None and pseq is None:
+        counters = fallback.get("counters")
+        has_counters = isinstance(counters, (list, tuple)) and len(counters) > 0
+        # A loss-only body (retired records, zero retained rows) is
+        # evidence too: an empty counters list beside a nonzero loss
+        # scalar or a nonempty key set must enter receipt validation,
+        # not retire by the payload-free quiet path -- retiring it
+        # would also co-delete any surviving rewrite tmps unread
+        # (#88R10-3).
+        has_loss = bool(fallback.get("probes_lost")) or bool(fallback.get("lost_keys"))
+        if not has_counters and not has_loss:
+            return True
+        if expected is None:
+            return True
+        warnings.warn(
+            f"probe sidecar {path} carries evidence but no receipt under stamped "
+            "coverage; evidence retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    if expected is None:
+        if absorbed is not None:
+            proved = _legacy_subsumption_proof(fallback, absorbed[0], absorbed[1])
+            if proved is not None:
+                # A loss key that landed between absorb and commit was
+                # never checkpointed: only a key set within the
+                # absorbed set retires (#88R11-4). And the commit-time
+                # receipt must equal the receipt proved and
+                # checkpointed at ingestion: same rows and keys from a
+                # different child are a different execution, never a
+                # duplicate (#88R12-2).
+                commit_receipt, commit_keys = proved
+                commit_set = frozenset(
+                    (key["parent_uuid"], key["probe_seq"]) for key in commit_keys
+                )
+                if commit_receipt == absorbed[3] and commit_set <= absorbed[2]:
+                    return True
+        if absorbed is not None and type(pseq) is int and pseq == absorbed[0]:
+            warnings.warn(
+                f"probe sidecar {path} states this probe's receipt under legacy-quiet "
+                "coverage with unproved equivalence; evidence retained for file "
+                "collection (which may double-count the overlap)",
+                UserWarning,
+                stacklevel=2,
+            )
+            return False
+        warnings.warn(
+            f"probe sidecar {path} states a receipt under legacy-quiet coverage; "
+            "evidence retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    if not is_worker_uuid(worker) or type(pseq) is not int:
+        warnings.warn(
+            f"probe sidecar {path} states a malformed receipt; evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    if (worker, pseq) != expected:
+        warnings.warn(
+            f"probe sidecar {path} contradicts the absorbed receipt "
+            f"({worker!r}, {pseq!r} != {expected!r}); evidence retained",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    return True
+
+
+def _commit_probe_sidecar(
+    path: str | None,
+    *,
+    force_tmps: bool = False,
+    expected: tuple[str, int] | None = None,
+    absorbed: tuple[int, list[Any], frozenset[tuple[str, int]], tuple[str, int] | None]
+    | None = None,
+) -> None:
     """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
 
     The parent checkpoint must be durable before the probe's own evidence
@@ -223,7 +449,15 @@ def _commit_probe_sidecar(path: str | None) -> None:
     delete itself fails after a good flush, the sidecar renames to a
     consumed marker instead: the parent checkpoint already holds the
     counts, and the marker tells orphan adoption to suppress rather than
-    fold them a second time.
+    fold them a second time. Delete and mark both require validated
+    ownership first (a foreign, unreadable, or receipt-contradictory
+    body is retained loudly); ``expected`` is the receipt the ingest
+    just absorbed (None for legacy-quiet coverage). ``absorbed`` is
+    the ``(seq, exit rows, absorbed keys, proved receipt)`` just
+    folded from receipt-less coverage: it re-proves legacy
+    subsumption at commit time, including the key-subset and
+    receipt-identity checks (None disables the proof; only the
+    legacy-quiet path passes it).
 
     Raises:
         CounterPersistenceError: When the parent checkpoint cannot be
@@ -235,9 +469,36 @@ def _commit_probe_sidecar(path: str | None) -> None:
     flush_counters()
     if path is None:
         return
-    if _delete_probe_sidecar(path):
+    if not _commit_sidecar_owned(path, expected, absorbed):
         return
-    mark_probe_consumed(path)
+    if _delete_probe_sidecar(path, force_tmps=force_tmps):
+        return
+    mark_probe_consumed(path, parent_uuid=get_worker_uuid())
+
+
+def _fallback_identity_clash(
+    fallback: dict[str, Any], launcher: str, info: dict[str, Any] | None
+) -> str | None:
+    """Describe a fallback/launcher identity contradiction, if any (#88R7-3).
+
+    Mirrors the file-reunion ownership rule: the sidecar's stated
+    parent/run/unit must agree with the launcher's, each compared only
+    when both sides state it. A contradiction means the slot holds a
+    stale or foreign sidecar that live ingest must not absorb (it
+    would also poison the consumed marker the commit path writes).
+    """
+    parent = fallback.get("parent_uuid")
+    if parent is not None and parent != launcher:
+        return f"parent {parent!r} != launcher {launcher!r}"
+    run = fallback.get("run_id")
+    launcher_run = info.get("run_id") if info else None
+    if run is not None and launcher_run is not None and run != launcher_run:
+        return f"run {run!r} != launcher run {launcher_run!r}"
+    unit = fallback.get("unit")
+    launcher_unit = info.get("unit") if info else None
+    if unit is not None and launcher_unit is not None and unit != launcher_unit:
+        return f"unit {unit!r} != launcher unit {launcher_unit!r}"
+    return None
 
 
 def ingest_probe_payload(
@@ -257,9 +518,14 @@ def ingest_probe_payload(
     ``"lost"`` otherwise. After a commit the sidecar goes only once the
     parent checkpoint flushed (flush-then-delete); on flush failure the
     sidecar is retained and the persistence error propagates loud. A
-    definitive miss still deletes the sidecar (validated-unusable, torn, or
-    missing: nothing recoverable remains); an unreadable sidecar (I/O
-    failure) is retained for collection to retry. This function never
+    definitive miss still deletes the sidecar (torn, missing, or
+    unstamped payload-free debris: nothing recoverable remains); a
+    stated-but-mismatched or evidence-bearing body retains loudly
+    for file collection to adjudicate under its own identity
+    (#88R11-3). An unreadable sidecar (I/O failure) is retained for
+    collection to retry, as is an unreadable rewrite tmp (replay
+    defers to file collection instead of ingesting a return-less
+    prefix). This function never
     accounts loss itself: the caller owns ``note_lost_probe`` for
     ``"partial"`` and ``"lost"`` alike (the single accounting site).
 
@@ -279,14 +545,46 @@ def ingest_probe_payload(
         counters = data.get("call_counters")
         receipt = data.get("receipt")
         if isinstance(counters, (list, tuple)) and receipt is None:
+            absorbed_rows = list(counters)
+            # A stamped sidecar proved subsumed by this exit coverage
+            # contributes its keyed losses to the same ingest (idempotent
+            # union) so the commit below can retire it: without the keys
+            # the retire would drop them, and without the retire the
+            # retained copy would double-fold against the checkpoint
+            # (#88R10-4a). The proof re-runs at commit against a fresh
+            # read, so a swap between absorb and commit still retains.
+            extra_keys: list[dict[str, Any]] = []
+            proved_receipt: tuple[str, int] | None = None
+            if sidecar is not None:
+                pre = _read_probe_json(sidecar)
+                if isinstance(pre, dict) and (
+                    _fallback_identity_clash(pre, get_worker_uuid(), registration_info()) is None
+                ):
+                    proved = _legacy_subsumption_proof(pre, seq, absorbed_rows)
+                    if proved is not None:
+                        proved_receipt, extra_keys = proved
+            raw_keys = data.get("lost_keys", ())
+            if extra_keys:
+                if not isinstance(raw_keys, (list, tuple)):
+                    raw_keys = [raw_keys]
+                merged_keys: Any = (*raw_keys, *extra_keys)
+            else:
+                merged_keys = raw_keys
             ingest_child_evidence(
-                list(counters),
+                absorbed_rows,
                 data.get("probes_lost", 0),
                 data.get("receipts", ()),
-                lost_keys=data.get("lost_keys", ()),
+                lost_keys=merged_keys,
                 source=source,
+                consumed_probe=proved_receipt,
             )
-            _commit_probe_sidecar(sidecar)
+            absorbed_keys = frozenset((key["parent_uuid"], key["probe_seq"]) for key in extra_keys)
+            # Exit coverage subsumes every mid-run tmp (#88R3).
+            _commit_probe_sidecar(
+                sidecar,
+                force_tmps=True,
+                absorbed=(seq, absorbed_rows, absorbed_keys, proved_receipt),
+            )
             return "folded"
         if isinstance(counters, (list, tuple)) and receipt is not None:
             validated = validate_probe_receipt(receipt, seq)
@@ -302,7 +600,8 @@ def ingest_probe_payload(
                     lost_keys=data.get("lost_keys", ()),
                     source=source,
                 )
-                _commit_probe_sidecar(sidecar)
+                # Exit coverage subsumes every mid-run tmp (#88R3).
+                _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
                 return "folded"
     fallback = _read_probe_json(sidecar)
     if isinstance(fallback, _UnreadableEvidence):
@@ -318,6 +617,49 @@ def ingest_probe_payload(
         fallback_counters = fallback.get("counters")
         validated_fallback = validate_probe_receipt(fallback_receipt, seq)
         if validated_fallback is not None and isinstance(fallback_counters, (list, tuple)):
+            # The child is reaped before ingest (run_probe waits), so its
+            # rewrite tmps are quiescent by construction: replay returns
+            # onto the sidecar rows with the shared collector logic
+            # (#88R3). Path freshness usually binds the run (the slot
+            # path carries a per-spawn nonce), but a stale or foreign
+            # sidecar can still land here: identity is validated
+            # against the launcher before anything is absorbed (#88R7-3).
+            assert sidecar is not None  # fallback read implies a path
+            info = registration_info()
+            clash = _fallback_identity_clash(fallback, get_worker_uuid(), info)
+            if clash is not None:
+                warnings.warn(
+                    f"probe sidecar {sidecar} contradicts the launcher ({clash}); "
+                    "evidence retained for file collection",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return "lost"
+            try:
+                # Divergent rewrites keep the orphan rows (quarantined
+                # loudly inside the replay); the live path ingests that
+                # baseline exactly like the file path folds it. Refused
+                # garbage is warned inside the replay; live ingest has
+                # no receipt flags (it never heals), so the flag reads
+                # here only to keep the 3-tuple unpack aligned.
+                fallback_counters, _divergent, _refused_garbage = _replay_probe_tmp_rows(
+                    Path(sidecar),
+                    validated_fallback[0],
+                    validated_fallback[1],
+                    fallback,
+                    list(fallback_counters),
+                    producer_run=info["run_id"] if info else None,
+                    producer_unit=info["unit"] if info else None,
+                    orphan_pid=fallback.get("pid"),
+                    orphan_birth=fallback.get("birth_token"),
+                    producer_uuid=get_worker_uuid(),
+                )
+            except _DeferProducerError:
+                # An unreadable rewrite tmp is not a definitive miss:
+                # retain everything for file collection to retry (the
+                # caller still accounts the loss, so the outcome stays
+                # fail-visible).
+                return "lost"
             # The consumed identity rides inside the ingest transaction:
             # no checkpoint ever carries absorbed counts without their
             # anti-double-fold proof (codex RC4-R1-2; a post-ingest
@@ -330,8 +672,23 @@ def ingest_probe_payload(
                 source=source,
                 consumed_probe=validated_fallback,
             )
-            _commit_probe_sidecar(sidecar)
+            _commit_probe_sidecar(sidecar, expected=validated_fallback)
             return "partial"
+    if sidecar is not None and not _fallback_body_is_debris(fallback):
+        # Torn coverage with an attributable or evidence-bearing body:
+        # live ingest cannot attribute it (no validated receipt), but
+        # deleting it would destroy evidence file collection can still
+        # adjudicate under the body's own identity -- so it retains
+        # loudly instead (#88R11-3). Only missing/torn bodies and
+        # unstamped payload-free debris delete here.
+        warnings.warn(
+            f"probe sidecar {sidecar} unabsorbed at fallback "
+            "(torn coverage, unattributable body); "
+            "evidence retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return "lost"
     _delete_probe_sidecar(sidecar)
     return "lost"
 
@@ -458,25 +815,60 @@ def run_probe(
             json.dump(payload, fh)
 
         cmd = [sys.executable, "-u", "-m", f"pkcs11_check.testcases._probes.{probe}", params_path]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                # F18: provider bytes on the pipe must not cost the markers.
-                errors="replace",
-                env=env,
-                timeout=timeout,
-            )
-            rc, out, err = proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as exc:
-            # TimeoutExpired.stdout/.stderr can be bytes even with text=True
-            # (raised mid-communicate() before decoding) -- use _as_text (I8).
-            timed_out = True
-            out = _as_text(exc.stdout)
-            err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
-            rc = SUBPROCESS_TIMEOUT_RC
+        # Popen + communicate, mirroring subprocess.run exactly
+        # (same kwargs, same TimeoutExpired kill/reap/partial semantics
+        # including the Windows re-collect): run() drops the child pid,
+        # but the spawn record below needs it.
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            # F18: provider bytes on the pipe must not cost the markers.
+            errors="replace",
+            env=env,
+        ) as proc:
+            if probe_sidecar is not None:
+                # Durable spawn record before the child can flush
+                # (#88R22-4): a supervisor killed before its child
+                # flushes must still leave the launch attributable, or
+                # a first flush landing between passes would fold into
+                # a retry that discards it. A failed record kills the
+                # child and raises (fail fast: an untracked child
+                # would silently reopen that hole).
+                try:
+                    note_probe_spawned(
+                        probe_seq=probe_seq,
+                        slot=probe_sidecar,
+                        pid=proc.pid,
+                        birth=birth_token_for_pid(proc.pid),
+                    )
+                except (ValueError, CounterPersistenceError):
+                    # Reap without draining (#88R23-6): communicate()
+                    # waits for pipe EOF, which a grandchild holding an
+                    # inherited pipe delays past the probe timeout. The
+                    # output is discarded (we raise), so wait() suffices
+                    # on every platform (unlike the timeout path, which
+                    # mirrors run()'s partial-output capture).
+                    proc.kill()
+                    proc.wait()
+                    raise
+            try:
+                out, err = proc.communicate(timeout=timeout)
+                rc = proc.returncode
+            except subprocess.TimeoutExpired as exc:
+                # TimeoutExpired.stdout/.stderr can be bytes even with text=True
+                # (raised mid-communicate() before decoding) -- use _as_text (I8).
+                proc.kill()
+                if sys.platform == "win32":
+                    exc.stdout, exc.stderr = proc.communicate()
+                else:
+                    proc.wait()
+                timed_out = True
+                out = _as_text(exc.stdout)
+                err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
+                rc = SUBPROCESS_TIMEOUT_RC
 
         # A non-negative exit code alone cannot tell "the module called exit() from inside
         # the PKCS#11 call" apart from "Python raised and died normally" -- both arrive
@@ -514,6 +906,11 @@ def run_probe(
             # heal exactly this claim. This is the only lost-probe
             # accounting site; ingests never account loss.
             note_lost_probe(parent_uuid=get_worker_uuid(), probe_seq=probe_seq)
+        # The child has exited (communicate waited) whatever the outcome:
+        # its spawn record is settled. Pruning is lazy (rides the next
+        # flush); a crash before it leaves a stale record the death
+        # check still resolves (#88R22-4).
+        forget_probe_spawn(probe_seq)
 
         # I7 AFTER ingest + loss accounting: the rv-trace is an optional
         # diagnostic parse, so it must never run before (or block) counter

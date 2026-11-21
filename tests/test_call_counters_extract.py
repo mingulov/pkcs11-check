@@ -1048,6 +1048,41 @@ def test_extract_forged_recovery_never_heals_another_producer(tmp_path: Path) ->
     assert {"worker_uuid": "a" * 32, "probe_seq": 0, "status": "lost"} in payload["probes_detail"]
 
 
+def test_extract_later_partial_recovery_heals_claimed_loss(tmp_path: Path) -> None:
+    # #88R20-4: recovery harvests from every partial (stage time), not
+    # first-wins: a retry partial healing a loss the first partial
+    # claimed resolves it, while counts keep the single first fold.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {
+                "$report_type": "CallCountersPartial",
+                "worker_uuid": "a" * 32,
+                "truncated": True,
+                **_buckets(5),
+                "probes_lost": 1,
+                "lost_keys": [{"parent_uuid": "a" * 32, "probe_seq": 0}],
+                "run_id": _R1,
+            },
+            {
+                "$report_type": "CallCountersPartial",
+                "worker_uuid": "a" * 32,
+                "truncated": True,
+                **_buckets(5),
+                "recovered_keys": [{"parent_uuid": "a" * 32, "probe_seq": 0}],
+                "run_id": _R1,
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 5
+    assert payload["probes_lost"] == 0
+
+
 def test_extract_loss_only_partial_pid_gets_zero_row(tmp_path: Path) -> None:
     # Contract review F5: a pid-bearing loss-only partial (zero counts,
     # real ledger loss, no session/fallback/lost) must render its pid's

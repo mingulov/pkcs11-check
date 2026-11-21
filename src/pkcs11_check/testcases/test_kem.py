@@ -336,8 +336,10 @@ def _generate_ml_kem_keypair(
     if CKA_ENCAPSULATE_OVERRIDE is not None:
         public_attrs[CKA_ENCAPSULATE] = CKA_ENCAPSULATE_OVERRIDE
 
+    # NOTE (#72): no CKA_SENSITIVE request -- KEM tests never read the
+    # private value, so the token chooses sensitivity. Asking FALSE fails
+    # on modules whose private keys are always sensitive.
     private_attrs = {
-        CKA_SENSITIVE: False,
         CKA_EXTRACTABLE: False,
         CKA_TOKEN: False,
     }
