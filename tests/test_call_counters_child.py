@@ -2087,14 +2087,17 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
                 )
             )
         except durability._DeferProducerError as exc:
-            # Only a writer-liveness deferral for this writer excuses
-            # the test (#88R33-6): a pid recycled between the proof
-            # above and the adoption makes postmortem recovery
-            # untestable. Any other deferral (an unreadable slot, a
-            # divergent rewrite) is a genuine adoption failure and
-            # must stay loud instead of masking as a skip.
-            if exc.pid == writer_pid:
-                pytest.skip(f"writer pid {writer_pid} recycled before adoption")
+            # Only a PROVEN recycle excuses the test (#88R33-6,
+            # hardened #88R34-8): a deferral naming this writer, a
+            # valid pre-kill birth, and a different incarnation still
+            # live in the pid slot. Any other deferral (an unreadable
+            # slot, a divergent rewrite) -- or a dead slot behind a
+            # refused fence -- is a genuine adoption failure and must
+            # stay loud instead of masking as a skip.
+            if exc.pid == writer_pid and durability.is_birth_token(writer_birth):
+                current_birth = durability.birth_token_for_pid(writer_pid)
+                if current_birth is not None and current_birth != writer_birth:
+                    pytest.skip(f"writer pid {writer_pid} recycled before adoption")
             raise
         assert merged is not None
         assert merged["total_calls"] == 3
@@ -2108,6 +2111,44 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=30)
+
+
+@pytest.mark.timeout(300)
+def test_sigkill_fence_refusal_stays_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#88R34-8: a refused adoption fence surfaces, never skips as recycled."""
+    from pkcs11_check.core import _counters_durability as durability
+    from pkcs11_check.core.counters_schema import is_birth_token
+
+    real_terminate = durability._terminate_verified
+
+    def _refuse_adoption(pid: int, birth: int, timeout_s: float) -> bool:
+        # The 30s call is the scenario's own pre-check fence
+        # (split-writer shims); only the 5s adoption fence refuses.
+        if timeout_s == 30.0:
+            return real_terminate(pid, birth, timeout_s)
+        return False
+
+    monkeypatch.setattr(durability, "_terminate_verified", _refuse_adoption)
+    try:
+        test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path)
+    except durability._DeferProducerError:
+        return
+    except pytest.skip.Exception as exc:
+        # Only a proven live-different occupant (genuine recycle) or
+        # a premise failure (unreadable slot) excuses a skip here; an
+        # unproven "recycled before adoption" skip is the R34-8 mask.
+        slot = tmp_path / "counters" / f"probe-{'c' * 8}-0-feedface.json"
+        try:
+            stamp = json.loads(slot.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pytest.skip(f"environmental: {exc}")
+        stamp_pid = stamp.get("pid")
+        stamp_birth = stamp.get("birth_token")
+        current = durability.birth_token_for_pid(stamp_pid) if isinstance(stamp_pid, int) else None
+        if is_birth_token(stamp_birth) and current is not None and current != stamp_birth:
+            pytest.skip(f"environmental: {exc}")
+        pytest.fail(f"refused fence masked as skip: {exc}")
+    pytest.fail("a refused adoption fence must surface, not adopt")
 
 
 def test_own_spawn_writes_launch_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
