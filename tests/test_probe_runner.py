@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -272,19 +273,27 @@ def test_run_probe_records_timeout_process_observation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     drain_process_observations()
+    calls: list[str] = []
 
-    def raise_timeout(proc: object, timeout: object) -> None:
-        raise subprocess.TimeoutExpired([], 1)
+    def raise_timeout_once(proc: object, timeout: object) -> tuple[str, str]:
+        # The first communicate() times out; the reaping call after the
+        # kill succeeds like a real Popen (R31: the win32 timeout path
+        # re-communicates, so an always-raising double is unrealistic).
+        calls.append("communicate")
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired([], 1)
+        return ("", "")
 
     monkeypatch.setattr(
         "pkcs11_check.testcases._probes.runner.subprocess.Popen",
-        _fake_popen_factory(communicate_hook=raise_timeout),
+        _fake_popen_factory(communicate_hook=raise_timeout_once),
     )
     result = run_probe("_echo", {"module_path": "/x.so"}, timeout=1)
 
     assert result.returncode == 124
     _assert_probe_observation(result, returncode=124, kind="timeout")
     assert drain_process_observations() == [result.observation]
+    assert calls == ["communicate"] * (2 if sys.platform == "win32" else 1)
 
 
 def test_run_probe_records_windows_access_violation_process_observation(
