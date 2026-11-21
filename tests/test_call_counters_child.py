@@ -2046,6 +2046,12 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
         assert total == 3, "child must flush its 3-unit prefix before the kill"
         proc.kill()
         proc.wait(timeout=30)
+        print(f"DIAG proc.pid={proc.pid} poll={proc.poll()} exists={durability._pid_exists(proc.pid)}")
+        try:
+            _payload = json.loads(slot.read_text(encoding="utf-8"))
+            print(f"DIAG slotpid={_payload.get('pid')} slotbirth={_payload.get('birth_token')} exists={durability._pid_exists(_payload.get('pid')) if isinstance(_payload.get('pid'), int) else 'n/a'}")
+        except Exception as exc:
+            print(f"DIAG slotread failed: {exc!r}")
         if durability._pid_exists(proc.pid):
             # The killed pid was recycled (or reads live) before adoption:
             # postmortem recovery is untestable against a live pid, and the
