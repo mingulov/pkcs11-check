@@ -51,7 +51,7 @@ import stat
 import sys
 import time
 import warnings
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -1357,6 +1357,13 @@ def _known_producer_uuids(root: Path) -> tuple[set[str], bool]:
             for registry_path in registry_paths:
                 content = read_registry_file(registry_path)
                 if content is None:
+                    # Registry identity is filename-bound (content
+                    # must match the name), so an entry whose name
+                    # cannot validate cannot hide a colliding uuid
+                    # and never poisons completeness (#88R28-5). A
+                    # name-valid failure stays conservative.
+                    if parse_registry_filename(registry_path.name) is None:
+                        continue
                     complete = False
                 else:
                     uuids.add(content["worker_uuid"])
@@ -2300,6 +2307,8 @@ class _DeferProducerError(Exception):
             return (
                 f"legacy identity needs a complete producer scan ({self.source or 'unknown file'})"
             )
+        if self.reason == "committed-session":
+            return f"cleanup retry needs the committed session ({self.source or 'unknown file'})"
         if self.source:
             return f"unreadable evidence ({self.source})"
         return "unreadable evidence"
@@ -4176,7 +4185,9 @@ def _prune_sidecar_tmps(
 
 
 def _consume_producer_files(
-    paths: list[Path], digests: Mapping[str, str] | None = None
+    paths: list[Path],
+    digests: Mapping[str, str] | None = None,
+    proved_absent: Container[str] | None = None,
 ) -> list[Path]:
     """Delete collected/committed evidence files (best effort, never raises).
 
@@ -4203,6 +4214,17 @@ def _consume_producer_files(
     held: list[Path] = []
     for path in paths:
         key = str(path)
+        if proved_absent is not None and key in proved_absent and _path_state(path) != "missing":
+            # Proved absent at retry time but present now: a ghost
+            # landed after the proof -- hold it for reunion instead
+            # of deleting unadjudicated bytes (#88R28-3).
+            warnings.warn(
+                f"cleanup target {path.name} appeared after being proved absent; held",
+                UserWarning,
+                stacklevel=2,
+            )
+            held.append(path)
+            continue
         if digests is not None and key in digests:
             state = _path_state(path)
             if state == "unreadable":
@@ -6013,14 +6035,22 @@ def _collect_committed_producer(
     sidecar_path = Path(sidecar_raw)
     sidecar: Any | None = None
     if sidecar_raw:
-        _, raw_committed, committed_digest = _read_json_evidence_digested(sidecar_path)
+        sidecar_status, raw_committed, committed_digest = _read_json_evidence_digested(sidecar_path)
         if committed_digest is not None and digests is not None:
             # Bind the adjudicated bytes (#88R27-3): a held sidecar
             # stages as a retryable cleanup target.
             digests.setdefault(str(sidecar_path), committed_digest)
+        if sidecar_status == "unreadable":
+            # An unreadable sidecar withholds coverage: proceeding
+            # would fold orphans the durable receipts should suppress
+            # and consume evidence whose bytes were never bound, so a
+            # held delete could never stage for retry (#88R28-2).
+            raise _DeferProducerError(uuid, None, source=sidecar_path.name)
         sidecar = raw_committed
     if sidecar_raw:
-        journal_lines, journal_digest = _read_journal_lines(_journal_for_sidecar(sidecar_path))
+        journal_lines, journal_digest = _read_journal_lines_strict(
+            _journal_for_sidecar(sidecar_path), uuid
+        )
         if journal_digest is not None and digests is not None:
             # Bind the adjudicated bytes (#88R27-3): a held journal
             # stages as a retryable cleanup target.
@@ -6502,6 +6532,7 @@ def _write_barrier_staging(
     collected: Collection[str],
     targets: Collection[tuple[str, str]],
     skip_held: Collection[str] = (),
+    disposition: Mapping[str, str] | None = None,
 ) -> bool:
     """Persist the collected barrier plan atomically (never raises).
 
@@ -6513,7 +6544,10 @@ def _write_barrier_staging(
     slots, never newly discovered ones (#88R11-6). ``skip_held``
     carries the uuids whose parents a skip retained for a live writer:
     a retry reunites them (never skip-adopts) so the association
-    survives until the writer exits (#88R14-1).
+    survives until the writer exits (#88R14-1). ``disposition`` maps
+    each collected uuid to its routing (``"committed"`` or ``"gap"``):
+    a retry honors the committed-vs-gap decision instead of
+    re-deriving it from a possibly absent prior (#88R28-1/#88R28-2).
     """
     path = root / BARRIER_STAGING_FILENAME
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -6529,6 +6563,9 @@ def _write_barrier_staging(
                         for target_path, digest in sorted(set(targets))
                     ],
                     "skip_held_uuids": sorted(set(skip_held)),
+                    "disposition": {
+                        uuid: value for uuid, value in sorted((disposition or {}).items())
+                    },
                 }
             ),
             encoding="utf-8",
@@ -6551,9 +6588,14 @@ def _write_barrier_staging(
 def _load_barrier_staging(
     root: Path,
 ) -> tuple[
-    dict[str, list[dict[str, Any]]], int, frozenset[str], frozenset[tuple[str, str]], frozenset[str]
+    dict[str, list[dict[str, Any]]],
+    int,
+    frozenset[str],
+    frozenset[tuple[str, str]],
+    frozenset[str],
+    dict[str, str],
 ]:
-    """Load retained staging ``(cache_records, consumed, collected, targets, skip_held)``.
+    """Load retained staging (records, consumed, collected, targets, holds, disposition).
 
     Absent reads empty. Torn or misshapen staging warns loudly (staged
     recovery evidence may be lost: atomic writes make this
@@ -6576,12 +6618,12 @@ def _load_barrier_staging(
     path = root / BARRIER_STAGING_FILENAME
     staging_state = _path_state(path)
     if staging_state == "missing":
-        return {}, 0, frozenset(), frozenset(), frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}
     if staging_state == "unreadable":
         raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
     status, raw = _read_json_evidence(path)
     if status == "gone":
-        return {}, 0, frozenset(), frozenset(), frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}
     if status == "unreadable":
         raise CounterPersistenceError(f"cannot read barrier staging {path}: I/O fault")
     if status == "torn" or not isinstance(raw, dict):
@@ -6602,7 +6644,7 @@ def _load_barrier_staging(
             path.unlink(missing_ok=True)
         except OSError:
             pass
-        return {}, 0, frozenset(), frozenset(), frozenset()
+        return {}, 0, frozenset(), frozenset(), frozenset(), {}
     collected: frozenset[str] = frozenset()
     claimed_clean = True
     if isinstance(raw, dict):
@@ -6669,7 +6711,23 @@ def _load_barrier_staging(
                 UserWarning,
                 stacklevel=2,
             )
-    return records, consumed, collected, targets, skip_held
+    disposition: dict[str, str] = {}
+    if isinstance(raw, dict) and "disposition" in raw:
+        claimed_disp = raw["disposition"]
+        if (
+            isinstance(claimed_disp, dict)
+            and all(isinstance(uuid, str) for uuid in claimed_disp)
+            and all(value in ("committed", "gap") for value in claimed_disp.values())
+        ):
+            disposition = dict(claimed_disp)
+        else:
+            warnings.warn(
+                f"counter barrier staging {path} has a malformed disposition map; "
+                "cleanup retries reunite instead of suppressing",
+                UserWarning,
+                stacklevel=2,
+            )
+    return records, consumed, collected, targets, skip_held, disposition
 
 
 def discard_barrier_staging(root: Path | str) -> bool:
@@ -6719,31 +6777,40 @@ def _cleanup_retry_proved(
     files: list[Path],
     staged_digests: dict[str, str],
     validated_cleanup: frozenset[str],
-) -> bool:
-    """Whether a targeted uuid's parents retry without reunion (#88R27-3).
+) -> tuple[bool, dict[str, str], set[str]]:
+    """Prove a targeted uuid's parents for reunion-free retry (#88R27-3).
 
-    Direct consume without reunion needs byte-proof nothing changed
-    since adjudication: every file either matches its staged digest,
+    Returns ``(proved, seed_digests, seed_absent)``. Direct consume
+    without reunion needs byte-proof nothing changed since
+    adjudication: every file either matches its staged digest,
     resolved since (missing), or never existed here (no staged digest
     and missing now -- a ghost would be present and fail the check).
     Anything else reunites instead, so post-stage evidence always
-    re-adjudicates rather than deleting blind. Never raises.
+    re-adjudicates rather than deleting blind. The seeds carry the
+    proof into consume: digests re-verify before unlink (a swap after
+    proof holds instead of deleting), and proved-absent paths hold if
+    anything appears under them (#88R28-3). Never raises.
     """
+    seed_digests: dict[str, str] = {}
+    seed_absent: set[str] = set()
     if uuid not in validated_cleanup:
-        return False
+        return False, seed_digests, seed_absent
     for path in files:
         expected = staged_digests.get(str(path))
         state = _path_state(path)
         if expected is None:
             if state != "missing":
-                return False
+                return False, {}, set()
+            seed_absent.add(str(path))
         elif state == "missing":
-            continue
+            seed_absent.add(str(path))
         elif state == "unreadable":
-            return False
+            return False, {}, set()
         elif _sha256_regular_file_hex(path) != expected:
-            return False
-    return True
+            return False, {}, set()
+        else:
+            seed_digests[str(path)] = expected
+    return True, seed_digests, seed_absent
 
 
 def _sha256_regular_file_hex(path: Path) -> str | None:
@@ -6761,7 +6828,14 @@ def _sha256_regular_file_hex(path: Path) -> str | None:
     except OSError:
         return None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        try:
+            file_stat = os.fstat(fd)
+        except OSError:
+            # A descriptor that cannot be statted is unverifiable
+            # (never a proved regular file): retention, not escape
+            # (#88R28-4).
+            return None
+        if not stat.S_ISREG(file_stat.st_mode):
             return None
         chunks: list[bytes] = []
         while True:
@@ -7185,9 +7259,14 @@ def prepare_resume(
         plan["barrier_ok"] = False
         return plan
     try:
-        staged_records, staged_consumed, staged_collected, staged_targets, staged_skip_held = (
-            _load_barrier_staging(root)
-        )
+        (
+            staged_records,
+            staged_consumed,
+            staged_collected,
+            staged_targets,
+            staged_skip_held,
+            staged_disposition,
+        ) = _load_barrier_staging(root)
     except CounterPersistenceError as exc:
         # Unreadable barrier memory fails the barrier without
         # discarding it (#88R24-1): the next barrier retries with a
@@ -7216,11 +7295,14 @@ def prepare_resume(
         if discard_barrier_staging(root):
             staged_records, staged_consumed, staged_collected = {}, 0, frozenset()
             staged_targets, staged_skip_held = frozenset(), frozenset()
+            staged_disposition = {}
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
     collected_now: set[str] = set()
+    routed_now: dict[str, str] = {}
     to_consume: list[Path] = []
+    proved_absent_now: set[str] = set()
     skip_retained: list[Path] = []
     skip_held_now: set[str] = set()
     # First read wins (#88R14-2): every recording uses setdefault so a
@@ -7414,7 +7496,7 @@ def prepare_resume(
             ],
         )
 
-    def _note_collected(uuid: str) -> bool:
+    def _note_collected(uuid: str, disposition: str) -> bool:
         """Record uuid as collected; False when already staged (#88R9-4).
 
         A retry re-collects staged evidence to finish its cleanup
@@ -7424,11 +7506,15 @@ def prepare_resume(
         (evidence or session behind the claim); only newly collected
         uuids join this pass's set or bump the consumed count, so the
         staged invariant consumed == len(collected_uuids) holds at
-        every write (#88R10-4b).
+        every write (#88R10-4b). The routing disposition stages
+        alongside: a cleanup retry must honor the committed-vs-gap
+        decision instead of re-deriving it from a possibly absent
+        prior (#88R28-2).
         """
         if uuid in validated_collected:
             return False
         collected_now.add(uuid)
+        routed_now[uuid] = disposition
         return True
 
     registry_files = _list_evidence_files(reg_dir, "", ".json")
@@ -7491,35 +7577,62 @@ def prepare_resume(
         uuid = content["worker_uuid"]
         seen_uuids.add(uuid)
         seen_runs.add(content["run_id"])
-        if (
-            uuid not in staged_skip_held
-            and verify_producer(content) == "dead"
-            and (
-                uuid in validated_collected
-                or _cleanup_retry_proved(
-                    uuid,
-                    _producer_files(content, registry_path),
-                    staged_digest_by_path,
-                    validated_cleanup,
-                )
+        if uuid not in staged_skip_held and verify_producer(content) == "dead":
+            if uuid in validated_collected:
+                # Staged retry (#88R13-2): this producer's evidence was
+                # adjudicated by the earlier barrier and its records stand
+                # staged, so reunion runs no second adjudication (a
+                # post-stage ghost would fold and discard under the gate).
+                # The parent files consume directly (a dead writer cannot
+                # ghost them) while parentless probes converge through
+                # digest-gated adoption below. Anything not proven dead
+                # reunites normally (a live writer needs fencing), as does
+                # anything a skip held for a live writer (#88R14-1).
+                to_consume.extend(_producer_files(content, registry_path))
+                continue
+            proved, seed_digests, seed_absent = _cleanup_retry_proved(
+                uuid,
+                _producer_files(content, registry_path),
+                staged_digest_by_path,
+                validated_cleanup,
             )
-        ):
-            # Staged retry (#88R13-2): this producer's evidence was
-            # adjudicated by the earlier barrier and its records stand
-            # staged, so reunion runs no second adjudication (a
-            # post-stage ghost would fold and discard under the gate).
-            # The parent files consume directly (a dead writer cannot
-            # ghost them) while parentless probes converge through
-            # digest-gated adoption below. Anything not proven dead
-            # reunites normally (a live writer needs fencing), as does
-            # anything a skip held for a live writer (#88R14-1). A
-            # cleanup-only uuid retries the same way once its staged
-            # digests prove nothing changed since adjudication
-            # (#88R27-3); anything else reunites (its bytes are new
-            # evidence, and the earlier silence means nothing about
-            # them was ever published).
-            to_consume.extend(_producer_files(content, registry_path))
-            continue
+            if proved and staged_disposition.get(uuid) in ("committed", "gap"):
+                # Proven cleanup retry (#88R27-3/#88R28-1): nothing
+                # changed since adjudication, and the staged
+                # disposition positively records why the earlier pass
+                # stayed silent -- so reunion would decide nothing
+                # new. The proof seeds consume (assignment wins over
+                # informational scans per first-wins' spirit: proved
+                # bytes beat scanned ones), closing the proof-to-unlink
+                # race (#88R28-3). Staging without a disposition
+                # reunites instead: silence without a stated basis
+                # never suppresses collection.
+                for seed_path, seed_digest in seed_digests.items():
+                    read_digests[seed_path] = seed_digest
+                proved_absent_now.update(seed_absent)
+                to_consume.extend(_producer_files(content, registry_path))
+                continue
+            if (
+                uuid in validated_cleanup
+                and staged_disposition.get(uuid) == "committed"
+                and not any(known_uuid == uuid for _, known_uuid in sessions)
+            ):
+                # Committed silence without its session (#88R28-2):
+                # gap fallback would falsely heal, so the producer
+                # waits for the authority its disposition names
+                # (same handling as the reunion arms' deferrals).
+                deferral = _DeferProducerError(
+                    uuid, None, source=registry_path.name, reason="committed-session"
+                )
+                warnings.warn(
+                    f"producer {deferral.uuid} deferred: {deferral.detail}; evidence retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["unresolved"].append(uuid)
+                retained_runs.add(content["run_id"])
+                deferred_units.add(content["unit"])
+                continue
         # Resume track (postponed): uuid-only matching preserves the
         # frozen committed-vs-gap routing exactly.
         if any(known_uuid == uuid for _, known_uuid in sessions):
@@ -7545,7 +7658,7 @@ def prepare_resume(
                 if exc.pid is not None:
                     skipped_live_units.add(content["unit"])
                 continue
-            if _note_collected(uuid):
+            if _note_collected(uuid, "committed"):
                 _emit(content["unit"], claim_records)
                 plan["consumed"] += 1
             else:
@@ -7601,7 +7714,7 @@ def prepare_resume(
                 if exc.pid is not None:
                     skipped_live_units.add(content["unit"])
                 continue
-            if _note_collected(uuid):
+            if _note_collected(uuid, "gap"):
                 _emit(content["unit"], records)
                 plan["consumed"] += 1
             else:
@@ -7656,7 +7769,7 @@ def prepare_resume(
                 if exc.pid is not None:
                     skipped_live_units.add(content["unit"])
                 continue
-            if _note_collected(uuid):
+            if _note_collected(uuid, "gap"):
                 _emit(content["unit"], records)
                 plan["consumed"] += 1
             else:
@@ -7737,29 +7850,53 @@ def prepare_resume(
             # reunion below re-decides (and defers loudly) instead of
             # consuming through hidden launches (#88R24-1/2).
             spawns_settled = False
-        if (
-            uuid not in staged_skip_held
-            and spawns_settled
-            and (
-                uuid in validated_collected
-                or _cleanup_retry_proved(
-                    uuid,
-                    [sidecar_path, journal_path],
-                    staged_digest_by_path,
-                    validated_cleanup,
-                )
+        if uuid not in staged_skip_held and spawns_settled:
+            if uuid in validated_collected:
+                # Staged retry (#88R13-2): no second reunion (see the
+                # registry loop); the files consume directly while probes
+                # converge through digest-gated adoption. Quiescence was
+                # proven by the adoption gate above. Skip-held producers
+                # reunite below instead (#88R15-2), as do producers with
+                # unflushed spawn children (#88R22-4).
+                to_consume.extend([sidecar_path, journal_path])
+                continue
+            proved, seed_digests, seed_absent = _cleanup_retry_proved(
+                uuid,
+                [sidecar_path, journal_path],
+                staged_digest_by_path,
+                validated_cleanup,
             )
-        ):
-            # Staged retry (#88R13-2): no second reunion (see the
-            # registry loop); the files consume directly while probes
-            # converge through digest-gated adoption. Quiescence was
-            # proven by the adoption gate above. Skip-held producers
-            # reunite below instead (#88R15-2), as do producers with
-            # unflushed spawn children (#88R22-4). Cleanup-only uuids
-            # retry once their staged digests prove nothing changed
-            # (#88R27-3).
-            to_consume.extend([sidecar_path, journal_path])
-            continue
+            if proved and staged_disposition.get(uuid) in ("committed", "gap"):
+                # Proven cleanup retry (see the registry loop):
+                # nothing changed and the staged disposition records
+                # why the earlier pass stayed silent.
+                for seed_path, seed_digest in seed_digests.items():
+                    read_digests[seed_path] = seed_digest
+                proved_absent_now.update(seed_absent)
+                to_consume.extend([sidecar_path, journal_path])
+                continue
+            if (
+                uuid in validated_cleanup
+                and staged_disposition.get(uuid) == "committed"
+                and not any(known_uuid == uuid for _, known_uuid in sessions)
+            ):
+                # Committed silence without its session (#88R28-2):
+                # gap fallback would falsely heal (same handling as
+                # the reunion arms' deferrals).
+                deferral = _DeferProducerError(
+                    uuid, None, source=sidecar_path.name, reason="committed-session"
+                )
+                warnings.warn(
+                    f"producer {deferral.uuid} deferred: {deferral.detail}; evidence retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["unresolved"].append(uuid)
+                if isinstance(sidecar.get("run_id"), str):
+                    retained_runs.add(sidecar["run_id"])
+                if isinstance(sidecar.get("unit"), str):
+                    deferred_units.add(sidecar["unit"])
+                continue
         barrier_unit = sidecar.get("unit")
         routed_committed = any(known_uuid == uuid for _, known_uuid in sessions)
         try:
@@ -7830,7 +7967,7 @@ def prepare_resume(
                 orphan_keys=orphan_keys,
                 adopted_lost=adopted_lost,
             )
-            if _note_collected(uuid):
+            if _note_collected(uuid, "committed"):
                 _emit(str(sidecar.get("unit", "")), claim_records)
                 plan["consumed"] += 1
             else:
@@ -7910,7 +8047,7 @@ def prepare_resume(
         )
         if lost is not None:
             records.append(lost)
-        if _note_collected(uuid):
+        if _note_collected(uuid, "gap"):
             _emit(str(sidecar.get("unit", "")), records)
             plan["consumed"] += 1
         else:
@@ -7974,6 +8111,10 @@ def prepare_resume(
     # debris leaks.
     if plan["cache_records"] or skip_held_now or to_consume:
         collected_union = collected_now | set(validated_cleanup)
+        disposition_union = dict(routed_now)
+        for uuid, disp in staged_disposition.items():
+            if uuid in collected_union:
+                disposition_union.setdefault(uuid, disp)
         # Self-healing count (#88R11-5): the staged invariant is
         # consumed == len(collected_uuids); a corrupt staged count
         # recomputes from the validated union instead of persisting.
@@ -8026,6 +8167,7 @@ def prepare_resume(
             collected_union,
             probe_targets,
             skip_held_union,
+            disposition_union,
         ):
             warnings.warn(
                 f"counter resume barrier cannot stage recovery evidence in {root}; "
@@ -8036,7 +8178,7 @@ def prepare_resume(
             plan["barrier_ok"] = False
             _release_barrier_seal(root)
             return plan
-    held = _consume_producer_files(to_consume, read_digests)
+    held = _consume_producer_files(to_consume, read_digests, proved_absent_now)
     # Held cleanup targets ride the plan: application keeps the staging
     # that authorizes their retry instead of discarding it, so the next
     # barrier finishes the cleanup without re-emitting (#88R10-4c).
