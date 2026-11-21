@@ -2096,7 +2096,11 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
             # stay loud instead of masking as a skip.
             if exc.pid == writer_pid and durability.is_birth_token(writer_birth):
                 current_birth = durability.birth_token_for_pid(writer_pid)
-                if current_birth is not None and current_birth != writer_birth:
+                if (
+                    current_birth is not None
+                    and current_birth != writer_birth
+                    and durability._incarnation_running_proven(writer_pid, current_birth)
+                ):
                     pytest.skip(f"writer pid {writer_pid} recycled before adoption")
             raise
         assert merged is not None
@@ -2149,6 +2153,72 @@ def test_sigkill_fence_refusal_stays_loud(tmp_path: Path, monkeypatch: pytest.Mo
             pytest.skip(f"environmental: {exc}")
         pytest.fail(f"refused fence masked as skip: {exc}")
     pytest.fail("a refused adoption fence must surface, not adopt")
+
+
+@pytest.mark.timeout(300)
+def test_sigkill_zombie_reuse_refusal_stays_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R35-8: a zombie occupant never proves recycle."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    if durability._pinning_backend() != "pidfd":
+        pytest.skip("pinned proof needs pidfd")
+    zombie = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        zb = durability.birth_token_for_pid(zombie.pid)
+        assert zb is not None, "an unreaped zombie keeps a readable birth"
+        # Starttime ticks in jiffies: separate the zombie's fork from
+        # the inner writer's by several ticks so their births differ
+        # deterministically (same-tick births would mask the reuse).
+        # The wait also lands the exit as an unreaped zombie (nobody
+        # waits here), so the reuse models a dead incarnation.
+        for _ in range(300):
+            state = (
+                Path(f"/proc/{zombie.pid}/stat")
+                .read_text(encoding="utf-8")
+                .rsplit(")", 1)[1]
+                .split()[0]
+            )
+            if state == "Z":
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("the child never reached zombie state")
+        time.sleep(0.05)
+        real_terminate = durability._terminate_verified
+        real_birth = durability.birth_token_for_pid
+        refused: list[bool] = []
+
+        def _refuse_adoption(pid: int, birth: int, timeout_s: float) -> bool:
+            if timeout_s == 30.0:
+                return real_terminate(pid, birth, timeout_s)
+            refused.append(True)
+            return False
+
+        def _reuse(pid: int) -> int | None:
+            # After the fence refuses, dead slots read as the zombie's
+            # birth (models a recycle the incarnation check reads dead).
+            current = real_birth(pid)
+            if current is None and refused:
+                return zb
+            return current
+
+        monkeypatch.setattr(durability, "_terminate_verified", _refuse_adoption)
+        monkeypatch.setattr(durability, "birth_token_for_pid", _reuse)
+        try:
+            test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path)
+        except durability._DeferProducerError:
+            return
+        except pytest.skip.Exception as exc:
+            pytest.fail(f"zombie reuse masked as skip: {exc}")
+        pytest.fail("a refused fence under zombie reuse must surface, not adopt")
+    finally:
+        zombie.wait(timeout=30)
 
 
 def test_own_spawn_writes_launch_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
