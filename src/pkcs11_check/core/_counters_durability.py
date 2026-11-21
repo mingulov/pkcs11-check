@@ -4236,7 +4236,10 @@ def _consume_producer_files(
                 )
                 held.append(path)
                 continue
-            if state == "present" and _sha256_file_hex(path) != digests[key]:
+            # Descriptor-verified hash: a FIFO swapped in after the
+            # proof reads None (held) instead of blocking the barrier
+            # sealed (#88R29-4).
+            if state == "present" and _sha256_regular_file_hex(path) != digests[key]:
                 warnings.warn(
                     f"cleanup target {path.name} changed since adjudication; held",
                     UserWarning,
@@ -4631,7 +4634,15 @@ def collect_unit(
         )
         return appended
     for sidecar_path in sidecar_files:
-        adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids, read_digests)
+        try:
+            adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids, read_digests)
+        except _DeferProducerError as exc:
+            warnings.warn(
+                f"producer {exc.uuid} deferred: {exc.detail}; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         if adopted is None:
             continue
         uuid, sidecar = adopted
@@ -5731,12 +5742,25 @@ def _adopt_orphan_sidecar(
     seen: set[str],
     digests: dict[str, str] | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
-    """Adopt a sidecar with no live registry via its carried identity."""
-    _, raw, sidecar_digest = _read_json_evidence_digested(sidecar_path)
+    """Adopt a sidecar with no live registry via its carried identity.
+
+    Raises :class:`_DeferProducerError` when the sidecar is unreadable:
+    skipping blind would grant run credit and sweep authority over
+    evidence whose ownership cannot be established (#88R29-6). The
+    filename uuid rides the deferral so the sweep exclusion still
+    names the producer; garbage-named files keep skipping (nothing
+    attributable exists to wait for).
+    """
+    status, raw, sidecar_digest = _read_json_evidence_digested(sidecar_path)
     if sidecar_digest is not None and digests is not None:
         # Bind the adjudicated bytes (#88R27-3): a held sidecar
         # stages as a retryable cleanup target.
         digests.setdefault(str(sidecar_path), sidecar_digest)
+    if status == "unreadable":
+        owner = sidecar_path.name.split("-", 1)[0]
+        if not is_worker_uuid(owner):
+            return None
+        raise _DeferProducerError(owner, None, source=sidecar_path.name)
     sidecar = raw
     if not isinstance(sidecar, dict):
         return None
@@ -6739,6 +6763,20 @@ def discard_barrier_staging(root: Path | str) -> bool:
     return True
 
 
+def _held_owner_uuid(path_str: str) -> str | None:
+    """Exact owner uuid of a held parent file, else None (#88R29-3).
+
+    Registry, sidecar, and journal names carry the full uuid;
+    anything else (orphans, markers, spawns, tmps of those) has no
+    exact name binding -- the sweep already retains valid ones, and
+    torn ones are unrecoverable debris by policy, so only exact
+    parent owners ride the family exclusion.
+    """
+    name = Path(path_str).name.split(".tmp-", 1)[0]
+    head = name.split("-", 1)[0].split(".", 1)[0]
+    return head if is_worker_uuid(head) else None
+
+
 def _staged_target_owner_hint(path_str: str) -> str | None:
     """Parent identity hint embedded in a staged target path (#88R26-7).
 
@@ -7612,27 +7650,41 @@ def prepare_resume(
                 proved_absent_now.update(seed_absent)
                 to_consume.extend(_producer_files(content, registry_path))
                 continue
-            if (
-                uuid in validated_cleanup
-                and staged_disposition.get(uuid) == "committed"
-                and not any(known_uuid == uuid for _, known_uuid in sessions)
-            ):
-                # Committed silence without its session (#88R28-2):
-                # gap fallback would falsely heal, so the producer
-                # waits for the authority its disposition names
-                # (same handling as the reunion arms' deferrals).
-                deferral = _DeferProducerError(
-                    uuid, None, source=registry_path.name, reason="committed-session"
-                )
-                warnings.warn(
-                    f"producer {deferral.uuid} deferred: {deferral.detail}; evidence retained",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                plan["unresolved"].append(uuid)
-                retained_runs.add(content["run_id"])
-                deferred_units.add(content["unit"])
-                continue
+        if (
+            uuid in staged_collected
+            and uuid not in validated_collected
+            and (
+                staged_disposition.get(uuid) == "committed"
+                or (staged_disposition.get(uuid) is None and uuid in validated_cleanup)
+            )
+        ):
+            # Silence without reunion authority (#88R28-2/#88R29-1): this
+            # uuid was collected with no staged records, so gap fallback
+            # would falsely heal committed evidence (or double-emit
+            # it). Non-strict implies sessionless (strict is
+            # records-or-session), so a committed disposition waits for
+            # its authorizing session instead -- as does a legacy
+            # (disposition-less) uuid with staged targets naming it,
+            # whose silence could be either. Bare legacy claims (no
+            # targets at all) still re-collect loud below: no natural
+            # write emits them, so they stay R10-4b alarms, never
+            # silent waits. Gap disposition reunites below: vacuous
+            # silence has nothing unpublished, so gap reunion is its
+            # first and only adjudication. This gates every branch
+            # below (fence, skip-held and unsettled-spawn reunion):
+            # nothing kills or collects undecidable evidence (#88R29-2).
+            deferral = _DeferProducerError(
+                uuid, None, source=registry_path.name, reason="committed-session"
+            )
+            warnings.warn(
+                f"producer {deferral.uuid} deferred: {deferral.detail}; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            plan["unresolved"].append(uuid)
+            retained_runs.add(content["run_id"])
+            deferred_units.add(content["unit"])
+            continue
         # Resume track (postponed): uuid-only matching preserves the
         # frozen committed-vs-gap routing exactly.
         if any(known_uuid == uuid for _, known_uuid in sessions):
@@ -7826,7 +7878,16 @@ def prepare_resume(
         _release_barrier_seal(root)
         return plan
     for sidecar_path in sidecar_files:
-        adopted = _adopt_orphan_sidecar(sidecar_path, seen_uuids, read_digests)
+        try:
+            adopted = _adopt_orphan_sidecar(sidecar_path, seen_uuids, read_digests)
+        except _DeferProducerError as exc:
+            warnings.warn(
+                f"producer {exc.uuid} deferred: {exc.detail}; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            plan["unresolved"].append(exc.uuid)
+            continue
         if adopted is None:
             continue
         uuid, sidecar = adopted
@@ -7875,28 +7936,31 @@ def prepare_resume(
                 proved_absent_now.update(seed_absent)
                 to_consume.extend([sidecar_path, journal_path])
                 continue
-            if (
-                uuid in validated_cleanup
-                and staged_disposition.get(uuid) == "committed"
-                and not any(known_uuid == uuid for _, known_uuid in sessions)
-            ):
-                # Committed silence without its session (#88R28-2):
-                # gap fallback would falsely heal (same handling as
-                # the reunion arms' deferrals).
-                deferral = _DeferProducerError(
-                    uuid, None, source=sidecar_path.name, reason="committed-session"
-                )
-                warnings.warn(
-                    f"producer {deferral.uuid} deferred: {deferral.detail}; evidence retained",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                plan["unresolved"].append(uuid)
-                if isinstance(sidecar.get("run_id"), str):
-                    retained_runs.add(sidecar["run_id"])
-                if isinstance(sidecar.get("unit"), str):
-                    deferred_units.add(sidecar["unit"])
-                continue
+        if (
+            uuid in staged_collected
+            and uuid not in validated_collected
+            and (
+                staged_disposition.get(uuid) == "committed"
+                or (staged_disposition.get(uuid) is None and uuid in validated_cleanup)
+            )
+        ):
+            # Silence without reunion authority (see the registry
+            # loop): gates every branch below including skip-held
+            # and unsettled-spawn reunion (#88R29-2).
+            deferral = _DeferProducerError(
+                uuid, None, source=sidecar_path.name, reason="committed-session"
+            )
+            warnings.warn(
+                f"producer {deferral.uuid} deferred: {deferral.detail}; evidence retained",
+                UserWarning,
+                stacklevel=2,
+            )
+            plan["unresolved"].append(uuid)
+            if isinstance(sidecar.get("run_id"), str):
+                retained_runs.add(sidecar["run_id"])
+            if isinstance(sidecar.get("unit"), str):
+                deferred_units.add(sidecar["unit"])
+            continue
         barrier_unit = sidecar.get("unit")
         routed_committed = any(known_uuid == uuid for _, known_uuid in sessions)
         try:
@@ -8108,8 +8172,11 @@ def prepare_resume(
     # Cleanup-pending passes stage too (#88R26-7): a committed producer
     # whose reunion emits no records still owes durable retry for its
     # held deletes, or the next pass finds no cleanup work and valid
-    # debris leaks.
-    if plan["cache_records"] or skip_held_now or to_consume:
+    # debris leaks. Fully resolved retries (every pending path already
+    # missing) stage nothing: the previous staging retires as spent
+    # instead of being rewritten bare (#88R29-1).
+    pending_present = any(_path_state(path) != "missing" for path in to_consume)
+    if plan["cache_records"] or skip_held_now or pending_present:
         collected_union = collected_now | set(validated_cleanup)
         disposition_union = dict(routed_now)
         for uuid, disp in staged_disposition.items():
@@ -8179,6 +8246,13 @@ def prepare_resume(
             _release_barrier_seal(root)
             return plan
     held = _consume_producer_files(to_consume, read_digests, proved_absent_now)
+    for held_path in held:
+        owner = _held_owner_uuid(str(held_path))
+        if owner is not None and owner not in plan["retained_uuids"]:
+            # Held files report their family (#88R29-3): the sweep
+            # must not delete a held file's siblings as debris while
+            # any member of its cleanup set is unresolved.
+            plan["retained_uuids"].append(owner)
     # Held cleanup targets ride the plan: application keeps the staging
     # that authorizes their retry instead of discarding it, so the next
     # barrier finishes the cleanup without re-emitting (#88R10-4c).
