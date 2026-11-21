@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,68 +66,81 @@ def _apply_rv_trace(raw: RawPKCS11, p11_config: P11TestConfig) -> None:
         raw.enable_rv_trace(maxlen=p11_config.rv_trace_compact)
 
 
-@pytest.fixture(scope="session")
-def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
-    """Merged configuration from CLI options, env vars, and TOML."""
-    module_path = request.config.getoption("p11_module")
-    if module_path is None:
-        pytest.skip("No --p11-module specified")
-    pin_value = request.config.getoption("p11_pin")
+def resolve_cli_settings(module_path: Path | str, getoption: Callable[..., Any]) -> P11TestConfig:
+    """Build merged settings from CLI options over env/TOML (#89, #88R32-6).
+
+    Every CLI-forwardable option is passed when explicitly set -- including
+    explicit empty strings, which override env/TOML -- while options left
+    at their plugin defaults fall through to env, then TOML, then defaults.
+    Shared by the runtime session fixtures and the collection probers so
+    both resolve identical settings (a probe that reads raw CLI options
+    logs itself out whenever the pin comes from another layer).
+    """
     kwargs: dict[str, Any] = {"module": Path(module_path)}
-    interface = request.config.getoption("p11_interface")
+    pin_value = getoption("p11_pin")
+    interface = getoption("p11_interface")
     if interface is not None:
         kwargs["interface"] = interface
-    slot = request.config.getoption("p11_slot")
+    slot = getoption("p11_slot")
     if slot is not None:
         kwargs["slot"] = slot
-    destructive = request.config.getoption("p11_destructive")
+    destructive = getoption("p11_destructive")
     if destructive:
         kwargs["destructive"] = destructive
     if pin_value is not None:
         kwargs["pin"] = pin_value
-    so_pin_value = request.config.getoption("p11_so_pin", default=None)
+    so_pin_value = getoption("p11_so_pin", default=None)
     if so_pin_value is not None:
         kwargs["so_pin"] = so_pin_value
     rv_trace_enabled, rv_trace_compact = _resolve_rv_trace(
-        opt_trace=bool(request.config.getoption("p11_rv_trace", default=False)),
-        opt_compact=request.config.getoption("p11_rv_trace_compact", default=None),
+        opt_trace=bool(getoption("p11_rv_trace", default=False)),
+        opt_compact=getoption("p11_rv_trace_compact", default=None),
         env_trace=os.environ.get("PKCS11_CHECK_RV_TRACE"),
         env_compact=os.environ.get("PKCS11_CHECK_RV_TRACE_COMPACT"),
     )
     if rv_trace_enabled:
         kwargs["rv_trace"] = True
         kwargs["rv_trace_compact"] = rv_trace_compact
-    key_inject = request.config.getoption("p11_key_inject", default="off")
+    key_inject = getoption("p11_key_inject", default="off")
     if key_inject != "off":
         kwargs["key_inject"] = key_inject
-    wrap_key_source = request.config.getoption("p11_wrap_key_source", default="bootstrap")
+    wrap_key_source = getoption("p11_wrap_key_source", default="bootstrap")
     if wrap_key_source != "bootstrap":
         kwargs["wrap_key_source"] = wrap_key_source
-    wrap_key_label = request.config.getoption("p11_wrap_key_label", default=None)
+    wrap_key_label = getoption("p11_wrap_key_label", default=None)
     if wrap_key_label is not None:
         kwargs["wrap_key_label"] = wrap_key_label
-    wrap_key_handle = request.config.getoption("p11_wrap_key_handle", default=None)
+    wrap_key_handle = getoption("p11_wrap_key_handle", default=None)
     if wrap_key_handle is not None:
         kwargs["wrap_key_handle"] = wrap_key_handle
-    wrap_key_value = request.config.getoption("p11_wrap_key_value", default=None)
+    wrap_key_value = getoption("p11_wrap_key_value", default=None)
     if wrap_key_value is not None:
         kwargs["wrap_key_value"] = wrap_key_value
-    wrap_mech = request.config.getoption("p11_wrap_mech", default=None)
+    wrap_mech = getoption("p11_wrap_mech", default=None)
     if wrap_mech is not None:
         kwargs["wrap_mech"] = wrap_mech
-    wrap_rsa_bits = request.config.getoption("p11_wrap_rsa_bits", default=2048)
+    wrap_rsa_bits = getoption("p11_wrap_rsa_bits", default=2048)
     if wrap_rsa_bits != 2048:
         kwargs["wrap_rsa_bits"] = wrap_rsa_bits
-    wrap_oaep_hash = request.config.getoption("p11_wrap_oaep_hash", default="auto")
+    wrap_oaep_hash = getoption("p11_wrap_oaep_hash", default="auto")
     if wrap_oaep_hash != "auto":
         kwargs["wrap_oaep_hash"] = wrap_oaep_hash
-    allow_external = request.config.getoption("p11_allow_external_provision", default=False)
+    allow_external = getoption("p11_allow_external_provision", default=False)
     if allow_external:
         kwargs["allow_external_provision"] = True
-    ext_cmd = request.config.getoption("p11_external_provision_cmd", default=None)
+    ext_cmd = getoption("p11_external_provision_cmd", default=None)
     if ext_cmd is not None:
         kwargs["external_provision_cmd"] = ext_cmd
     return P11TestConfig(**kwargs)
+
+
+@pytest.fixture(scope="session")
+def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
+    """Merged configuration from CLI options, env vars, and TOML."""
+    module_path = request.config.getoption("p11_module")
+    if module_path is None:
+        pytest.skip("No --p11-module specified")
+    return resolve_cli_settings(module_path, request.config.getoption)
 
 
 @pytest.fixture(scope="session")
