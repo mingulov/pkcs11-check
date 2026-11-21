@@ -143,7 +143,7 @@ jobs:
         # Runs the framework's own meta-tests natively on Windows so portability
         # regressions surface here rather than only in a user's real run (issue #3).
         shell: pwsh
-        run: uv run pytest tests/test_call_counters_child.py::test_sigkill_mid_probe_run_recovers_flushed_prefix -v --timeout=60 --full-trace -s
+        run: uv run pytest tests/ -v --timeout=60 --full-trace
       - name: Install SoftHSM2 for Windows + provision a token
         shell: pwsh
         run: |
