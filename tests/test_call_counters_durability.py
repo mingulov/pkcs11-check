@@ -2702,13 +2702,20 @@ class TestSweepAndFence:
         )
         registry_name = Path(retained["registry"]).name
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _eperm_registry(self: Path, *args: Any, **kwargs: Any) -> str:
             if self.name == registry_name:
                 raise PermissionError("injected registry EPERM")
             return real_read_text(self, *args, **kwargs)
 
+        def _eperm_registry_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self.name == registry_name:
+                raise PermissionError("injected registry EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _eperm_registry)
+        monkeypatch.setattr(Path, "read_bytes", _eperm_registry_bytes)
         with pytest.warns(UserWarning, match="unreadable registry"):
             plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert plan["retained_uuids"] == [_UUID_A]
@@ -2738,6 +2745,7 @@ class TestSweepAndFence:
         )
         registry_name = Path(planted["registry"]).name
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
         blocked = True
 
         def _flaky_registry(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -2745,7 +2753,13 @@ class TestSweepAndFence:
                 raise PermissionError("injected registry EPERM")
             return real_read_text(self, *args, **kwargs)
 
+        def _flaky_registry_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if blocked and self.name == registry_name:
+                raise PermissionError("injected registry EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _flaky_registry)
+        monkeypatch.setattr(Path, "read_bytes", _flaky_registry_bytes)
         with pytest.warns(UserWarning, match="unreadable registry"):
             plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert plan["retained_uuids"] == [_UUID_A]
@@ -4031,7 +4045,7 @@ class TestSweepAndFence:
         assert plan["barrier_ok"] is True
         assert opened == [], "carry-forward must not open a FIFO"
         carried = json.loads(staging.read_text(encoding="utf-8"))["cleanup_targets"]
-        assert [entry["path"] for entry in carried] == [str(fifo)]
+        assert str(fifo) in [entry["path"] for entry in carried]
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
     def test_staged_target_carries_fifo_branch(self, tmp_path: Path) -> None:
@@ -4040,6 +4054,58 @@ class TestSweepAndFence:
         os.mkfifo(fifo)
         assert durability._staged_target_carries(fifo, "0" * 64) is True
         assert durability._staged_target_carries(tmp_path, "0" * 64) is True
+
+    def test_regular_file_hash_contracts(self, tmp_path: Path) -> None:
+        """#88R27-4: fd-verified hashing binds regular files only."""
+        import hashlib
+        import threading
+
+        plain = tmp_path / "regular.json"
+        plain.write_text("{}", encoding="utf-8")
+        assert durability._sha256_regular_file_hex(plain) == hashlib.sha256(b"{}").hexdigest()
+        assert durability._sha256_regular_file_hex(tmp_path / "gone.json") is None
+        assert durability._sha256_regular_file_hex(tmp_path) is None
+        if sys.platform == "win32":
+            return
+        fifo = tmp_path / "pipe.tmp-1"
+        os.mkfifo(fifo)
+        done: list[bool] = []
+
+        def _hash() -> None:
+            done.append(durability._sha256_regular_file_hex(fifo) is None)
+
+        worker = threading.Thread(target=_hash, daemon=True)
+        worker.start()
+        worker.join(timeout=15)
+        assert done == [True], "hashing a FIFO returns None instead of blocking"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+    def test_carry_ignores_raced_stat(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R27-4: carry never trusts a stat (a swap cannot plant a block)."""
+        import stat
+        import threading
+
+        fifo = tmp_path / "probe-aaaaaaaa-0-feedface.json.tmp-9"
+        os.mkfifo(fifo)
+
+        class _AlwaysRegular:
+            st_mode = stat.S_IFREG | 0o644
+
+        def _lying_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+            return _AlwaysRegular()
+
+        monkeypatch.setattr(os, "stat", _lying_stat)
+        done: list[bool] = []
+
+        def _carry() -> None:
+            done.append(durability._staged_target_carries(fifo, "0" * 64))
+
+        worker = threading.Thread(target=_carry, daemon=True)
+        worker.start()
+        worker.join(timeout=15)
+        assert done == [True], "a stat/open race must not block carry"
 
     def test_cleanup_only_pass_stages_retry_and_converges(
         self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4121,6 +4187,213 @@ class TestSweepAndFence:
         assert not staging.exists(), "spent staging discards once resolved"
         assert not any("re-collect as fresh" in str(w.message) for w in seen3)
 
+    def test_cleanup_hint_never_suppresses_producer_collection(self, engaged: Path) -> None:
+        """#88R27-1: cleanup-target validation must not suppress collection."""
+        import hashlib
+
+        uuid_b = "aaaaaaaa" + "b" * 24
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        marker = engaged / f"probe-consumed-{uuid_b}-0-bead99.json"
+        pid_m, birth_m = _dead_pid_with_birth()
+        marker.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": 0,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": uuid_b,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "pid": pid_m,
+                    "birth_token": birth_m,
+                }
+            ),
+            encoding="utf-8",
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(
+            json.dumps(
+                {
+                    "cache_records": {},
+                    "consumed": 1,
+                    "collected_uuids": [_UUID_A],
+                    "cleanup_targets": [
+                        {
+                            "path": str(marker),
+                            "sha256": hashlib.sha256(marker.read_bytes()).hexdigest(),
+                        }
+                    ],
+                    "skip_held_uuids": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        partials = [
+            rec
+            for rec in plan["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 2
+        assert not Path(planted["registry"]).exists()
+        assert marker.exists(), "a foreign-owned marker is not this producer's cleanup"
+
+    def test_held_parent_cleanup_stages_and_retries(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R27-3: held parent files stage as targets and retry to done."""
+        import unittest.mock as mock
+        import warnings
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+        pid_m, birth_m = _dead_pid_with_birth()
+        marker.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": 0,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": _UUID_A,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "pid": pid_m,
+                    "birth_token": birth_m,
+                    "finalized": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        parents = {
+            str(Path(planted["registry"])),
+            str(Path(planted["sidecar"])),
+            str(Path(planted["journal"])),
+        }
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}, "committed silence: no records"
+        assert parents <= set(plan1["cleanup_held"])
+        staged_targets = {
+            entry["path"]
+            for entry in json.loads(staging.read_text(encoding="utf-8"))["cleanup_targets"]
+        }
+        assert parents <= staged_targets, "held parents stage as retry targets"
+        # Pass 2 without the prior: the staged retry consumes the held
+        # parents directly instead of gap re-emitting the producer.
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert plan2["cache_records"] == {}, "retry suppresses, never re-emits"
+        assert not Path(planted["registry"]).exists()
+        assert not Path(planted["sidecar"]).exists()
+        assert not any("re-collect as fresh" in str(w.message) for w in seen)
+        # Pass 3: spent staging retires silently.
+        with warnings.catch_warnings(record=True) as seen3:
+            warnings.simplefilter("always")
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert not staging.exists()
+        assert not any("re-collect as fresh" in str(w.message) for w in seen3)
+
+    def test_incomplete_discovery_defers_legacy_producer(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R27-2: a withheld legacy orphan defers its producer (no stranding)."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        pid_o, birth_o = _dead_pid_with_birth()
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            pid=pid_o,
+            birth=birth_o,
+        )
+        reg_dir = engaged / durability.REGISTRY_DIRNAME
+        real_glob = Path.glob
+        real_scandir = os.scandir
+        fired: list[str] = []
+
+        def _flaky_glob(self: Path, pattern: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(self) == str(reg_dir) and not fired:
+                fired.append(str(self))
+                return iter([])
+            return real_glob(self, pattern, *args, **kwargs)
+
+        def _flaky_scandir(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path) == str(reg_dir) and not fired:
+                fired.append(str(path))
+                raise PermissionError("injected readdir EACCES")
+            return real_scandir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "glob", _flaky_glob)
+        monkeypatch.setattr(os, "scandir", _flaky_scandir)
+        with pytest.warns(UserWarning, match="deferred"):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert fired, "the fault must hit the identity scan"
+        assert plan1["barrier_ok"] is True
+        assert _UUID_A in plan1["unresolved"]
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        # Pass 2 healed: parent and orphan collect coherently.
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        partials = [
+            rec
+            for rec in plan2["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 3
+        assert not orphan.exists()
+
     def test_identity_scan_reports_completeness(self, engaged: Path) -> None:
         """#88R26-2: the producer scan reports whether discovery completed."""
         pid, birth = _dead_pid_with_birth()
@@ -4145,10 +4418,10 @@ class TestSweepAndFence:
     def test_incomplete_discovery_withholds_legacy_attribution(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#88R26-2: a faulted identity scan never attributes legacy orphans."""
+        """#88R26-2/#88R27-2: a faulted scan defers instead of misattributing."""
         uuid_b = "aaaaaaaa" + "b" * 24
         pid_a, birth_a = _dead_pid_with_birth()
-        _plant_producer(
+        planted_a = _plant_producer(
             engaged,
             uuid=_UUID_A,
             pid=pid_a,
@@ -4197,13 +4470,25 @@ class TestSweepAndFence:
 
         monkeypatch.setattr(Path, "glob", _flaky_glob)
         monkeypatch.setattr(os, "scandir", _flaky_scandir)
-        with pytest.warns(UserWarning, match="ambiguous|incomplete"):
+        with pytest.warns(UserWarning, match="ambiguous|incomplete|deferred"):
             plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert fired, "the fault must hit the identity scan"
         assert plan["barrier_ok"] is True
+        assert _UUID_A in plan["unresolved"], "withhold-then-publish would strand"
         assert orphan.exists(), "no attribution on incomplete discovery"
-        partials = plan["cache_records"]["a.py"]
-        assert partials[0]["total_calls"] == 2
+        assert Path(planted_a["registry"]).exists()
+        # Healed retry: the true prefix collision still withholds B's
+        # orphan from A, but A itself collects and converges.
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        partials = [
+            rec
+            for rec in plan2["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 2
+        assert not Path(planted_a["registry"]).exists()
+        assert orphan.exists()
 
     def test_quarantined_probe_never_adopted(self, engaged: Path) -> None:
         """#88R10-4c: quarantined forensics survive staged adoption."""
@@ -12695,13 +12980,20 @@ class TestProbeOrphanAdoption:
         )
         failing: list[bool] = [True]
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
             if failing[0] and self == Path(planted["registry"]):
                 raise OSError("transient read failure")
             return real_read_text(self, *args, **kwargs)
 
+        def _flaky_read_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if failing[0] and self == Path(planted["registry"]):
+                raise OSError("transient read failure")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        monkeypatch.setattr(Path, "read_bytes", _flaky_read_bytes)
         assert (
             durability.collect_unit(
                 engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
@@ -12737,6 +13029,7 @@ class TestProbeOrphanAdoption:
             [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
         )
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
         attempts: list[str] = []
 
         def _flaky_twice(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -12747,7 +13040,14 @@ class TestProbeOrphanAdoption:
                 raise OSError("transient read failure")
             return real_read_text(self, *args, **kwargs)
 
+        def _flaky_twice_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if len(attempts) < 2 and self == Path(planted["registry"]):
+                attempts.append("read")
+                raise OSError("transient read failure")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _flaky_twice)
+        monkeypatch.setattr(Path, "read_bytes", _flaky_twice_bytes)
         records = durability.collect_unit(
             engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
         )
@@ -13488,13 +13788,20 @@ class TestProbeOrphanAdoption:
             engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
         )
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _sticky_fault(self: Path, *args: Any, **kwargs: Any) -> str:
             if self == Path(planted["registry"]):
                 raise OSError("sticky read failure")
             return real_read_text(self, *args, **kwargs)
 
+        def _sticky_fault_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self == Path(planted["registry"]):
+                raise OSError("sticky read failure")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _sticky_fault)
+        monkeypatch.setattr(Path, "read_bytes", _sticky_fault_bytes)
         child = _write_jsonl(
             tmp_path / "child.jsonl",
             [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
@@ -13533,13 +13840,20 @@ class TestProbeOrphanAdoption:
         planted_b["sidecar"].write_text(json.dumps(sidecar_b), encoding="utf-8")
         fault_on = True
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _gated_fault(self: Path, *args: Any, **kwargs: Any) -> str:
             if fault_on and self == Path(planted_b["sidecar"]):
                 raise OSError("transient barrier-phase fault")
             return real_read_text(self, *args, **kwargs)
 
+        def _gated_fault_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if fault_on and self == Path(planted_b["sidecar"]):
+                raise OSError("transient barrier-phase fault")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _gated_fault)
+        monkeypatch.setattr(Path, "read_bytes", _gated_fault_bytes)
         plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert plan["barrier_ok"] is True
         assert "None" not in plan["collected_runs"]
@@ -16390,13 +16704,20 @@ def test_unreadable_registry_reserves_uuid(tmp_path: Path, monkeypatch: pytest.M
     )
     registry_name = Path(planted["registry"]).name
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
 
     def _eperm_once(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.name == registry_name:
             raise PermissionError("injected registry EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _eperm_once_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if self.name == registry_name:
+            raise PermissionError("injected registry EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _eperm_once)
+    monkeypatch.setattr(Path, "read_bytes", _eperm_once_bytes)
     with pytest.warns(UserWarning, match="unreadable"):
         records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert records == []
@@ -16417,6 +16738,7 @@ def test_healed_registry_skips_orphan_adoption(
         in_progress=_entry_only_block(1),
     )
     real_read = durability.read_registry_file
+    real_digested = durability._read_registry_file_digested
     calls = 0
 
     def _flaky(path: Path | str) -> dict[str, Any] | None:
@@ -16428,7 +16750,15 @@ def test_healed_registry_skips_orphan_adoption(
             return None
         return real_read(path)
 
+    def _flaky_digested(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            return None, None
+        return real_digested(path)
+
     monkeypatch.setattr(durability, "read_registry_file", _flaky)
+    monkeypatch.setattr(durability, "_read_registry_file_digested", _flaky_digested)
     records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert records == []
     assert Path(planted["registry"]).exists()
@@ -18133,6 +18463,7 @@ def test_unreadable_producer_sidecar_defers(
     )
     sidecar = Path(planted["sidecar"])
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
     blocked = True
 
     def _flaky_sidecar(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -18140,7 +18471,13 @@ def test_unreadable_producer_sidecar_defers(
             raise PermissionError("injected sidecar EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _flaky_sidecar_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if blocked and self.name == sidecar.name:
+            raise PermissionError("injected sidecar EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _flaky_sidecar)
+    monkeypatch.setattr(Path, "read_bytes", _flaky_sidecar_bytes)
     with pytest.warns(UserWarning, match="deferred"):
         first = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert first == []
@@ -18172,6 +18509,7 @@ def test_unreadable_journal_defers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )
     journal = Path(planted["journal"])
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
     blocked = True
 
     def _flaky_journal(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -18179,7 +18517,13 @@ def test_unreadable_journal_defers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             raise PermissionError("injected journal EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _flaky_journal_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if blocked and self.name == journal.name:
+            raise PermissionError("injected journal EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _flaky_journal)
+    monkeypatch.setattr(Path, "read_bytes", _flaky_journal_bytes)
     with pytest.warns(UserWarning, match="deferred"):
         first = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert first == []
