@@ -2057,6 +2057,7 @@ def test_sigkill_mid_probe_run_recovers_flushed_prefix(tmp_path: Path) -> None:
                 journal_lines=[],
                 claims={},
                 known_uuids={parent},
+                known_complete=True,
                 producer_run="R1",
                 producer_unit="a.py",
                 fence_live=True,

@@ -489,6 +489,12 @@ def _pid_exists(pid: int) -> bool:
     if pid < 0:
         return False
     if sys.platform == "win32":
+        if not _pid_representable(pid):
+            # Beyond c_uint the conversion fails (OverflowError) or
+            # wraps (a wrapped pid 0 reads dead on invalid-parameter):
+            # either way no death is proven, so read alive-conservative
+            # without calling (#88R26-5).
+            return True
         kernel32 = _kernel32()
         handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
@@ -913,6 +919,12 @@ def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
     Returns True when termination is proven (or the pid died first); False
     when unproven or the platform cannot pin (never signals there).
     """
+    if not _pid_representable(pid):
+        # Unrepresentable here, unprovable everywhere: no backend can
+        # pin it (pidfd_open raises OverflowError, not OSError), so
+        # termination reads unproven and the caller retains the
+        # evidence (#88R26-4).
+        return False
     if sys.platform.startswith("linux"):
         return _terminate_pidfd(pid, birth, timeout_s)
     if sys.platform == "win32":
@@ -1158,14 +1170,27 @@ def _committed_from_jsonl(
     the strict schema says. Overshoot there only ever yields
     spurious-incomplete, never silent-complete.
     """
-    sessions: set[tuple[str, str]] = set()
-    entries: set[tuple[str, str]] = set()
-    lenient: set[tuple[str, str]] = set()
     if path is None:
-        return sessions, entries, lenient
+        return set(), set(), set()
     lines = _read_jsonl_lines(Path(path))
     if lines is None:
         return None
+    return _committed_from_jsonl_lines(lines)
+
+
+def _committed_from_jsonl_lines(
+    lines: Iterable[bytes],
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
+    """Derive committed sets from already-read JSONL lines (#88R26-1).
+
+    The single-snapshot core of :func:`_committed_from_jsonl`: callers
+    that need sessions and claims from the same file read once and
+    derive both, so a fault between two reads can never split
+    authority from claims.
+    """
+    sessions: set[tuple[str, str]] = set()
+    entries: set[tuple[str, str]] = set()
+    lenient: set[tuple[str, str]] = set()
     for record in _iter_jsonl_line_records(lines):
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
@@ -1215,12 +1240,24 @@ def _claimed_receipts_from_jsonl(
     resume track relies on) -- see the review report for the full
     tradeoff.
     """
-    claims: dict[str, set[tuple[str, int]]] = {}
     if path is None:
-        return claims
+        return {}
     lines = _read_jsonl_lines(Path(path))
     if lines is None:
         return None
+    return _claimed_receipts_from_jsonl_lines(lines)
+
+
+def _claimed_receipts_from_jsonl_lines(
+    lines: Iterable[bytes],
+) -> dict[str, set[tuple[str, int]]]:
+    """Derive folded-probe claims from already-read JSONL lines (#88R26-1).
+
+    The single-snapshot core of
+    :func:`_claimed_receipts_from_jsonl` (same one-read rationale as
+    :func:`_committed_from_jsonl_lines`).
+    """
+    claims: dict[str, set[tuple[str, int]]] = {}
     for record in _iter_jsonl_line_records(lines):
         report_type = record.get("$report_type", "TestReport")
         if report_type == SESSION_REPORT_TYPE:
@@ -1259,9 +1296,17 @@ def _claimed_receipts_from_jsonl(
     return claims
 
 
-def _known_producer_uuids(root: Path) -> set[str]:
-    """Return every producer uuid visible in the counters dir (content-authoritative)."""
+def _known_producer_uuids(root: Path) -> tuple[set[str], bool]:
+    """Return every producer uuid visible in the counters dir (content-authoritative).
+
+    Returns ``(uuids, complete)``: ``complete`` is False whenever any
+    listing or read faulted, since a hidden uuid may collide under a
+    legacy prefix the scan reports as unique. Callers disable legacy
+    prefix attribution on an incomplete scan (the orphan waits for a
+    clean pass) instead of attributing from a partial set (#88R26-2).
+    """
     uuids: set[str] = set()
+    complete = True
     reg_dir = root / REGISTRY_DIRNAME
     reg_state = _path_is_dir(reg_dir)
     if reg_state == "unreadable":
@@ -1273,16 +1318,41 @@ def _known_producer_uuids(root: Path) -> set[str]:
             UserWarning,
             stacklevel=2,
         )
+        complete = False
     elif reg_state == "present":
-        for registry_path in reg_dir.glob("*.json"):
-            content = read_registry_file(registry_path)
-            if content is not None:
-                uuids.add(content["worker_uuid"])
-    for sidecar_path in root.glob(f"*{SIDECAR_SUFFIX}"):
-        sidecar = read_json_file(sidecar_path)
-        if isinstance(sidecar, dict) and is_worker_uuid(sidecar.get("worker_uuid")):
-            uuids.add(sidecar["worker_uuid"])
-    return uuids
+        # Fault-aware listing: pathlib glob swallows readdir faults,
+        # which would silently hide colliding producers (#88R26-2).
+        registry_paths = _list_evidence_files(reg_dir, "", ".json")
+        if registry_paths is None:
+            warnings.warn(
+                f"producer registry dir {reg_dir} unlistable; identity scan degraded",
+                UserWarning,
+                stacklevel=2,
+            )
+            complete = False
+        else:
+            for registry_path in registry_paths:
+                content = read_registry_file(registry_path)
+                if content is None:
+                    complete = False
+                else:
+                    uuids.add(content["worker_uuid"])
+    sidecar_paths = _list_evidence_files(root, "", SIDECAR_SUFFIX)
+    if sidecar_paths is None:
+        warnings.warn(
+            f"producer sidecar listing under {root} unlistable; identity scan degraded",
+            UserWarning,
+            stacklevel=2,
+        )
+        complete = False
+    else:
+        for sidecar_path in sidecar_paths:
+            sidecar = read_json_file(sidecar_path)
+            if not (isinstance(sidecar, dict) and is_worker_uuid(sidecar.get("worker_uuid"))):
+                complete = False
+            else:
+                uuids.add(sidecar["worker_uuid"])
+    return uuids, complete
 
 
 def _valid_receipts(value: Any) -> list[dict[str, Any]]:
@@ -2248,6 +2318,7 @@ def _adopt_probe_orphans(
     journal_lines: list[str],
     claims: dict[str, set[tuple[str, int]]],
     known_uuids: set[str],
+    known_complete: bool,
     producer_run: str | None = None,
     producer_unit: str | None = None,
     heal_orphans: bool = True,
@@ -2331,7 +2402,10 @@ def _adopt_probe_orphans(
     """
     prefix = worker_uuid[:8]
     colliders = sorted(uuid for uuid in known_uuids if uuid.startswith(prefix))
-    unambiguous = colliders == [worker_uuid]
+    # An incomplete identity scan proves nothing unique: legacy prefix
+    # attribution waits for a clean pass instead of folding a hidden
+    # collider's orphan into this producer (#88R26-2).
+    unambiguous = known_complete and colliders == [worker_uuid]
     coverage = _durable_receipts(sidecar, journal_lines) | claims.get(worker_uuid, set())
     coverage_snapshots: dict[
         tuple[str, int], tuple[list[Any], frozenset[tuple[str, int]], int]
@@ -2619,6 +2693,11 @@ def _adopt_probe_orphans(
     # markers, prefix fallback only for legacy markers under an
     # unambiguous prefix. A foreign marker heals nothing here.
     ambiguous_reporter = colliders[:1] == [worker_uuid]
+    ambiguity_detail = (
+        f"({len(colliders)} producers share prefix {prefix})"
+        if known_complete
+        else "(producer discovery incomplete; attribution withheld)"
+    )
     # Receipt-level live holds (#88R18-3): duplicate markers for one
     # receipt resolve together -- if any copy names a live writer, no
     # copy heals or consumes until it exits. The pre-scan records
@@ -2744,8 +2823,7 @@ def _adopt_probe_orphans(
             # owner cannot be proved).
             if len(owner) != 32 and not unambiguous and ambiguous_reporter:
                 warnings.warn(
-                    f"ambiguous consumed marker {path.name} retained "
-                    f"({len(colliders)} producers share prefix {prefix})",
+                    f"ambiguous consumed marker {path.name} retained {ambiguity_detail}",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -2786,8 +2864,7 @@ def _adopt_probe_orphans(
         if verdict == "ambiguous":
             if ambiguous_reporter:
                 warnings.warn(
-                    f"ambiguous consumed marker {path.name} retained "
-                    f"({len(colliders)} producers share prefix {prefix})",
+                    f"ambiguous consumed marker {path.name} retained {ambiguity_detail}",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -3080,8 +3157,7 @@ def _adopt_probe_orphans(
             # suppresses the duplicate (or defers on a newer rewrite).
             if ambiguous_reporter:
                 warnings.warn(
-                    f"ambiguous probe orphan {path.name} retained "
-                    f"({len(colliders)} producers share prefix {prefix})",
+                    f"ambiguous probe orphan {path.name} retained {ambiguity_detail}",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -4379,7 +4455,7 @@ def collect_unit(
         return _collect_unreadable_child(root, reg_dir, child_path, unit, current_run)
     sessions, entries, lenient_sessions = committed
     assert claims is not None
-    known_uuids = _known_producer_uuids(root)
+    known_uuids, known_complete = _known_producer_uuids(root)
     end_state = end_state_for_attempt(status=status, returncode=returncode, timed_out=timed_out)
     appended: list[dict[str, Any]] = []
     seen_sidecar_uuids: set[str] = set()
@@ -4427,6 +4503,7 @@ def collect_unit(
                     uuid,
                     root=root,
                     known_uuids=known_uuids,
+                    known_complete=known_complete,
                     claims=claims,
                     digests=read_digests,
                 )
@@ -4456,6 +4533,7 @@ def collect_unit(
                 end_state,
                 root=root,
                 known_uuids=known_uuids,
+                known_complete=known_complete,
                 claims=claims,
                 heal_orphans=_orphan_heal_allowed(lenient_sessions, content["run_id"], uuid),
                 digests=read_digests,
@@ -4541,6 +4619,7 @@ def collect_unit(
                 journal_lines=journal_lines,
                 claims=claims,
                 known_uuids=known_uuids,
+                known_complete=known_complete,
                 producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
                 producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
                 heal_orphans=_orphan_heal_allowed(
@@ -5646,6 +5725,7 @@ def _collect_dead_producer(
     *,
     root: Path,
     known_uuids: set[str],
+    known_complete: bool,
     claims: dict[str, set[tuple[str, int]]],
     heal_orphans: bool = True,
     digests: dict[str, str] | None = None,
@@ -5722,6 +5802,7 @@ def _collect_dead_producer(
         journal_lines=journal_lines,
         claims=claims,
         known_uuids=known_uuids,
+        known_complete=known_complete,
         producer_run=content["run_id"],
         producer_unit=content["unit"],
         heal_orphans=heal_orphans,
@@ -5831,6 +5912,7 @@ def _collect_committed_producer(
     *,
     root: Path,
     known_uuids: set[str],
+    known_complete: bool,
     claims: dict[str, set[tuple[str, int]]],
     digests: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[Path], bool]:
@@ -5868,6 +5950,7 @@ def _collect_committed_producer(
         journal_lines=journal_lines,
         claims=claims,
         known_uuids=known_uuids,
+        known_complete=known_complete,
         producer_run=content["run_id"],
         producer_unit=content["unit"],
         heal_orphans=False,
@@ -6170,7 +6253,18 @@ def sweep_orphans(
             retained += 1
             continue
         stem = journal_path.name[: -len(JOURNAL_SUFFIX)]
-        if list(root.glob(f"{stem}{SIDECAR_SUFFIX}")):
+        # Exact tri-state shield lookup: a glob swallows readdir faults
+        # as "no sidecar" and would delete a shielded journal (#88R26-3).
+        sidecar_state = _path_state(root / f"{stem}{SIDECAR_SUFFIX}")
+        if sidecar_state == "unreadable":
+            warnings.warn(
+                f"sidecar {stem}{SIDECAR_SUFFIX} is unreadable; journal shielded",
+                UserWarning,
+                stacklevel=2,
+            )
+            retained += 1
+            continue
+        if sidecar_state == "present":
             continue
         shield_state = _path_state(reg_dir / f"{uuid}.json")
         if shield_state == "unreadable":
@@ -6489,6 +6583,31 @@ def discard_barrier_staging(root: Path | str) -> bool:
     except OSError:
         return False
     return True
+
+
+def _staged_target_owner_hint(path_str: str) -> str | None:
+    """Parent identity hint embedded in a staged target path (#88R26-7).
+
+    Registries, sidecars, and journals carry the full uuid; probe and
+    spawn orphans carry the parent prefix, as do consumed markers
+    through their slot name; rewrite tmps resolve through their base.
+    None when the name parses to nothing usable (the target then
+    validates no uuid). Pure filename reading: never opens anything.
+    """
+    name = Path(path_str).name.split(".tmp-", 1)[0]
+    if name.startswith(PROBE_CONSUMED_PREFIX):
+        slot = _marker_slot_name(name)
+        if slot is None:
+            return None
+        name = slot
+    head = name.split("-", 1)[0].split(".", 1)[0]
+    if is_worker_uuid(head):
+        return head
+    if name.startswith((PROBE_FILE_PREFIX, SPAWN_FILE_PREFIX)):
+        parts = name.split("-")
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
+    return None
 
 
 def _staged_parent_link(
@@ -6827,12 +6946,23 @@ def _staged_target_carries(path: Path, digest: str) -> bool:
     (adoption re-verifies byte-identity before acting, so a stale
     entry can never authorize a changed file). A hash fault
     mid-verify is unverifiable, not evolved: it carries blind for
-    the same adoption-guarded reason. Never raises.
+    the same adoption-guarded reason. Non-regular finals (FIFOs,
+    sockets, dirs, devices) carry blind without opening: hashing
+    would block or mislead, and only a regular file is safely
+    readable here (#88R26-6). Never raises.
     """
     state = _path_state(path)
     if state == "missing":
         return False
     if state == "unreadable":
+        return True
+    try:
+        regular = stat.S_ISREG(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        # Raced away or unstatable mid-verify: unverifiable, like a
+        # hash fault -- the next pass drops it once stably missing.
+        return True
+    if not regular:
         return True
     digest_now = _sha256_file_hex(path)
     if digest_now is None:
@@ -6908,6 +7038,22 @@ def prepare_resume(
         plan["barrier_ok"] = False
         _release_barrier_seal(root)
         return plan
+    if (
+        not staged_records
+        and not staged_skip_held
+        and staged_targets
+        and all(_path_state(Path(target_path)) == "missing" for target_path, _ in staged_targets)
+    ):
+        # Spent staging retires silently (#88R26-7): it named held
+        # deletes and every one resolved, with nothing publishable
+        # left, so the file goes instead of alarming as an
+        # inconsistent claim on every later pass. Bare claims (no
+        # targets at all) still alarm below: collected-with-nothing
+        # was never cleanup. Unreadable targets are NOT spent (retry
+        # stays blind); a failed discard simply retries next pass.
+        if discard_barrier_staging(root):
+            staged_records, staged_consumed, staged_collected = {}, 0, frozenset()
+            staged_targets, staged_skip_held = frozenset(), frozenset()
     for staged_unit, staged_list in staged_records.items():
         plan["cache_records"].setdefault(staged_unit, []).extend(staged_list)
     plan["consumed"] += staged_consumed
@@ -6923,28 +7069,41 @@ def prepare_resume(
     # earlier informational scan of the same tmp (#88R15-3).
     read_digests: dict[str, str] = {}
     prior: Path | None = Path(prior_merged_jsonl) if prior_merged_jsonl else None
-    if prior is not None and _path_state(prior) == "unreadable":
-        # An unreadable prior refuses the barrier (#88R25-1). Reading
-        # it as empty flips authority committed->dead, which turns
-        # claim-only orphan folds into claim+recover and discards a
-        # session loss the dead path never saw (loss becomes
-        # complete=True). This overturns the frozen legacy
-        # empty-reading: the freeze is proven unsound, and the next
-        # barrier retries with a fresh seal instead.
-        warnings.warn(
-            f"counter resume barrier cannot read prior {prior.name}; refusing",
-            UserWarning,
-            stacklevel=2,
-        )
-        plan["barrier_ok"] = False
-        _release_barrier_seal(root)
-        return plan
-    prior_arg = prior if prior and _path_state(prior) == "present" else None
-    committed = _committed_from_jsonl(prior_arg)
-    sessions, entries = committed[:2] if committed is not None else (set(), set())
-    claims = _claimed_receipts_from_jsonl(prior_arg)
-    if claims is None:
-        claims = {}
+    prior_lines: list[bytes] | None = None
+    if prior is not None:
+        if _path_state(prior) == "missing":
+            # An absent prior is a first run: empty authority is
+            # correct (nothing was ever committed), not a misread.
+            prior = None
+        else:
+            # One snapshot read (#88R26-1): sessions and claims derive
+            # from the same bytes, so a fault between two reads (or a
+            # flapped re-stat) can never split authority from claims
+            # or silently empty either. An unreadable prior refuses
+            # the barrier (#88R25-1): reading it as empty flips
+            # authority committed->dead, which turns claim-only
+            # orphan folds into claim+recover and discards a session
+            # loss the dead path never saw (loss becomes
+            # complete=True). This overturns the frozen legacy
+            # empty-reading: the freeze is proven unsound, and the
+            # next barrier retries with a fresh seal instead.
+            prior_lines = _read_jsonl_lines(prior)
+            if prior_lines is None:
+                warnings.warn(
+                    f"counter resume barrier cannot read prior {prior.name}; refusing",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                plan["barrier_ok"] = False
+                _release_barrier_seal(root)
+                return plan
+    if prior is None or prior_lines is None:
+        sessions: set[tuple[str, str]] = set()
+        entries: set[tuple[str, str]] = set()
+        claims: dict[str, set[tuple[str, int]]] = {}
+    else:
+        sessions, entries, _ = _committed_from_jsonl_lines(prior_lines)
+        claims = _claimed_receipts_from_jsonl_lines(prior_lines)
     # Cleanup authority needs staged evidence or an authoritative
     # session: a staged uuid suppresses re-emission only when the
     # staged records mention it or the prior merged stream carries its
@@ -6982,19 +7141,34 @@ def prepare_resume(
                         and type(entry.get("probe_seq")) is int
                     ):
                         worker_keys[bucket].add((entry["parent_uuid"], entry["probe_seq"]))
+    # Cleanup-targeted uuids validate too (#88R26-7): a recordless
+    # pass stages its held deletes with digests captured at read, so a
+    # staged uuid named by a target path is genuine cleanup authority,
+    # not an inconsistent claim. Adoption still re-verifies
+    # byte-identity plus exact content parentage before acting, so a
+    # shared prefix can only defer mute files, never misadopt.
+    target_hints = set()
+    for target_path, _target_digest in staged_targets:
+        hint = _staged_target_owner_hint(target_path)
+        if hint is not None:
+            target_hints.add(hint)
     validated_collected = frozenset(
-        uuid for uuid in staged_collected if uuid in recorded_uuids or uuid in session_uuids
+        uuid
+        for uuid in staged_collected
+        if uuid in recorded_uuids
+        or uuid in session_uuids
+        or any(uuid.startswith(hint) for hint in target_hints)
     )
     dropped_claims = sorted(staged_collected - validated_collected)
     if dropped_claims:
         warnings.warn(
             f"counter barrier staging claims {len(dropped_claims)} collected uuid(s) "
-            f"with no staged evidence or session ({', '.join(dropped_claims)}); "
-            "they re-collect as fresh",
+            "with no staged evidence, session, or cleanup targets "
+            f"({', '.join(dropped_claims)}); they re-collect as fresh",
             UserWarning,
             stacklevel=2,
         )
-    known_uuids = _known_producer_uuids(root)
+    known_uuids, known_complete = _known_producer_uuids(root)
     reg_dir = root / REGISTRY_DIRNAME
     seen_runs: set[str] = set()
     retained_runs: set[str] = set()
@@ -7174,6 +7348,7 @@ def prepare_resume(
                     uuid,
                     root=root,
                     known_uuids=known_uuids,
+                    known_complete=known_complete,
                     claims=claims,
                     digests=read_digests,
                 )
@@ -7229,6 +7404,7 @@ def prepare_resume(
                     "unknown",
                     root=root,
                     known_uuids=known_uuids,
+                    known_complete=known_complete,
                     claims=claims,
                     digests=read_digests,
                 )
@@ -7283,6 +7459,7 @@ def prepare_resume(
                     "killed",
                     root=root,
                     known_uuids=known_uuids,
+                    known_complete=known_complete,
                     claims=claims,
                     digests=read_digests,
                 )
@@ -7410,6 +7587,7 @@ def prepare_resume(
                 journal_lines=journal_lines,
                 claims=claims,
                 known_uuids=known_uuids,
+                known_complete=known_complete,
                 producer_run=barrier_run if isinstance(barrier_run, str) else None,
                 producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
                 # A committed session is authoritative: reunion skips
@@ -7592,7 +7770,11 @@ def prepare_resume(
     # immune: they sweep with empty collected_runs, which makes the
     # run-match branches dead code there.
     plan["collected_runs"] = sorted(seen_runs - retained_runs)
-    if plan["cache_records"] or skip_held_now:
+    # Cleanup-pending passes stage too (#88R26-7): a committed producer
+    # whose reunion emits no records still owes durable retry for its
+    # held deletes, or the next pass finds no cleanup work and valid
+    # debris leaks.
+    if plan["cache_records"] or skip_held_now or to_consume:
         collected_union = collected_now | set(validated_collected)
         # Self-healing count (#88R11-5): the staged invariant is
         # consumed == len(collected_uuids); a corrupt staged count
