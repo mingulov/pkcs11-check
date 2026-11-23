@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
+import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -65,6 +67,8 @@ from pkcs11_check.testcases._probes import token_admin
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.ckr import test_ckr_destructive as ckr_case
 from tests._skip_assert import assert_skips, assert_xfails
+
+needs_posix = pytest.mark.skipif(sys.platform == "win32", reason="POSIX sleep(1)")
 
 
 def _as_int(value: object) -> int:
@@ -1061,6 +1065,43 @@ def test_mint_without_conf_artifact_raises(
     cap = throwaway.require_throwaway_capability()
     with pytest.raises(throwaway.ThrowawayMintError, match="conf"):
         throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
+
+
+def test_mint_defaults_to_120s_timeout() -> None:
+    """S9: the mint shell-out cannot hang the suite forever."""
+    import inspect
+
+    assert inspect.signature(throwaway.mint_throwaway_token).parameters["timeout"].default == 120
+
+
+def test_mint_timeout_raises_and_cleans_up(
+    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_capability_env(monkeypatch)
+    cap = throwaway.require_throwaway_capability()
+
+    def _hang(*args: object, **kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(cmd=args[0] if args else "", timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", _hang)
+    before = set(os.listdir(tempfile.gettempdir()))
+    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
+        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
+    after = set(os.listdir(tempfile.gettempdir()))
+    assert after - before == set()
+
+
+@needs_posix
+def test_mint_hanging_command_times_out_for_real(
+    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_capability_env(monkeypatch, PKCS11_CHECK_TOKEN_MINT_CMD="sleep 30")
+    cap = throwaway.require_throwaway_capability()
+    before = set(os.listdir(tempfile.gettempdir()))
+    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
+        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_", timeout=2)
+    after = set(os.listdir(tempfile.gettempdir()))
+    assert after - before == set()
 
 
 def test_reset_rejects_directory_outside_temp() -> None:
