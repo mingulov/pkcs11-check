@@ -75,7 +75,7 @@ def _ctr_encrypt(key: bytes, bits: int, cb: bytes, plaintext: bytes) -> bytes:
     low_mask = (1 << bits) - 1
     high = base & ~low_mask
     low = base & low_mask
-    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()  # nosec B305
     out = bytearray()
     for index in range((len(plaintext) + 15) // 16):
         block = (high | ((low + index) & low_mask)).to_bytes(16, "big")

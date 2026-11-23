@@ -480,6 +480,29 @@ def _attempt_is_login_caused(attempt: object) -> bool:
         return False
 
 
+def _last_off_contract_ckr(attempts: Any) -> int | None:
+    """Last nameable non-login-caused attempt CKR, else None (R4-7).
+
+    Last-wins matches the detector's own unlisted-RV convention. Attempts
+    that are not dicts or carry no parseable CKR are skipped: the
+    conversion gate already keeps such transcripts loud, and selection
+    only renames the primary RV when it can name a concrete one.
+    """
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        if _attempt_is_login_caused(attempt):
+            continue
+        ckr = attempt.get("ckr")
+        if ckr is None:
+            continue
+        try:
+            return int(ckr)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
     """Get or detect the structured CTS result, cached within one isolated process.
 
@@ -491,6 +514,10 @@ def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
     login refusal) stays loud. Callers that know the session is logged in
     (or predate the discriminator) keep the default, which preserves
     setup-error.
+    R4-7: a mixed setup-error reports the off-contract attempt's RV as the
+    primary (login-independent): the detector's last-wins primary can name
+    a login refusal while an undefined RV sits in the attempts, and the
+    reporter would then raise for the wrong RV.
     """
     global _cts_detection_result  # noqa: PLW0603
     if _cts_detection_result is None:
@@ -514,6 +541,14 @@ def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
                     ),
                 },
             )
+        elif result.status is CtsDetectionStatus.SETUP_ERROR and not all_login_caused:
+            reselected = _last_off_contract_ckr(attempts)
+            if reselected is not None and reselected != result.error_rv:
+                result = CtsDetectionResult(
+                    CtsDetectionStatus.SETUP_ERROR,
+                    error_rv=reselected,
+                    detail=result.detail,
+                )
         _cts_detection_result = result
     return _cts_detection_result
 

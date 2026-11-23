@@ -31,9 +31,9 @@ permission-probe classifier):
       ``event=malformed,value_type/value_repr``              -- present non-bool value
   ``CKR:0x{rv:08x}``                                          -- return value of the C_*Init call
   ``OK``                                                      -- probe reached its end
-  ``SETUP_XFAIL:C_GenerateKey for CKA_ENCRYPT=False failed: {name}``  -- keygen setup reject
-  ``SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {name}``     -- keygen setup reject
-  ``SETUP_XFAIL:C_GenerateKey for CKA_DECRYPT=False failed: {name}``  -- keygen setup reject
+  ``SETUP_REFUSED:{C_Op}:0x{rv:08x}``                           -- numeric setup/control refusal
+      (generic keygen/import, AES keygen, or a failed R4-3 positive control;
+      undefined RVs fail as metadata in the parent, defined ones xfail)
 
 Required ``extra`` keys:
   ``"probe"`` -- ``"encrypt"``, ``"sign"``, or ``"decrypt"``.
@@ -71,6 +71,7 @@ from pkcs11_check.raw.types_std import (
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_SHA256_HMAC,
     CKO_SECRET_KEY,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
@@ -100,7 +101,9 @@ def _classify_readback(vals: Mapping[int, Any], attr: int) -> dict[str, Any]:
     return {"event": "omitted"}
 
 
-def _claim(ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: str) -> None:
+def _claim(
+    ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: str
+) -> dict[str, Any]:
     # The event is self-describing so the parent can reject output copied from
     # another probe.
     vals = read_attributes(ctx.raw, sh, key_value, [attr])
@@ -112,56 +115,108 @@ def _claim(ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: 
         **_classify_readback(vals, attr),
     }
     print("ATTRIBUTE_EVENT:" + json.dumps(event, separators=(",", ":")))
+    return event
+
+
+#: Same-route enabled-key factory for the R4-3 positive control: returns
+#: (key-or-None, creation RV, creation op name for the refusal marker).
+_ControlFactory = Callable[[], tuple[int | None, int, str]]
 
 
 def _finish_flag_probe(
-    ctx: ProbeContext, sh: int, key: int, *, false_attr: int, op_mech: int, op_init: str
+    ctx: ProbeContext,
+    sh: int,
+    key: int,
+    *,
+    false_attr: int,
+    op_mech: int,
+    op_init: str,
+    control: _ControlFactory | None = None,
 ) -> None:
-    """Claim the flag, call *op_init*, and report the CKR without asserting."""
-    _claim(ctx, sh, key, false_attr, operation=op_init)
+    """Claim the flag, call *op_init*, and report the CKR without asserting.
+
+    R4-3: when a same-route enabled-key factory is given and the transcript
+    would otherwise award a pass (clean False claim + NOT_PERMITTED), the
+    control twin must initialize first; anything but its acceptance leaves
+    the denial uncredited (numeric setup marker, no CKR/OK).
+    """
+    event = _claim(ctx, sh, key, false_attr, operation=op_init)
     mech = mech_simple(op_mech)
     init = getattr(ctx.raw, op_init)
     rv = init(sh, mech.byref(), key)
+    if (
+        control is not None
+        and event.get("event") == "boolean"
+        and event.get("value") is False
+        and rv == int(CKR_KEY_FUNCTION_NOT_PERMITTED)
+    ):
+        control_key, control_rv, control_op = control()
+        if control_key is None:
+            print(f"SETUP_REFUSED:{control_op}:0x{control_rv:08x}")
+            return
+        control_init_rv = init(sh, mech.byref(), control_key)
+        if control_init_rv != CKR_OK:
+            print(f"SETUP_REFUSED:{op_init}:0x{control_init_rv:08x}")
+            return
+        print(
+            f"positive control: enabled-key {op_init} accepted; denial credited",
+            file=sys.stderr,
+        )
     print(f"CKR:0x{rv:08x}")
     # Report result without asserting -- outer test checks security compliance
     print("OK")
 
 
-def _flag_not_permitted(
+def _generate_aes_key(
     ctx: ProbeContext,
+    sh: int,
     *,
     false_attr: int,
-    false_attr_name: str,
     counterpart_attr: int,
-    op_mech: int,
-    op_init: str,
-) -> None:
-    """Generate an AES key with *false_attr*=False, then call *op_init* on it."""
-    assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
-    sh: int = ctx.sh
+    flag: bool = False,
+) -> tuple[int | None, int]:
+    """Generate an AES key with *false_attr*=flag; (None, rv) when refused."""
     attrs = template(
         attr_ulong(CKA_VALUE_LEN, 32),
-        attr_bool(false_attr, False),
+        attr_bool(false_attr, flag),
         attr_bool(counterpart_attr, True),
         attr_bool(CKA_TOKEN, False),
     )
     mech_kg = mech_simple(CKM_AES_KEY_GEN)
     key = CK_OBJECT_HANDLE(0)
     rv = ctx.raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-    if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_GenerateKey for {false_attr_name}=False failed: {ckr_name(rv)}")
+    return (key.value, rv) if rv == CKR_OK else (None, rv)
+
+
+def _flag_not_permitted(
+    ctx: ProbeContext,
+    *,
+    false_attr: int,
+    counterpart_attr: int,
+    op_mech: int,
+    op_init: str,
+    control: _ControlFactory | None = None,
+) -> None:
+    """Generate an AES key with *false_attr*=False, then call *op_init* on it."""
+    assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
+    sh: int = ctx.sh
+    key, rv = _generate_aes_key(ctx, sh, false_attr=false_attr, counterpart_attr=counterpart_attr)
+    if key is None:
+        print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         return
-    _finish_flag_probe(ctx, sh, key.value, false_attr=false_attr, op_mech=op_mech, op_init=op_init)
+    _finish_flag_probe(
+        ctx, sh, key, false_attr=false_attr, op_mech=op_mech, op_init=op_init, control=control
+    )
 
 
 _HMAC_FALLBACK_VALUE = bytes([0x07]) * 32
 
 
-def _generate_hmac_key(ctx: ProbeContext, sh: int) -> tuple[int | None, int]:
-    """Generate a generic-secret key with CKA_SIGN=False; (None, rv) when refused."""
+def _generate_hmac_key(ctx: ProbeContext, sh: int, *, sign: bool = False) -> tuple[int | None, int]:
+    """Generate a generic-secret key with CKA_SIGN=sign; (None, rv) when refused."""
     attrs = template(
         attr_ulong(CKA_VALUE_LEN, 32),
-        attr_bool(CKA_SIGN, False),
+        attr_bool(CKA_SIGN, sign),
         attr_bool(CKA_VERIFY, True),
         attr_bool(CKA_TOKEN, False),
     )
@@ -171,13 +226,13 @@ def _generate_hmac_key(ctx: ProbeContext, sh: int) -> tuple[int | None, int]:
     return (key.value, rv) if rv == CKR_OK else (None, rv)
 
 
-def _create_hmac_key(ctx: ProbeContext, sh: int) -> tuple[int | None, int]:
-    """CreateObject a generic-secret key with CKA_SIGN=False; (None, rv) when refused."""
+def _create_hmac_key(ctx: ProbeContext, sh: int, *, sign: bool = False) -> tuple[int | None, int]:
+    """CreateObject a generic-secret key with CKA_SIGN=sign; (None, rv) when refused."""
     attrs = template(
         attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
         attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
         attr_bytes(CKA_VALUE, _HMAC_FALLBACK_VALUE),
-        attr_bool(CKA_SIGN, False),
+        attr_bool(CKA_SIGN, sign),
         attr_bool(CKA_VERIFY, True),
         attr_bool(CKA_TOKEN, False),
     )
@@ -200,7 +255,6 @@ def _encrypt(ctx: ProbeContext) -> None:
     _flag_not_permitted(
         ctx,
         false_attr=CKA_ENCRYPT,
-        false_attr_name="CKA_ENCRYPT",
         counterpart_attr=CKA_DECRYPT,
         op_mech=CKM_AES_ECB,
         op_init="C_EncryptInit",
@@ -212,11 +266,30 @@ def _sign(ctx: ProbeContext) -> None:
 
     fw#96: an AES key makes the SignInit refusal ambiguous (key type vs
     key function), so the probe prefers a generic-secret HMAC key and only
-    falls back to the AES route (then SETUP_XFAIL) without generic support.
+    falls back to the AES route (then SETUP_REFUSED) without generic support.
+    R4-3: whichever route produces the disabled key also builds the enabled
+    twin for the positive control, so a credited denial proves enforcement
+    on the probed key rather than a blanket route refusal.
     """
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
+
+    def _control_via_generate() -> tuple[int | None, int, str]:
+        control_key, control_rv = _generate_hmac_key(ctx, sh, sign=True)
+        return control_key, control_rv, "C_GenerateKey"
+
+    def _control_via_create() -> tuple[int | None, int, str]:
+        control_key, control_rv = _create_hmac_key(ctx, sh, sign=True)
+        return control_key, control_rv, "C_CreateObject"
+
+    def _control_via_aes() -> tuple[int | None, int, str]:
+        control_key, control_rv = _generate_aes_key(
+            ctx, sh, false_attr=CKA_SIGN, counterpart_attr=CKA_ENCRYPT, flag=True
+        )
+        return control_key, control_rv, "C_GenerateKey"
+
     key, rv = _generate_hmac_key(ctx, sh)
+    control: _ControlFactory = _control_via_generate
     if key is None:
         if not _is_routable_setup_rv(rv):
             print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
@@ -226,6 +299,7 @@ def _sign(ctx: ProbeContext) -> None:
             file=sys.stderr,
         )
         key, rv = _create_hmac_key(ctx, sh)
+        control = _control_via_create
         if key is None and not _is_routable_setup_rv(rv):
             print(f"SETUP_REFUSED:C_CreateObject:0x{rv:08x}")
             return
@@ -233,14 +307,20 @@ def _sign(ctx: ProbeContext) -> None:
         _flag_not_permitted(
             ctx,
             false_attr=CKA_SIGN,
-            false_attr_name="CKA_SIGN",
             counterpart_attr=CKA_ENCRYPT,
             op_mech=CKM_SHA256_HMAC,
             op_init="C_SignInit",
+            control=_control_via_aes,
         )
         return
     _finish_flag_probe(
-        ctx, sh, key, false_attr=CKA_SIGN, op_mech=CKM_SHA256_HMAC, op_init="C_SignInit"
+        ctx,
+        sh,
+        key,
+        false_attr=CKA_SIGN,
+        op_mech=CKM_SHA256_HMAC,
+        op_init="C_SignInit",
+        control=control,
     )
 
 
@@ -248,7 +328,6 @@ def _decrypt(ctx: ProbeContext) -> None:
     _flag_not_permitted(
         ctx,
         false_attr=CKA_DECRYPT,
-        false_attr_name="CKA_DECRYPT",
         counterpart_attr=CKA_ENCRYPT,
         op_mech=CKM_AES_ECB,
         op_init="C_DecryptInit",

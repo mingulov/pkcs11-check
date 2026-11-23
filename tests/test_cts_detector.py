@@ -822,10 +822,11 @@ def test_cts_collection_probe_logged_in_login_refusal_stays_loud(
     assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
 
 
-def test_cts_mixed_refusal_stays_loud(
+def test_cts_mixed_refusal_reports_off_contract_rv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
 ) -> None:
-    """R2-2b: a foreign RV among login refusals blocks the downgrade (loud)."""
+    """R4-7: mixed attempts report the off-contract RV+operation, not the login RV."""
+    from pkcs11_check.raw.rv import CkrAssertionError
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
 
     _isolate_pin_env(monkeypatch, tmp_path)
@@ -838,7 +839,50 @@ def test_cts_mixed_refusal_stays_loud(
             error_rv=int(CKR_USER_NOT_LOGGED_IN),
             detail={
                 "attempts": [
-                    {"ckr": 0x00FFFFFF},
+                    {"ckr": 0x00FFFFFF, "operation": "C_Encrypt", "stage": "operation"},
+                    {
+                        "ckr": int(CKR_USER_NOT_LOGGED_IN),
+                        "operation": "C_Login",
+                        "stage": "setup",
+                    },
+                    {
+                        "ckr": int(CKR_USER_NOT_LOGGED_IN),
+                        "operation": "C_Login",
+                        "stage": "setup",
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    with pytest.raises(CkrAssertionError, match="C_Encrypt") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+
+
+def test_cts_mixed_refusal_logged_in_reports_off_contract_rv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R4-7: reselection is login-independent (mixed while logged in)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {"ckr": 0x00FFFFFF, "operation": "C_Encrypt", "stage": "operation"},
                     {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
                 ]
             },
@@ -849,7 +893,8 @@ def test_cts_mixed_refusal_stays_loud(
     result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
 
     assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
-    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    assert result.error_rv == 0x00FFFFFF
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
 
 
 def test_detection_skip_reason_names_logged_out_login_refusal() -> None:

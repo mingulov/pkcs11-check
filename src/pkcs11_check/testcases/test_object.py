@@ -50,6 +50,8 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_MONTGOMERY,
     CKK_ML_DSA,
     CKK_RSA,
+    CKM_EC_EDWARDS_KEY_PAIR_GEN,
+    CKM_EC_KEY_PAIR_GEN,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_ML_KEM_KEY_PAIR_GEN,
@@ -933,6 +935,42 @@ def _import_or_xfail(attempt: Any, *, purpose: str) -> int:
         raise
 
 
+def _baseline_raw_gen(rs: Any, family: str, ec_params: bytes) -> tuple[int, int]:
+    """One bare generation on the requested curve; typed refusal (R4-6).
+
+    Raw calls, never the keygen wrappers: no multi-curve retries, no
+    skip/xfail outcomes, exactly one attempt. Montgomery generates only
+    the requested curve (X25519 vs X448 are independently supportable).
+    """
+    if family == "montgomery":
+        return gen_keypair(
+            rs.raw,
+            rs.sh,
+            int(CKM_EC_MONTGOMERY_KEY_PAIR_GEN),
+            pub_base=[attr_bytes(CKA_EC_PARAMS, ec_params)],
+            priv_base=[],
+            public_attrs={CKA_TOKEN: False, CKA_DERIVE: True},
+            private_attrs={CKA_TOKEN: False, CKA_DERIVE: True},
+            pub_skip={CKA_EC_PARAMS},
+        )
+    if family == "edwards":
+        mechanism = int(CKM_EC_EDWARDS_KEY_PAIR_GEN)
+    elif family == "ec":
+        mechanism = int(CKM_EC_KEY_PAIR_GEN)
+    else:
+        raise ValueError(f"unknown QC7a private family: {family}")
+    return gen_keypair(
+        rs.raw,
+        rs.sh,
+        mechanism,
+        pub_base=[attr_bytes(CKA_EC_PARAMS, ec_params)],
+        priv_base=[],
+        public_attrs={CKA_VERIFY: True},
+        private_attrs={CKA_SIGN: True},
+        pub_skip={CKA_EC_PARAMS},
+    )
+
+
 def _baseline_curve_gen_or_skip(
     rs: Any, family: str, ec_params: bytes, exc: CkrAssertionError
 ) -> NoReturn:
@@ -940,23 +978,21 @@ def _baseline_curve_gen_or_skip(
 
     A refusal is attributable to the curve only when a bare generation on
     the same curve refuses too; a working baseline means the refusal is
-    template-specific and stays loud. Baseline keys are destroyed;
-    anything but a typed refusal or an explicit skip propagates (confused
-    situations stay loud).
+    template-specific and stays loud. Baseline keys are destroyed.
+    R4-5: entry and skip eligibility gate on the explicit curve set --
+    any other primary RV re-raises without consulting, and an unexpected
+    baseline RV re-raises as its own finding, never a skip.
     """
+    if not is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+        raise exc
     try:
-        if family == "montgomery":
-            pub, priv = _gen_montgomery_pair_or_xfail(rs)
-        elif family == "edwards":
-            pub, priv = gen_edwards_keypair_or_xfail(rs, ec_params)
-        elif family == "ec":
-            pub, priv = gen_ec_keypair_or_xfail(rs, ec_params)
-        else:
-            raise ValueError(f"unknown QC7a private family: {family}")
-    except pytest.skip.Exception as exc2:
+        pub, priv = _baseline_raw_gen(rs, family, ec_params)
+    except CkrAssertionError as bexc:
+        if not is_known_error(bexc, EC_CURVE_UNSUPPORTED_RVS):
+            raise bexc from exc
         pytest.skip(
             f"QC7a {family} private import not supported ({exc}); "
-            f"baseline generation unavailable: {exc2}"
+            f"baseline generation refused: {ckr_name(bexc.rv)}"
         )
     try:
         raise CkrAssertionError(
@@ -973,11 +1009,17 @@ def _baseline_mldsa_import_or_skip(rs: Any, exc: CkrAssertionError) -> NoReturn:
     """Minimal-template baseline for ML-DSA import refusals (R2-6).
 
     Retries without CKA_SIGN and the seal attributes: success proves the
-    refusal is template-specific (loud); any refusal concedes absence
-    (skip naming the baseline RV). The baseline key is destroyed.
+    refusal is template-specific (loud); an explicit refusal concedes
+    absence (skip naming the baseline RV). The baseline key is destroyed.
+    R4-5: entry and skip eligibility gate on the explicit RV -- any other
+    primary RV re-raises without consulting, an unexpected baseline RV
+    re-raises as its own finding, and a baseline that cannot run is
+    inconclusive (xfail), never absence.
     """
     from pkcs11_check.testcases.test_sensitivity import _MATRIX_MLDSA44_SK
 
+    if not is_known_error(exc, (CKR_ATTRIBUTE_TYPE_INVALID,)):
+        raise exc
     try:
         baseline = create_object_negotiated(
             rs,
@@ -992,10 +1034,20 @@ def _baseline_mldsa_import_or_skip(rs: Any, exc: CkrAssertionError) -> NoReturn:
             preserve_policy_attrs=True,
         )
     except pytest.skip.Exception as exc2:
-        pytest.skip(
-            f"QC7a ML-DSA-44 private import not supported ({exc}); baseline unavailable: {exc2}"
+        C.xfail_as(
+            "not_operational",
+            label="QC7a ML-DSA-44 private import",
+            operation="C_CreateObject",
+            expected=CKR_OK,
+            actual=exc.rv,
+            summary=(
+                f"QC7a ML-DSA-44 private import ({exc}); minimal-template baseline "
+                f"unavailable: {exc2}; import support inconclusive"
+            ),
         )
     except CkrAssertionError as bexc:
+        if not is_known_error(bexc, (CKR_ATTRIBUTE_TYPE_INVALID,)):
+            raise bexc from exc
         pytest.skip(
             f"QC7a ML-DSA-44 private import not supported ({exc}); "
             f"baseline minimal import refused: {ckr_name(bexc.rv)}"
@@ -1551,6 +1603,20 @@ class TestAttributeValueEncodings:
                 rs, pub, CKA_EC_POINT, label=label, producer_operation="C_GenerateKeyPair"
             )
             records.extend(point_records)
+            if status_p != "present" and not point_records:
+                # R4-8: generation must contribute CKA_EC_POINT to the
+                # public object (PKCS#11 v3.2 section 6.3.9); an unreadable
+                # point is a structured deviation, never a silent binding
+                # skip. The value legs below still run, and any stronger
+                # readback finding wins via _qc7_raise_strongest.
+                records.append(
+                    _qc7_record_missing(
+                        CKA_EC_POINT,
+                        label=label,
+                        producer_operation="C_GenerateKeyPair",
+                        status=status_p,
+                    )
+                )
             binding = _qc7_scalar_point_binding_record(
                 generated, point if status_p == "present" else None, label=label
             )
