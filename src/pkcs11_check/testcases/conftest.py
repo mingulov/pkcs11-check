@@ -894,6 +894,10 @@ def gen_ec_keypair_or_xfail(
             private_attrs=private_attrs,
         )
     except CkrAssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            rv = getattr(exc, "rv", None)
+            detail = ckr_name(rv) if rv is not None else str(exc)
+            pytest.skip(f"EC curve not supported by module: {detail}")
         if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
             _classification.xfail_as(
                 "not_operational",
