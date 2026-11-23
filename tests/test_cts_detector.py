@@ -723,6 +723,59 @@ def test_cts_collection_probe_logs_in_with_env_pin(
     assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
 
 
+def test_cts_collection_probe_env_pin_yields_detection_not_setup_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#89 end-to-end: env pin logs in, so a login-enforcing module detects."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    def login_enforcing_detection(rs: Any) -> base_cts.CtsDetectionResult:
+        if not captured.get("logins"):
+            return base_cts.CtsDetectionResult(
+                base_cts.CtsDetectionStatus.SETUP_ERROR,
+                detail={"ckr": "CKR_USER_NOT_LOGGED_IN"},
+            )
+        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
+
+    monkeypatch.setattr(base_cts, "get_cts_detection", login_enforcing_detection)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+def test_cts_collection_probe_without_pin_surfaces_setup_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No PIN, no login: detection surfaces setup-error (pins pre-S2 behavior)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured)
+
+    def login_enforcing_detection(rs: Any) -> base_cts.CtsDetectionResult:
+        if not captured.get("logins"):
+            return base_cts.CtsDetectionResult(
+                base_cts.CtsDetectionStatus.SETUP_ERROR,
+                detail={"ckr": "CKR_USER_NOT_LOGGED_IN"},
+            )
+        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
+
+    monkeypatch.setattr(base_cts, "get_cts_detection", login_enforcing_detection)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert not captured.get("logins")
+
+
 def test_cts_collection_probe_cli_pin_wins_over_env(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
