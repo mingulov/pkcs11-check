@@ -165,3 +165,42 @@ def test_tee_captures_output_larger_than_pipe_buffer() -> None:
     )
     assert rc == 0, rc
     assert len(out) == n, len(out)
+
+
+def test_quiet_display_hides_report_log_chatter_but_keeps_capture(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U6: internal report-log lines leave live display, stay in capture."""
+    script = (
+        "import sys\n"
+        "sys.stdout.write('hello\\n')\n"
+        "sys.stdout.write('------ generated report log file: /tmp/x.jsonl -------\\n')\n"
+        "sys.stdout.write('world\\n')\n"
+    )
+    rc, out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "hello" in shown and "world" in shown, shown
+    assert "generated report log file" not in shown, shown
+    assert "generated report log file" in out, out
+
+
+def test_loud_display_shows_everything(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U6 control: without the flag the display is byte-identical."""
+    script = (
+        "import sys\nsys.stdout.write("
+        "'------ generated report log file: /tmp/x.jsonl -------\\n')\n"
+    )
+    rc, _out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script], env=dict(os.environ), timeout=30
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "generated report log file" in shown, shown

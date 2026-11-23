@@ -1193,16 +1193,35 @@ def _kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
         pass
 
 
+# U6: live-display chatter hidden from unit runs unless verbose. The
+# pytest-reportlog plugin unconditionally prints its tmp report-log path in
+# the terminal summary; users should never see internal per-process paths.
+_DISPLAY_NOISE_MARKERS: tuple[str, ...] = ("generated report log file:",)
+# U6: cap on held-back unterminated display bytes. An incomplete line is
+# held only until it completes (so a noise line never partially shows) --
+# but a line longer than this (e.g. pytest -q progress dots) flushes
+# through, so quiet display never stalls liveness output.
+_DISPLAY_HOLD_CAP = 1024
+
+
+def _display_line_allowed(line: str) -> bool:
+    """U6: whether a child output line may reach live display."""
+    return not any(marker in line for marker in _DISPLAY_NOISE_MARKERS)
+
+
 def _run_subprocess_tee(
     cmd: list[str],
     *,
     env: dict[str, str],
     timeout: int,
+    quiet_unit_display: bool = False,
 ) -> tuple[int, str, str, dict[str, object]]:
     """Run a subprocess with tee-style output: live display AND capture.
 
     Returns (returncode, captured_stdout, captured_stderr, observation).
     If the process is killed by a signal, returncode is negative.
+    With ``quiet_unit_display`` (U6), internal chatter lines are withheld
+    from live display; capture stays byte-complete either way.
     """
     proc = subprocess.Popen(
         cmd,
@@ -1224,6 +1243,7 @@ def _run_subprocess_tee(
     console_lock = threading.Lock()
 
     def _pump(stream: IO[bytes], buf: _BoundedCapture, is_stdout: bool) -> None:
+        carry = b""
         try:
             while True:
                 chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)
@@ -1232,12 +1252,31 @@ def _run_subprocess_tee(
                 buf.write(chunk)
                 target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
                 with console_lock:
-                    target.write(chunk)
+                    if not quiet_unit_display:
+                        target.write(chunk)
+                    else:
+                        data = carry + chunk
+                        *lines, carry = data.split(b"\n")
+                        for line in lines:
+                            if _display_line_allowed(line.decode("utf-8", errors="replace")):
+                                target.write(line + b"\n")
+                        if len(carry) > _DISPLAY_HOLD_CAP:
+                            target.write(carry)
+                            carry = b""
                     target.flush()
         except (OSError, ValueError):
             # stream closed underneath us (e.g. proc.kill on the timeout path).
             pass
         finally:
+            if quiet_unit_display and carry:
+                try:
+                    target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
+                    with console_lock:
+                        if _display_line_allowed(carry.decode("utf-8", errors="replace")):
+                            target.write(carry)
+                        target.flush()
+                except (OSError, ValueError):
+                    pass
             try:
                 stream.close()
             except OSError:
@@ -1348,6 +1387,7 @@ def _run_outer_tee(
     target: str,
     role: str,
     timeout_evidence: Callable[[], bool] | None = None,
+    quiet_unit_display: bool = False,
 ) -> tuple[int, str, str]:
     """Run one outer process, append its evidence, and preserve timeout flow.
 
@@ -1362,8 +1402,11 @@ def _run_outer_tee(
     observe. Inert when disengaged.
     """
     env.update(_counters_child_env(state, env, target, role))
+    # Passed only when set (default False == absent): keeps the legacy call
+    # shape for the many fixed-signature test doubles of the tee.
+    tee_kwargs: dict[str, Any] = {"quiet_unit_display": True} if quiet_unit_display else {}
     try:
-        tee_result = _run_subprocess_tee(cmd, env=env, timeout=timeout)
+        tee_result = _run_subprocess_tee(cmd, env=env, timeout=timeout, **tee_kwargs)
     except subprocess.TimeoutExpired:
         _append_process_observation(
             state,
@@ -2231,8 +2274,13 @@ def run_isolated_pytest_units(
     selection_batch_id: str | None = None,
     selection_digest: str | None = None,
     counters_barrier_plan: dict[str, Any] | None = None,
+    quiet_unit_display: bool = False,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress.
+
+    ``quiet_unit_display`` (U6) withholds internal per-unit chatter lines
+    (e.g. the reportlog plugin's tmp-path notice) from live display;
+    captures stay complete.
 
     ``recovery_config`` (default None / mode "off") enables crashing-daemon recovery: the run
     detects a dead daemon between units, pauses for it to return, supersedes the false-failure
@@ -2245,6 +2293,9 @@ def run_isolated_pytest_units(
     applied. None runs the barrier in-runner (the programmatic fallback).
     """
     env = os.environ.copy()
+    # U6: passed only when set (default False == absent), like the tee layer
+    # below, so fixed-signature test doubles of _run_outer_tee keep working.
+    outer_tee_kwargs: dict[str, Any] = {"quiet_unit_display": True} if quiet_unit_display else {}
     # Framework version, computed once per run: children inherit the pin (no
     # per-unit git shell-out) and skip their own ProvenanceReport; the parent
     # merges exactly one into report.jsonl at the writer calls below.
@@ -2567,6 +2618,7 @@ def run_isolated_pytest_units(
                         target=unit,
                         role="unit",
                         timeout_evidence=lambda: _stream_has_timeout_expired(unit_jsonl_path),
+                        **outer_tee_kwargs,
                     )
                     status = _status_from_returncode(returncode)
                     if unit_jsonl_path is not None:
@@ -2690,6 +2742,7 @@ def run_isolated_pytest_units(
                                             timeout_evidence=lambda: _stream_has_timeout_expired(
                                                 confirm_jsonl_path
                                             ),
+                                            **outer_tee_kwargs,
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
                                         ensure_failed_collection_report(
@@ -2863,6 +2916,7 @@ def run_isolated_pytest_units(
                                         timeout_evidence=lambda: _stream_has_timeout_expired(
                                             retry_jsonl_path
                                         ),
+                                        **outer_tee_kwargs,
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
                                     ensure_failed_collection_report(
@@ -3264,6 +3318,7 @@ def run_isolated_pytest_units(
                                             timeout_evidence=lambda: _stream_has_timeout_expired(
                                                 confirm_jsonl_path
                                             ),
+                                            **outer_tee_kwargs,
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
                                         ensure_failed_collection_report(
@@ -3537,6 +3592,7 @@ def run_isolated_pytest_units(
                                         timeout_evidence=lambda: _stream_has_timeout_expired(
                                             retry_jsonl_path
                                         ),
+                                        **outer_tee_kwargs,
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
                                     ensure_failed_collection_report(

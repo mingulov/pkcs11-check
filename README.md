@@ -96,9 +96,7 @@ token from scratch, run the suite, and read the results.
 ### Saving a report
 
 By default `pkcs11-check test` prints a human-readable summary and keeps **no**
-report file. The `generated report log file: /tmp/pkcs11-check-...jsonl` lines you
-may notice are *internal* per-process logs that the isolated runner aggregates and
-then deletes - they are not meant to be read directly.
+report file.
 
 To save a machine-readable report, add `--output json` and `--output-file`. The
 files are written next to the path you give:
