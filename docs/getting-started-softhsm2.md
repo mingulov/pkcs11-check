@@ -65,6 +65,10 @@ Note: `--slot` is a **0-based index** into the token-present slots, *not* the
 provider's internal slot ID. A freshly initialised SoftHSM2 token is index `0`.
 Run `pkcs11-check info --module <lib>` to list them.
 
+`doctor`'s vector-data check is presence-only (the Wycheproof/ACVP
+directories exist); run `pkcs11-check fetch-data --status` to validate
+what is actually fetched.
+
 ## 4. Run and see results
 
 Start small - a quick functional run prints a summary to the console:
@@ -88,10 +92,9 @@ head ./pk-demo/reports/report.jsonl           # one JSON record per test
 ```
 
 `./pk-demo/reports/` then contains `results.json` (summary), `report.jsonl`
-(per-test records), `coverage.json` (mechanism coverage) and `quality.json`
-(per-outcome classification). The `generated report log file: /tmp/…jsonl` lines
-printed during a run are *internal* temporaries the runner aggregates and deletes
-- the files above are the real output.
+(per-test records) and `quality.json` (per-outcome classification), plus
+`coverage.json` (mechanism coverage) only when the run collected coverage
+data — otherwise that file is absent, not empty.
 
 ## 5. Run the full suite
 
