@@ -872,12 +872,28 @@ def _gen_pqc_pair_or_xfail(
         raise
 
 
-def _import_or_xfail(attempt: Any, *, purpose: str) -> int:
+def _import_or_xfail(attempt: Any, *, purpose: str, skip_rvs: tuple[Any, ...] = ()) -> int:
     try:
         return int(attempt())
     except AssertionError as exc:
+        if skip_rvs and is_known_error(exc, skip_rvs):
+            pytest.skip(f"{purpose} not supported: {ckr_name(getattr(exc, 'rv', None))}")
         xfail_if_known_ckr(exc, KEYPAIR_RUNTIME_REJECT_RVS, f"{purpose} is not operational")
         raise
+
+
+def _qc7_skip_unless_family_import_supported(rs: Any, family: str) -> None:
+    """Skip a family import when no family mechanism is advertised (fw#93).
+
+    Mirrors the matrix import pre-gate: import cells only need the module
+    to handle the family's key type.
+    """
+    from pkcs11_check.testcases.test_sensitivity import _matrix_import_mechanisms
+
+    matrix_family = {"ml_dsa_44": "mldsa"}.get(family, family)
+    mechs = _matrix_import_mechanisms(matrix_family)
+    if not any(rs.has_mechanism(name) for name in mechs):
+        pytest.skip(f"QC7a {family} private import: no {family} mechanism advertised")
 
 
 def _qc7_prove_unsealed(
@@ -938,6 +954,7 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
     from cryptography.hazmat.primitives.asymmetric import ec, ed25519, x25519
 
     skip_unless_create_object_supported(rs)
+    _qc7_skip_unless_family_import_supported(rs, family)
     if family == "ml_dsa_44":
         from pkcs11_check.testcases.test_sensitivity import _MATRIX_MLDSA44_SK
 
@@ -958,6 +975,7 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
                 preserve_policy_attrs=True,
             ),
             purpose="QC7a ML-DSA-44 private import",
+            skip_rvs=(CKR_ATTRIBUTE_TYPE_INVALID,),
         )
         return handle, _MATRIX_MLDSA44_SK, None
 
@@ -1000,6 +1018,7 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
             preserve_policy_attrs=True,
         ),
         purpose=f"QC7a {family} private import",
+        skip_rvs=EC_CURVE_UNSUPPORTED_RVS,
     )
     return handle, raw, der
 

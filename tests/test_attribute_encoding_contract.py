@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CK_UNAVAILABLE_INFORMATION,
     CKA_CLASS,
     CKA_DERIVE,
+    CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
@@ -39,10 +40,15 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VERIFY_RECOVER,
+    CKK_EC,
+    CKK_EC_MONTGOMERY,
+    CKK_ML_DSA,
     CKO_PRIVATE_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
@@ -52,7 +58,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import test_attribute_defaults as defaults_case
 from pkcs11_check.testcases import test_keypair_consistency as pair_case
 from pkcs11_check.testcases import test_object as object_case
-from tests._skip_assert import assert_xfails
+from tests._skip_assert import assert_skips, assert_xfails
 
 _OK = int(CKR_OK)
 _TYPE_INVALID = int(CKR_ATTRIBUTE_TYPE_INVALID)
@@ -621,6 +627,77 @@ def test_private_value_claim_overridden_is_not_judged() -> None:
         "ec",
     )
     assert any(rec.reason == "honest_deviation" for rec in _records())
+    _assert_cleanup(fake)
+
+
+class _CurveRefusalRaw(_EncodingRaw):
+    """Refuse creates for one key type with a scripted RV (fw#93)."""
+
+    def __init__(self, key_type: int, rv: int) -> None:
+        super().__init__()
+        self._refuse_key_type = key_type
+        self._refuse_rv = rv
+
+    def C_CreateObject(self, _sh: int, tmpl: Any, count: int, handle_ptr: Any) -> int:  # noqa: N802
+        if int(count) > 0:
+            attrs = _decode_template(tmpl, int(count))
+            if attrs.get(int(CKA_KEY_TYPE)) == _ulong_blob(self._refuse_key_type):
+                return self._refuse_rv
+        return super().C_CreateObject(_sh, tmpl, count, handle_ptr)
+
+
+def test_montgomery_import_curve_refusal_skips() -> None:
+    """Curve refusal on Montgomery import skips: unsupported capability (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_CURVE_NOT_SUPPORTED))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+def test_ec_import_curve_refusal_skips() -> None:
+    """Curve refusal on EC import skips as well (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_EC), int(CKR_CURVE_NOT_SUPPORTED))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ec",
+    )
+    _assert_cleanup(fake)
+
+
+def test_montgomery_import_general_error_xfails_not_skips() -> None:
+    """General failures stay loud: KEYPAIR-set RVs xfail, never skip (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_GENERAL_ERROR))
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+def test_montgomery_import_function_failed_xfails_not_skips() -> None:
+    """Function failure on Montgomery import xfails, never skips (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_FUNCTION_FAILED))
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_attribute_type_invalid_skips() -> None:
+    """ML-DSA-44 import refused as unknown attributes skips (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_ML_DSA), int(CKR_ATTRIBUTE_TYPE_INVALID))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ml_dsa_44",
+    )
     _assert_cleanup(fake)
 
 
