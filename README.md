@@ -204,7 +204,7 @@ src/pkcs11_check/
 
 - **`pkcs11_check.raw`** - pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
 - **Crash-safe by default** - `--isolation auto` runs each test unit in its own subprocess, so a provider crash is recorded as that unit's result instead of killing the suite. `disabled-tests` files are for hangs/crashes you deliberately exclude up front, not a crash workaround
-- **`--ckr-strict`** mode enforces exact OASIS spec CKR codes (not just "any error")
+- **CKR return-code compliance** - `testcases/ckr/` checks exact OASIS spec CKR codes (not just "any error"). Bare pytest only, not a `pkcs11-check test` flag: `uv run pytest src/pkcs11_check/testcases/ckr/ --ckr-strict --p11-module <module> --p11-pin <pin>` for the strictest spec reading
 - **Wycheproof + ACVP vectors** - cross-verification against C2SP and NIST test vectors
 
 ## Documentation
