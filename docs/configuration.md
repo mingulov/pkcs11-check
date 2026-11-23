@@ -109,6 +109,21 @@ Detection is a liveness probe between test units, never a list of error codes: m
 
 A daemon that is reachable but degraded -- answering, only ever more slowly -- is **not** detected. That needs a different signal than reachability.
 
+## Empty PIN semantics
+
+Three states, three behaviors (cleanup deferred; this section pins the
+current truth):
+
+- **Absent** (no `--pin`, no `P11TEST_PIN`, no TOML `pin`): nothing logs
+  in; tests that need a PIN skip with an explicit reason.
+- **Non-empty**: sessions log in; PIN-needing tests run.
+- **Empty string** (`--pin ""` or `P11TEST_PIN=`): an empty `--pin` never
+  overrides the environment (a set `P11TEST_PIN` wins); session fixtures
+  treat empty as absent and do **not** log in. One known inconsistency:
+  `get_pin_bytes()` returns `b""` (not `None`) for an empty PIN, so its
+  security-test consumers proceed as if a PIN existed. To force a
+  no-login run, unset `P11TEST_PIN` rather than emptying it.
+
 ## Environment variables that are not settings
 
 These have no TOML or CLI equivalent. The operator knobs first, then the
