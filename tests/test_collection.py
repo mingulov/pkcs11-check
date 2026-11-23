@@ -461,6 +461,19 @@ def test_collect_items_with_skips_reports_module_skip(tmp_path: Path) -> None:
     assert skips[0].reason == "vectors not cloned"
 
 
+def _finish(plugin: col._CollectionPlugin, items: list[object]) -> None:
+    """Drive collection finish with fake items (deferred skip resolution)."""
+    from types import SimpleNamespace
+
+    plugin.pytest_collection_finish(SimpleNamespace(items=items))
+
+
+def _fake_item(nodeid: str, path: Path) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(nodeid=nodeid, path=path, iter_markers=lambda: [])
+
+
 def test_collection_skip_empty_nodeid_resolves_from_longrepr(tmp_path: Path) -> None:
     """R21-3: an empty nodeid (cross-rootpath target) resolves to the file
     named by the skip longrepr -- the shape Windows CI produces."""
@@ -476,6 +489,8 @@ def test_collection_skip_empty_nodeid_resolves_from_longrepr(tmp_path: Path) -> 
             longrepr=(str(target), 2, "Skipped: vectors not cloned"),
         )
     )
+    assert plugin.skips == []
+    _finish(plugin, [])
     assert plugin.skips == [col.CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
 
 
@@ -488,6 +503,7 @@ def test_collection_skip_empty_nodeid_keeps_empty_without_path() -> None:
     plugin.pytest_collectreport(
         SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
     )
+    _finish(plugin, [])
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
 
 
@@ -503,6 +519,7 @@ def test_collection_skip_empty_nodeid_rejects_missing_longrepr_path() -> None:
             longrepr=("/nonexistent/test_gone.py", 1, "Skipped: why"),
         )
     )
+    _finish(plugin, [])
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="why")]
 
 
@@ -544,6 +561,8 @@ def test_collection_skip_same_helper_skips_stay_distinct(tmp_path: Path) -> None
                 longrepr=(str(helper), 27, "Skipped: vectors unavailable"),
             )
         )
+    assert plugin.skips == []
+    _finish(plugin, [])
     assert plugin.skips == [
         col.CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
         col.CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
@@ -551,8 +570,8 @@ def test_collection_skip_same_helper_skips_stay_distinct(tmp_path: Path) -> None
 
 
 def test_collection_skip_completed_file_never_pairs(tmp_path: Path) -> None:
-    """R20-4 via fusion: a file with collected items cannot absorb a later
-    empty skip (the pruned-passed stale-top case stays honest)."""
+    """R23-1: a file with final items cannot absorb an empty skip, however
+    late its items arrive (the pruned-passed case stays honest)."""
     from types import SimpleNamespace
 
     mod = tmp_path / "test_mod.py"
@@ -560,10 +579,26 @@ def test_collection_skip_completed_file_never_pairs(tmp_path: Path) -> None:
     plugin = col._CollectionPlugin()
     plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=tmp_path))
     plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
-    plugin.pytest_itemcollected(SimpleNamespace(path=mod))
     plugin.pytest_collectreport(
         SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
     )
+    _finish(plugin, [_fake_item(f"{mod}::test_case", mod)])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_deselected_file_never_pairs(tmp_path: Path) -> None:
+    """R23-1: -k-emptied files count as completed via deselection events."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_deselected([SimpleNamespace(path=mod)])
+    plugin.pytest_collectreport(
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    )
+    _finish(plugin, [])
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
 
 
@@ -692,8 +727,11 @@ def test_collection_digest_invalidates_on_dash_c_config_edit(tmp_path: Path) -> 
     arg_forms = [
         ["-c", str(config)],
         [f"-c{config}"],
+        [f"-c={config}"],
         [f"--config-file={config}"],
         ["--config-file", str(config)],
+        ["-qc", str(config)],
+        [f"-qc{config}"],
     ]
     for args in arg_forms:
         before = col._collection_inputs_digest([str(target)], args)
@@ -713,7 +751,8 @@ def test_collection_digest_keys_pytest_addopts(tmp_path: Path) -> None:
     assert col._collection_inputs_digest([str(target)], [], pytest_addopts="-k foo") != base
     config = tmp_path / "selected.ini"
     config.write_text("[pytest]\n", encoding="utf-8")
-    addopts = f"-c {config}"
+    # R23-4: quote the path: shlex would eat raw Windows backslashes.
+    addopts = f'-c "{config}"'
     before = col._collection_inputs_digest([str(target)], [], pytest_addopts=addopts)
     assert before is not None
     config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
@@ -791,7 +830,8 @@ def test_collection_recollects_after_addopts_config_broadens_k(tmp_path: Path) -
             for key, value in os.environ.items()
             if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
         }
-        env["PYTEST_ADDOPTS"] = f"-c {config}"
+        # R23-4: quote the path: shlex would eat raw Windows backslashes.
+        env["PYTEST_ADDOPTS"] = f'-c "{config}"'
         return env
 
     targets = [str(first), str(second)]

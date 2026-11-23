@@ -113,8 +113,17 @@ def _scrub_pin(detail: str, pin: bytes) -> str:
     scrubs nothing (no-op, never corrupts or mangles).
     """
     secret = pin.decode("utf-8", "surrogateescape")
-    if secret and not secret.isspace() and secret in detail:
-        return detail.replace(secret, "[redacted]")
+    if not secret or secret.isspace():
+        return detail
+    # Normalize like the text-mode pipe already did (universal newlines):
+    # a PIN with an embedded carriage return would otherwise survive as
+    # fragments (R23-3). The detail is normalized too (a no-op for pipe
+    # text, required for raw JSON details); newline flavor in a
+    # diagnostic carries no meaning.
+    normalized_secret = secret.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = detail.replace("\r\n", "\n").replace("\r", "\n")
+    if normalized_secret in normalized:
+        return normalized.replace(normalized_secret, "[redacted]")
     return detail
 
 
