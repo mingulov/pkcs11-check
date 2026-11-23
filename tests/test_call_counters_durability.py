@@ -6238,6 +6238,36 @@ class TestTransientWriteRetry:
         assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
         assert list(tmp_path.glob("*.tmp-*")) == []
 
+    def test_sidecar_unreadable_old_refuses_destructive_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+        real_read_bytes = Path.read_bytes
+        unlinked: list[str] = []
+
+        def _unreadable(self: Path) -> bytes:
+            if str(self) == str(target):
+                raise OSError(errno.EACCES, "denied")
+            return real_read_bytes(self)
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        real_unlink = Path.unlink
+
+        def _spy_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            unlinked.append(str(self))
+            real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_bytes", _unreadable)
+        monkeypatch.setattr(Path, "unlink", _spy_unlink)
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert str(target) not in unlinked, "unstashable snapshot must not be deleted"
+        assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+
     def test_replace_fallback_warns_once_per_process(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -8945,3 +8975,21 @@ class TestEvidenceContainment:
         assert outside.exists()
         assert not reg_path.exists()
         assert swept["removed"] >= 1
+
+    def test_sweep_refuses_linked_registrations_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "counters"
+        root.mkdir()
+        outside = tmp_path / "victim"
+        outside.mkdir()
+        (outside / "package.json").write_text('{"name": "x"}', encoding="utf-8")
+        link = root / "registrations"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            swept = durability.sweep_orphans(root, current_run=_RUN)
+        assert (outside / "package.json").exists()
+        assert swept["removed"] == 0

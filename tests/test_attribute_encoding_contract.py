@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CK_UNAVAILABLE_INFORMATION,
     CKA_CLASS,
     CKA_DERIVE,
+    CKA_EC_POINT,
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
@@ -69,6 +70,7 @@ _NOT_PERMITTED = int(CKR_KEY_FUNCTION_NOT_PERMITTED)
 _UNAVAILABLE = int(CK_UNAVAILABLE_INFORMATION)
 _VALUE = int(CKA_VALUE)
 _DERIVE = int(CKA_DERIVE)
+_EC_POINT = int(CKA_EC_POINT)
 _MODULUS = int(CKA_MODULUS)
 _MODULUS_BITS = int(CKA_MODULUS_BITS)
 
@@ -789,6 +791,52 @@ def test_generated_zero_scalar_fails() -> None:
         object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
             _rs(fake)
         )
+    _assert_cleanup(fake)
+
+
+def _p256_point_for(scalar: bytes) -> bytes:
+    """DER-OCTET P-256 public point derived from a scalar (test helper)."""
+    nums = (
+        ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    raw_point = b"\x04" + nums.x.to_bytes(32, "big") + nums.y.to_bytes(32, "big")
+    return b"\x04\x41" + raw_point
+
+
+def test_generated_scalar_matching_public_point_passes() -> None:
+    """F8: scalar deriving the generated point passes the binding check."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+        _rs(fake)
+    )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_public_mismatch_fails() -> None:
+    """F8: scalar not deriving the generated point fails (key confusion caught)."""
+    scalar_a = b"\x01" + b"\x07" * 31
+    scalar_b = b"\x02" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar_a)}, {_VALUE: scalar_b})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_undecodable_point_skips_binding() -> None:
+    """F8: undecodable points skip binding (point validity is other tests' job)."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: b"garbage"}, {_VALUE: scalar})]
+    object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+        _rs(fake)
+    )
     _assert_cleanup(fake)
 
 

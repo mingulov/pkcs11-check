@@ -291,29 +291,9 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
         rs = _MinimalSession(raw, sh, frozenset(names))
         # Use the structured process cache so the selected sentinel/vector
         # runtime guard reuses this collection result instead of touching the
-        # provider a second time.
-        result = get_cts_detection(rs)
-        if (
-            not logged_in
-            and result.status is _CtsDetectionStatus.SETUP_ERROR
-            and result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
-        ):
-            # S2: genuine no-PIN on a strict provider is not a provider
-            # finding -- the probe never logged in. Downgrade to
-            # not-operational (xfail) instead of a setup-error FAIL.
-            # Logged-in meetings with the same RV stay loud below.
-            return _CtsDetectionResult(
-                _CtsDetectionStatus.NOT_OPERATIONAL,
-                error_rv=result.error_rv,
-                detail={
-                    **result.detail,
-                    "reason": (
-                        "logged-out probe refused with CKR_USER_NOT_LOGGED_IN; "
-                        "configure a PIN to exercise CTS vectors"
-                    ),
-                },
-            )
-        return result
+        # provider a second time. The probe threads its login state so a
+        # logged-out login refusal converts before caching (S2).
+        return get_cts_detection(rs, logged_in=logged_in)
     finally:
         if logged_in:
             logout_quietly(raw, sh)

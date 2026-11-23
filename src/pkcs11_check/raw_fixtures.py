@@ -77,18 +77,18 @@ def raw_session(
     The PIN resolves through the merged config, so env/TOML pins log in
     exactly like runtime sessions; an explicit empty PIN means no login.
     """
-    flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
-    sh = open_session(raw_pkcs11, raw_slot_id, flags)
-
     cfg = _merged_config(request)
     pin_value: str | None = cfg.pin.get_secret_value() if cfg.pin else None
-    if pin_value is not None:
-        login_user(raw_pkcs11, sh, CKU_USER, pin_value.encode("utf-8"))
-
+    flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
+    sh = open_session(raw_pkcs11, raw_slot_id, flags)
+    logged_in = False
     try:
+        if pin_value is not None:
+            login_user(raw_pkcs11, sh, CKU_USER, pin_value.encode("utf-8"))
+            logged_in = True
         yield sh
     finally:
-        if pin_value is not None:
+        if logged_in:
             logout_quietly(raw_pkcs11, sh)
         close_session_quietly(raw_pkcs11, sh)
 

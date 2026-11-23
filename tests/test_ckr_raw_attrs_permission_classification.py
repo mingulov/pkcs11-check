@@ -354,10 +354,14 @@ class _SignCaptureRaw:
         sign_rv: int,
         refuse_keygen: set[int] | None = None,
         refuse_create: bool = False,
+        keygen_rv: int | None = None,
+        create_rv: int | None = None,
     ) -> None:
         self._sign_rv = sign_rv
         self._refuse_keygen = refuse_keygen or set()
         self._refuse_create = refuse_create
+        self._keygen_rv = keygen_rv if keygen_rv is not None else int(CKR_MECHANISM_INVALID)
+        self._create_rv = create_rv if create_rv is not None else int(CKR_FUNCTION_NOT_SUPPORTED)
         self.keygen_calls: list[tuple[int, dict[int, bytes]]] = []
         self.create_calls: list[dict[int, bytes]] = []
         self.sign_mech: int | None = None
@@ -378,14 +382,14 @@ class _SignCaptureRaw:
         mech = int(ctypes.cast(mech_ptr, ctypes.POINTER(CK_MECHANISM)).contents.mechanism)
         self.keygen_calls.append((mech, self._decode_attrs(tmpl_ptr, int(count))))
         if mech in self._refuse_keygen:
-            return int(CKR_MECHANISM_INVALID)
+            return self._keygen_rv
         ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4242
         return int(CKR_OK)
 
     def C_CreateObject(self, _sh: int, tmpl_ptr: Any, count: int, out: Any) -> int:  # noqa: N802
         self.create_calls.append(self._decode_attrs(tmpl_ptr, int(count)))
         if self._refuse_create:
-            return int(CKR_FUNCTION_NOT_SUPPORTED)
+            return self._create_rv
         ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4243
         return int(CKR_OK)
 
@@ -494,6 +498,48 @@ def test_sign_probe_setup_failure_reports_setup_xfail(
     out = capsys.readouterr().out
     assert "SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed" in out
     assert "CKR:" not in out
+
+
+def test_sign_probe_undefined_keygen_rv_fails_loud_without_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F6a: undefined setup RVs never silently fall back (fail loud)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN)},
+        keygen_rv=0x00FFFFFF,
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed" in out
+    assert "CKR:" not in out
+    assert raw.create_calls == []
+    assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
+
+
+def test_sign_probe_undefined_create_rv_fails_loud_without_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F6a: undefined CreateObject RV never falls through to the AES route."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN)},
+        refuse_create=True,
+        create_rv=0x00FFFFFF,
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "SETUP_XFAIL:C_CreateObject for CKA_SIGN=False failed" in out
+    assert "CKR:" not in out
+    assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")

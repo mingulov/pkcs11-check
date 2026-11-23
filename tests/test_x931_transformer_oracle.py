@@ -166,3 +166,28 @@ def test_verify_rejects_wrong_message_in_n_minus_s_form() -> None:
     sig = (_TOY_N - s).to_bytes(_TOY_K, "big")
     reason = _x931.verify_x931_signature(sig, _TOY_E, _TOY_N, b"abd", "sha256")
     assert reason is not None and "digest" in reason
+
+
+def test_verify_rejects_out_of_range_representative() -> None:
+    """Signatures at or above n are malformed, even with a valid reduction (fw#94)."""
+    found = False
+    for i in range(200):
+        message = f"range-probe-{i}".encode()
+        h_and_id = _x931.x931_sign_input(message, "sha256")
+        block = _pad_x931(h_and_id, _TOY_K)
+        s = pow(int.from_bytes(block, "big"), _TOY_D, _TOY_N)
+        assert (
+            _x931.verify_x931_signature(
+                s.to_bytes(_TOY_K, "big"), _TOY_E, _TOY_N, message, "sha256"
+            )
+            is None
+        )
+        s2 = s + _TOY_N
+        if s2 >= 256**_TOY_K:
+            continue
+        found = True
+        reason = _x931.verify_x931_signature(
+            s2.to_bytes(_TOY_K, "big"), _TOY_E, _TOY_N, message, "sha256"
+        )
+        assert reason is not None
+    assert found, "toy key must admit an in-width out-of-range representative"

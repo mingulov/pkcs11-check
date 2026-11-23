@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CTS,
     CKR_DEVICE_ERROR,
     CKR_OK,
+    CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases._operability import (
     Operability,
@@ -466,11 +467,35 @@ def reset_cts_detection_cache() -> None:
     _cts_detection_result = None
 
 
-def get_cts_detection(rs: Any) -> CtsDetectionResult:
-    """Get or detect the structured CTS result, cached within one isolated process."""
+def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
+    """Get or detect the structured CTS result, cached within one isolated process.
+
+    S2: a logged-out login refusal is not a provider finding -- the probe
+    never logged in -- so it is converted to not-operational (xfail)
+    BEFORE caching, and every consumer (sentinel, vector guards) sees the
+    converted result. Callers that know the session is logged in (or predate
+    the discriminator) keep the default, which preserves setup-error.
+    """
     global _cts_detection_result  # noqa: PLW0603
     if _cts_detection_result is None:
-        _cts_detection_result = _detect_cts_variant(rs)
+        result = _detect_cts_variant(rs)
+        if (
+            not logged_in
+            and result.status is CtsDetectionStatus.SETUP_ERROR
+            and result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+        ):
+            result = CtsDetectionResult(
+                CtsDetectionStatus.NOT_OPERATIONAL,
+                error_rv=result.error_rv,
+                detail={
+                    **result.detail,
+                    "reason": (
+                        "logged-out probe refused with CKR_USER_NOT_LOGGED_IN; "
+                        "configure a PIN to exercise CTS vectors"
+                    ),
+                },
+            )
+        _cts_detection_result = result
     return _cts_detection_result
 
 

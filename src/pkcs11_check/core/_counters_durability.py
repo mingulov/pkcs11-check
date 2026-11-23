@@ -639,9 +639,11 @@ def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> 
     missing, which readers treat as absent), then a direct plain write
     (torn-on-crash, likewise fail-visible). The committed bytes are
     stashed first and restored best-effort when nothing lands, so total
-    failure preserves the old snapshot instead of deleting it. Returns
-    True when the payload landed; False leaves tmp for the caller to
-    clean and the original error to raise. Callers warn on success.
+    failure preserves the old snapshot instead of deleting it. A present
+    but unstashable destination refuses the destructive path outright.
+    Returns True when the payload landed; False leaves tmp for the
+    caller to clean and the original error to raise. Callers warn on
+    success.
     """
     tmp_path = Path(tmp)
     resolved_path = Path(resolved)
@@ -649,6 +651,10 @@ def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> 
         old = resolved_path.read_bytes()
     except OSError:
         old = None
+    if old is None and resolved_path.exists():
+        # Present but unstashable: refuse the destructive path rather than
+        # risk an unrestorable delete (F2b). The caller raises loudly.
+        return False
     try:
         resolved_path.unlink()
     except OSError:
@@ -2492,8 +2498,12 @@ def _reap_torn_registry(root: Path, registry_path: Path) -> bool:
     caller's read and this one must not delete a healthy record).
     Returns True when the file was unlinked. All registry deletion
     funnels through here (collection and sweep alike) so the triage
-    cannot be bypassed.
+    cannot be bypassed. Registry paths resolving outside the counters
+    root (for example through a linked registrations dir) are retained
+    with a loud warning instead (M8/F1).
     """
+    if _deletion_refused(root, registry_path, verb="reap"):
+        return False
     try:
         raw: str | None = registry_path.read_text(encoding="utf-8")
     except OSError:

@@ -91,7 +91,10 @@ def verify_x931_signature(sig: bytes, e: int, n: int, message: bytes, hash_name:
     k = (n.bit_length() + 7) // 8
     if len(sig) != k:
         return f"signature length {len(sig)}, expected modulus size {k}"
-    m = pow(int.from_bytes(sig, "big"), e, n)
+    s = int.from_bytes(sig, "big")
+    if s >= n:
+        return f"representative {s} out of range for modulus {n}"
+    m = pow(s, e, n)
     if m & 0xF != _FINAL_TRAILER_BYTE & 0xF:
         m = n - m
     recovered = m.to_bytes(k, "big")

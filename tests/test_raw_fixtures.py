@@ -151,6 +151,29 @@ def test_raw_pkcs11_defaults_interface_to_auto(
     assert captured == {"interface": "auto"}
 
 
+def test_raw_session_closes_session_on_login_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """F11: a failed login still closes the opened session (no leak)."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    closed: list[int] = []
+    logouts: list[int] = []
+    monkeypatch.setattr(rf, "open_session", lambda raw, slot, flags: 99)
+
+    def _fail_login(raw: Any, sh: int, user: int, pin: bytes) -> None:
+        raise RuntimeError("login failed")
+
+    monkeypatch.setattr(rf, "login_user", _fail_login)
+    monkeypatch.setattr(rf, "logout_quietly", lambda raw, sh: logouts.append(sh))
+    monkeypatch.setattr(rf, "close_session_quietly", lambda raw, sh: closed.append(sh))
+
+    gen = rf.raw_session.__wrapped__(object(), 7, _parity_request({"p11_pin": "badpin"}))
+    with pytest.raises(RuntimeError, match="login failed"):
+        next(gen)
+    assert closed == [99]
+    assert logouts == []
+
+
 def test_create_object_importable() -> None:
     """create_object recipe exists and is importable."""
     assert callable(create_object)
