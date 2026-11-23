@@ -203,8 +203,10 @@ class TestAESEncryption:
         _require_aes_keygen(rs)
         key = _gen_aes_key_or_xfail(rs)
         plaintext = b"determinism test"  # 16 bytes
-        iv1 = generate_random(rs.raw, rs.sh, 16)
-        iv2 = generate_random(rs.raw, rs.sh, 16)
+        # S5: fixed distinct values (deterministic attribution;
+        # a ciphertext match then proves IV-insensitivity, never a test-RNG collision).
+        iv1 = b"\x00" * 16
+        iv2 = b"\x01" * 16
 
         try:
             ct1 = encrypt_single(
