@@ -360,7 +360,7 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
                     attempted.append(
                         _attempt_detail(
                             stage="operation",
-                            operation="C_Encrypt",
+                            operation=getattr(exc, "operation", None) or "C_Encrypt",
                             key_bits=key_bits,
                             case=case,
                             ckr=exc.rv,
@@ -674,6 +674,7 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
             f"CTS detection {naming_stage} {naming_operation} rejected with "
             f"{ckr_name(rv)} outside the known contract",
             int(rv),
+            naming_operation,
         )
 
 

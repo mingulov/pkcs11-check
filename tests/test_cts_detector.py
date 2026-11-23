@@ -1077,6 +1077,56 @@ def test_cts_mixed_same_rv_names_operation_stage(
     assert "C_CreateObject" not in str(excinfo.value)
 
 
+def test_cts_detector_captures_encrypt_stage_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R7-2: operation attempts carry the failing C_* stage, not bare C_Encrypt."""
+
+    def _import(_rs: Any, _key: bytes, **_kwargs: Any) -> int:
+        return 99
+
+    def _refuse_init(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("init refused", 0x00FFFFFF, "C_EncryptInit")
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", _import)
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(base_cts, "encrypt_single", _refuse_init)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    operations = [
+        attempt["operation"]
+        for attempt in result.detail["attempts"]
+        if attempt["stage"] == "operation"
+    ]
+    assert operations and all(op == "C_EncryptInit" for op in operations)
+
+
+def test_cts_reporter_passes_selected_operation() -> None:
+    """R7-2: the setup-error raise carries the selected attempt's operation."""
+    result = base_cts.CtsDetectionResult(
+        base_cts.CtsDetectionStatus.SETUP_ERROR,
+        error_rv=0x00FFFFFF,
+        detail={
+            "attempts": [
+                {
+                    "ckr": 0x00FFFFFF,
+                    "operation": "C_EncryptInit",
+                    "stage": "operation",
+                    "key_bits": 256,
+                    "case": "aligned",
+                },
+            ],
+            "primary_attempt": {"operation": "C_EncryptInit", "stage": "operation"},
+        },
+    )
+
+    with pytest.raises(CkrAssertionError, match="C_EncryptInit") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+    assert excinfo.value.operation == "C_EncryptInit"
+
+
 def test_detection_skip_reason_names_logged_out_login_refusal() -> None:
     """S2: logged-out skips tell the operator to configure a PIN."""
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest

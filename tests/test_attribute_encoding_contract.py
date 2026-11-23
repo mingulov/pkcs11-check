@@ -1205,6 +1205,7 @@ def test_generated_scalar_sentinel_point_reuses_single_deviation() -> None:
     ]
     assert len(point_deviations) == 1
     assert point_deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert point_deviations[0].detail.get("producer_operation") == "C_GenerateKeyPair"
     _assert_cleanup(fake)
 
 
@@ -1229,6 +1230,7 @@ def test_known_material_value_sentinel_reuses_single_deviation() -> None:
     deviations = _value_deviations()
     assert len(deviations) == 1
     assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert deviations[0].detail.get("producer_operation") == "C_CreateObject"
     _assert_cleanup(fake)
 
 
@@ -1246,6 +1248,7 @@ def test_generated_value_sentinel_reuses_single_deviation() -> None:
     deviations = _value_deviations()
     assert len(deviations) == 1
     assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert deviations[0].detail.get("producer_operation") == "C_GenerateKeyPair"
     _assert_cleanup(fake)
 
 
@@ -1263,6 +1266,7 @@ def test_reimported_value_sentinel_reuses_single_deviation() -> None:
     deviations = _value_deviations()
     assert len(deviations) == 1
     assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert deviations[0].detail.get("producer_operation") == "C_CreateObject"
     _assert_cleanup(fake)
 
 
