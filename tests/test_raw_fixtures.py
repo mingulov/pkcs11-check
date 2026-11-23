@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from pkcs11_check import raw_fixtures as rf
 from pkcs11_check.fixtures import RawSession, p11_module_session, p11_raw_session
 from pkcs11_check.raw.recipes import create_object, get_mechanism_list
 
@@ -16,10 +19,10 @@ def test_raw_pkcs11_fixture_passes_requested_interface() -> None:
 
     request = SimpleNamespace(
         config=SimpleNamespace(
-            getoption=lambda name: {
+            getoption=lambda name, default=None: {
                 "p11_module": "/tmp/provider.so",
                 "p11_interface": "3.1",
-            }.get(name)
+            }.get(name, default)
         )
     )
     raw = object()
@@ -28,6 +31,124 @@ def test_raw_pkcs11_fixture_passes_requested_interface() -> None:
         assert next(fixture) is raw
 
     from_lib.assert_called_once_with("/tmp/provider.so", interface="3.1")
+
+
+def _parity_request(options: dict[str, Any]) -> Any:
+    values = {"p11_module": "/tmp/provider.so", **options}
+    config = SimpleNamespace(getoption=lambda name, default=None: values.get(name, default))
+    return SimpleNamespace(config=config)
+
+
+def _isolate_settings_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Drop ambient pin/slot/interface layers; TOML reads from an empty dir."""
+    monkeypatch.delenv("P11TEST_PIN", raising=False)
+    monkeypatch.delenv("P11TEST_SLOT", raising=False)
+    monkeypatch.delenv("P11TEST_INTERFACE", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+
+def test_raw_session_logs_in_with_env_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """S3: P11TEST_PIN logs the raw session in (env parity with runtime)."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    logins: list[bytes] = []
+    monkeypatch.setattr(rf, "open_session", lambda raw, slot, flags: 99)
+    monkeypatch.setattr(rf, "login_user", lambda raw, sh, user, pin: logins.append(pin))
+    monkeypatch.setattr(rf, "logout_quietly", lambda *a: None)
+    monkeypatch.setattr(rf, "close_session_quietly", lambda *a: None)
+
+    gen = rf.raw_session.__wrapped__(object(), 7, _parity_request({}))
+    assert next(gen) == 99
+    gen.close()
+
+    assert logins == [b"envpin"]
+
+
+def test_raw_session_explicit_empty_pin_does_not_log_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """S3/F13: explicit empty PIN means no login (force-no-login)."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    logins: list[bytes] = []
+    monkeypatch.setattr(rf, "open_session", lambda raw, slot, flags: 99)
+    monkeypatch.setattr(rf, "login_user", lambda raw, sh, user, pin: logins.append(pin))
+    monkeypatch.setattr(rf, "logout_quietly", lambda *a: None)
+    monkeypatch.setattr(rf, "close_session_quietly", lambda *a: None)
+
+    gen = rf.raw_session.__wrapped__(object(), 7, _parity_request({"p11_pin": ""}))
+    assert next(gen) == 99
+    gen.close()
+
+    assert logins == []
+
+
+def test_raw_slot_id_resolves_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """S3: --p11-slot is an index into token-present slots (documented)."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(rf, "get_slot_ids", lambda raw: [10, 20])
+
+    assert rf.raw_slot_id.__wrapped__(object(), _parity_request({"p11_slot": 1})) == 20
+
+
+def test_raw_slot_id_env_slot_honored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """S3: P11TEST_SLOT selects the slot (env parity with runtime)."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "1")
+    monkeypatch.setattr(rf, "get_slot_ids", lambda raw: [10, 20])
+
+    assert rf.raw_slot_id.__wrapped__(object(), _parity_request({})) == 20
+
+
+def test_raw_slot_id_invalid_slot_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """S3: garbage slot config fails cleanly instead of opening a wrong slot."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "abc")
+    monkeypatch.setattr(rf, "get_slot_ids", lambda raw: [10, 20])
+
+    with pytest.raises(pytest.UsageError):
+        rf.raw_slot_id.__wrapped__(object(), _parity_request({}))
+
+
+def test_raw_pkcs11_uses_env_interface(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """S3: P11TEST_INTERFACE selects the interface (env parity with runtime)."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.0")
+    captured: dict[str, Any] = {}
+
+    def fake_from_lib(path: object, interface: object = None) -> object:
+        captured["path"] = path
+        captured["interface"] = interface
+        return object()
+
+    monkeypatch.setattr(rf, "RawPKCS11", SimpleNamespace(from_lib=fake_from_lib))
+
+    gen = rf.raw_pkcs11.__wrapped__(_parity_request({}))
+    next(gen)
+    gen.close()
+
+    assert captured == {"path": "/tmp/provider.so", "interface": "3.0"}
+
+
+def test_raw_pkcs11_defaults_interface_to_auto(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """S3 control: no configured interface keeps the historical auto default."""
+    _isolate_settings_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+
+    def fake_from_lib(path: object, interface: object = None) -> object:
+        captured["interface"] = interface
+        return object()
+
+    monkeypatch.setattr(rf, "RawPKCS11", SimpleNamespace(from_lib=fake_from_lib))
+
+    gen = rf.raw_pkcs11.__wrapped__(_parity_request({}))
+    next(gen)
+    gen.close()
+
+    assert captured == {"interface": "auto"}
 
 
 def test_create_object_importable() -> None:
