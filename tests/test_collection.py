@@ -525,6 +525,48 @@ def test_collection_skip_nonempty_nodeid_ignores_longrepr(tmp_path: Path) -> Non
     ]
 
 
+def test_collection_skip_same_helper_skips_stay_distinct(tmp_path: Path) -> None:
+    """R22-3: two files skipping from one shared helper keep both records."""
+    from types import SimpleNamespace
+
+    first = tmp_path / "test_xts.py"
+    second = tmp_path / "test_ccm.py"
+    helper = tmp_path / "acvp_loader.py"
+    for path in (first, second, helper):
+        path.write_text("# stub\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    for target in (first, second):
+        plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=target))
+        plugin.pytest_collectreport(
+            SimpleNamespace(
+                outcome="skipped",
+                nodeid="",
+                longrepr=(str(helper), 27, "Skipped: vectors unavailable"),
+            )
+        )
+    assert plugin.skips == [
+        col.CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
+        col.CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
+    ]
+
+
+def test_collection_skip_completed_file_never_pairs(tmp_path: Path) -> None:
+    """R20-4 via fusion: a file with collected items cannot absorb a later
+    empty skip (the pruned-passed stale-top case stays honest)."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=tmp_path))
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_itemcollected(SimpleNamespace(path=mod))
+    plugin.pytest_collectreport(
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    )
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
     """R18-2a: the combined API returns the same items as the legacy one."""
     target = tmp_path / "test_demo.py"
@@ -641,6 +683,43 @@ def test_collection_digest_invalidates_on_ancestor_config_edit(
     assert col._collection_inputs_digest([str(target)], []) != before
 
 
+def test_collection_digest_invalidates_on_dash_c_config_edit(tmp_path: Path) -> None:
+    """R22-2: editing a -c/--config-file config rekeys (all flag forms)."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    config = tmp_path / "selected.ini"
+    config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
+    arg_forms = [
+        ["-c", str(config)],
+        [f"-c{config}"],
+        [f"--config-file={config}"],
+        ["--config-file", str(config)],
+    ]
+    for args in arg_forms:
+        before = col._collection_inputs_digest([str(target)], args)
+        assert before is not None
+        config.write_text("[pytest]\naddopts = -k test_one\nmarkers = x: y\n", encoding="utf-8")
+        after = col._collection_inputs_digest([str(target)], args)
+        assert after is not None and after != before
+        config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
+
+
+def test_collection_digest_keys_pytest_addopts(tmp_path: Path) -> None:
+    """R22-2: the addopts string itself rekeys, and so does its -c file."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    base = col._collection_inputs_digest([str(target)], [], pytest_addopts="")
+    assert base is not None
+    assert col._collection_inputs_digest([str(target)], [], pytest_addopts="-k foo") != base
+    config = tmp_path / "selected.ini"
+    config.write_text("[pytest]\n", encoding="utf-8")
+    addopts = f"-c {config}"
+    before = col._collection_inputs_digest([str(target)], [], pytest_addopts=addopts)
+    assert before is not None
+    config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], [], pytest_addopts=addopts) != before
+
+
 def test_collection_recollects_after_external_target_edit(tmp_path: Path) -> None:
     """R19-2 end to end: a new matching test is collected, never stale-hit."""
     first = tmp_path / "test_first.py"
@@ -694,3 +773,32 @@ def test_collection_recollects_after_conftest_marks_new_file(tmp_path: Path) -> 
     )
     items = collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)
     assert len(items) == 2
+
+
+def test_collection_recollects_after_addopts_config_broadens_k(tmp_path: Path) -> None:
+    """R22-2 end to end: broadening -k inside a PYTEST_ADDOPTS -c file
+    invalidates the warm cache instead of serving the stale selection."""
+    first = tmp_path / "test_alpha.py"
+    second = tmp_path / "test_beta.py"
+    first.write_text("def test_alpha(): pass\n", encoding="utf-8")
+    second.write_text("def test_beta(): pass\n", encoding="utf-8")
+    config = tmp_path / "selected.ini"
+    config.write_text("[pytest]\naddopts = -k test_alpha\n", encoding="utf-8")
+
+    def _env() -> dict[str, str]:
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
+        }
+        env["PYTEST_ADDOPTS"] = f"-c {config}"
+        return env
+
+    targets = [str(first), str(second)]
+    assert len(collect_pytest_item_metadata(targets, [], env=_env())) == 1
+    config.write_text("[pytest]\naddopts = -k 'test_alpha or test_beta'\n", encoding="utf-8")
+    items = collect_pytest_item_metadata(targets, [], env=_env())
+    assert sorted(item.nodeid.split("::")[-1] for item in items) == [
+        "test_alpha",
+        "test_beta",
+    ]
