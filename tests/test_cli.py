@@ -715,6 +715,81 @@ class TestTestCommand:
         runner.invoke(app, ["test", "--module", str(module), "--isolation", "file", "--verbose"])
         assert seen == [True, False], seen
 
+    def test_provenance_explains_dev_checkout_suffix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U4: a git-describe version says once that it is a dev checkout."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "_build_run_provenance",
+            lambda *a, **k: {
+                "framework": {"version": "v0.3.0-71-gabc1234-dirty", "source": "git-describe"},
+                "provider": {},
+            },
+        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        assert "v0.3.0-71-gabc1234-dirty (dev checkout)" in result.output
+
+    def test_provenance_clean_for_package_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U4 control: a package version prints with no suffix clause."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "_build_run_provenance",
+            lambda *a, **k: {
+                "framework": {"version": "0.3.1", "source": "package"},
+                "provider": {},
+            },
+        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        assert "pkcs11-check 0.3.1 |" in result.output
+        assert "dev checkout" not in result.output
+
+    def test_sessions_hidden_from_help_but_still_accepted(self) -> None:
+        """U13: the dead --sessions knob is hidden, not removed."""
+        help_text = runner.invoke(app, ["test", "--help"])
+        assert help_text.exit_code == 0, help_text.output
+        assert "--sessions" not in help_text.output
+        parsed = runner.invoke(
+            app, ["test", "--module", "m.so", "--sessions", "4", "--show-config"]
+        )
+        assert parsed.exit_code == 0, parsed.output
+
+    def test_sessions_warns_in_isolated_modes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U13: passing --sessions warns that it is ignored."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "file", "--sessions", "4"],
+        )
+        assert "--sessions is ignored" in result.output
+
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
