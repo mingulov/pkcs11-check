@@ -26,8 +26,8 @@ from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.config_layers import (
-    NO_EFFECT,
     find_ignored_settings,
+    is_dead_config_key,
     read_toml_settings,
     resolve_config_rows,
 )
@@ -140,7 +140,8 @@ def _print_show_config(cli_values: dict[str, Any]) -> None:
     table.add_column("Source")
     for row in rows:
         # U13: dead keys live in docs/configuration.md, not in this table.
-        if row.effective == NO_EFFECT:
+        # N3: keyed on deadness, never on the value text.
+        if is_dead_config_key(row.key):
             continue
         table.add_row(row.key, row.effective, row.source)
     Console().print(table)
@@ -153,23 +154,32 @@ def _unit_display_quiet(verbose: bool) -> bool:
     return logging.getLogger().getEffectiveLevel() > logging.DEBUG
 
 
+def _warn_ignored_sessions(sessions: int, isolation: str) -> None:
+    """U13/N5: --sessions is dead in every mode; warn wherever passed."""
+    if sessions != 1:
+        console.print(
+            f"[yellow]Warning:[/yellow] --sessions is ignored in --isolation {isolation} mode"
+        )
+
+
 def _print_run_totals(state_file: Path) -> None:
     """U5: end a text-mode run with unit totals (README 'Saving a report').
 
-    Best-effort console line only: a missing or unreadable state file skips
-    silently rather than disturbing the run verdict or exit path.
+    Best-effort console line only: any state problem (missing, unreadable,
+    or malformed) skips silently rather than disturbing the run verdict or
+    exit path.
     """
     try:
         state = load_run_state(state_file)
-    except (OSError, ValueError):
+        if state is None or not state.results:
+            return
+        counts: dict[str, int] = {}
+        for result in state.results:
+            counts[result.status] = counts.get(result.status, 0) + 1
+        parts = ", ".join(f"{n} {status}" for status, n in sorted(counts.items()))
+        console.print(f"Totals: {parts} ({len(state.results)} total)")
+    except Exception:  # noqa: BLE001  # M2: best-effort line must never mask the run exit
         return
-    if state is None or not state.results:
-        return
-    counts: dict[str, int] = {}
-    for result in state.results:
-        counts[result.status] = counts.get(result.status, 0) + 1
-    parts = ", ".join(f"{n} {status}" for status, n in sorted(counts.items()))
-    console.print(f"Totals: {parts} ({len(state.results)} total)")
 
 
 def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
@@ -1481,12 +1491,7 @@ def test_command(
             setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
             raise typer.Exit(code=setup_exit_code) from exc
 
-        if sessions != 1:
-            # U13: --sessions is dead in every mode (nothing reads it) --
-            # warn wherever it is passed, not just isolated runs.
-            console.print(
-                f"[yellow]Warning:[/yellow] --sessions is ignored in --isolation {isolation} mode"
-            )
+        _warn_ignored_sessions(sessions, isolation)
         if isolation in {"auto", "file", "test"}:
             collection_phase = True
 
@@ -1596,7 +1601,11 @@ def test_command(
                 # Only when the user actually selected something (flags,
                 # targets, or a selection manifest); full runs never probe.
                 # Reuse already-collected metadata when the discovery path
-                # produced it, else collect once here.
+                # produced it, else collect once here. M4: skip_slow /
+                # only_slow count as selection (they can match nothing),
+                # so filtered file/test runs pay one extra collection pass;
+                # its only side effect is better unit timeouts (counts can
+                # only raise the per-unit budget, never lower it).
                 has_selection = bool(
                     match
                     or category
@@ -1616,9 +1625,18 @@ def test_command(
                         collected_items = collect_pytest_item_metadata(target_args, pytest_args)
                         selected_count = len(collected_items)
                 if selected_count == 0 or (not selection_plan.units and has_selection):
-                    console.print(
-                        "[red]Error:[/red] 0 tests matched the selection (nothing to run)"
-                    )
+                    if selected_count and not selection_plan.units:
+                        # M3: tests matched but every unit was excluded
+                        # (e.g. the disabled baseline) -- say so exactly.
+                        console.print(
+                            "[red]Error:[/red] "
+                            f"{selected_count} tests matched but all units were "
+                            "excluded (nothing to run)"
+                        )
+                    else:
+                        console.print(
+                            "[red]Error:[/red] 0 tests matched the selection (nothing to run)"
+                        )
                     empty_exit_code = _resume_exit_code(state_file, 2) if resume else 2
                     raise typer.Exit(code=empty_exit_code)
                 collection_phase = False

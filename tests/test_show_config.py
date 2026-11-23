@@ -223,7 +223,24 @@ class TestShowConfigCommand:
         assert "force-unwrap" in result.output
         assert "CKM_RSA_AES_KEY_WRAP" in result.output
 
-    def test_show_config_warns_on_dead_settings(
+    def test_show_config_keeps_live_row_matching_dead_marker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """N3: hiding keys on deadness, never on the value text."""
+        from pkcs11_check.cli.app import app
+        from tests._plain_cli_runner import PlainCliRunner
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pkcs11_check.toml").write_text(
+            'wrap_key_label = "(no effect)"\n', encoding="utf-8"
+        )
+        result = PlainCliRunner().invoke(
+            app, ["test", "--module", str(tmp_path / "x.so"), "--show-config"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "wrap_key_label" in result.output
+
+    def test_show_config_warns_on_ignored_settings(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """S12: --show-config emits the same dead-setting warnings as test."""

@@ -406,6 +406,7 @@ def test_verify_retry_releases_first_buffer_before_realloc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """R13-3: the retry never holds two provider buffers at once."""
+    import gc
     import weakref
 
     from pkcs11_check.raw import recipes as raw_recipes
@@ -434,7 +435,13 @@ def test_verify_retry_releases_first_buffer_before_realloc(
             attrs[0].ulValueLen = 3
         return int(CKR_OK)
 
-    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    # Nit 3: disable cyclic GC around the read so the proof is refcounting,
+    # not a fortuitously timed collection of a cast-pinned buffer.
+    gc.disable()
+    try:
+        result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    finally:
+        gc.enable()
     assert result.unproved_delivery == {int(CKA_VALUE)}
     assert max_live == 1
 

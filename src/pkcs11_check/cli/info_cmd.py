@@ -72,21 +72,25 @@ def _collect_module_info(module: str, interface: str) -> ModuleInfo:
     slots: list[SlotInfo] = []
     for i, slot in enumerate(p11.get_slots(token_present=True)):
         token = slot.get_token()
+        initialized = bool(int(token.flags) & int(CKF_TOKEN_INITIALIZED))
         mechs: list[tuple[str, str, str]] = []
-        for mech in sorted(slot.get_mechanisms(), key=_mech_sort_key):
-            info = slot.get_mechanism_info(mech)
-            mechs.append(
-                (
-                    _mech_sort_key(mech),
-                    str(info.min_key_length) if info else "",
-                    str(info.max_key_length) if info else "",
+        # N7: uninitialized tokens render no mechanism table, so skip the
+        # per-mechanism queries (fewer provider calls on unusable slots).
+        if initialized:
+            for mech in sorted(slot.get_mechanisms(), key=_mech_sort_key):
+                info = slot.get_mechanism_info(mech)
+                mechs.append(
+                    (
+                        _mech_sort_key(mech),
+                        str(info.min_key_length) if info else "",
+                        str(info.max_key_length) if info else "",
+                    )
                 )
-            )
         slots.append(
             SlotInfo(
                 index=i,
                 label=str(token.label),
-                initialized=bool(int(token.flags) & int(CKF_TOKEN_INITIALIZED)),
+                initialized=initialized,
                 manufacturer_id=getattr(token, "manufacturer_id", None),
                 model=getattr(token, "model", None),
                 mechanisms=tuple(mechs),

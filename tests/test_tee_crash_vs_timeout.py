@@ -204,3 +204,66 @@ def test_loud_display_shows_everything(
     shown = capsys.readouterr().out
     assert rc == 0, rc
     assert "generated report log file" in shown, shown
+
+
+def test_quiet_display_flushes_long_unterminated_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M6: the hold cap never stalls liveness output (e.g. -q dots).
+
+    20000 newline-free bytes force multiple 8 KiB reads, so the hold cap
+    must flush mid-stream however the pipe chunks -- deterministic, no
+    sleeps. The completed line still filters on its marker.
+    """
+    script = (
+        "import sys\n"
+        "sys.stdout.write('x' * 20000)\n"
+        "sys.stdout.write('------ generated report log file: /tmp/x.jsonl -------\\n')\n"
+    )
+    rc, _out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "x" * 1024 in shown, shown
+    assert "generated report log file" not in shown, shown
+
+
+def test_quiet_display_eof_flushing_and_filtering(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M6: EOF flushes a normal tail but still withholds a noise tail."""
+    script = "import sys\nsys.stdout.write('tail-no-newline')\nsys.stdout.flush()\n"
+    rc, _out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "tail-no-newline" in shown, shown
+
+
+def test_quiet_display_eof_withholds_noise_tail(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M6: an unterminated noise line stays hidden at EOF."""
+    script = (
+        "import sys\n"
+        "sys.stdout.write('------ generated report log file: /tmp/x.jsonl -------')\n"
+        "sys.stdout.flush()\n"
+    )
+    rc, out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "generated report log file" not in shown, shown
+    assert "generated report log file" in out, out

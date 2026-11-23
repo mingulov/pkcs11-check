@@ -157,11 +157,13 @@ def _fake_module(slots: list[tuple[str, int]]) -> object:
     class _Slot:
         def __init__(self, label: str, flags: int) -> None:
             self._token = _Token(label, flags)
+            self.queries = 0
 
         def get_token(self) -> _Token:
             return self._token
 
         def get_mechanisms(self) -> list[int]:
+            self.queries += 1
             return [0x1082] if self._token.label else []
 
         def get_mechanism_info(self, mech: int) -> object:
@@ -173,12 +175,15 @@ def _fake_module(slots: list[tuple[str, int]]) -> object:
         path = "fake.so"
         interface_version = "3.0"
 
+        def __init__(self) -> None:
+            self._slots = [_Slot(label, flags) for label, flags in slots]
+
         def get_interface_list(self) -> list[tuple[str, int, int]]:
             return []
 
         def get_slots(self, token_present: bool = True) -> list[_Slot]:
             assert token_present
-            return [_Slot(label, flags) for label, flags in slots]
+            return self._slots
 
     return _Module()
 
@@ -189,13 +194,12 @@ def test_collect_marks_uninitialized_slots(
     """U9: collection records per-slot initialized state from token flags."""
     from pkcs11_check.raw.types_std import CKF_TOKEN_INITIALIZED
 
-    monkeypatch.setattr(
-        info_cmd,
-        "load_module",
-        lambda *a, **k: _fake_module([("demo", int(CKF_TOKEN_INITIALIZED)), ("", 0)]),
-    )
+    fake = _fake_module([("demo", int(CKF_TOKEN_INITIALIZED)), ("", 0)])
+    monkeypatch.setattr(info_cmd, "load_module", lambda *a, **k: fake)
     info = info_cmd._collect_module_info("fake.so", "auto")
     assert [slot.initialized for slot in info.slots] == [True, False]
+    # N7: mechanism queries run only for the initialized slot.
+    assert [slot.queries for slot in fake._slots] == [1, 0]
 
 
 def test_render_names_usable_slot_and_skips_uninitialized_table(

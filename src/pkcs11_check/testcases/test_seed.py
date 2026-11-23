@@ -268,7 +268,7 @@ class TestSEEDEncryption:
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         # S5: fixed distinct values (deterministic attribution;
-        # a ciphertext match then proves IV-insensitivity, never a test-RNG collision).
+        # a ciphertext match then proves IV-insensitivity, never a provider-RNG collision).
         iv1 = b"\x00" * 16
         iv2 = b"\x01" * 16
         try:

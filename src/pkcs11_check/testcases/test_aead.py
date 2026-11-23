@@ -235,7 +235,7 @@ class TestAESGCMProperties:
         plaintext = b"nonce uniqueness"
 
         # S5: fixed distinct values (deterministic attribution;
-        # a ciphertext match then proves IV-insensitivity, never a test-RNG collision).
+        # a ciphertext match then proves IV-insensitivity, never a provider-RNG collision).
         nonce1 = b"\x00" * 12
         nonce2 = b"\x01" * 12
 

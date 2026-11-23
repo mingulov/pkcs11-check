@@ -555,6 +555,65 @@ class TestTestCommand:
         assert "0 tests matched" in result.output
         assert called == []
 
+    def test_test_matched_but_all_units_excluded_names_exclusion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M3/M5: matched-but-excluded says so; does not claim 0 matched."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, args: [
+                CollectedPytestItem(nodeid="a.py::t", file_path="a.py", markers=[])
+            ],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--match", "t", "--isolation", "file"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "1 tests matched but all units were excluded" in result.output
+        assert "0 tests matched" not in result.output
+        assert called == []
+
+    def test_test_no_selection_zero_units_skips_fast_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M5: without any selection, empty units never hit the U11 error."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        assert "0 tests matched" not in result.output
+        assert "were excluded" not in result.output
+        assert called == ["run"]
+
     def test_test_nonempty_match_runs_units(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -638,6 +697,37 @@ class TestTestCommand:
         )
         assert result.exit_code == 1, result.output
         assert "Totals: 1 failed, 1 passed (2 total)" in result.output
+
+    def test_test_corrupt_state_skips_totals_without_masking_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M2: a malformed state file never masks the run's exit code."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            kwargs["state_file"].write_text("[]", encoding="utf-8")
+            return 3
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 3, result.output
+        assert "Totals:" not in result.output
+        assert "Traceback" not in result.output
 
     def test_test_json_run_prints_no_text_totals(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -771,6 +861,15 @@ class TestTestCommand:
             app, ["test", "--module", "m.so", "--sessions", "4", "--show-config"]
         )
         assert parsed.exit_code == 0, parsed.output
+
+    def test_sessions_warning_fires_in_every_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """N5: the dead --sessions warning fires in none mode too."""
+        test_cmd._warn_ignored_sessions(4, "file")
+        test_cmd._warn_ignored_sessions(4, "none")
+        test_cmd._warn_ignored_sessions(1, "none")
+        err = capsys.readouterr().err
+        assert err.count("--sessions is ignored") == 2, err
+        assert "--isolation none mode" in err
 
     def test_sessions_warns_in_isolated_modes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
