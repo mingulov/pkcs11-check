@@ -231,18 +231,52 @@ def test_false_write_is_detected_despite_zero_bytes() -> None:
     assert refusal.malformed is False
 
 
-def test_success_without_write_is_omission_not_canary_value() -> None:
-    """R9-1: CKR_OK with a pristine canary surfaces nothing (never canary bytes)."""
+def test_success_without_write_omits_bool_not_bytes() -> None:
+    """R10-2: pristine-canary omission applies to bools (out-of-domain canary)."""
+    from pkcs11_check.raw.types_std import CKA_TOKEN
 
     def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
         assert count == 1
         attrs[0].ulValueLen = 1  # claims a byte, writes nothing
         return int(CKR_OK)
 
-    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
-    assert CKA_LABEL not in result
+    result = read_attributes(_raw(_get), 1, 1, [CKA_TOKEN])
+    assert CKA_TOKEN not in result
     assert result.refusals == {}
     assert result.unavailable_without_ckr == set()
+
+
+def test_canary_valued_bytes_still_decode() -> None:
+    """R10-2: arbitrary-byte values decode even when canary-valued (never dropped)."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue:
+            ctypes.memmove(attrs[0].pValue, b"\xa5" * 16, 16)
+        attrs[0].ulValueLen = 16
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE])
+    assert result[CKA_VALUE] == b"\xa5" * 16
+
+
+def test_out_of_range_write_does_not_validate_bool() -> None:
+    """R10-1: a write outside the returned range leaves the bool unproved."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 2
+        else:
+            ctypes.memmove(attrs[0].pValue + 1, b"\x00", 1)
+            attrs[0].ulValueLen = 1
+        return int(CKR_OK)
+
+    from pkcs11_check.raw.types_std import CKA_TOKEN
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_TOKEN])
+    assert CKA_TOKEN not in result
+    assert result.refusals == {}
 
 
 def test_canary_collision_undercounts_transparently() -> None:
@@ -266,21 +300,20 @@ def test_large_compare_stays_bounded_without_int_list() -> None:
     """R9-2: buffer comparison never materializes an int list (MemoryError fix)."""
     import tracemalloc
 
-    from pkcs11_check.raw.recipes import _proven_write_len
+    from pkcs11_check.raw.recipes import _changed_byte_count
 
     n = 4 * 1024 * 1024
     buf = (ctypes.c_ubyte * n)()
     ctypes.memset(buf, 0xA5, n)
     tracemalloc.start()
     try:
-        snapshot = bytes(memoryview(buf))
-        assert _proven_write_len(buf, snapshot) is None
+        assert _changed_byte_count(buf, n) == 0
         buf[n - 1] = 0x00
-        assert _proven_write_len(buf, snapshot) == 1
+        assert _changed_byte_count(buf, n) == 1
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert peak < 3 * n
+    assert peak < n
 
 
 def test_large_sentinel_refusal_survives_snapshot() -> None:

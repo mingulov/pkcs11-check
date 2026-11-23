@@ -1285,20 +1285,23 @@ def _is_unavailable_length(val: int) -> bool:
 _READ_CANARY_BYTE = 0xA5
 
 
-def _proven_write_len(buf: Any, snapshot: bytes | None) -> int | None:
-    """Proven-changed byte count against a canary snapshot, else None (R9-1).
+def _changed_byte_count(buf: Any, size: int) -> int:
+    """Bytes in ``buf[0:size]`` differing from the canary (R9-1b).
 
-    Compares through a buffer view (bounded space: one snapshot-sized
-    copy at most, never a materialized int list). ``None`` when no
-    snapshot exists or nothing changed. A lower bound: bytes matching
-    the canary are invisible.
+    Chunked raw reads: bounded space regardless of buffer size (no
+    snapshot, no full copy, no int list). The range clamps to the
+    allocation; a lower bound, since canary-matching bytes are invisible.
+    Call only for canary-filled single-attribute buffers.
     """
-    if not snapshot:
-        return None
-    current = bytes(memoryview(buf))
-    if current == snapshot:
-        return None
-    return sum(1 for a, b in zip(current, snapshot) if a != b)
+    bound = min(size, len(buf))
+    needle = bytes((_READ_CANARY_BYTE,))
+    base = ctypes.addressof(buf)
+    changed = 0
+    for off in range(0, bound, 65536):
+        clen = min(65536, bound - off)
+        chunk = ctypes.string_at(base + off, clen)
+        changed += clen - chunk.count(needle)
+    return changed
 
 
 def read_attributes(
@@ -1306,6 +1309,8 @@ def read_attributes(
     session: int,
     handle: int,
     attr_types: list[int] | tuple[int, ...] | set[int] | frozenset[int],
+    *,
+    raw_bool: bool = False,
 ) -> AttrReadResult:
     """Read attribute values from an object.
 
@@ -1314,7 +1319,9 @@ def read_attributes(
     to its value. Uses the generated ATTR_VALUE_TYPES table for
     spec-correct decoding: bool attrs as bool, ulong attrs as int, str attrs
     as str, date attrs as 'YYYYMMDD' str, ulong_array attrs as list[int],
-    template and unknown attrs as bytes.
+    template and unknown attrs as bytes. With ``raw_bool``, bool attrs come
+    back as the raw byte instead, so callers needing canonical-TRUE proof
+    (the sign-probe twin check) can require exactly ``0x01``.
 
     An attribute type that the module refused (CKR_ATTRIBUTE_SENSITIVE or
     CKR_ATTRIBUTE_TYPE_INVALID) is never a key in the returned mapping, and
@@ -1323,6 +1330,12 @@ def read_attributes(
     sensitive" from "unrecognised attribute type" instead of seeing one
     undifferentiated omission. A plain absence with no CKR observed for that
     attribute carries no ``refusals`` entry.
+
+    Single-attribute buffers prefill with a non-boolean canary (R9-1):
+    refusal-with-data claims are proven by changed bytes, and a success
+    whose returned range is canary-pristine omits the key (bool attrs
+    only -- other types have no out-of-domain canary, so their values
+    decode as before). Never hand canary bytes back as data.
 
     Returns `dict[int, Any]`-shaped values (not a precise union) because
     callers typically know the expected attribute type and call
@@ -1342,29 +1355,23 @@ def read_attributes(
 
     # Allocate buffers (skip unavailable attributes)
     buffers: list[Any] = []
-    snapshots: list[bytes | None] = []
     for i in range(count):
         size = tmpl[i].ulValueLen
         if _is_unavailable_length(size):
             buffers.append(None)
-            snapshots.append(None)
             continue
         buf = _alloc_module_output(size, what="C_GetAttributeValue")
         tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
         tmpl[i].ulValueLen = size
         buffers.append(buf)
         # R9-1: canary-fill single-attribute buffers (non-boolean 0xA5, so
-        # even a FALSE/zero write provably differs) and snapshot them, so
-        # a refusal-with-data claim is proven by changed bytes, never
-        # inferred from a bare length. Multi-attribute reads keep today's
-        # zero-fill (their refusal attribution stays the documented
-        # residual gap below). Snapshots copy through a buffer view: one
-        # bounded allocation, never a materialized int list.
+        # even a FALSE/zero write provably differs from untouched
+        # allocation). No snapshot is stored: comparisons run against the
+        # known fill byte in bounded chunks. Multi-attribute reads keep
+        # today's zero-fill (their refusal attribution stays the
+        # documented residual gap below).
         if count == 1 and size > 0:
             ctypes.memset(buf, _READ_CANARY_BYTE, size)
-            snapshots.append(bytes(memoryview(buf)))
-        else:
-            snapshots.append(None)
 
     # Second call: read values
     rv2 = raw.C_GetAttributeValue(session, handle, tmpl, count)
@@ -1381,16 +1388,21 @@ def read_attributes(
     result = AttrReadResult()
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
-        snapshot = snapshots[i]
-        changed_len = _proven_write_len(buffers[i], snapshot) if count == 1 else None
-        if _is_unavailable_length(size) or buffers[i] is None:
+        buf = buffers[i]
+        # Whole-allocation change count, single-attribute canary reads only.
+        changed_all = (
+            _changed_byte_count(buf, len(buf)) if count == 1 and buf is not None else 0
+        )
+        if _is_unavailable_length(size) or buf is None:
             # Attribute sensitive or type invalid, correctly signalled via the
             # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
             # record a refusal when one was actually observed on this call.
             if _observed_refusal_ckr is not None:
                 # R8-1: a write proven by changed bytes counts even when the
                 # module hid behind the sentinel afterwards.
-                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr, leaked_len=changed_len)
+                result.refusals[at] = AttrRefusal(
+                    ckr=_observed_refusal_ckr, leaked_len=changed_all or None
+                )
             else:
                 # F20: the sentinel was observed but the calls returned CKR_OK --
                 # success claimed, no value delivered. No CKR is invented, but
@@ -1398,7 +1410,6 @@ def read_attributes(
                 # spec-shape deviation from a plain omission.
                 result.unavailable_without_ckr.add(at)
             continue
-        raw_bytes = bytes(buffers[i][:size])
         if _observed_refusal_ckr is not None and count == 1:
             # This is the sole requested attribute, so an observed refusal CKR is
             # unambiguously about it -- even though the module used a real
@@ -1410,10 +1421,10 @@ def read_attributes(
             # leak. With multiple requested attributes this per-attribute
             # attribution is not reliable from the overall rv alone, so it is
             # intentionally left as a residual gap (documented, not guessed at).
-            if changed_len is not None:
+            if changed_all:
                 result.refusals[at] = AttrRefusal(
                     ckr=_observed_refusal_ckr,
-                    leaked_len=changed_len,
+                    leaked_len=changed_all,
                     reported_len=size,
                 )
             else:
@@ -1421,23 +1432,28 @@ def read_attributes(
                     ckr=_observed_refusal_ckr, malformed=True, reported_len=size
                 )
             continue
+        vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         if (
             _observed_refusal_ckr is None
             and count == 1
             and size > 0
-            and snapshot
-            and changed_len is None
+            and vtype == "bool"
+            and size == ctypes.sizeof(CK_BBOOL)
+            and _changed_byte_count(buf, size) == 0
         ):
-            # R9-1: success claimed but the canary is pristine -- nothing was
-            # written, so there is no value to surface. Never hand canary
-            # bytes back as data; treat as a plain omission (downstream
-            # deviation, never a pass). Zero-size successes stay empty
-            # values (nothing observable); multi-attribute reads keep
+            # R9-1: success claimed but the returned range is canary-pristine:
+            # nothing was delivered, so there is no value to surface. Never
+            # hand canary bytes back as data; treat as a plain omission
+            # (downstream deviation, never a pass). Scoped to canonical
+            # bools (R10-2): the only type with an out-of-domain canary --
+            # arbitrary-byte values always decode, and a write outside the
+            # returned range does not validate it. Zero-size successes stay
+            # empty values (nothing observable); multi-attribute reads keep
             # today's zero-fill behavior.
             continue
-        vtype = ATTR_VALUE_TYPES.get(at, "bytes")
+        raw_bytes = bytes(buffers[i][:size])
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
-            result[at] = raw_bytes[0] != 0
+            result[at] = raw_bytes[0] if raw_bool else raw_bytes[0] != 0
         elif vtype == "ulong" and size == ctypes.sizeof(CK_ULONG):
             result[at] = int.from_bytes(raw_bytes, byteorder=sys.byteorder)
         elif vtype == "str":

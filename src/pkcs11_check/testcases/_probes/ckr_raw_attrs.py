@@ -164,7 +164,7 @@ def _finish_flag_probe(
         if control_key == key:
             print(f"BREAK:control twin aliases the disabled key (handle {key})")
             return
-        twin_vals = read_attributes(ctx.raw, sh, control_key, [false_attr])
+        twin_vals = read_attributes(ctx.raw, sh, control_key, [false_attr], raw_bool=True)
         twin_refusal = refusal_for(twin_vals, false_attr)
         attr_name = ATTR_NAMES.get(int(false_attr), str(false_attr))
         if twin_refusal is not None and twin_refusal.leaked_len is not None:
@@ -173,8 +173,7 @@ def _finish_flag_probe(
                 f"for {attr_name} but wrote {twin_refusal.leaked_len} bytes"
             )
             return
-        twin_claim = _classify_readback(twin_vals, false_attr)
-        if twin_claim.get("event") == "omitted":
+        if false_attr not in twin_vals:
             if twin_refusal is not None and twin_refusal.malformed:
                 print(
                     f"DEVIATION_XFAIL:control twin omits {attr_name} "
@@ -192,10 +191,13 @@ def _finish_flag_probe(
                     f"DEVIATION_XFAIL:control twin omits {attr_name}; enforcement oracle disabled"
                 )
             return
-        if twin_claim.get("event") != "boolean" or twin_claim.get("value") is not True:
+        if twin_vals[false_attr] != 1:
+            # R10-1: only the canonical TRUE byte verifies the twin. A
+            # disclaimed flag, a mangled value, or an untouched canary
+            # (out-of-range write) all void the control loudly.
             print(
-                f"BREAK:control twin does not read back {attr_name}=True "
-                f"({twin_claim.get('event')})"
+                f"BREAK:control twin does not read back canonical {attr_name}=True "
+                f"(got {twin_vals[false_attr]!r})"
             )
             return
         control_init_rv = init(sh, mech.byref(), control_key)

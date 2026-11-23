@@ -444,7 +444,7 @@ def _ulong_native(value: int) -> bytes:
 def _readback_by_handle(disabled_handle: int = 4242) -> Any:
     """Read back CKA_SIGN=False only for the disabled key (R5-1 twin checks)."""
 
-    def _read(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, bool]:
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any) -> dict[int, bool]:
         return {CKA_SIGN: int(handle) != disabled_handle}
 
     return _read
@@ -683,7 +683,7 @@ def test_sign_probe_control_twin_omitted_deviates(
 ) -> None:
     """R6-1: a twin omitting the flag deviates (oracle disabled), uncredited."""
 
-    def _omit_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+    def _omit_twin(_raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any) -> dict[int, Any]:
         if int(handle) != 4242:
             return {}
         return {CKA_SIGN: False}
@@ -711,7 +711,9 @@ def test_sign_probe_control_twin_malformed_breaks(
 ) -> None:
     """R6-1: a twin with a malformed flag readback stays loud (break)."""
 
-    def _malform_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+    def _malform_twin(
+        _raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any
+    ) -> dict[int, Any]:
         if int(handle) != 4242:
             return {CKA_SIGN: b""}
         return {CKA_SIGN: False}
@@ -738,7 +740,7 @@ def test_sign_probe_control_twin_refusal_with_data_breaks(
     """R7-1: twin refusal-with-data is a hard break (RV + length kept)."""
     from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
 
-    def _leak_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+    def _leak_twin(_raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any) -> dict[int, Any]:
         if int(handle) == 4242:
             return {CKA_SIGN: False}
         result = AttrReadResult()
@@ -771,7 +773,9 @@ def test_sign_probe_control_twin_clean_refusal_names_rv(
     """R7-1: a clean twin refusal deviates, naming the observed RV."""
     from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
 
-    def _refuse_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+    def _refuse_twin(
+        _raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any
+    ) -> dict[int, Any]:
         if int(handle) == 4242:
             return {CKA_SIGN: False}
         result = AttrReadResult()
@@ -802,7 +806,9 @@ def test_sign_probe_control_twin_malformed_refusal_deviates(
     """R8-1: a malformed twin refusal deviates by name (uncredited, no leak)."""
     from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
 
-    def _malform_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+    def _malform_twin(
+        _raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any
+    ) -> dict[int, Any]:
         if int(handle) == 4242:
             return {CKA_SIGN: False}
         result = AttrReadResult()
@@ -844,6 +850,73 @@ def test_sign_probe_false_write_detected_through_real_reader(
     out = capsys.readouterr().out
     assert "BREAK:" in out
     assert "wrote 1 bytes" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_sign_probe_control_twin_noncanonical_true_breaks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R10-1: only canonical 0x01 verifies the twin (truthy is not enough)."""
+
+    def _noncanonical_twin(
+        _raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any
+    ) -> dict[int, Any]:
+        if int(handle) == 4242:
+            return {CKA_SIGN: False}
+        return {CKA_SIGN: 0xFF}
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _noncanonical_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "BREAK:" in out
+    assert "canonical" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+class _OutOfRangeWriteRaw(_SignCaptureRaw):
+    """Twin writes outside the returned range (R10-1 integrated proof)."""
+
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        assert int(count) == 1
+        if int(handle) == 4242:
+            if tmpl[0].pValue:
+                ctypes.memmove(tmpl[0].pValue, b"\x00", 1)
+            tmpl[0].ulValueLen = 1
+            return int(CKR_OK)
+        if tmpl[0].pValue is None:
+            tmpl[0].ulValueLen = 2
+        else:
+            ctypes.memmove(tmpl[0].pValue + 1, b"\x00", 1)
+            tmpl[0].ulValueLen = 1
+        return int(CKR_OK)
+
+
+def test_sign_probe_out_of_range_write_leaves_twin_unproved(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R10-1: out-of-range twin write deviates (real reader, no credit)."""
+    raw = _OutOfRangeWriteRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "DEVIATION_XFAIL:" in out
+    assert "BREAK:" not in out
     assert "CKR:" not in out
     assert "OK" not in out.splitlines()
     assert len(raw.sign_calls) == 1
