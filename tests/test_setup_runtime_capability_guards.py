@@ -3090,3 +3090,31 @@ def test_gen_ec_unlisted_refusal_reraises(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_ckr(int(CKR_ACTION_PROHIBITED)))
     with pytest.raises(CkrAssertionError):
         conftest.gen_ec_keypair_or_xfail(_gen_ec_rs(), b"fake-oid")
+
+
+def test_gen_ec_curve_refusal_with_working_baseline_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2-6: curve refusal with a working plain-gen baseline stays loud."""
+    calls: list[bool] = []
+
+    def _refuse_then_work(*args: Any, **kwargs: Any) -> tuple[int, int]:
+        calls.append(True)
+        if len(calls) == 1:
+            raise CkrAssertionError("refused", int(CKR_CURVE_NOT_SUPPORTED), "C_GenerateKeyPair")
+        return (11, 12)
+
+    destroyed: list[Any] = []
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _refuse_then_work)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", lambda *a: destroyed.append(a))
+    with pytest.raises(CkrAssertionError, match="baseline"):
+        conftest.gen_ec_keypair_or_xfail(_gen_ec_rs(), b"fake-oid")
+    assert {c[2] for c in destroyed} == {11, 12}
+
+
+def test_gen_ec_curve_refusal_with_refused_baseline_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2-6: baseline refusal confirms absence (skip names the baseline)."""
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_ckr(int(CKR_CURVE_NOT_SUPPORTED)))
+    assert_skips(conftest.gen_ec_keypair_or_xfail, _gen_ec_rs(), b"fake-oid", match="baseline")

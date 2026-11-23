@@ -467,22 +467,41 @@ def reset_cts_detection_cache() -> None:
     _cts_detection_result = None
 
 
+def _attempt_is_login_caused(attempt: object) -> bool:
+    """Whether one detector attempt is consistent with a logged-out probe (R2-2b)."""
+    if not isinstance(attempt, dict):
+        return False
+    ckr = attempt.get("ckr")
+    if ckr is None:
+        return True
+    try:
+        return int(ckr) == int(CKR_USER_NOT_LOGGED_IN)
+    except (TypeError, ValueError):
+        return False
+
+
 def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
     """Get or detect the structured CTS result, cached within one isolated process.
 
     S2: a logged-out login refusal is not a provider finding -- the probe
     never logged in -- so it is converted to not-operational (xfail)
     BEFORE caching, and every consumer (sentinel, vector guards) sees the
-    converted result. Callers that know the session is logged in (or predate
-    the discriminator) keep the default, which preserves setup-error.
+    converted result. The conversion requires every recorded attempt to be
+    login-caused: a mixed refusal (for example an undefined RV beside a
+    login refusal) stays loud. Callers that know the session is logged in
+    (or predate the discriminator) keep the default, which preserves
+    setup-error.
     """
     global _cts_detection_result  # noqa: PLW0603
     if _cts_detection_result is None:
         result = _detect_cts_variant(rs)
+        attempts = result.detail.get("attempts", []) if result.detail else []
+        all_login_caused = all(_attempt_is_login_caused(a) for a in attempts)
         if (
             not logged_in
             and result.status is CtsDetectionStatus.SETUP_ERROR
             and result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+            and all_login_caused
         ):
             result = CtsDetectionResult(
                 CtsDetectionStatus.NOT_OPERATIONAL,

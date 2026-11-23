@@ -822,6 +822,36 @@ def test_cts_collection_probe_logged_in_login_refusal_stays_loud(
     assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
 
 
+def test_cts_mixed_refusal_stays_loud(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R2-2b: a foreign RV among login refusals blocks the downgrade (loud)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {"ckr": 0x00FFFFFF},
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+
+
 def test_detection_skip_reason_names_logged_out_login_refusal() -> None:
     """S2: logged-out skips tell the operator to configure a PIN."""
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest

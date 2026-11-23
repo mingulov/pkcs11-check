@@ -6205,6 +6205,29 @@ class TestTransientWriteRetry:
         with pytest.raises(durability.CounterPersistenceError):
             durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
 
+    def test_sidecar_unreadable_destination_refuses_without_bare_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """F2b: read+stat EACCES refuses via CounterPersistenceError (no tmp left)."""
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+
+        def _raise_eacces(self: Path, *args: Any, **kwargs: Any) -> Any:
+            raise PermissionError(errno.EACCES, "Permission denied")
+
+        monkeypatch.setattr(Path, "read_bytes", _raise_eacces)
+        monkeypatch.setattr(Path, "exists", _raise_eacces)
+
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert list(tmp_path.glob("*.tmp-*")) == []
+        assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+
     def test_sidecar_total_failure_restores_committed_snapshot(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

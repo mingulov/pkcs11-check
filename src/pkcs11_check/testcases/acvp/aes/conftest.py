@@ -42,16 +42,20 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     # Classify CTS variant test items
     cts_variant_items: dict[str, list[pytest.Item]] = {}
+    sentinel_selected = False
     for item in items:
         nodeid = item.nodeid
         if "test_cts.py" not in nodeid:
+            continue
+        if nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected":
+            sentinel_selected = True
             continue
         for v in ("1", "2", "3"):
             if f"_cs{v}_" in nodeid:
                 cts_variant_items.setdefault(v, []).append(item)
                 break
 
-    if not cts_variant_items:
+    if not cts_variant_items and not sentinel_selected:
         return
 
     detection = _probe_cts_variant(config)
@@ -63,10 +67,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         # detection-failure classification.  The sentinel is skipped only when
         # it is actually part of this selection; never assume pytest selected a
         # sibling test or add one to the run.
-        sentinel_selected = any(
-            item.nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected"
-            for item in items
-        )
         if sentinel_selected:
             # Detection failed: skip all CS variant tests.  The selected
             # sentinel remains the sole reporter.

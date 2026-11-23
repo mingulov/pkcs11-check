@@ -500,10 +500,10 @@ def test_sign_probe_setup_failure_reports_setup_xfail(
     assert "CKR:" not in out
 
 
-def test_sign_probe_undefined_keygen_rv_fails_loud_without_fallback(
+def test_sign_probe_undefined_keygen_rv_emits_refused_marker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """F6a: undefined setup RVs never silently fall back (fail loud)."""
+    """F6a: undefined setup RVs emit SETUP_REFUSED, never silently fall back."""
     monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
@@ -515,13 +515,14 @@ def test_sign_probe_undefined_keygen_rv_fails_loud_without_fallback(
     raw_probe._sign(ctx)
 
     out = capsys.readouterr().out
-    assert "SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed" in out
+    assert "SETUP_REFUSED:C_GenerateKey:0x00ffffff" in out
     assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
     assert raw.create_calls == []
     assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
 
 
-def test_sign_probe_undefined_create_rv_fails_loud_without_fallback(
+def test_sign_probe_undefined_create_rv_emits_refused_marker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """F6a: undefined CreateObject RV never falls through to the AES route."""
@@ -537,9 +538,123 @@ def test_sign_probe_undefined_create_rv_fails_loud_without_fallback(
     raw_probe._sign(ctx)
 
     out = capsys.readouterr().out
-    assert "SETUP_XFAIL:C_CreateObject for CKA_SIGN=False failed" in out
+    assert "SETUP_REFUSED:C_CreateObject:0x00ffffff" in out
     assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
     assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
+
+
+def test_sign_probe_defined_rv_still_falls_back(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F6a control: defined setup refusals keep the fallback chain."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN)},
+        refuse_create=True,
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "SETUP_REFUSED" not in out
+    assert out.rstrip().endswith("OK")
+
+
+def test_sign_probe_fallback_notes_beaten_defined_rv_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F6a: beaten defined RVs stay visible on stderr (unparsed diagnostics)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN)},
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    err = capsys.readouterr().err
+    assert "setup fallback" in err
+    assert "C_GenerateKey" in err
+
+
+def test_refused_marker_undefined_rv_is_hard_metadata_fail() -> None:
+    """F6a: undefined setup RV routes to a hard metadata verdict with op+RV."""
+    out = "SETUP_REFUSED:C_GenerateKey:0x00ffffff\n"
+    with pytest.raises(pytest.fail.Exception, match="return-value contract violation"):
+        tra._check_permission_probe(
+            0,
+            out,
+            "",
+            context="C_SignInit with CKA_SIGN=False",
+            operation="C_SignInit",
+            attribute=CKA_SIGN,
+        )
+    refused = [
+        record
+        for record in C.get_records()
+        if record.detail is not None and record.detail.get("protocol_marker") == "SETUP_REFUSED"
+    ]
+    assert len(refused) == 1
+    assert refused[0].reason == "self_contradiction"
+    assert refused[0].kind == "metadata"
+    assert refused[0].operation == "C_GenerateKey"
+    assert refused[0].actual_ckr == "0x00ffffff"
+
+
+def test_refused_marker_defined_rv_is_not_operational_xfail() -> None:
+    """F6a: defined setup refusals route to not_operational xfail."""
+    out = "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+    with pytest.raises(pytest.xfail.Exception, match="setup C_GenerateKey refused"):
+        tra._check_permission_probe(
+            0,
+            out,
+            "",
+            context="C_SignInit with CKA_SIGN=False",
+            operation="C_SignInit",
+            attribute=CKA_SIGN,
+        )
+    refused = [
+        record
+        for record in C.get_records()
+        if record.detail is not None and record.detail.get("protocol_marker") == "SETUP_REFUSED"
+    ]
+    assert len(refused) == 1
+    assert refused[0].reason == "not_operational"
+    assert refused[0].outcome == "xfail"
+
+
+def test_refused_marker_malformed_is_harness_error() -> None:
+    """F6a: malformed refusal markers fail loud as harness errors."""
+    out = "SETUP_REFUSED:garbage!!!\n"
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        tra._check_permission_probe(
+            0,
+            out,
+            "",
+            context="C_SignInit with CKA_SIGN=False",
+            operation="C_SignInit",
+            attribute=CKA_SIGN,
+        )
+    assert any(record.reason == "harness_error" for record in C.get_records())
+
+
+def test_refused_marker_beside_measurement_is_harness_error() -> None:
+    """F6a: a refusal beside a target measurement breaks the wire protocol."""
+    out = "SETUP_REFUSED:C_GenerateKey:0x00000006\nCKR:0x00000062\n"
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        tra._check_permission_probe(
+            0,
+            out,
+            "",
+            context="C_SignInit with CKA_SIGN=False",
+            operation="C_SignInit",
+            attribute=CKA_SIGN,
+        )
+    assert any(record.reason == "harness_error" for record in C.get_records())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")

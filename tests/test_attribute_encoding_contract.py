@@ -37,11 +37,13 @@ from pkcs11_check.raw.types_std import (
     CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
+    CKA_SIGN,
     CKA_SIGN_RECOVER,
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VERIFY_RECOVER,
     CKK_EC,
+    CKK_EC_EDWARDS,
     CKK_EC_MONTGOMERY,
     CKK_ML_DSA,
     CKO_PRIVATE_KEY,
@@ -635,21 +637,45 @@ def test_private_value_claim_overridden_is_not_judged() -> None:
 class _CurveRefusalRaw(_EncodingRaw):
     """Refuse creates for one key type with a scripted RV (fw#93)."""
 
-    def __init__(self, key_type: int, rv: int) -> None:
+    def __init__(
+        self,
+        key_type: int,
+        rv: int,
+        *,
+        only_if: Any = None,
+    ) -> None:
         super().__init__()
         self._refuse_key_type = key_type
         self._refuse_rv = rv
+        self._only_if = only_if
 
     def C_CreateObject(self, _sh: int, tmpl: Any, count: int, handle_ptr: Any) -> int:  # noqa: N802
         if int(count) > 0:
             attrs = _decode_template(tmpl, int(count))
-            if attrs.get(int(CKA_KEY_TYPE)) == _ulong_blob(self._refuse_key_type):
+            if attrs.get(int(CKA_KEY_TYPE)) == _ulong_blob(self._refuse_key_type) and (
+                self._only_if is None or self._only_if(attrs)
+            ):
                 return self._refuse_rv
         return super().C_CreateObject(_sh, tmpl, count, handle_ptr)
 
+    def C_GenerateKeyPair(  # noqa: N802
+        self,
+        _sh: int,
+        _mech: Any,
+        _pub_tmpl: Any,
+        _pub_count: int,
+        _priv_tmpl: Any,
+        _priv_count: int,
+        _pub_ptr: Any,
+        _priv_ptr: Any,
+    ) -> int:
+        # The R2-6 baseline consults generation on the same curve: a fake
+        # modeling a genuinely unsupported curve refuses both legs.
+        return self._refuse_rv
+
 
 def test_montgomery_import_curve_refusal_skips() -> None:
-    """Curve refusal on Montgomery import skips: unsupported capability (fw#93)."""
+    """Curve refusal on Montgomery import+baseline skips: unsupported (fw#93, R2-6)."""
     fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_CURVE_NOT_SUPPORTED))
     assert_skips(
         object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
@@ -660,7 +686,7 @@ def test_montgomery_import_curve_refusal_skips() -> None:
 
 
 def test_ec_import_curve_refusal_skips() -> None:
-    """Curve refusal on EC import skips as well (fw#93)."""
+    """Curve refusal on EC import+baseline skips as well (fw#93, R2-6)."""
     fake = _CurveRefusalRaw(int(CKK_EC), int(CKR_CURVE_NOT_SUPPORTED))
     assert_skips(
         object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
@@ -717,6 +743,94 @@ def test_montgomery_import_without_mechanism_skips() -> None:
         object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
         rs,
         "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type,gen_name",
+    [
+        ("ec", int(CKK_EC), "gen_ec_keypair_or_xfail"),
+        ("edwards", int(CKK_EC_EDWARDS), "gen_edwards_keypair_or_xfail"),
+        ("montgomery", int(CKK_EC_MONTGOMERY), "_gen_montgomery_pair_or_xfail"),
+    ],
+)
+def test_import_curve_refusal_with_working_baseline_reraises(
+    monkeypatch: pytest.MonkeyPatch, family: str, key_type: int, gen_name: str
+) -> None:
+    """R2-6: import refusal with a working gen baseline stays loud."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(key_type, int(CKR_CURVE_NOT_SUPPORTED))
+    gen_calls: list[bool] = []
+
+    def _working(rs: Any, *args: Any, **kwargs: Any) -> tuple[int, int]:
+        gen_calls.append(True)
+        return (11, 12)
+
+    monkeypatch.setattr(object_case, gen_name, _working)
+    destroyed: list[Any] = []
+    monkeypatch.setattr(object_case, "destroy_quietly", lambda *a: destroyed.append(a))
+    with pytest.raises(CkrAssertionError, match="baseline"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), family
+        )
+    assert len(gen_calls) == 1
+    assert {c[2] for c in destroyed} == {11, 12}
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type,gen_name",
+    [
+        ("ec", int(CKK_EC), "gen_ec_keypair_or_xfail"),
+        ("edwards", int(CKK_EC_EDWARDS), "gen_edwards_keypair_or_xfail"),
+        ("montgomery", int(CKK_EC_MONTGOMERY), "_gen_montgomery_pair_or_xfail"),
+    ],
+)
+def test_import_curve_refusal_with_refused_baseline_skips(
+    monkeypatch: pytest.MonkeyPatch, family: str, key_type: int, gen_name: str
+) -> None:
+    """R2-6: baseline refusal confirms absence (skip names the baseline)."""
+    fake = _CurveRefusalRaw(key_type, int(CKR_CURVE_NOT_SUPPORTED))
+
+    def _refused(rs: Any, *args: Any, **kwargs: Any) -> Any:
+        raise pytest.skip.Exception("baseline curve refused")
+
+    monkeypatch.setattr(object_case, gen_name, _refused)
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        family,
+        match="baseline",
+    )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_minimal_baseline_works_reraises() -> None:
+    """R2-6: ML-DSA refusal with a working minimal template stays loud."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(
+        int(CKK_ML_DSA),
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        only_if=lambda attrs: int(CKA_SIGN) in attrs,
+    )
+    with pytest.raises(CkrAssertionError, match="baseline"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), "ml_dsa_44"
+        )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_minimal_baseline_refused_skips() -> None:
+    """R2-6: minimal-template refusal confirms absence (skip names the baseline)."""
+    fake = _CurveRefusalRaw(int(CKK_ML_DSA), int(CKR_ATTRIBUTE_TYPE_INVALID))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ml_dsa_44",
+        match="baseline",
     )
     _assert_cleanup(fake)
 
@@ -829,11 +943,48 @@ def test_generated_scalar_public_mismatch_fails() -> None:
     _assert_cleanup(fake)
 
 
-def test_generated_scalar_undecodable_point_skips_binding() -> None:
-    """F8: undecodable points skip binding (point validity is other tests' job)."""
+def test_generated_scalar_undecodable_point_fails() -> None:
+    """F8: undecodable points fail (garbage is assessed broken, per precedent)."""
     scalar = b"\x01" + b"\x07" * 31
     fake = _EncodingRaw()
     fake.genpair_queue = [({_EC_POINT: b"garbage"}, {_VALUE: scalar})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_compressed_mismatch_fails() -> None:
+    """F8: binding sees compressed encodings too (no silent pass)."""
+    scalar_a = b"\x01" + b"\x07" * 31
+    scalar_b = b"\x02" + b"\x07" * 31
+    nums_a = (
+        ec.derive_private_key(int.from_bytes(scalar_a, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    compressed_a = (b"\x02" if nums_a.y % 2 == 0 else b"\x03") + nums_a.x.to_bytes(32, "big")
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: b"\x04\x21" + compressed_a}, {_VALUE: scalar_b})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_compressed_match_passes() -> None:
+    """F8 control: matching compressed points pass the binding check."""
+    scalar = b"\x01" + b"\x07" * 31
+    nums = (
+        ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    compressed = (b"\x02" if nums.y % 2 == 0 else b"\x03") + nums.x.to_bytes(32, "big")
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: b"\x04\x21" + compressed}, {_VALUE: scalar})]
     object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
         _rs(fake)
     )
