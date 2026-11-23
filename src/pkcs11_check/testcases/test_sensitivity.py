@@ -3621,6 +3621,48 @@ def _matrix_first_length_problem(length: int, cap: int) -> tuple[str, str, str]:
     return ("untouched buffer", "provider-written bytes", "pre-call sentinel bytes intact")
 
 
+_MATRIX_BIGINT_ATTRS = frozenset(
+    {
+        int(CKA_MODULUS),
+        int(CKA_PUBLIC_EXPONENT),
+        int(CKA_PRIVATE_EXPONENT),
+        int(CKA_PRIME_1),
+        int(CKA_PRIME_2),
+        int(CKA_EXPONENT_1),
+        int(CKA_EXPONENT_2),
+        int(CKA_COEFFICIENT),
+    }
+)
+
+
+def _matrix_check_integer_member(
+    len_d: int, observed: bytes, cap: int, expected: bytes
+) -> tuple[bool, str, str, str]:
+    """Compare a known bigint read by integer value (fw#95).
+
+    Minimal-encoding (BN_num_bytes) providers return RSA integers without
+    leading-zero padding, so only the integer value is pinned, in
+    1..len(expected) bytes within the buffer. want/got stay length-only:
+    values are key material and must never reach the records.
+    """
+    bound = min(cap, len(expected))
+    if not 0 < len_d <= bound:
+        return (
+            False,
+            "impossible reported length",
+            f"1..{bound} bytes encoding the known integer",
+            f"{len_d}",
+        )
+    if int.from_bytes(observed[:len_d], "big") != int.from_bytes(expected, "big"):
+        return (
+            False,
+            "wrong integer value",
+            "minimal-or-full-width encoding of the known integer",
+            f"{len_d} bytes",
+        )
+    return True, "", "", ""
+
+
 def _check_matrix_readable_member(
     *,
     rs: Any,
@@ -3878,6 +3920,10 @@ def _check_matrix_readable_member(
                     want = ""
                     got = ""
                 correct = populated
+        elif int(attr) in _MATRIX_BIGINT_ATTRS:
+            correct, problem, want, got = _matrix_check_integer_member(
+                len_d, observed, cap, expected
+            )
         else:
             lengths_ok = len_d <= cap and len_d == len(expected)
             delivered = observed[:len_d] if lengths_ok else b""
