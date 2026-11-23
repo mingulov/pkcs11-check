@@ -106,6 +106,19 @@ def _classify_readback(vals: Mapping[int, Any], attr: int) -> dict[str, Any]:
     return {"event": "omitted"}
 
 
+def _present_raw_byte(vals: Mapping[int, Any], attr: int) -> Any:
+    """Stored value for a present attr (R10-1 canonical-twin check).
+
+    Call only after establishing presence (absence takes the deviation
+    branch and never reaches here); the guard doubles as the
+    access-guard-approved missingness check, and None can only mean a
+    caller bug, which the canonical comparison below fails loudly.
+    """
+    if attr in vals:
+        return vals[attr]
+    return None
+
+
 def _claim(
     ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: str
 ) -> dict[str, Any]:
@@ -173,7 +186,8 @@ def _finish_flag_probe(
                 f"for {attr_name} but wrote {twin_refusal.leaked_len} bytes"
             )
             return
-        if false_attr not in twin_vals:
+        twin_claim = _classify_readback(twin_vals, false_attr)
+        if twin_claim.get("event") == "omitted":
             if twin_refusal is not None and twin_refusal.malformed:
                 print(
                     f"DEVIATION_XFAIL:control twin omits {attr_name} "
@@ -191,13 +205,14 @@ def _finish_flag_probe(
                     f"DEVIATION_XFAIL:control twin omits {attr_name}; enforcement oracle disabled"
                 )
             return
-        if twin_vals[false_attr] != 1:
+        twin_byte = _present_raw_byte(twin_vals, false_attr)
+        if twin_byte != 1:
             # R10-1: only the canonical TRUE byte verifies the twin. A
             # disclaimed flag, a mangled value, or an untouched canary
             # (out-of-range write) all void the control loudly.
             print(
                 f"BREAK:control twin does not read back canonical {attr_name}=True "
-                f"(got {twin_vals[false_attr]!r})"
+                f"(got {twin_byte!r})"
             )
             return
         control_init_rv = init(sh, mech.byref(), control_key)
