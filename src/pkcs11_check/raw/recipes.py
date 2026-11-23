@@ -1208,10 +1208,17 @@ class AttrRefusal:
     to collapse them into one undifferentiated omission.
 
     ``leaked_len`` is not ``None`` when the module answered with a refusal
-    CKR but *also* wrote ``leaked_len`` bytes of real attribute data into the
-    template -- a self-contradiction worth recording. The decoded bytes
+    CKR but *also* wrote real attribute data into the template -- a
+    self-contradiction worth recording. It counts proven-changed bytes (a
+    lower bound: zero-writes are invisible against zeroed allocation), so
+    a retained length alone never counts as a write. The decoded bytes
     themselves are never carried here or anywhere derived from this class;
     only the length is bounded metadata.
+
+    ``malformed`` marks a refusal that retained a finite length without
+    writing anything (R8-1): sloppy but not a leak -- the refusal is
+    honored (no value is surfaced), yet the length field contradicts it.
+    Report as malformed, never as clean and never as leaked.
 
     Whether a given refusal is *conformant* (the attribute may legitimately
     be sensitive, e.g. a private-key component) or a *defect* (refused an
@@ -1223,6 +1230,7 @@ class AttrRefusal:
 
     ckr: int
     leaked_len: int | None = None
+    malformed: bool = False
 
 
 class AttrReadResult(dict[int, Any]):
@@ -1305,15 +1313,22 @@ def read_attributes(
 
     # Allocate buffers (skip unavailable attributes)
     buffers: list[Any] = []
+    snapshots: list[bytes | None] = []
     for i in range(count):
         size = tmpl[i].ulValueLen
         if _is_unavailable_length(size):
             buffers.append(None)
+            snapshots.append(None)
             continue
         buf = _alloc_module_output(size, what="C_GetAttributeValue")
         tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
         tmpl[i].ulValueLen = size
         buffers.append(buf)
+        # R8-1: snapshot the pristine buffer so a refusal-with-data claim
+        # is proven by changed bytes, never inferred from a bare length.
+        # Only single-attribute reads use it (multi-attribute refusal
+        # attribution stays the documented residual gap below).
+        snapshots.append(bytes(buf[:size]) if count == 1 else None)
 
     # Second call: read values
     rv2 = raw.C_GetAttributeValue(session, handle, tmpl, count)
@@ -1330,12 +1345,20 @@ def read_attributes(
     result = AttrReadResult()
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
+        snapshot = snapshots[i]
+        changed_len: int | None = None
+        if snapshot is not None:
+            current = bytes(buffers[i][: len(snapshot)])
+            if current != snapshot:
+                changed_len = sum(1 for a, b in zip(current, snapshot) if a != b)
         if _is_unavailable_length(size) or buffers[i] is None:
             # Attribute sensitive or type invalid, correctly signalled via the
             # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
             # record a refusal when one was actually observed on this call.
             if _observed_refusal_ckr is not None:
-                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr)
+                # R8-1: a write proven by changed bytes counts even when the
+                # module hid behind the sentinel afterwards.
+                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr, leaked_len=changed_len)
             else:
                 # F20: the sentinel was observed but the calls returned CKR_OK --
                 # success claimed, no value delivered. No CKR is invented, but
@@ -1349,15 +1372,16 @@ def read_attributes(
             # unambiguously about it -- even though the module used a real
             # length/buffer instead of the CK_UNAVAILABLE_INFORMATION sentinel.
             # Never surface this as a present value (that would hand back
-            # material the module just declared sensitive/invalid); when the
-            # module also wrote real bytes (size > 0) that is itself a
-            # self-contradiction worth recording (bounded length only, never
-            # the bytes). With multiple requested attributes this per-attribute
+            # material the module just declared sensitive/invalid). R8-1: a
+            # leak needs proven-changed bytes (never a bare length); a
+            # retained finite length without a write is malformed, not a
+            # leak. With multiple requested attributes this per-attribute
             # attribution is not reliable from the overall rv alone, so it is
             # intentionally left as a residual gap (documented, not guessed at).
-            result.refusals[at] = AttrRefusal(
-                ckr=_observed_refusal_ckr, leaked_len=size if size > 0 else None
-            )
+            if changed_len is not None:
+                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr, leaked_len=changed_len)
+            else:
+                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr, malformed=True)
             continue
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):

@@ -783,6 +783,39 @@ def test_sign_probe_control_twin_clean_refusal_names_rv(
     assert len(raw.sign_calls) == 1
 
 
+def test_sign_probe_control_twin_malformed_refusal_deviates(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R8-1: a malformed twin refusal deviates by name (uncredited, no leak)."""
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    def _malform_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+        if int(handle) == 4242:
+            return {CKA_SIGN: False}
+        result = AttrReadResult()
+        result.refusals[int(CKA_SIGN)] = AttrRefusal(
+            ckr=int(CKR_ATTRIBUTE_TYPE_INVALID), malformed=True
+        )
+        return result
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _malform_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "DEVIATION_XFAIL:" in out
+    assert "malformed refusal" in out
+    assert "BREAK:" not in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
 def test_deviation_transcript_xfails_without_missing_ckr_noise() -> None:
     """R6-1: DEVIATION is terminal (xfail); no missing-CKR harness record."""
     out = (

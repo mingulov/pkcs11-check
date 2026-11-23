@@ -617,11 +617,27 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
             detail=result.detail,
         )
     if result.status is CtsDetectionStatus.NOT_OPERATIONAL:
+        # R8-2: name the attempt that supplied the reported RV (a listed
+        # Init refusal is not a C_Encrypt call); bare C_Encrypt only when
+        # no attempt carries it.
+        attempts = result.detail.get("attempts", []) if result.detail else []
+        supplying = next(
+            (
+                attempt
+                for attempt in reversed(attempts)
+                if isinstance(attempt, dict) and attempt.get("ckr") == result.error_rv
+            ),
+            None,
+        )
+        if supplying is not None and supplying.get("operation") is not None:
+            naming_operation: Any = supplying["operation"]
+        else:
+            naming_operation = "C_Encrypt"
         classify(
             "not_operational",
             kind="crypto",
             label=label,
-            operation="C_Encrypt",
+            operation=naming_operation,
             mechanism="CKM_AES_CTS",
             actual=result.error_rv,
             summary=("CKM_AES_CTS advertised but fixed-key variant detection was not operational"),

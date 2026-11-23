@@ -57,7 +57,9 @@ def refusal_rv_for(attrs: Mapping[Any, Any], attr: Any) -> int | None:
     returned and the caller must route that shape through ``attr_or_record``
     (which records the contradiction) plus a terminating classifier.
     Forwarding its RV into a negative-operation classifier would downgrade
-    a measured contradiction to an honest-deviation xfail.
+    a measured contradiction to an honest-deviation xfail. A malformed
+    refusal (R8-1: finite length retained without a write) is likewise
+    withheld: it must be reported as malformed, never forwarded as clean.
 
     Use this only when the calling oracle must forward the original refusal
     RV (e.g. into a negative-operation classifier); ordinary absence
@@ -67,6 +69,8 @@ def refusal_rv_for(attrs: Mapping[Any, Any], attr: Any) -> int | None:
     if refusal is None:
         return None
     if refusal.leaked_len is not None:
+        return None
+    if refusal.malformed:
         return None
     return refusal.ckr
 
@@ -165,6 +169,28 @@ def attr_or_record(
             summary=(
                 f"{label}: module answered {ckr_name(refusal.ckr)} for this attribute "
                 f"but still wrote {refusal.leaked_len} bytes into the template"
+            ),
+            detail=detail,
+        )
+        return MISSING_ATTRIBUTE
+
+    if refusal is not None and refusal.malformed:
+        # R8-1: refusal honored (no value surfaced) but a finite length was
+        # retained without a write -- sloppy, not a leak. Named as malformed
+        # (never forwarded as clean), proportionate xfail: nothing unsafe
+        # happened, so this notes the shape without failing the run.
+        detail["malformed_refusal"] = True
+        record_as(
+            reason,
+            kind=kind,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: attribute refusal malformed "
+                f"({ckr_name(refusal.ckr)} with a retained finite length, no write)"
             ),
             detail=detail,
         )

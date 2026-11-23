@@ -172,6 +172,67 @@ def test_type_invalid_without_sentinel_zero_length_is_not_a_present_empty_value(
     refusal = result.refusals[CKA_LABEL]
     assert refusal.ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
     assert refusal.leaked_len is None
+    assert refusal.malformed is True
+
+
+def test_retained_finite_length_without_write_is_malformed_not_leaked() -> None:
+    """R8-1: a bare retained length is not proof of a write (no false leak)."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        attrs[0].ulValueLen = 1  # retained from the size query; buffer untouched
+        return int(CKR_ATTRIBUTE_TYPE_INVALID)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
+    assert CKA_LABEL not in result
+    refusal = result.refusals[CKA_LABEL]
+    assert refusal.ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
+    assert refusal.leaked_len is None
+    assert refusal.malformed is True
+
+
+def test_write_behind_sentinel_is_still_a_leak() -> None:
+    """R8-1: proven-written bytes count as leaked even under the sentinel."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue:
+            attrs[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
+            ctypes.memmove(attrs[0].pValue, b"\xab", 1)
+        else:
+            attrs[0].ulValueLen = 1
+        return int(CKR_ATTRIBUTE_TYPE_INVALID)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
+    assert CKA_LABEL not in result
+    refusal = result.refusals[CKA_LABEL]
+    assert refusal.ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
+    assert refusal.leaked_len == 1
+
+
+def test_attr_or_record_reports_malformed_refusal_as_named_deviation() -> None:
+    """R8-1: malformed refusals deviate by name, never forward as clean."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.refusals[CKA_VALUE] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_TYPE_INVALID), malformed=True)
+    value = attr_or_record(attrs, CKA_VALUE, label="malformed refusal", reason="honest_deviation")
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert record.reason == "honest_deviation"
+    assert "malformed" in (record.summary or "")
+    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert record.detail.get("malformed_refusal") is True
+
+
+def test_refusal_rv_for_withholds_malformed_refusal() -> None:
+    """R8-1: malformed refusals stay out of negative-operation classifiers."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+    from pkcs11_check.testcases._attribute_values import refusal_rv_for
+
+    attrs = AttrReadResult()
+    attrs.refusals[CKA_VALUE] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_TYPE_INVALID), malformed=True)
+    assert refusal_rv_for(attrs, CKA_VALUE) is None
 
 
 def test_plain_ok_read_is_unaffected() -> None:
