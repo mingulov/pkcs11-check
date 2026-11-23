@@ -62,6 +62,21 @@ def test_wrong_pin_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert exc.value.exit_code == 1
 
 
+def test_hostile_probe_detail_renders_literally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R20-1: doctor escapes probe/child bytes instead of crashing on markup."""
+    mod = tmp_path / "m.so"
+    mod.write_bytes(b"\x7fELF")
+    _patch(monkeypatch, _manifest("ok"), LoginProbe("error", "[/red]"))
+    with pytest.raises(typer.Exit) as exc:
+        doctor_cmd.doctor_command(module=mod, interface="auto", slot=0, pin="1234", timeout=10)
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "Traceback" not in out
+    assert "[/red]" in out
+
+
 def test_slot_out_of_range_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mod = tmp_path / "m.so"
     mod.write_bytes(b"\x7fELF")

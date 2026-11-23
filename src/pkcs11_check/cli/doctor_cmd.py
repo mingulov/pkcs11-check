@@ -15,6 +15,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
@@ -28,7 +29,9 @@ _SKIP = "[dim]–[/dim]"
 
 
 def _line(mark: str, label: str, detail: str = "") -> None:
-    console.print(f"  {mark} {label}" + (f"  [dim]{detail}[/dim]" if detail else ""))
+    # Details carry child bytes (probe stderr, manifest errors) and user
+    # paths: escape unconditionally (no caller passes intentional markup).
+    console.print(f"  {mark} {label}" + (f"  [dim]{escape(detail)}[/dim]" if detail else ""))
 
 
 def _strip_exception_class(message: str) -> str:

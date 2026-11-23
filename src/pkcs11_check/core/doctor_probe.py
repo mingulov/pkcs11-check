@@ -103,6 +103,21 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
             pass  # finalize is best-effort during a probe
 
 
+def _scrub_pin(detail: str, pin: bytes) -> str:
+    """Redact the PIN from an untrusted probe detail (child bytes may echo it).
+
+    Applied to the stderr tail and child JSON details at construction, so
+    neither the console, the doctor output, nor the counter evidence can
+    leak it (R20-1). Our own format strings stay unscrubbed (a numeric PIN
+    would otherwise eat the numbers they report). An empty PIN scrubs
+    nothing (no-op, never corrupts).
+    """
+    secret = pin.decode("utf-8", "surrogateescape")
+    if secret and secret in detail:
+        return detail.replace(secret, "[redacted]")
+    return detail
+
+
 def run_login_probe_subprocess(
     module: Path,
     *,
@@ -196,6 +211,8 @@ def run_login_probe_subprocess(
         commit()
 
     if timed_out:
+        # Our own format string (ints only): nothing to scrub, and scrubbing
+        # here would redact the timeout seconds on a numeric-PIN collision.
         detail = f"login probe timed out after {timeout}s"
         _retain("timeout", detail)
         return LoginProbe("timeout", detail, returncode)
@@ -211,8 +228,12 @@ def run_login_probe_subprocess(
             continue
         if isinstance(payload, dict) and "status" in payload:
             _retain("ok", None)
-            return LoginProbe(str(payload["status"]), str(payload.get("detail", "")), returncode)
-    detail = err.strip()[-200:] or "no probe result"
+            return LoginProbe(
+                str(payload["status"]),
+                _scrub_pin(str(payload.get("detail", "")), pin),
+                returncode,
+            )
+    detail = _scrub_pin(err.strip()[-200:] or "no probe result", pin)
     _retain("error", detail)
     return LoginProbe("error", detail, returncode)
 
