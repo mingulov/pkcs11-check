@@ -16,6 +16,7 @@ from rich.table import Table
 
 from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.core.loader import load_module
+from pkcs11_check.raw.types_std import CKF_TOKEN_INITIALIZED
 
 
 def _mech_sort_key(m: object) -> str:
@@ -47,6 +48,7 @@ class SlotInfo:
 
     index: int
     label: str
+    initialized: bool
     manufacturer_id: str | None
     model: str | None
     mechanisms: tuple[tuple[str, str, str], ...]
@@ -84,6 +86,7 @@ def _collect_module_info(module: str, interface: str) -> ModuleInfo:
             SlotInfo(
                 index=i,
                 label=str(token.label),
+                initialized=bool(int(token.flags) & int(CKF_TOKEN_INITIALIZED)),
                 manufacturer_id=getattr(token, "manufacturer_id", None),
                 model=getattr(token, "model", None),
                 mechanisms=tuple(mechs),
@@ -159,14 +162,21 @@ def _render_module_info(info: ModuleInfo) -> None:
     if info.interfaces:
         console.print(f"[bold]Available interfaces:[/bold] {', '.join(info.interfaces)}")
 
-    console.print(f"\n[bold]Slots with tokens:[/bold] {len(info.slots)}")
+    usable = sum(1 for slot in info.slots if slot.initialized)
+    console.print(f"\n[bold]Slots with tokens:[/bold] {len(info.slots)} ({usable} usable)")
 
     for slot in info.slots:
-        console.print(f"\n  [bold]Slot {slot.index}:[/bold] {slot.label}")
+        label = slot.label if slot.label else "(no label)"
+        console.print(f"\n  [bold]Slot {slot.index}:[/bold] {label}")
         if slot.manufacturer_id is not None:
             console.print(f"    Manufacturer: {slot.manufacturer_id}")
         if slot.model is not None:
             console.print(f"    Model: {slot.model}")
+        if not slot.initialized:
+            console.print(
+                "    [yellow]token not initialized[/yellow] — initialize it to use this slot"
+            )
+            continue
 
         table = Table(title=f"Mechanisms ({len(slot.mechanisms)})")
         table.add_column("Mechanism", style="cyan")
