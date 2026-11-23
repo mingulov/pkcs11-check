@@ -6205,6 +6205,39 @@ class TestTransientWriteRetry:
         with pytest.raises(durability.CounterPersistenceError):
             durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
 
+    def test_sidecar_total_failure_restores_committed_snapshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        real_open = open
+
+        def _no_target_write(path: Any, *args: Any, **kwargs: Any) -> Any:
+            mode = args[0] if args else kwargs.get("mode", "")
+            if str(path) == str(target) and "w" in str(mode):
+                raise OSError(errno.ENOSPC, "no space left")
+            return real_open(path, *args, **kwargs)
+
+        real_unlink = Path.unlink
+        unlinked: list[str] = []
+
+        def _spy_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            unlinked.append(str(self))
+            real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr("builtins.open", _no_target_write)
+        monkeypatch.setattr(Path, "unlink", _spy_unlink)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert str(target) in unlinked, "fallback deleted the committed file"
+        assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
     def test_replace_fallback_warns_once_per_process(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
