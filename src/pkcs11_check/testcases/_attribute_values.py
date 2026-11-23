@@ -92,6 +92,22 @@ def _sentinel_without_ckr(attrs: Mapping[Any, Any], attr: Any) -> bool:
         return False
 
 
+def _unproved_delivery(attrs: Mapping[Any, Any], attr: Any) -> bool:
+    """Whether ``read_attributes`` marked delivery unproved for ``attr`` (R11-2).
+
+    True only when the read claimed success over an untouched fill pattern
+    (its additive ``unproved_delivery`` channel); a plain ``Mapping`` with
+    no such channel reports ``False``.
+    """
+    observed = getattr(attrs, "unproved_delivery", None)
+    if not observed:
+        return False
+    try:
+        return attr in observed
+    except TypeError:
+        return False
+
+
 def attr_or_record(
     attrs: Mapping[Any, Any],
     attr: Any,
@@ -151,6 +167,24 @@ def attr_or_record(
     detail: dict[str, Any] = {"attribute": {"name": attr_name, "id": attr_id}}
 
     refusal = _refusal_for(attrs, attr)
+
+    if _unproved_delivery(attrs, attr):
+        # R11-2: success claimed but nothing delivered (fill pattern
+        # intact). Retained as a visible deviation -- never a value, and
+        # never silent capability absence for optional callers.
+        detail["unproved_delivery"] = True
+        record_as(
+            reason,
+            kind=kind,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            actual=None,
+            summary=f"{label}: attribute value unproved (success without delivery)",
+            detail=detail,
+        )
+        return MISSING_ATTRIBUTE
 
     if refusal is not None and refusal.leaked_len is not None:
         # Self-contradiction: the module answered a refusal CKR for this attribute
