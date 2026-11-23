@@ -10,6 +10,7 @@ import ctypes
 import hashlib
 import os
 import sys
+import warnings
 from collections.abc import Callable, Iterable, Mapping
 from ctypes import byref
 from dataclasses import dataclass
@@ -163,9 +164,10 @@ def _max_module_output_bytes() -> int:
     """Return the effective module-output allocation cap in bytes.
 
     ``PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES`` (plain integer bytes) overrides the
-    1 GiB default for deployments with genuinely huge outputs. A missing, empty,
-    unparsable, or non-positive value fails closed to the default: a typo'd
-    override must not silently disable the cap.
+    1 GiB default for deployments with genuinely huge outputs. A missing or
+    empty value quietly means the default; an unparsable or non-positive
+    value warns loudly (S14, mirroring the counters flush-K knob) and fails
+    closed to the default: a typo'd override must not silently disable the cap.
     """
     raw_value = os.environ.get(MAX_MODULE_OUTPUT_BYTES_ENV)
     if raw_value is None or not raw_value.strip():
@@ -173,8 +175,14 @@ def _max_module_output_bytes() -> int:
     try:
         parsed = int(raw_value.strip())
     except ValueError:
-        return DEFAULT_MAX_MODULE_OUTPUT_BYTES
+        parsed = 0
     if parsed <= 0:
+        warnings.warn(
+            f"invalid {MAX_MODULE_OUTPUT_BYTES_ENV}={raw_value.strip()!r}: "
+            "expected a positive int; falling back to 1 GiB",
+            UserWarning,
+            stacklevel=2,
+        )
         return DEFAULT_MAX_MODULE_OUTPUT_BYTES
     return parsed
 
