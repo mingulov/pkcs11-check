@@ -142,6 +142,32 @@ def _print_show_config(cli_values: dict[str, Any]) -> None:
     Console().print(table)
 
 
+def _unit_display_quiet(verbose: bool) -> bool:
+    """U6: hide per-unit chatter unless verbose or DEBUG logging."""
+    if verbose:
+        return False
+    return logging.getLogger().getEffectiveLevel() > logging.DEBUG
+
+
+def _print_run_totals(state_file: Path) -> None:
+    """U5: end a text-mode run with unit totals (README 'Saving a report').
+
+    Best-effort console line only: a missing or unreadable state file skips
+    silently rather than disturbing the run verdict or exit path.
+    """
+    try:
+        state = load_run_state(state_file)
+    except (OSError, ValueError):
+        return
+    if state is None or not state.results:
+        return
+    counts: dict[str, int] = {}
+    for result in state.results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+    parts = ", ".join(f"{n} {status}" for status, n in sorted(counts.items()))
+    console.print(f"Totals: {parts} ({len(state.results)} total)")
+
+
 def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
     """Assemble the provenance block for this run (best-effort; never raises)."""
     try:
@@ -1549,6 +1575,35 @@ def test_command(
                                 excluded_units=excluded_units,
                             ),
                         )
+                # U11: fail fast on an empty selection, before any unit runs.
+                # Only when the user actually selected something (flags,
+                # targets, or a selection manifest); full runs never probe.
+                # Reuse already-collected metadata when the discovery path
+                # produced it, else collect once here.
+                has_selection = bool(
+                    match
+                    or category
+                    or marker
+                    or skip_slow
+                    or only_slow
+                    or targets
+                    or case_selection is not None
+                )
+                selected_count: int | None = None
+                if has_selection:
+                    if case_selection is not None:
+                        selected_count = len(case_selection.nodeids)
+                    elif collected_items is not None:
+                        selected_count = len(collected_items)
+                    else:
+                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        selected_count = len(collected_items)
+                if selected_count == 0 or (not selection_plan.units and has_selection):
+                    console.print(
+                        "[red]Error:[/red] 0 tests matched the selection (nothing to run)"
+                    )
+                    empty_exit_code = _resume_exit_code(state_file, 2) if resume else 2
+                    raise typer.Exit(code=empty_exit_code)
                 collection_phase = False
                 try:
                     recovery_config = build_recovery_config(
@@ -1580,6 +1635,7 @@ def test_command(
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
+                    quiet_unit_display=_unit_display_quiet(verbose),
                     deselect_by_file=selection_plan.deselect_by_file,
                     baseline_fingerprint=selection_plan.baseline_fingerprint,
                     timeout=timeout,
@@ -1597,6 +1653,8 @@ def test_command(
                     **runner_kwargs,
                 )
                 _fold_preflight_evidence(report_config, preflight_evidence_path, output, console)
+                if output != "json":
+                    _print_run_totals(state_file)
             except (FileNotFoundError, ValueError, CounterPersistenceError) as exc:
                 if collection_phase:
                     _persist_collection_failure(

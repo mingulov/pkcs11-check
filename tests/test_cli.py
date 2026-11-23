@@ -391,6 +391,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -516,6 +517,204 @@ class TestTestCommand:
         assert "PIN incorrect" not in result.output
         assert called == ["run"]
 
+    def test_test_empty_match_fails_fast_without_running_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U11: a selection matching nothing exits 2 before any unit runs."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(test_cmd, "collect_pytest_item_metadata", lambda targets, args: [])
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--match",
+                "zzz_no_such_test_zzz",
+                "--isolation",
+                "file",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "0 tests matched" in result.output
+        assert called == []
+
+    def test_test_nonempty_match_runs_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U11 control: a matching selection proceeds to the runner."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, args: [
+                CollectedPytestItem(
+                    nodeid="test_alpha.py::test_hit", file_path="test_alpha.py", markers=[]
+                )
+            ],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--match", "test_hit", "--isolation", "file"],
+        )
+        assert "0 tests matched" not in result.output
+        assert called == ["run"]
+
+    def test_test_text_run_ends_with_unit_totals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U5: a text-mode run ends with a totals line."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            save_run_state(
+                kwargs["state_file"],
+                FileRunState(
+                    units=["a.py", "b.py"],
+                    fingerprint="fp",
+                    results=[
+                        FileRunResult("a.py", "passed", 0, 0.1),
+                        FileRunResult("b.py", "failed", 1, 0.2),
+                    ],
+                ),
+            )
+            return 1
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, args: [
+                CollectedPytestItem(nodeid="a.py::t", file_path="a.py", markers=[])
+            ],
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert "Totals: 1 failed, 1 passed (2 total)" in result.output
+
+    def test_test_json_run_prints_no_text_totals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U5 control: JSON mode keeps totals in the file, not on console."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            save_run_state(
+                kwargs["state_file"],
+                FileRunState(
+                    units=["a.py"],
+                    fingerprint="fp",
+                    results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                ),
+            )
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, args: [
+                CollectedPytestItem(nodeid="a.py::t", file_path="a.py", markers=[])
+            ],
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+                "--output",
+                "json",
+                "--output-file",
+                str(tmp_path / "results.json"),
+            ],
+        )
+        assert "Totals:" not in result.output
+
+    def test_unit_display_quiet_by_default_loud_when_verbose(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U6: chatter hidden by default, shown with --verbose or DEBUG."""
+        assert test_cmd._unit_display_quiet(False) is True
+        assert test_cmd._unit_display_quiet(True) is False
+        import logging
+
+        monkeypatch.setattr(logging.getLogger(), "level", logging.DEBUG)
+        assert test_cmd._unit_display_quiet(False) is False
+
+    def test_test_threads_quiet_display_to_runner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U6: default runs hide unit chatter; --verbose shows it."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        seen: list[object] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            seen.append(kwargs.get("quiet_unit_display"))
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        runner.invoke(app, ["test", "--module", str(module), "--isolation", "file", "--verbose"])
+        assert seen == [True, False], seen
+
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
@@ -534,6 +733,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -605,6 +805,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -692,6 +893,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -761,6 +963,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
+            collected_items: object = None,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -790,6 +994,17 @@ class TestTestCommand:
             "discover_pytest_units",
             lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
                 "src/pkcs11_check/testcases/test_demo.py::test_case"
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, pytest_args: [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid="src/pkcs11_check/testcases/test_demo.py::test_case",
+                    file_path="src/pkcs11_check/testcases/test_demo.py",
+                    markers=[],
+                )
             ],
         )
         monkeypatch.setattr(
@@ -845,6 +1060,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -1303,6 +1519,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -1380,6 +1597,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -1409,7 +1627,9 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "load_run_state",
-            lambda path: SimpleNamespace(units=["saved.py", "saved.py::test_case"]),  # type: ignore[arg-type]
+            lambda path: SimpleNamespace(  # type: ignore[arg-type]
+                units=["saved.py", "saved.py::test_case"], results=[], fingerprint=""
+            ),
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1559,6 +1779,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -2436,6 +2657,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -2541,6 +2763,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -2660,6 +2883,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
