@@ -971,6 +971,22 @@ def _baseline_raw_gen(rs: Any, family: str, ec_params: bytes) -> tuple[int, int]
     )
 
 
+def _baseline_gen_mechanisms(family: str) -> tuple[str, ...]:
+    """Generation mechanisms proving the import baseline can run (R5-3).
+
+    Mirrors the keygen wrappers' advertised-capability strings: without
+    one of these, dispatching C_GenerateKeyPair manufactures a refusal
+    (MECHANISM_INVALID) the baseline must not judge.
+    """
+    if family == "ec":
+        return ("EC_KEY_PAIR_GEN", "ECDSA_KEY_PAIR_GEN")
+    if family == "edwards":
+        return ("EC_EDWARDS_KEY_PAIR_GEN",)
+    if family == "montgomery":
+        return ("EC_MONTGOMERY_KEY_PAIR_GEN",)
+    raise ValueError(f"unknown QC7a private family: {family}")
+
+
 def _baseline_curve_gen_or_skip(
     rs: Any, family: str, ec_params: bytes, exc: CkrAssertionError
 ) -> NoReturn:
@@ -982,9 +998,24 @@ def _baseline_curve_gen_or_skip(
     R4-5: entry and skip eligibility gate on the explicit curve set --
     any other primary RV re-raises without consulting, and an unexpected
     baseline RV re-raises as its own finding, never a skip.
+    R5-3: unadvertised generation cannot run the baseline; the import
+    refusal is inconclusive (xfail), never absence and never a finding
+    manufactured from the baseline's own refusal.
     """
     if not is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
         raise exc
+    if not any(rs.has_mechanism(name) for name in _baseline_gen_mechanisms(family)):
+        C.xfail_as(
+            "not_operational",
+            label=f"QC7a {family} private import",
+            operation="C_GenerateKeyPair",
+            expected=CKR_OK,
+            actual=exc.rv,
+            summary=(
+                f"QC7a {family} private import ({exc}); generation mechanism "
+                "unadvertised, baseline cannot run; import support inconclusive"
+            ),
+        )
     try:
         pub, priv = _baseline_raw_gen(rs, family, ec_params)
     except CkrAssertionError as bexc:
@@ -1599,6 +1630,7 @@ class TestAttributeValueEncodings:
                 )
                 _qc7_raise_strongest(records)
                 return
+            records_before_point = len(C.get_records())
             status_p, point, point_records = _qc7_read_single(
                 rs, pub, CKA_EC_POINT, label=label, producer_operation="C_GenerateKeyPair"
             )
@@ -1609,14 +1641,21 @@ class TestAttributeValueEncodings:
                 # point is a structured deviation, never a silent binding
                 # skip. The value legs below still run, and any stronger
                 # readback finding wins via _qc7_raise_strongest.
-                records.append(
-                    _qc7_record_missing(
-                        CKA_EC_POINT,
-                        label=label,
-                        producer_operation="C_GenerateKeyPair",
-                        status=status_p,
+                # R5-4: a CKR_OK-plus-sentinel absence already recorded its
+                # deviation globally during the read; reuse it instead of
+                # minting a second record with an unobserved CKR.
+                fresh_point_records = C.get_records()[records_before_point:]
+                if fresh_point_records:
+                    records.extend(fresh_point_records)
+                else:
+                    records.append(
+                        _qc7_record_missing(
+                            CKA_EC_POINT,
+                            label=label,
+                            producer_operation="C_GenerateKeyPair",
+                            status=status_p,
+                        )
                     )
-                )
             binding = _qc7_scalar_point_binding_record(
                 generated, point if status_p == "present" else None, label=label
             )
