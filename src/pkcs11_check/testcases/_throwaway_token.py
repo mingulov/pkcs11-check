@@ -80,12 +80,27 @@ def require_throwaway_capability() -> ThrowawayCapability:
     return cap
 
 
-def mint_throwaway_token(cap: ThrowawayCapability, *, prefix: str) -> MintedToken:
-    """Provision a disposable token; raise ThrowawayMintError on any failure."""
+def mint_throwaway_token(
+    cap: ThrowawayCapability, *, prefix: str, timeout: int = 120
+) -> MintedToken:
+    """Provision a disposable token; raise ThrowawayMintError on any failure.
+
+    The operator-owned template runs under a 120s timeout (S9) so a hung
+    mint command cannot hang the suite; the paths are interpolated raw
+    because operator templates quote them themselves (see the
+    `echo ... > "{conf_path}"` test template) -- adding `shlex.quote`
+    here would double-quote and break them.
+    """
     token_dir = tempfile.mkdtemp(prefix=prefix)
     conf_path = os.path.join(token_dir, "module.conf")
     mint_cmd = cap.mint_cmd_template.format(token_dir=token_dir, conf_path=conf_path)
-    proc = subprocess.run(shell_invocation(mint_cmd), capture_output=True, check=False)
+    try:
+        proc = subprocess.run(
+            shell_invocation(mint_cmd), capture_output=True, check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise ThrowawayMintError(f"mint command timed out after {timeout}s") from None
     if proc.returncode != 0:
         shutil.rmtree(token_dir, ignore_errors=True)
         tail = proc.stderr.decode("utf-8", errors="replace")[-300:]
