@@ -611,6 +611,62 @@ def _is_transient_write_error(exc: OSError) -> bool:
     return sys.platform == "win32" and exc.errno in _WIN32_TRANSIENT_WRITE_ERRNOS
 
 
+#: Errnos that trigger the rename-over-existing fallback (M7): vboxsf-class
+#: filesystems refuse atomic replace with EPERM/EACCES instead of renaming.
+_REPLACE_FALLBACK_ERRNOS = frozenset({errno.EPERM, errno.EACCES})
+
+_replace_fallback_warned = False
+
+
+def _warn_replace_fallback_once(path: Path | str) -> None:
+    """Warn once per process that atomic replace fell back (nonstandard FS)."""
+    global _replace_fallback_warned
+    if _replace_fallback_warned:
+        return
+    _replace_fallback_warned = True
+    warnings.warn(
+        f"counters persistence {path}: atomic replace refused; "
+        "using fallback writes; prefer a native filesystem for counter durability",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> bool:
+    """Land tmp onto resolved despite rename-over-existing refusal (M7).
+
+    Tries unlink+replace (atomicity preserved: a crash leaves resolved
+    missing, which readers treat as absent), then a direct plain write
+    (torn-on-crash, likewise fail-visible). Returns True when the payload
+    landed; False leaves tmp for the caller to clean and the original
+    error to raise. Callers warn on success.
+    """
+    tmp_path = Path(tmp)
+    resolved_path = Path(resolved)
+    try:
+        resolved_path.unlink()
+    except OSError:
+        pass
+    else:
+        try:
+            os.replace(tmp_path, resolved_path)
+        except OSError:
+            pass
+        else:
+            return True
+    try:
+        with open(resolved_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+    except OSError:
+        return False
+    try:
+        tmp_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return True
+
+
 def append_journal(path: Path | str, record: dict[str, Any]) -> None:
     """Append one window record to a journal (no fsync by design).
 
@@ -670,7 +726,9 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
 
     A crash lands the old or the new content, never a mix; readers treat a
     torn file as absent. Transient write errors retry boundedly (each attempt
-    cleans its tmp first), then raise.
+    cleans its tmp first), then raise. Rename-over-existing refusal (EPERM /
+    EACCES, vboxsf-class filesystems) falls back to unlink+replace, then a
+    direct plain write, warning once per process.
 
     Raises:
         CounterPersistenceError: When the payload cannot be encoded or written.
@@ -686,8 +744,6 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(text)
                 fh.flush()
-            os.replace(tmp, resolved)
-            return
         except OSError as exc:
             try:
                 tmp.unlink(missing_ok=True)
@@ -696,6 +752,25 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
             if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
                 raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
             time.sleep(_WRITE_RETRY_BACKOFF_S)
+            continue
+        try:
+            os.replace(tmp, resolved)
+            return
+        except OSError as exc:
+            if exc.errno in _REPLACE_FALLBACK_ERRNOS and (
+                attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc)
+            ):
+                if _replace_with_fallback(tmp, resolved, text):
+                    _warn_replace_fallback_once(resolved)
+                    return
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
+                raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
+            time.sleep(_WRITE_RETRY_BACKOFF_S)
+            continue
 
 
 def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> FenceOutcome:
@@ -1196,12 +1271,23 @@ def write_probe_sidecar(
     if not finalized:
         payload["finalized"] = False
     tmp = f"{path}.tmp-{os.getpid()}"
+    text = json.dumps(payload)
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
+            fh.write(text)
             fh.flush()
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
         os.replace(tmp, path)
-    except (OSError, TypeError, ValueError):
+    except OSError as exc:
+        if exc.errno in _REPLACE_FALLBACK_ERRNOS and _replace_with_fallback(tmp, path, text):
+            _warn_replace_fallback_once(Path(path))
+            return
         try:
             os.unlink(tmp)
         except OSError:
@@ -1229,6 +1315,23 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
     try:
         os.replace(path, marked)
     except OSError as exc:
+        if exc.errno in _REPLACE_FALLBACK_ERRNOS:
+            try:
+                stale = marked.read_bytes() if marked.exists() else None
+            except OSError:
+                stale = None
+            try:
+                marked.unlink(missing_ok=True)
+                os.replace(path, marked)
+            except OSError:
+                if stale is not None:
+                    try:
+                        marked.write_bytes(stale)
+                    except OSError:
+                        pass
+            else:
+                _warn_replace_fallback_once(marked)
+                return marked
         raise CounterPersistenceError(f"cannot mark probe sidecar consumed: {exc}") from exc
     return marked
 
