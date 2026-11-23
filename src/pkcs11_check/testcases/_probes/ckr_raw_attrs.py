@@ -34,6 +34,8 @@ permission-probe classifier):
   ``SETUP_REFUSED:{C_Op}:0x{rv:08x}``                           -- numeric setup/control refusal
       (generic keygen/import, AES keygen, or a failed R4-3 positive control;
       undefined RVs fail as metadata in the parent, defined ones xfail)
+  ``BREAK:{reason}``                                          -- void control twin (R5-1):
+      aliased handle or twin disclaiming the flag; parent hard-fails
 
 Required ``extra`` keys:
   ``"probe"`` -- ``"encrypt"``, ``"sign"``, or ``"decrypt"``.
@@ -138,7 +140,9 @@ def _finish_flag_probe(
     R4-3: when a same-route enabled-key factory is given and the transcript
     would otherwise award a pass (clean False claim + NOT_PERMITTED), the
     control twin must initialize first; anything but its acceptance leaves
-    the denial uncredited (numeric setup marker, no CKR/OK).
+    the denial uncredited (numeric setup marker, no CKR/OK). R5-1: the twin
+    must be a distinct handle reading back enabled, else BREAK (a twin
+    that aliases the disabled key or disclaims the flag proves nothing).
     """
     event = _claim(ctx, sh, key, false_attr, operation=op_init)
     mech = mech_simple(op_mech)
@@ -153,6 +157,19 @@ def _finish_flag_probe(
         control_key, control_rv, control_op = control()
         if control_key is None:
             print(f"SETUP_REFUSED:{control_op}:0x{control_rv:08x}")
+            return
+        if control_key == key:
+            print(f"BREAK:control twin aliases the disabled key (handle {key})")
+            return
+        twin_claim = _classify_readback(
+            read_attributes(ctx.raw, sh, control_key, [false_attr]), false_attr
+        )
+        if twin_claim.get("event") != "boolean" or twin_claim.get("value") is not True:
+            attr_name = ATTR_NAMES.get(int(false_attr), str(false_attr))
+            print(
+                f"BREAK:control twin does not read back {attr_name}=True "
+                f"({twin_claim.get('event')})"
+            )
             return
         control_init_rv = init(sh, mech.byref(), control_key)
         if control_init_rv != CKR_OK:

@@ -480,27 +480,57 @@ def _attempt_is_login_caused(attempt: object) -> bool:
         return False
 
 
-def _last_off_contract_ckr(attempts: Any) -> int | None:
-    """Last nameable non-login-caused attempt CKR, else None (R4-7).
+def _selectable_off_contract_ckr(attempt: object) -> int | None:
+    """Nameable off-contract CKR, else None (R5-2: the detector's own contract).
 
-    Last-wins matches the detector's own unlisted-RV convention. Attempts
-    that are not dicts or carry no parseable CKR are skipped: the
-    conversion gate already keeps such transcripts loud, and selection
-    only renames the primary RV when it can name a concrete one.
+    An attempt is selectable only when the detector would class it
+    off-contract: stage-appropriate listed set exclusion, mirroring the
+    `last_operation_unlisted_rv` / `last_setup_unlisted_rv` tracking.
+    Successes, skips, listed clean refusals, login-caused attempts, and
+    malformed entries are never candidates.
     """
+    if not isinstance(attempt, dict):
+        return None
+    if _attempt_is_login_caused(attempt):
+        return None
+    raw = attempt.get("ckr")
+    if raw is None:
+        return None
+    try:
+        ckr = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if ckr == int(CKR_OK):
+        return None
+    stage = attempt.get("stage")
+    if stage == "setup":
+        listed = {int(rv) for rv in AES_KEYGEN_RUNTIME_REJECT_RVS}
+    elif stage == "operation":
+        listed = {int(rv) for rv in CIPHER_OP_RUNTIME_REJECT_RVS}
+    else:
+        return None
+    if ckr in listed:
+        return None
+    return ckr
+
+
+def _last_off_contract_ckr(attempts: Any) -> int | None:
+    """Off-contract attempt CKR, else None (R4-7, R5-2).
+
+    Operation stage wins over setup (the detector's own priority); last
+    within a stage. Returns None when no attempt is selectable, keeping
+    the detector's primary.
+    """
+    fallback: int | None = None
     for attempt in reversed(attempts):
-        if not isinstance(attempt, dict):
-            continue
-        if _attempt_is_login_caused(attempt):
-            continue
-        ckr = attempt.get("ckr")
+        ckr = _selectable_off_contract_ckr(attempt)
         if ckr is None:
             continue
-        try:
-            return int(ckr)
-        except (TypeError, ValueError):
-            continue
-    return None
+        if isinstance(attempt, dict) and attempt.get("stage") == "operation":
+            return ckr
+        if fallback is None:
+            fallback = ckr
+    return fallback
 
 
 def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
@@ -517,7 +547,9 @@ def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
     R4-7: a mixed setup-error reports the off-contract attempt's RV as the
     primary (login-independent): the detector's last-wins primary can name
     a login refusal while an undefined RV sits in the attempts, and the
-    reporter would then raise for the wrong RV.
+    reporter would then raise for the wrong RV. R5-2: only attempts the
+    detector itself classes off-contract (stage-appropriate listed-set
+    exclusion; never successes) are candidates, operation over setup.
     """
     global _cts_detection_result  # noqa: PLW0603
     if _cts_detection_result is None:

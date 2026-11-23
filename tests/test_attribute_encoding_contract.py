@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -865,6 +866,40 @@ def test_import_undefined_rv_never_consults_baseline(family: str, key_type: int)
     _assert_cleanup(fake)
 
 
+@pytest.mark.parametrize(
+    "family,key_type,gen_mechs",
+    [
+        ("ec", int(CKK_EC), ("EC_KEY_PAIR_GEN", "ECDSA_KEY_PAIR_GEN")),
+        ("edwards", int(CKK_EC_EDWARDS), ("EC_EDWARDS_KEY_PAIR_GEN",)),
+        ("montgomery", int(CKK_EC_MONTGOMERY), ("EC_MONTGOMERY_KEY_PAIR_GEN",)),
+    ],
+)
+def test_import_curve_refusal_without_gen_mechanism_xfails_inconclusive(
+    family: str, key_type: int, gen_mechs: tuple[str, ...]
+) -> None:
+    """R5-3: unadvertised generation makes the import refusal inconclusive."""
+    from types import SimpleNamespace
+
+    fake = _CurveRefusalRaw(
+        key_type, int(CKR_CURVE_NOT_SUPPORTED), genpair_rv=int(CKR_MECHANISM_INVALID)
+    )
+    rs = SimpleNamespace(
+        raw=fake,
+        sh=7,
+        slot_id=0,
+        has_mechanism=lambda name: name not in gen_mechs,
+        has_mechanism_flag=lambda *_a: True,
+    )
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        rs,
+        family,
+        match="inconclusive",
+    )
+    assert fake.genpair_attempts == 0
+    _assert_cleanup(fake)
+
+
 def test_montgomery_baseline_ignores_other_curve() -> None:
     """R4-6: an X448 success never credits an X25519 import baseline (skip)."""
     from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -1144,6 +1179,27 @@ def test_generated_scalar_absent_point_records_deviation() -> None:
         and rec.detail.get("attribute", {}).get("id") == _EC_POINT
         for rec in _records()
     )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_sentinel_point_reuses_single_deviation() -> None:
+    """R5-4: sentinel-shaped absence reuses its record; no invented CKR."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: scalar})]
+    fake.attr_sentinel_ok_by_role = {("genpair_pub", _EC_POINT)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    point_deviations = [
+        rec
+        for rec in _records()
+        if rec.detail is not None and rec.detail.get("attribute", {}).get("id") == _EC_POINT
+    ]
+    assert len(point_deviations) == 1
+    assert point_deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
     _assert_cleanup(fake)
 
 

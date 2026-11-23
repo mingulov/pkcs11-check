@@ -358,6 +358,7 @@ class _SignCaptureRaw:
         keygen_rv: int | None = None,
         create_rv: int | None = None,
         keygen_refuse_predicate: Any = None,
+        handle_sequence: list[int] | None = None,
     ) -> None:
         self._sign_rv = sign_rv
         self._sign_rvs = list(sign_rvs) if sign_rvs else []
@@ -366,10 +367,20 @@ class _SignCaptureRaw:
         self._keygen_rv = keygen_rv if keygen_rv is not None else int(CKR_MECHANISM_INVALID)
         self._create_rv = create_rv if create_rv is not None else int(CKR_FUNCTION_NOT_SUPPORTED)
         self._keygen_refuse_predicate = keygen_refuse_predicate
+        self._handle_sequence = list(handle_sequence) if handle_sequence else []
+        self._next_handle = 4242
         self.keygen_calls: list[tuple[int, dict[int, bytes]]] = []
         self.create_calls: list[dict[int, bytes]] = []
         self.sign_mech: int | None = None
         self.sign_calls: list[int] = []
+
+    def _issue_handle(self, out: Any) -> None:
+        if self._handle_sequence:
+            handle = self._handle_sequence.pop(0)
+        else:
+            handle = self._next_handle
+            self._next_handle += 1
+        ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = handle
 
     @staticmethod
     def _decode_attrs(tmpl_ptr: Any, count: int) -> dict[int, bytes]:
@@ -393,14 +404,14 @@ class _SignCaptureRaw:
                 return int(veto)
         if mech in self._refuse_keygen:
             return self._keygen_rv
-        ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4242
+        self._issue_handle(out)
         return int(CKR_OK)
 
     def C_CreateObject(self, _sh: int, tmpl_ptr: Any, count: int, out: Any) -> int:  # noqa: N802
         self.create_calls.append(self._decode_attrs(tmpl_ptr, int(count)))
         if self._refuse_create:
             return self._create_rv
-        ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4243
+        self._issue_handle(out)
         return int(CKR_OK)
 
     def C_SignInit(self, _sh: int, mech_ptr: Any, _key: int) -> int:  # noqa: N802
@@ -415,11 +426,20 @@ def _ulong_native(value: int) -> bytes:
     return value.to_bytes(ctypes.sizeof(CK_ULONG), sys.byteorder)
 
 
+def _readback_by_handle(disabled_handle: int = 4242) -> Any:
+    """Read back CKA_SIGN=False only for the disabled key (R5-1 twin checks)."""
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, bool]:
+        return {CKA_SIGN: int(handle) != disabled_handle}
+
+    return _read
+
+
 def test_sign_probe_control_success_credits_denial(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """R4-3: an enabled twin on the same route must init before denial credits (fw#96)."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
@@ -455,7 +475,7 @@ def test_sign_probe_falls_back_to_create_object(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Without generic keygen, the sign probe creates the HMAC key (fw#96)."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
@@ -485,7 +505,7 @@ def test_sign_probe_falls_back_to_aes_route(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Without generic-secret support, the sign probe keeps today's AES route (fw#96)."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
@@ -535,7 +555,7 @@ def test_sign_probe_control_init_refused_stays_untested(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """R4-3: an enabled twin that also refuses uncredits the denial (no CKR/OK)."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[
@@ -585,7 +605,7 @@ def test_sign_probe_control_init_undefined_rv_is_refused_marker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """R4-3: an undefined control RV keeps its exact value in the marker."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), 0x00FFFFFF],
@@ -598,6 +618,65 @@ def test_sign_probe_control_init_undefined_rv_is_refused_marker(
     assert "SETUP_REFUSED:C_SignInit:0x00ffffff" in out
     assert "CKR:" not in out
     assert "OK" not in out.splitlines()
+
+
+def test_sign_probe_control_aliased_handle_breaks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R5-1: a twin aliasing the disabled handle is a hard break, never credit."""
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+        handle_sequence=[4242, 4242],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "BREAK:" in out
+    assert "aliases" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_sign_probe_control_twin_unclaimed_breaks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R5-1: a twin reading back SIGN=False voids the control (hard break)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "BREAK:" in out
+    assert "CKA_SIGN=True" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_break_transcript_fails_without_missing_ckr_noise() -> None:
+    """R5-1: BREAK is terminal (fail); no missing-CKR harness record beside it."""
+    out = f"{_SIGN_FALSE}\nBREAK:control twin aliases the disabled key (handle 4242)\n"
+    with pytest.raises(pytest.fail.Exception, match="aliases"):
+        tra._check_permission_probe(
+            0,
+            out,
+            "",
+            context="C_SignInit with CKA_SIGN=False",
+            operation="C_SignInit",
+            attribute=CKA_SIGN,
+        )
+    assert any(record.reason == "self_contradiction" for record in C.get_records())
+    assert not any("CKR marker is missing" in (record.summary or "") for record in C.get_records())
 
 
 def test_sign_probe_disabled_accepted_runs_no_control(
@@ -655,7 +734,7 @@ def test_sign_probe_aes_fallback_control_success(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """R4-3: the AES route controls with an AES twin (same route, SIGN=True)."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
@@ -682,7 +761,7 @@ def test_sign_probe_aes_fallback_control_refused(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """R4-3: a refused AES twin uncredits the AES denial (Codex round-3 shape)."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[
@@ -843,7 +922,7 @@ def test_sign_probe_defined_rv_still_falls_back(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """F6a control: defined setup refusals keep the fallback chain."""
-    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    monkeypatch.setattr(raw_probe, "read_attributes", _readback_by_handle())
     raw = _SignCaptureRaw(
         sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
         sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
