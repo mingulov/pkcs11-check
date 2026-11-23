@@ -461,55 +461,68 @@ def test_collect_items_with_skips_reports_module_skip(tmp_path: Path) -> None:
     assert skips[0].reason == "vectors not cloned"
 
 
-def test_collection_skip_pairs_empty_nodeid_with_started_collector() -> None:
-    """R19-win: an empty report nodeid (cross-rootpath target) resolves via
-    the most recent collectstart -- the shape Windows CI produces."""
+def test_collection_skip_empty_nodeid_resolves_from_longrepr(tmp_path: Path) -> None:
+    """R21-3: an empty nodeid (cross-rootpath target) resolves to the file
+    named by the skip longrepr -- the shape Windows CI produces."""
     from types import SimpleNamespace
 
-    collected_path = Path("C:/Temp/test_skipped_mod.py")
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text("def test_never(): pass\n", encoding="utf-8")
     plugin = col._CollectionPlugin()
-    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=collected_path))
     plugin.pytest_collectreport(
         SimpleNamespace(
             outcome="skipped",
             nodeid="",
-            longrepr=("C:/Temp/test_skipped_mod.py", 2, "Skipped: vectors not cloned"),
+            longrepr=(str(target), 2, "Skipped: vectors not cloned"),
         )
     )
-    # R20-3: compare through the same str(Path) the worker stores, so the
-    # assertion holds under Windows backslashes as well as POSIX slashes.
-    assert plugin.skips == [
-        col.CollectedSkip(nodeid=str(collected_path), reason="vectors not cloned")
-    ]
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
 
 
-def test_collection_skip_ignores_stale_started_collector() -> None:
-    """R19-win: a mismatched pairing stays empty rather than misattributing."""
+def test_collection_skip_empty_nodeid_keeps_empty_without_path() -> None:
+    """R21-3: a string longrepr carries no file, so the nodeid stays empty
+    rather than misattributing (session skips included)."""
     from types import SimpleNamespace
 
     plugin = col._CollectionPlugin()
-    plugin.pytest_collectstart(SimpleNamespace(nodeid="other.py", path=Path("/tmp/other.py")))
     plugin.pytest_collectreport(
-        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: why")
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    )
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_empty_nodeid_rejects_missing_longrepr_path() -> None:
+    """R21-3: a longrepr path that is not a file is not trusted either."""
+    from types import SimpleNamespace
+
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=("/nonexistent/test_gone.py", 1, "Skipped: why"),
+        )
     )
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="why")]
 
 
-def test_collection_skip_pairs_nested_empty_nodeids_by_stack() -> None:
-    """R20-4: a session skip after a successful module attributes to the
-    session (stack discipline), not to the most recently started module."""
+def test_collection_skip_nonempty_nodeid_ignores_longrepr(tmp_path: Path) -> None:
+    """R21-3: pytest's own nodeid always wins over the longrepr fallback."""
     from types import SimpleNamespace
 
-    collected_root = Path("/tmp/collected")
-    collected_mod = collected_root / "test_mod.py"
+    other = tmp_path / "test_other.py"
+    other.write_text("def test_never(): pass\n", encoding="utf-8")
     plugin = col._CollectionPlugin()
-    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=collected_root))
-    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=collected_mod))
-    plugin.pytest_collectreport(SimpleNamespace(outcome="passed", nodeid="", longrepr=None))
     plugin.pytest_collectreport(
-        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="test_skipped_mod.py",
+            longrepr=(str(other), 2, "Skipped: vectors not cloned"),
+        )
     )
-    assert plugin.skips == [col.CollectedSkip(nodeid=str(collected_root), reason="no dice")]
+    assert plugin.skips == [
+        col.CollectedSkip(nodeid="test_skipped_mod.py", reason="vectors not cloned")
+    ]
 
 
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
@@ -608,6 +621,24 @@ def test_collection_digest_invalidates_on_ancestor_conftest_edit(tmp_path: Path)
     assert middle is not None and middle != before
     config.write_text("[pytest]\nmarkers = smoke: a smoke test\n", encoding="utf-8")
     assert col._collection_inputs_digest([str(target)], []) != middle
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    ["pytest.toml", ".pytest.toml", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"],
+)
+def test_collection_digest_invalidates_on_ancestor_config_edit(
+    tmp_path: Path, config_name: str
+) -> None:
+    """R21-2: every pytest config name above a target rekeys on edit."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    config = tmp_path / config_name
+    config.write_text("# v1\n", encoding="utf-8")
+    before = col._collection_inputs_digest([str(target)], [])
+    assert before is not None
+    config.write_text("# v1 with more content\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], []) != before
 
 
 def test_collection_recollects_after_external_target_edit(tmp_path: Path) -> None:

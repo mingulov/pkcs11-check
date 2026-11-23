@@ -233,7 +233,9 @@ def run_login_probe_subprocess(
                 _scrub_pin(str(payload.get("detail", "")), pin),
                 returncode,
             )
-    detail = _scrub_pin(err.strip()[-200:] or "no probe result", pin)
+    # Scrub BEFORE truncating: a PIN straddling the 200-char cutoff
+    # would otherwise leak its suffix (R21-1).
+    detail = _scrub_pin(err.strip(), pin)[-200:] or "no probe result"
     _retain("error", detail)
     return LoginProbe("error", detail, returncode)
 

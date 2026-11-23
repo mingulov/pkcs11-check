@@ -95,12 +95,16 @@ def _iter_input_files(data_dir_override: str | None = None) -> list[Path]:
 # every level plus the rootdir config files (markers, options). Walked per
 # target so an edit above an external target invalidates the cache (R20-2);
 # in-tree files duplicate the package walk harmlessly (same key material).
+# The config names mirror pytest's own locate_config list exactly (R21-2).
 _COLLECTION_CONFIG_NAMES: tuple[str, ...] = (
     "conftest.py",
+    "pytest.toml",
+    ".pytest.toml",
     "pytest.ini",
+    ".pytest.ini",
     "pyproject.toml",
-    "setup.cfg",
     "tox.ini",
+    "setup.cfg",
 )
 
 
@@ -449,6 +453,33 @@ def collect_pytest_items_with_skips(
         output_path.unlink(missing_ok=True)
 
 
+def _skip_path_from_longrepr(longrepr: object) -> str:
+    """Resolve an empty skip nodeid to the raising file, else "".
+
+    A target outside rootpath gets nodeid "" by pytest design
+    (cross-drive on Windows); the report then carries nothing else
+    (fspath/location derive from the nodeid too). But a module-level
+    skip's longrepr is (path, lineno, message) naming the file that
+    raised it -- usually the skipped module itself. Validated is-file:
+    anything else stays empty rather than misattributing. (Pairing via
+    pytest_make_collect_report cannot work: that hook never fires for
+    File collectors -- verified -- and start/report pairing breaks when
+    exact-node selection prunes intermediate reports.)
+    """
+    try:
+        if not (
+            isinstance(longrepr, tuple)
+            and len(longrepr) == 3
+            and isinstance(longrepr[0], str)
+            and longrepr[0]
+        ):
+            return ""
+        candidate = Path(longrepr[0])
+        return str(candidate) if candidate.is_file() else ""
+    except (OSError, ValueError):
+        return ""
+
+
 class _CollectionPlugin:
     """Collect marker metadata for each pytest item, plus collection skips."""
 
@@ -456,26 +487,13 @@ class _CollectionPlugin:
         self.items: list[CollectedPytestItem] = []
         self.skips: list[CollectedSkip] = []
         self._skip_nodeids: set[str] = set()
-        self._start_stack: list[tuple[str, str]] = []
-
-    def pytest_collectstart(self, collector: pytest.Collector) -> None:
-        self._start_stack.append((str(collector.nodeid), str(collector.path)))
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
-        nodeid = str(report.nodeid)
-        if self._start_stack and self._start_stack[-1][0] == nodeid:
-            # Starts and reports nest (a collector's report follows its
-            # whole subtree), so the matching start is always on top; a
-            # mismatch means an unexpected sequence -- leave the stack
-            # alone and fall back to the report's own nodeid.
-            _, started_path = self._start_stack.pop()
-            if not nodeid:
-                # A target outside rootpath gets nodeid "" by pytest design
-                # (cross-drive on Windows); the report carries nothing else
-                # (fspath/location derive from the nodeid too).
-                nodeid = started_path
         if report.outcome != "skipped":
             return
+        nodeid = str(report.nodeid)
+        if not nodeid:
+            nodeid = _skip_path_from_longrepr(report.longrepr)
         if nodeid in self._skip_nodeids:
             return
         self._skip_nodeids.add(nodeid)
