@@ -780,8 +780,15 @@ def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> Fence
     need no signal. Only a pid whose live birth matches the registry is ever
     signaled, through an incarnation-pinning handle (pidfd on Linux, process
     handle on Windows); the birth is re-verified immediately before the
-    signal closes the TOCTOU window. Unverifiable producers (unknown
-    platform, unreadable birth) report ``unresolved`` with a warning and are
+    signal closes the TOCTOU window. SECURITY (M8 residual): the pinning
+    verifies the victim, not the registry -- a planted registry naming a
+    live (pid, birth) pair still signals it, so resume trusts the counters
+    dir it was pointed at (which M8 confines to allocated sibling forms).
+    Ancestry gating cannot fix this (crashed runs' orphans are reparented);
+    a future hardening is refusing pids whose birth predates the state
+    file.
+    Unverifiable producers (unknown platform, unreadable birth) report
+    ``unresolved`` with a warning and are
     never signaled; resume must skip their conflicting reruns.
     """
     verdict = verify_producer(registry)
@@ -1987,9 +1994,39 @@ def _journal_for_sidecar(sidecar_path: Path) -> Path:
     return sidecar_path.with_name(stem + JOURNAL_SUFFIX)
 
 
-def _consume_producer_files(paths: list[Path]) -> None:
-    """Delete collected/committed evidence files (best effort, never raises)."""
+def _deletion_refused(root: Path | str, path: Path | str, *, verb: str) -> bool:
+    """Whether deleting path is refused: not inside the counters root (M8).
+
+    The parent chain resolves (a lexical check misses intermediate links);
+    the final component stays unresolved so inside symlinks unlink safely
+    as links. Refusals warn loudly and retain the evidence; extractor
+    dedup keeps retention exact. Never raises.
+    """
+    try:
+        root_resolved = Path(root).resolve()
+        parent_resolved = Path(path).parent.resolve()
+    except OSError:
+        refused = True
+    else:
+        refused = not (parent_resolved == root_resolved or root_resolved in parent_resolved.parents)
+    if refused:
+        warnings.warn(
+            f"refused to {verb} {path}: not inside the counters root; evidence retained",
+            UserWarning,
+            stacklevel=3,
+        )
+    return refused
+
+
+def _consume_producer_files(paths: list[Path], *, root: Path | str) -> None:
+    """Delete collected/committed evidence files (best effort, never raises).
+
+    M8: paths resolving outside root are retained with a loud warning (a
+    planted registry must never delete outside the counters dir).
+    """
     for path in paths:
+        if _deletion_refused(root, path, verb="consume"):
+            continue
         try:
             path.unlink(missing_ok=True)
         except OSError:
@@ -2243,8 +2280,8 @@ def collect_unit(
             )
             if _append_collected(child_path, claim_records):
                 appended.extend(claim_records)
-                _consume_producer_files(_producer_files(content, registry_path))
-                _consume_producer_files(consumed)
+                _consume_producer_files(_producer_files(content, registry_path), root=root)
+                _consume_producer_files(consumed, root=root)
             continue
         if verify_producer(content) != "dead":
             continue
@@ -2260,8 +2297,8 @@ def collect_unit(
         )
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files(_producer_files(content, registry_path))
-            _consume_producer_files(consumed)
+            _consume_producer_files(_producer_files(content, registry_path), root=root)
+            _consume_producer_files(consumed, root=root)
     for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids)
         if adopted is None:
@@ -2351,8 +2388,8 @@ def collect_unit(
                 )
             if _append_collected(child_path, records):
                 appended.extend(records)
-                _consume_producer_files([sidecar_path, journal_path])
-                _consume_producer_files(consumed)
+                _consume_producer_files([sidecar_path, journal_path], root=root)
+                _consume_producer_files(consumed, root=root)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -2407,8 +2444,8 @@ def collect_unit(
             records.append(lost)
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files([sidecar_path, _journal_for_sidecar(sidecar_path)])
-            _consume_producer_files(consumed)
+            _consume_producer_files([sidecar_path, _journal_for_sidecar(sidecar_path)], root=root)
+            _consume_producer_files(consumed, root=root)
             # The twin funnels through the reaper (valid content and
             # I/O failure retain; only provably-torn content reaps),
             # exactly like the sweep and the main loop (codex R7-F2).
@@ -3001,6 +3038,9 @@ def sweep_orphans(
     def _remove(paths: list[Path]) -> None:
         nonlocal removed, retained
         for path in paths:
+            if _deletion_refused(root, path, verb="remove"):
+                retained += 1
+                continue
             if not path.exists() and not path.is_symlink():
                 continue
             try:
@@ -3424,7 +3464,7 @@ def prepare_resume(
             )
             plan["barrier_ok"] = False
             return plan
-    _consume_producer_files(to_consume)
+    _consume_producer_files(to_consume, root=root)
     try:
         unseal(root)
     except CounterPersistenceError as exc:

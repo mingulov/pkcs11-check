@@ -67,6 +67,7 @@ from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     _collection_failure_reporting_copy,
     _emit_external_provision_banner,
+    _is_owned_counters_dir,
     _reset_fresh_run_artifacts,
     _resume_exit_code,
     _run_artifact_guard_paths,
@@ -632,6 +633,27 @@ def _assemble_json_artifacts_from_jsonl(
     return results_payload
 
 
+def _validated_recorded_counters_dir(state_file: Path, recorded: str) -> Path:
+    """Resolve a recorded counters dir, refusing non-allocated forms (M8).
+
+    Resume reuses the state's recorded dir for evidence continuity, but a
+    restored/planted state must never divert collection, sweep, and fence
+    authority to an arbitrary directory: the recorded path must resolve to
+    a sibling of the state file in an allocated counters-dir form
+    (canonical or nonce-suffixed, same rule as fresh-run cleanup).
+    """
+    candidate = Path(recorded)
+    resolved = candidate.resolve()
+    if resolved.parent != state_file.resolve().parent or not _is_owned_counters_dir(
+        state_file.name, resolved.name
+    ):
+        raise ValueError(
+            f"recorded counters dir {recorded} is not an allocated counters dir "
+            f"for state {state_file}"
+        )
+    return resolved
+
+
 def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
     interface: InterfaceChoice = typer.Option(
@@ -1150,7 +1172,17 @@ def test_command(
                     stored = getattr(prior_counters_state, "counters_dir", None)
                     recorded_counters_dir = stored if isinstance(stored, str) else None
             if recorded_counters_dir:
-                counters_root = Path(recorded_counters_dir)
+                try:
+                    counters_root = _validated_recorded_counters_dir(
+                        state_file, recorded_counters_dir
+                    )
+                except ValueError as exc:
+                    console.print(
+                        f"[red]Error:[/red] refusing to resume: {exc}; re-run "
+                        "without --resume for a fresh run (or restore the original directory)"
+                    )
+                    setup_exit_code = _resume_exit_code(state_file, 2)
+                    raise typer.Exit(code=setup_exit_code) from exc
             else:
                 # Fresh series (including resume-without-state): a new
                 # run-specific dir, never a reused one (N-C3).

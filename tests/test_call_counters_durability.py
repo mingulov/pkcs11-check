@@ -8864,3 +8864,51 @@ def test_sigkill_after_entry_names_unknown_module_row(tmp_path: Path) -> None:
         {"module": "", "bucket": "session_provisioning", "fn": "C_Digest", "count": 1}
     ]
     assert schema.is_sidecar_partial(partials[0]) is True
+
+
+class TestEvidenceContainment:
+    """M8: planted evidence paths never delete outside the counters root."""
+
+    def test_consume_refuses_outside_paths(self, tmp_path: Path) -> None:
+        root = tmp_path / "counters"
+        root.mkdir()
+        victim = tmp_path / "victim.txt"
+        victim.write_text("do not delete", encoding="utf-8")
+        decoy = tmp_path / "victim.txt.tmp-9"
+        decoy.write_text("do not delete", encoding="utf-8")
+        inside = root / "evidence.json"
+        inside.write_text("{}", encoding="utf-8")
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            durability._consume_producer_files([victim, inside], root=root)
+        assert victim.exists() and decoy.exists()
+        assert not inside.exists()
+
+    def test_consume_refuses_counters_root_itself(self, tmp_path: Path) -> None:
+        root = tmp_path / "counters"
+        root.mkdir()
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            durability._consume_producer_files([root], root=root)
+        assert root.is_dir()
+
+    def test_sweep_retains_planted_outside_sidecar(self, engaged: Path, tmp_path: Path) -> None:
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=12345,
+            birth=999,
+            run_id=_RUN,
+            in_progress=_counts_block(1),
+        )
+        outside = tmp_path / "victim.txt"
+        outside.write_text("do not delete", encoding="utf-8")
+        reg_path = Path(planted["registry"])
+        content = json.loads(reg_path.read_text(encoding="utf-8"))
+        content["sidecar"] = str(outside)
+        reg_path.write_text(json.dumps(content), encoding="utf-8")
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            swept = durability.sweep_orphans(
+                engaged, current_run=_RUN, committed_uuids=frozenset({_UUID_A})
+            )
+        assert outside.exists()
+        assert not reg_path.exists()
+        assert swept["removed"] >= 1

@@ -3988,3 +3988,46 @@ def test_merge_shards_cli_includes_shard_with_only_selection_json(tmp_path: Path
     assert any(
         "shard1" in w and "LOST" in w for w in merged_data.get("shards", {}).get("warnings", [])
     )
+
+
+def test_recorded_counters_dir_accepts_allocated_forms(tmp_path: Path) -> None:
+    """M8: sibling canonical/nonce counters dirs are accepted for resume."""
+    state = tmp_path / "run.json"
+    state.touch()
+    canonical = tmp_path / "run.json.counters"
+    canonical.mkdir()
+    nonced = tmp_path / "run.json.counters.abcdef12"
+    nonced.mkdir()
+    assert test_cmd._validated_recorded_counters_dir(state, str(canonical)) == canonical.resolve()
+    assert test_cmd._validated_recorded_counters_dir(state, str(nonced)) == nonced.resolve()
+
+
+def test_recorded_counters_dir_refuses_outside_and_lookalikes(tmp_path: Path) -> None:
+    """M8: non-sibling dirs and hostile lookalikes are refused for resume."""
+    state = tmp_path / "run.json"
+    state.touch()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    outsider = elsewhere / "run.json.counters"
+    outsider.mkdir()
+    lookalike = tmp_path / "run.json.counters.evil"
+    lookalike.mkdir()
+    with pytest.raises(ValueError, match="not an allocated counters dir"):
+        test_cmd._validated_recorded_counters_dir(state, str(outsider))
+    with pytest.raises(ValueError, match="not an allocated counters dir"):
+        test_cmd._validated_recorded_counters_dir(state, str(lookalike))
+
+
+def test_recorded_counters_dir_refuses_symlink_escape(tmp_path: Path) -> None:
+    """M8: a correctly-named link escaping the state dir is refused."""
+    state = tmp_path / "run.json"
+    state.touch()
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "run.json.counters"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="not an allocated counters dir"):
+        test_cmd._validated_recorded_counters_dir(state, str(link))
