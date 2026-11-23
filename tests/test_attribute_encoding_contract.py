@@ -569,6 +569,46 @@ def test_ec_private_value_sensitive_refusal_after_unsealed_claim_fails() -> None
     _assert_cleanup(fake)
 
 
+def _minimal_scalar_transform(stored: dict[int, bytes]) -> dict[int, bytes]:
+    """Model a minimal-encoding provider: strip leading zeros on store."""
+    out = dict(stored)
+    scalar = out.get(_VALUE)
+    if scalar is not None:
+        out[_VALUE] = scalar.lstrip(b"\x00") or b"\x00"
+    return out
+
+
+def test_ec_private_value_minimal_encoding_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A minimal-encoded P-256 scalar reads back by integer value (fw#95)."""
+    small = int.from_bytes(b"\x00" + bytes(range(1, 32)), "big")
+    key = ec.derive_private_key(small, ec.SECP256R1())
+    monkeypatch.setattr(ec, "generate_private_key", lambda curve: key)
+    fake = _EncodingRaw()
+    fake.create_transform = _minimal_scalar_transform
+    object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+        _rs(fake), "ec"
+    )
+    _assert_cleanup(fake)
+
+
+def test_edwards_private_value_minimal_encoding_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Minimal-encoding is EC-only: stripped Edwards seeds still fail (fw#95)."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    seed = b"\x00" + bytes(range(1, 32))
+    key = ed25519.Ed25519PrivateKey.from_private_bytes(seed)
+    monkeypatch.setattr(ed25519.Ed25519PrivateKey, "generate", staticmethod(lambda: key))
+    fake = _EncodingRaw()
+    fake.create_transform = _minimal_scalar_transform
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), "edwards"
+        )
+    _assert_cleanup(fake)
+
+
 def test_private_value_claim_overridden_is_not_judged() -> None:
     from pkcs11_check.raw.types_std import CKA_SENSITIVE
 
@@ -607,6 +647,49 @@ def test_generated_imported_private_value_mismatch_fails() -> None:
     )
     fake.genpair_queue = [({}, {_VALUE: sec1})]
     fake.create_transform = _ec_pkcs8_transform
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_minimal_length_passes() -> None:
+    """A 31-byte generated P-256 scalar passes the generated leg (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: bytes(range(1, 32))})]
+    object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+        _rs(fake)
+    )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_overlong_still_fails() -> None:
+    """A 33-byte generated value still fails (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: bytes(range(1, 34))})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_at_or_above_curve_order_fails() -> None:
+    """A generated scalar >= P-256 order fails: range is part of validity (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: b"\xff" * 32})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_zero_scalar_fails() -> None:
+    """A zero generated scalar fails (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: b"\x00" * 32})]
     with pytest.raises(Failed):
         object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
             _rs(fake)

@@ -70,6 +70,7 @@ from pkcs11_check.testcases._attribute_values import (
     attr_or_record,
     refusal_rv_for,
 )
+from pkcs11_check.testcases._ec_export import SECP256R1_ORDER
 from pkcs11_check.testcases._rsa_export import rsa_public_key_from_attrs_or_xfail
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
@@ -747,6 +748,30 @@ def _qc7_record_wrong_value(
     )
 
 
+_P256_SCALAR_WIDTH = 32
+
+
+def _qc7_ec_scalar_equal(value: bytes, expected: bytes) -> bool:
+    """EC scalar equality by integer value (fw#95): minimal-or-full width.
+
+    Minimal-encoding providers return P-256 scalars without leading-zero
+    padding. Widths stay pinned to 1..32 so SEC1/PKCS#8 containers (and any
+    overlong blob) can never compare equal.
+    """
+    if not value or len(value) > _P256_SCALAR_WIDTH or len(expected) > _P256_SCALAR_WIDTH:
+        return False
+    return int.from_bytes(value, "big") == int.from_bytes(expected, "big")
+
+
+def _qc7_is_p256_scalar(blob: bytes) -> bool:
+    """Whether blob is a raw P-256 private scalar: 1..32 bytes below the order."""
+    return (
+        isinstance(blob, bytes)
+        and 1 <= len(blob) <= _P256_SCALAR_WIDTH
+        and 0 < int.from_bytes(blob, "big") < SECP256R1_ORDER
+    )
+
+
 def _qc7_is_der_public_key(blob: bytes) -> bool:
     try:
         from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -1269,7 +1294,11 @@ class TestAttributeValueEncodings:
                     )
                 )
             elif status == "present":
-                if not isinstance(value, bytes) or value != expected:
+                if family == "ec":
+                    match = isinstance(value, bytes) and _qc7_ec_scalar_equal(value, expected)
+                else:
+                    match = isinstance(value, bytes) and value == expected
+                if not match:
                     records.append(
                         _qc7_record_wrong_value(
                             CKA_VALUE,
@@ -1299,8 +1328,9 @@ class TestAttributeValueEncodings:
     def test_private_value_generated_imported_equivalent(self, p11_raw_session: Any) -> None:
         """Same P-256 material reads identically generated and imported.
 
-        GENERATED leg must first be a 32-byte raw scalar (a SEC1/PKCS#8
-        container fails here before any re-import is attempted).
+        GENERATED leg must first be a raw P-256 scalar: 1..32 bytes below
+        the curve order (a SEC1/PKCS#8 container fails here before any
+        re-import is attempted).
         """
         rs = p11_raw_session
         skip_unless_create_object_supported(rs)
@@ -1350,13 +1380,16 @@ class TestAttributeValueEncodings:
                     )
                 _qc7_raise_strongest(records)
                 return
-            if len(generated) != 32:
+            if not _qc7_is_p256_scalar(generated):
                 records.append(
                     _qc7_record_wrong_value(
                         CKA_VALUE,
                         label=label,
                         producer_operation="C_GenerateKeyPair",
-                        summary=f"{label}: generated value is not a 32-byte raw scalar",
+                        summary=(
+                            f"{label}: generated value is not a raw P-256 scalar "
+                            "(1..32 bytes below the curve order)"
+                        ),
                         expected_len=32,
                         actual_len=len(generated),
                     )
@@ -1402,7 +1435,10 @@ class TestAttributeValueEncodings:
                         )
                     )
                 elif status2 == "present":
-                    if imported_value != generated:
+                    if not (
+                        isinstance(imported_value, bytes)
+                        and _qc7_ec_scalar_equal(imported_value, generated)
+                    ):
                         records.append(
                             _qc7_record_wrong_value(
                                 CKA_VALUE,
