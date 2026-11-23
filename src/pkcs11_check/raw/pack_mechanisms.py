@@ -751,12 +751,18 @@ def mech_cbc_pad(mechanism_type: CKM | int, iv: bytes) -> PackedMechanism:
     return mech_bytes(mechanism_type, iv)
 
 
-def mech_ctr(mechanism_type: CKM | int, bits: int = 128) -> PackedMechanism:
-    """Pack CK_AES_CTR_PARAMS with ulCounterBits=bits and zeroed counter block."""
+def mech_ctr(
+    mechanism_type: CKM | int, bits: int = 128, cb: bytes | None = None
+) -> PackedMechanism:
+    """Pack CK_AES_CTR_PARAMS with ulCounterBits=bits and the counter block."""
+    if cb is None:
+        cb = bytes(16)
+    if len(cb) != 16:
+        raise ValueError(f"CTR counter block must be 16 bytes, got {len(cb)}")
     params = CK_AES_CTR_PARAMS()
     params.ulCounterBits = bits
     for i in range(16):
-        params.cb[i] = 0
+        params.cb[i] = cb[i]
     return _mech_struct(mechanism_type, params, "mech_ctr", sub_mechanisms={"counterBits": bits})
 
 
