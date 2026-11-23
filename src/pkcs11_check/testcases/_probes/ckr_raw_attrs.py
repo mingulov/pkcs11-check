@@ -35,7 +35,9 @@ permission-probe classifier):
       (generic keygen/import, AES keygen, or a failed R4-3 positive control;
       undefined RVs fail as metadata in the parent, defined ones xfail)
   ``BREAK:{reason}``                                          -- void control twin (R5-1):
-      aliased handle or twin disclaiming the flag; parent hard-fails
+      aliased handle or twin disclaiming/mangling the flag; parent hard-fails
+  ``DEVIATION_XFAIL:{reason}``                                -- twin omitting the flag
+      (R6-1): enforcement oracle disabled, denial uncredited, parent xfails
 
 Required ``extra`` keys:
   ``"probe"`` -- ``"encrypt"``, ``"sign"``, or ``"decrypt"``.
@@ -164,8 +166,11 @@ def _finish_flag_probe(
         twin_claim = _classify_readback(
             read_attributes(ctx.raw, sh, control_key, [false_attr]), false_attr
         )
+        attr_name = ATTR_NAMES.get(int(false_attr), str(false_attr))
+        if twin_claim.get("event") == "omitted":
+            print(f"DEVIATION_XFAIL:control twin omits {attr_name}; enforcement oracle disabled")
+            return
         if twin_claim.get("event") != "boolean" or twin_claim.get("value") is not True:
-            attr_name = ATTR_NAMES.get(int(false_attr), str(false_attr))
             print(
                 f"BREAK:control twin does not read back {attr_name}=True "
                 f"({twin_claim.get('event')})"

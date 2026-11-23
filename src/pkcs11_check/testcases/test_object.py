@@ -643,7 +643,13 @@ def _qc7_detail(attr: int, *, producer_operation: str, **extra: Any) -> dict[str
 
 
 def _qc7_read_single(
-    rs: Any, handle: int, attr: int, *, label: str, producer_operation: str
+    rs: Any,
+    handle: int,
+    attr: int,
+    *,
+    label: str,
+    producer_operation: str,
+    pass_on_absence: bool = False,
 ) -> tuple[str, Any, list[C.Classification]]:
     """Single-attribute read with inverse-oracle-safe polarity.
 
@@ -652,6 +658,11 @@ def _qc7_read_single(
     ``missing`` (nothing observed), or ``error`` (already recorded).
     A correct TYPE_INVALID produces no record -- ``attr_or_record``
     would record it as a deviation, which is the wrong polarity here.
+    A sentinel-shaped absence returns its recorded deviation (R6-2) so
+    callers judge it instead of minting a second record with an
+    unobserved CKR -- unless ``pass_on_absence`` marks absence itself
+    as the asserted property (inverse-oracle checks), where the global
+    evidence stays but nothing is raised.
     """
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr])
@@ -717,7 +728,11 @@ def _qc7_read_single(
             record.detail.setdefault("producer_operation", producer_operation)
         return "error", None, added
     if added:
-        return "absent", None, []
+        # R6-2: the sentinel deviation is evidence the caller must judge
+        # (returned, not just global), so no second record with an
+        # invented CKR is minted downstream. Inverse-oracle callers keep
+        # the old pass shape via pass_on_absence.
+        return "absent", None, ([] if pass_on_absence else added)
     return "missing", None, []
 
 
@@ -839,7 +854,12 @@ def _qc7_is_der_public_key(blob: bytes) -> bool:
 
 def _qc7_check_public_value_absent(rs: Any, pub: int, *, label: str) -> list[C.Classification]:
     status, value, records = _qc7_read_single(
-        rs, pub, CKA_VALUE, label=label, producer_operation="C_GenerateKeyPair"
+        rs,
+        pub,
+        CKA_VALUE,
+        label=label,
+        producer_operation="C_GenerateKeyPair",
+        pass_on_absence=True,
     )
     if status == "present":
         value_len = len(value) if isinstance(value, (bytes, bytearray)) else None
@@ -1008,7 +1028,7 @@ def _baseline_curve_gen_or_skip(
         C.xfail_as(
             "not_operational",
             label=f"QC7a {family} private import",
-            operation="C_GenerateKeyPair",
+            operation="C_CreateObject",
             expected=CKR_OK,
             actual=exc.rv,
             summary=(
@@ -1630,7 +1650,6 @@ class TestAttributeValueEncodings:
                 )
                 _qc7_raise_strongest(records)
                 return
-            records_before_point = len(C.get_records())
             status_p, point, point_records = _qc7_read_single(
                 rs, pub, CKA_EC_POINT, label=label, producer_operation="C_GenerateKeyPair"
             )
@@ -1640,22 +1659,18 @@ class TestAttributeValueEncodings:
                 # public object (PKCS#11 v3.2 section 6.3.9); an unreadable
                 # point is a structured deviation, never a silent binding
                 # skip. The value legs below still run, and any stronger
-                # readback finding wins via _qc7_raise_strongest.
-                # R5-4: a CKR_OK-plus-sentinel absence already recorded its
-                # deviation globally during the read; reuse it instead of
-                # minting a second record with an unobserved CKR.
-                fresh_point_records = C.get_records()[records_before_point:]
-                if fresh_point_records:
-                    records.extend(fresh_point_records)
-                else:
-                    records.append(
-                        _qc7_record_missing(
-                            CKA_EC_POINT,
-                            label=label,
-                            producer_operation="C_GenerateKeyPair",
-                            status=status_p,
-                        )
+                # readback finding wins via _qc7_raise_strongest. R6-2: a
+                # sentinel absence arrives via point_records (shared fix),
+                # so this branch only mints clean-TYPE_INVALID (observed),
+                # missing, or sensitive shapes -- never an invented CKR.
+                records.append(
+                    _qc7_record_missing(
+                        CKA_EC_POINT,
+                        label=label,
+                        producer_operation="C_GenerateKeyPair",
+                        status=status_p,
                     )
+                )
             binding = _qc7_scalar_point_binding_record(
                 generated, point if status_p == "present" else None, label=label
             )

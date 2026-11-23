@@ -663,6 +663,78 @@ def test_sign_probe_control_twin_unclaimed_breaks(
     assert len(raw.sign_calls) == 1
 
 
+def test_sign_probe_control_twin_omitted_deviates(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R6-1: a twin omitting the flag deviates (oracle disabled), uncredited."""
+
+    def _omit_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+        if int(handle) != 4242:
+            return {}
+        return {CKA_SIGN: False}
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _omit_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "DEVIATION_XFAIL:" in out
+    assert "oracle disabled" in out
+    assert "BREAK:" not in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_sign_probe_control_twin_malformed_breaks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R6-1: a twin with a malformed flag readback stays loud (break)."""
+
+    def _malform_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+        if int(handle) != 4242:
+            return {CKA_SIGN: b""}
+        return {CKA_SIGN: False}
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _malform_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "BREAK:" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_deviation_transcript_xfails_without_missing_ckr_noise() -> None:
+    """R6-1: DEVIATION is terminal (xfail); no missing-CKR harness record."""
+    out = (
+        f"{_SIGN_FALSE}\nDEVIATION_XFAIL:control twin omits CKA_SIGN; enforcement oracle disabled\n"
+    )
+    with pytest.raises(pytest.xfail.Exception, match="oracle disabled"):
+        tra._check_permission_probe(
+            0,
+            out,
+            "",
+            context="C_SignInit with CKA_SIGN=False",
+            operation="C_SignInit",
+            attribute=CKA_SIGN,
+        )
+    assert any(record.reason == "honest_deviation" for record in C.get_records())
+    assert not any("CKR marker is missing" in (record.summary or "") for record in C.get_records())
+
+
 def test_break_transcript_fails_without_missing_ckr_noise() -> None:
     """R5-1: BREAK is terminal (fail); no missing-CKR harness record beside it."""
     out = f"{_SIGN_FALSE}\nBREAK:control twin aliases the disabled key (handle 4242)\n"

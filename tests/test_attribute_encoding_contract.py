@@ -897,6 +897,11 @@ def test_import_curve_refusal_without_gen_mechanism_xfails_inconclusive(
         match="inconclusive",
     )
     assert fake.genpair_attempts == 0
+    inconclusive = [rec for rec in _records() if "inconclusive" in (rec.summary or "")]
+    assert len(inconclusive) == 1
+    # R6-4: the RV belongs to the import that returned it, not the baseline.
+    assert inconclusive[0].operation == "C_CreateObject"
+    assert inconclusive[0].actual_ckr == "CKR_CURVE_NOT_SUPPORTED"
     _assert_cleanup(fake)
 
 
@@ -1200,6 +1205,64 @@ def test_generated_scalar_sentinel_point_reuses_single_deviation() -> None:
     ]
     assert len(point_deviations) == 1
     assert point_deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    _assert_cleanup(fake)
+
+
+def _value_deviations() -> list[Any]:
+    return [
+        rec
+        for rec in _records()
+        if rec.detail is not None and rec.detail.get("attribute", {}).get("id") == _VALUE
+    ]
+
+
+def test_known_material_value_sentinel_reuses_single_deviation() -> None:
+    """R6-2: sentinel VALUE on known-material import judges once, no invented CKR."""
+    fake = _EncodingRaw()
+    fake.attr_sentinel_ok_by_role = {("create", _VALUE)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ec",
+        match="unavailable",
+    )
+    deviations = _value_deviations()
+    assert len(deviations) == 1
+    assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    _assert_cleanup(fake)
+
+
+def test_generated_value_sentinel_reuses_single_deviation() -> None:
+    """R6-2: sentinel VALUE on the generated leg judges once, no invented CKR."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    fake.attr_sentinel_ok_by_role = {("genpair_priv", _VALUE)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    deviations = _value_deviations()
+    assert len(deviations) == 1
+    assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    _assert_cleanup(fake)
+
+
+def test_reimported_value_sentinel_reuses_single_deviation() -> None:
+    """R6-2: sentinel VALUE on the re-import leg judges once, no invented CKR."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    fake.attr_sentinel_ok_by_role = {("create", _VALUE)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    deviations = _value_deviations()
+    assert len(deviations) == 1
+    assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
     _assert_cleanup(fake)
 
 
