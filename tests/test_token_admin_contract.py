@@ -1099,6 +1099,14 @@ class _HangingMintProc:
         return -9
 
 
+class _InterruptedMintProc(_HangingMintProc):
+    """A mint child alive when Ctrl-C lands mid-communicate."""
+
+    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
+        self.communicate_calls += 1
+        raise KeyboardInterrupt
+
+
 def test_mint_timeout_raises_and_cleans_up(
     _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1127,6 +1135,24 @@ def test_mint_timeout_kills_without_redrain(
     with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
         throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
     assert fake.communicate_calls == 1
+    assert fake.killed is True
+    assert fake.waited is True
+
+
+def test_mint_keyboard_interrupt_kills_child_and_cleans_up(
+    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R19-5: Ctrl-C kills the mint child (run() parity) and removes the dir."""
+    _set_capability_env(monkeypatch)
+    cap = throwaway.require_throwaway_capability()
+
+    fake = _InterruptedMintProc()
+    monkeypatch.setattr(subprocess, "Popen", fake)
+    before = set(os.listdir(tempfile.gettempdir()))
+    with pytest.raises(KeyboardInterrupt):
+        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
+    after = set(os.listdir(tempfile.gettempdir()))
+    assert after - before == set()
     assert fake.killed is True
     assert fake.waited is True
 

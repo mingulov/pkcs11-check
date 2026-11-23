@@ -109,6 +109,13 @@ def mint_throwaway_token(
         mint_proc.wait()
         shutil.rmtree(token_dir, ignore_errors=True)
         raise ThrowawayMintError(f"mint command timed out after {timeout}s") from None
+    except KeyboardInterrupt:
+        # run() parity: Ctrl-C kills the direct child instead of orphaning
+        # it; the token dir is ours, so remove it before propagating.
+        mint_proc.kill()
+        mint_proc.wait()
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise
     if mint_proc.returncode != 0:
         shutil.rmtree(token_dir, ignore_errors=True)
         tail = mint_stderr.decode("utf-8", errors="replace")[-300:]

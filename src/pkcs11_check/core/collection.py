@@ -29,7 +29,7 @@ from pkcs11_check.core.nodeids import item_nodeid
 # drop or alter a test. The cache lives in a private owner-only dir (never /tmp,
 # which is world-writable) and is stored as plain JSON (no code-object surface).
 # Disable with PKCS11_CHECK_NO_COLLECTION_CACHE=1.
-_CACHE_FORMAT = 4
+_CACHE_FORMAT = 5
 _PACKAGE_DIR = Path(__file__).resolve().parents[1]
 # pytest args that name a per-run temp file and do NOT affect which items are
 # collected (the manifest is only consulted at runtime, never during
@@ -91,6 +91,28 @@ def _iter_input_files(data_dir_override: str | None = None) -> list[Path]:
     return files
 
 
+def _iter_target_files(targets: list[str]) -> list[Path]:
+    """Target files whose content affects collection (R19-2).
+
+    The package walk covers in-tree targets only; an edited external
+    target otherwise reuses a stale cache entry (M3b then refuses a
+    runnable test). Directories contribute their ``*.py`` files, nodeids
+    their file part; missing targets contribute nothing (their path
+    string already keys them, and collection fails loudly).
+    """
+    files: list[Path] = []
+    for target in targets:
+        candidate = Path(target.split("::", 1)[0])
+        try:
+            if candidate.is_dir():
+                files.extend(p for p in candidate.rglob("*.py") if p.is_file())
+            elif candidate.is_file():
+                files.append(candidate)
+        except OSError:
+            continue
+    return files
+
+
 def _collection_inputs_digest(
     targets: list[str],
     pytest_args: list[str],
@@ -120,6 +142,10 @@ def _collection_inputs_digest(
         for path in _iter_input_files(data_dir_override):
             st = path.stat()
             stats.append(f"{path}:{st.st_mtime_ns}:{st.st_size}")
+        for path in _iter_target_files(targets):
+            resolved = path.resolve()
+            st = resolved.stat()
+            stats.append(f"{resolved}:{st.st_mtime_ns}:{st.st_size}")
         stats.sort()
         parts.extend(stats)
     except OSError:
@@ -405,11 +431,25 @@ class _CollectionPlugin:
         self.items: list[CollectedPytestItem] = []
         self.skips: list[CollectedSkip] = []
         self._skip_nodeids: set[str] = set()
+        self._last_started: tuple[str, str] | None = None
+
+    def pytest_collectstart(self, collector: pytest.Collector) -> None:
+        self._last_started = (str(collector.nodeid), str(collector.path))
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.outcome != "skipped":
             return
         nodeid = str(report.nodeid)
+        if not nodeid and self._last_started is not None:
+            # A target outside rootpath gets nodeid "" by pytest design
+            # (cross-drive on Windows); the report carries nothing else
+            # (fspath/location derive from the nodeid too). Pair with the
+            # most recent collectstart: the skip aborts descent, so nothing
+            # can start between a collector's start and its skipped report.
+            # The equality check keeps a stale pairing honest (stay empty).
+            started_nodeid, started_path = self._last_started
+            if started_nodeid == nodeid:
+                nodeid = started_path
         if nodeid in self._skip_nodeids:
             return
         self._skip_nodeids.add(nodeid)

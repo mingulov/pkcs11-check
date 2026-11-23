@@ -302,6 +302,81 @@ def _evidence_counters(evidence_path: Path | None) -> dict[str, Any] | None:
     return extract_call_counters_from_jsonl(evidence_path)
 
 
+def _write_early_failure_results(
+    *,
+    output: str,
+    output_file: str | None,
+    module: Path,
+    status: str,
+    legacy_returncode: int,
+    observation: dict[str, Any] | None,
+    case_selection: CaseSelection | None,
+    preflight_evidence_path: Path | None,
+) -> None:
+    """Write results.json for a JSON run dead on arrival (exit 1), else nothing.
+
+    Shared by the manifest-preflight and login-probe crash/timeout exits:
+    exit 1 claims something happened, so the requested report must exist,
+    marked incomplete, with the retained counter evidence folded in. Text
+    mode and usage errors (exit 2) write nothing, as before.
+    """
+    if output != "json":
+        return
+    results_path = Path(output_file or "pkcs11-check-results.json")
+    result = FileRunResult(
+        target=str(module),
+        status=status,
+        returncode=legacy_returncode,
+        duration_s=0.0,
+    )
+    state = FileRunState(
+        units=[str(module)],
+        fingerprint="",
+        results=[result],
+        process_observations=[observation] if isinstance(observation, dict) else [],
+    )
+    payload = write_isolated_json_report(
+        results_path,
+        state,
+        selection=case_selection,
+        call_counters=_evidence_counters(preflight_evidence_path),
+    )
+    payload["summary"]["incomplete"] = True
+    results_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
+def _retain_early_failure_evidence(
+    *,
+    output: str,
+    output_file: str | None,
+    preflight_evidence_path: Path | None,
+    console: Console,
+) -> None:
+    """Retain counter-only JSONL evidence next to the results, else nothing.
+
+    A dead-on-arrival JSON run keeps its counts-or-loss evidence even when
+    no results file is written (plain error manifests); text mode and usage
+    errors write nothing, as before.
+    """
+    if output != "json" or preflight_evidence_path is None:
+        return
+    try:
+        blob = preflight_evidence_path.read_bytes()
+    except OSError:
+        blob = b""
+    if blob.strip():
+        report_path = Path(output_file or "pkcs11-check-results.json").parent
+        report_path.mkdir(parents=True, exist_ok=True)
+        try:
+            (report_path / "report.jsonl").write_bytes(blob)
+        except OSError as exc:
+            console.print(
+                f"[yellow]Warning:[/yellow] preflight counter evidence not retained: {exc}"
+            )
+
+
 def _fold_preflight_evidence(
     report_config: IsolatedReportConfig | None,
     evidence_path: Path | None,
@@ -1328,8 +1403,7 @@ def test_command(
             console.print(
                 f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}"
             )
-            if output == "json" and manifest.status in {"crashed", "timeout"}:
-                results_path = Path(output_file or "pkcs11-check-results.json")
+            if manifest.status in {"crashed", "timeout"}:
                 observation = manifest.process_observation
                 raw_code = (
                     observation.get("termination", {}).get("raw_code")
@@ -1342,47 +1416,22 @@ def test_command(
                     if manifest.status == "timeout"
                     else (int(raw_code) if isinstance(raw_code, int) else 1)
                 )
-                result = FileRunResult(
-                    target=str(module),
+                _write_early_failure_results(
+                    output=output,
+                    output_file=output_file,
+                    module=module,
                     status=manifest.status,
-                    returncode=legacy_returncode,
-                    duration_s=0.0,
+                    legacy_returncode=legacy_returncode,
+                    observation=observation if isinstance(observation, dict) else None,
+                    case_selection=case_selection,
+                    preflight_evidence_path=preflight_evidence_path,
                 )
-                state = FileRunState(
-                    units=[str(module)],
-                    fingerprint="",
-                    results=[result],
-                    process_observations=[observation] if isinstance(observation, dict) else [],
-                )
-                payload = write_isolated_json_report(
-                    results_path,
-                    state,
-                    selection=case_selection,
-                    call_counters=_evidence_counters(preflight_evidence_path),
-                )
-                payload["summary"]["incomplete"] = True
-                results_path.write_text(
-                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-                )
-            if output == "json" and preflight_evidence_path is not None:
-                # Failed preflights still retain their counter-only JSONL
-                # evidence (counts or identity-bearing loss) next to the
-                # results; plain error manifests write no results file (as
-                # before), only this evidence.
-                try:
-                    blob = preflight_evidence_path.read_bytes()
-                except OSError:
-                    blob = b""
-                if blob.strip():
-                    report_path = Path(output_file or "pkcs11-check-results.json").parent
-                    report_path.mkdir(parents=True, exist_ok=True)
-                    try:
-                        (report_path / "report.jsonl").write_bytes(blob)
-                    except OSError as exc:
-                        console.print(
-                            "[yellow]Warning:[/yellow] "
-                            f"preflight counter evidence not retained: {exc}"
-                        )
+            _retain_early_failure_evidence(
+                output=output,
+                output_file=output_file,
+                preflight_evidence_path=preflight_evidence_path,
+                console=console,
+            )
             if manifest.status in {"crashed", "timeout"}:
                 preflight_exit_code = 1
             elif manifest.reason == "module_unloadable":
@@ -1428,13 +1477,38 @@ def test_command(
                 # to run login-independent tests without this gate.
                 console.print(
                     f"[red]✗[/red] login probe {login_probe.status} for slot {slot}"
-                    f" ({login_probe.detail}) — refusing to run the suite"
+                    f" ({escape(login_probe.detail)}) — refusing to run the suite"
+                )
+                # Exit 1 claims something happened: the requested JSON report
+                # must exist (R19-1), mirroring the manifest-crash artifacts.
+                probe_returncode = (
+                    124
+                    if login_probe.status == "timeout"
+                    else (login_probe.returncode if isinstance(login_probe.returncode, int) else 1)
+                )
+                _write_early_failure_results(
+                    output=output,
+                    output_file=output_file,
+                    module=module,
+                    status=login_probe.status,
+                    legacy_returncode=probe_returncode,
+                    observation=None,
+                    case_selection=case_selection,
+                    preflight_evidence_path=preflight_evidence_path,
+                )
+                _retain_early_failure_evidence(
+                    output=output,
+                    output_file=output_file,
+                    preflight_evidence_path=preflight_evidence_path,
+                    console=console,
                 )
                 raise typer.Exit(code=_resume_exit_code(state_file, 1) if resume else 1)
             if login_probe.status == "error":
+                # The detail can carry child stderr (provider bytes): escape
+                # it like every other hostile value (R18-4 class).
                 console.print(
                     "[yellow]Warning:[/yellow] login probe inconclusive "
-                    f"({login_probe.detail}) — proceeding anyway"
+                    f"({escape(login_probe.detail)}) — proceeding anyway"
                 )
 
         assert manifest_path is not None
