@@ -111,8 +111,9 @@ That writes into `./reports/`:
 
 - **`report.jsonl`** - one JSON record per test (outcome, return code, notes)
 - **`results.json`** - the consolidated run summary (counts, crashes, environment)
-- **`coverage.json`**, **`quality.json`** - mechanism coverage and the
-  per-outcome classification report
+- **`quality.json`** - the per-outcome classification report
+- **`coverage.json`** - mechanism coverage, only when the run collected
+  coverage data (absent otherwise, not an empty file)
 
 Use `--output junit --output-file ./reports/results.xml` for JUnit XML instead
 (for CI). The output directory is taken from the `--output-file` path, so point it
@@ -137,9 +138,10 @@ directory (fresh-dir `ls -a`, nothing else):
   suites using those plugins ran
 
 With `--output json` the machine-readable `results.json`, `report.jsonl`,
-`coverage.json`, and `quality.json` land next to `--output-file` instead
-of the system temp dir (default file name `pkcs11-check-results.json` in
-the current directory). Suggested `.gitignore` for run dirs:
+and `quality.json` land next to `--output-file` instead of the system temp
+dir (default file name `pkcs11-check-results.json` in the current
+directory), plus `coverage.json` only when the run collected coverage
+data. Suggested `.gitignore` for run dirs:
 
 ```gitignore
 .pkcs11-check-*

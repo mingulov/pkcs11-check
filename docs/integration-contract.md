@@ -121,6 +121,9 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   `empty`; preserved provider findings or incomplete results return `1`, while raw pytest harness
   exits `2`/`3`/`4` without a provider finding return public code `2`. A provider finding retained
   alongside one of those harness exits still returns `1`.
+- Known limitation: if a resumed run fails its startup checks, it can overwrite the previous
+  report files. Keep a copy of any report you need before resuming; a code fix is deferred
+  follow-up work.
 - Daemon recovery can replace a dying provider's result only as the current aggregate verdict.
   The superseded attempt (including report records, output, and process observations) remains in
   `attempt_history`; every confirmed daemon death remains in `recovery_events` and contributes a
