@@ -117,6 +117,40 @@ Use `--output junit --output-file ./reports/results.xml` for JUnit XML instead
 (for CI). The output directory is taken from the `--output-file` path, so point it
 wherever you want the files created.
 
+### Files a run creates
+
+A default `pkcs11-check test` run writes these entries in the current
+directory (fresh-dir `ls -a`, nothing else):
+
+- **`.pkcs11-check-isolation-state.json`** - run state for resume
+  (`--resume` continues from it; `--state-file` moves it elsewhere)
+- **`..pkcs11-check-isolation-state.json.report-records/`** - per-unit
+  report cache feeding resume and the final report (yes, two leading
+  dots - historical name, kept so old run dirs still resume)
+- **`.pkcs11-check-isolation-state.json.counters.<id>`** - call-counter
+  evidence dir (`<id>` differs per run; the previous one is removed)
+- **`.pkcs11-check-isolation-state.json.lock`** - run guard marker
+- **`.pkcs11-check-isolation-state.json.preflight-counters.jsonl`** -
+  preflight counter evidence
+- **`.benchmarks/`**, **`.hypothesis/`** - pytest-plugin caches, only when
+  suites using those plugins ran
+
+With `--output json` the machine-readable `results.json`, `report.jsonl`,
+`coverage.json`, and `quality.json` land next to `--output-file` instead
+of the system temp dir (default file name `pkcs11-check-results.json` in
+the current directory). Suggested `.gitignore` for run dirs:
+
+```gitignore
+.pkcs11-check-*
+..pkcs11-check-*
+pkcs11-check-results.*
+report.jsonl
+coverage.json
+quality.json
+.benchmarks/
+.hypothesis/
+```
+
 ## Test suite
 
 Test categories:
