@@ -790,6 +790,31 @@ class TestTestCommand:
         )
         assert "--sessions is ignored" in result.output
 
+    def test_resume_barrier_refusal_names_fresh_run_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """S12: a failed resume barrier refuses loudly and names the way out."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "prepare_resume", lambda *a, **k: {"barrier_ok": False})
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(tmp_path / "state.json"),
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "without proven quiescence" in result.output
+        assert "without --resume" in result.output
+
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
