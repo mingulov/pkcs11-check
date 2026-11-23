@@ -1379,15 +1379,18 @@ def read_attributes(
     value, never silent). Genuine values always differ from the pattern
     somewhere, so they still decode. Never hand fill bytes back as data.
 
-    With ``verify_delivery``, a partially proven success (some bytes
-    match the fill) retries once with the alternate fill (R12-3): a tail
-    that follows the fill confirms unproved delivery, while byte-stable
-    content proves genuine (compared by digest, so stable genuine data
-    with coincidental fill bytes still decodes cleanly). The retry
-    supersedes the first read and never re-triggers (``_alternate_fill``
-    and ``_baseline`` are internal retry machinery, not caller knobs).
-    Opt in at callers whose verdicts must not rest on partially proven
-    bytes.
+    With ``verify_delivery``, a success the fill cannot fully prove --
+    some bytes match the fill, or all of them do (R12-3, R13-2) -- retries
+    once with the alternate fill: a tail that follows the fill confirms
+    unproved delivery, while byte-stable content proves genuine (compared
+    by digest, so stable genuine data with coincidental fill bytes still
+    decodes cleanly). The retry supersedes the first read and never
+    re-triggers, and it releases the first attempt's buffers before
+    allocating its own (R13-3); anything but a length- and content-stable
+    retry stays marked, and a retry refusal after a first-read success
+    stays marked too (R13-1). ``_alternate_fill`` and ``_baseline`` are
+    internal retry machinery, not caller knobs. Opt in at callers whose
+    verdicts must not rest on partially proven bytes.
 
     Returns `dict[int, Any]`-shaped values (not a precise union) because
     callers typically know the expected attribute type and call
@@ -1413,7 +1416,12 @@ def read_attributes(
             buffers.append(None)
             continue
         buf = _alloc_module_output(size, what="C_GetAttributeValue")
-        tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
+        # R13-3: take the address, never ctypes.cast: cast() plants a
+        # self-cycle in the buffer's _objects keep-alive dict, which pins
+        # the allocation until the cyclic GC runs. The plain address keeps
+        # no keeper, so dropping our names below frees deterministically
+        # (the buffers list owns the memory across the provider call).
+        tmpl[i].pValue = ctypes.addressof(buf)
         tmpl[i].ulValueLen = size
         buffers.append(buf)
         # R11-2: pattern-fill single-attribute buffers so untouched
@@ -1464,6 +1472,12 @@ def read_attributes(
                 # the observation is kept so attr_or_record can tell this
                 # spec-shape deviation from a plain omission.
                 result.unavailable_without_ckr.add(at)
+            if _baseline is not None:
+                # R13-1: a baseline exists only when the first attempt was a
+                # success for this attribute, so a retry ending at the
+                # sentinel contradicts it -- the delivery stays marked and
+                # can never read as silent capability absence downstream.
+                result.unproved_delivery.add(at)
             continue
         if _observed_refusal_ckr is not None and count == 1:
             # This is the sole requested attribute, so an observed refusal CKR is
@@ -1486,16 +1500,29 @@ def read_attributes(
                 result.refusals[at] = AttrRefusal(
                     ckr=_observed_refusal_ckr, malformed=True, reported_len=size
                 )
+            if _baseline is not None:
+                # R13-1: the first attempt observed a success (that is the
+                # only way a baseline exists), so a retry refusal
+                # contradicts it -- keep the refusal, and mark the delivery
+                # so strict callers stay loud instead of skipping.
+                result.unproved_delivery.add(at)
             continue
         if _observed_refusal_ckr is None and count == 1 and size > 0:
             changed = _changed_byte_count(buf, size, alternate=_alternate_fill)
-            if 0 < changed < size and verify_delivery and not _alternate_fill:
-                # R12-3: partially proven success on a verified read: one
-                # retry with the alternate fill distinguishes an unwritten
-                # tail (which follows the fill) from genuine content
-                # (which stays stable). The retry supersedes this read and
-                # never re-triggers; the baseline digest lets it recognize
-                # byte-stable genuine content.
+            if changed < size and verify_delivery and not _alternate_fill:
+                # R12-3/R13-2: unproven success on a verified read -- a
+                # partial write, an untouched buffer, or a wholly
+                # fill-matching one: one retry with the alternate fill
+                # distinguishes an unwritten tail (which follows the fill)
+                # from genuine content (which stays stable). The retry
+                # supersedes this read and never re-triggers; the baseline
+                # digest lets it recognize byte-stable genuine content.
+                # R13-3: release this attempt's buffers before the retry
+                # allocates its own -- the template holds only addresses,
+                # so dropping these names frees the provider buffer and the
+                # retry never holds two at once.
+                _retry_baseline = (_digest_range(buf, size), size)
+                del buf, buffers, tmpl, result
                 return read_attributes(
                     raw,
                     session,
@@ -1504,7 +1531,7 @@ def read_attributes(
                     raw_bool=raw_bool,
                     verify_delivery=False,
                     _alternate_fill=True,
-                    _baseline=(_digest_range(buf, size), size),
+                    _baseline=_retry_baseline,
                 )
             stable = (
                 _baseline is not None
@@ -1512,15 +1539,17 @@ def read_attributes(
                 and size == _baseline[1]
                 and _digest_range(buf, size) == _baseline[0]
             )
-            if changed < size and not stable:
+            if (changed < size or _baseline is not None) and not stable:
                 # Delivery not fully proven: intact fill, or a partial
                 # write the caller did not ask to verify (or that proved
-                # unstable on retry). Mark it; bools additionally omit
-                # (flags fail closed -- a fabricated True must never read
-                # as enabled), while other types decode below with the
-                # mark riding for strict callers. Byte-stable retries
-                # skip the mark: identical bytes under both fills are
-                # proven genuine.
+                # unstable on retry). On a retry anything but a stable
+                # match stays marked -- even fully changed bytes, which
+                # then disagree with the first read. Mark it; bools
+                # additionally omit (flags fail closed -- a fabricated
+                # True must never read as enabled), while other types
+                # decode below with the mark riding for strict callers.
+                # Byte-stable retries skip the mark: identical bytes under
+                # both fills are proven genuine.
                 result.unproved_delivery.add(at)
                 vtype = ATTR_VALUE_TYPES.get(at, "bytes")
                 if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
