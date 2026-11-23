@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -175,6 +176,117 @@ def test_ensure_manifest_defaults_unset_interface_and_slot(
     assert manifest is not None
     assert manifest.requested_interface == "auto"
     assert manifest.slot_index == 0
+
+
+def _manifest_probe_harness(
+    monkeypatch: pytest.MonkeyPatch, options: dict[str, object | None]
+) -> tuple[Any, list[tuple[str, int]]]:
+    """Fake config + capturing preflight for _ensure_manifest routing tests."""
+    calls: list[tuple[str, int]] = []
+
+    def getoption(name: str, default: object | None = None) -> object | None:
+        return options.get(name, default)
+
+    def fake_preflight(
+        module: Path,
+        *,
+        interface: str,
+        slot: int,
+        timeout: int,
+        output_path: Path,
+    ) -> CapabilityManifest:
+        del timeout, output_path
+        calls.append((interface, slot))
+        return CapabilityManifest(
+            status="ok",
+            module_path=str(module),
+            requested_interface=interface,
+            interface_version="2.40",
+            slot_index=slot,
+            slot_count=1,
+            mechanisms=[],
+        )
+
+    monkeypatch.setattr(selection_mod, "run_preflight_subprocess", fake_preflight)
+    stash = pytest.Stash()
+    stash[plugin_mod._MANIFEST_KEY] = None
+    config = SimpleNamespace(stash=stash, getoption=getoption)
+    return config, calls
+
+
+def test_ensure_manifest_honors_env_slot_and_interface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4: preflight uses merged slot/interface, not raw CLI options."""
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    monkeypatch.delenv("P11TEST_PIN", raising=False)
+    monkeypatch.delenv("P11TEST_SLOT", raising=False)
+    monkeypatch.delenv("P11TEST_INTERFACE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "1")
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.0")
+    options = {
+        "p11_module": str(module_path),
+        "p11_manifest": None,
+        "p11_interface": None,
+        "p11_slot": None,
+    }
+    config, calls = _manifest_probe_harness(monkeypatch, options)
+
+    manifest = plugin_mod._ensure_manifest(config)
+
+    assert calls == [("3.0", 1)]
+    assert manifest is not None
+    assert manifest.requested_interface == "3.0"
+    assert manifest.slot_index == 1
+
+
+def test_ensure_manifest_invalid_slot_is_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4: garbage slot config fails cleanly with UsageError (runtime parity)."""
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    monkeypatch.delenv("P11TEST_PIN", raising=False)
+    monkeypatch.delenv("P11TEST_SLOT", raising=False)
+    monkeypatch.delenv("P11TEST_INTERFACE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "abc")
+    options = {
+        "p11_module": str(module_path),
+        "p11_manifest": None,
+        "p11_interface": None,
+        "p11_slot": None,
+    }
+    config, _calls = _manifest_probe_harness(monkeypatch, options)
+
+    with pytest.raises(pytest.UsageError, match="invalid pkcs11-check configuration"):
+        plugin_mod._ensure_manifest(config)
+
+
+def test_ensure_manifest_cli_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S4 control: explicit CLI slot/interface beat env (documented precedence)."""
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    monkeypatch.delenv("P11TEST_PIN", raising=False)
+    monkeypatch.delenv("P11TEST_SLOT", raising=False)
+    monkeypatch.delenv("P11TEST_INTERFACE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "1")
+    monkeypatch.setenv("P11TEST_INTERFACE", "3.0")
+    options = {
+        "p11_module": str(module_path),
+        "p11_manifest": None,
+        "p11_interface": "3.1",
+        "p11_slot": 2,
+    }
+    config, calls = _manifest_probe_harness(monkeypatch, options)
+
+    manifest = plugin_mod._ensure_manifest(config)
+
+    assert calls == [("3.1", 2)]
+    assert manifest is not None
 
 
 def test_explicit_non_green_manifest_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
