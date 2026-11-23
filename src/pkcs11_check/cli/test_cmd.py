@@ -61,6 +61,7 @@ from pkcs11_check.core.disabled_baseline import (
     format_disabled_baseline_banner,
     resolve_disabled_nodeids,
 )
+from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
 from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
@@ -1334,6 +1335,24 @@ def test_command(
             if resume:
                 preflight_exit_code = _resume_exit_code(state_file, preflight_exit_code)
             raise typer.Exit(code=preflight_exit_code)
+
+        # U1: fail fast on a wrong PIN (one login probe, one message) instead
+        # of per-test login tracebacks. Only when a PIN was actually supplied
+        # (CLI flag or env); other probe outcomes proceed to the run.
+        effective_pin = pin or os.environ.get("P11TEST_PIN")
+        if effective_pin:
+            login_probe = run_login_probe_subprocess(
+                module,
+                interface=interface,
+                slot=slot,
+                pin=effective_pin.encode("utf-8", "surrogateescape"),
+                timeout=max(10, min(timeout, 60)),
+            )
+            if login_probe.status == "pin_incorrect":
+                console.print(
+                    f"[red]✗[/red] PIN incorrect for slot {slot} — run `pkcs11-check doctor`"
+                )
+                raise typer.Exit(code=2)
 
         assert manifest_path is not None
         run_provenance = _build_run_provenance(manifest, resolve_data_dir())

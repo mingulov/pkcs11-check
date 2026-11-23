@@ -17,6 +17,7 @@ from pkcs11_check.core import collection_errors as collection_errors_mod
 from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
 from pkcs11_check.core._report_records import _write_unit_report_record_cache
 from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.doctor_probe import LoginProbe
 from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
@@ -457,6 +458,63 @@ class TestTestCommand:
         assert "--p11-pin" not in called["pytest_args"]
         assert "--p11-so-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
+
+    def test_test_bad_pin_fails_fast_without_running_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U1: wrong PIN prints one message and exits 2; no units run."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def bad_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("pin_incorrect")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", bad_pin_probe)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "9999", "--isolation", "file"],
+        )
+        assert result.exit_code == 2, result.output
+        assert result.output.count("PIN incorrect for slot 0") == 1, result.output
+        assert "pkcs11-check doctor" in result.output
+        assert called == []
+
+    def test_test_good_pin_runs_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U1 control: a correct PIN proceeds to the runner unchanged."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def good_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("ok")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", good_pin_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert "PIN incorrect" not in result.output
+        assert called == ["run"]
 
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         module = tmp_path / "dummy.so"
