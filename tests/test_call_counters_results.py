@@ -555,6 +555,7 @@ def test_isolated_path_seeds_isolation_env_for_unit_children(
         provenance: object = None,
         recovery_config: object = None,
         counters_barrier_plan: object = None,
+        quiet_unit_display: bool = False,
     ) -> int:
         del (
             units,
@@ -1472,6 +1473,7 @@ def _invoke_isolated_with_env_probes(
         provenance: object = None,
         recovery_config: object = None,
         counters_barrier_plan: object = None,
+        quiet_unit_display: bool = False,
     ) -> int:
         del (
             units,

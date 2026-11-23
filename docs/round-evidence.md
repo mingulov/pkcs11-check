@@ -3,20 +3,20 @@
 Small repo-side toolkit for gating CI provider rounds. It ships in the
 package, but it currently has **no active CI consumer**: end-to-end
 release-job wiring (E5) waits on p11lab publishing `checker-round.yml`.
-Until then the toolkit is diagnostic-only — useful for local
+Until then the toolkit is diagnostic-only -- useful for local
 experimentation, not enforcing anything.
 
 ## Commands
 
-- `pkcs11-check evidence-export <report.jsonl> <ledger.jsonl>` — fold one
+- `pkcs11-check evidence-export <report.jsonl> <ledger.jsonl>` -- fold one
   lane's raw report stream into a canonical `ledger.jsonl`, stamping the
   lane/provider identity headers (`--lane/--lane-os/--lane-arch`,
   `--framework-sha`, `--p11lab-sha`, `--image-digest`). See
   `evidence-export --help` for the full option list.
 - `pkcs11-check evidence-admit <ledger.jsonl> --roster <roster.json>
-  --obligations <catalog.json>` — admit a lane ledger against its
+  --obligations <catalog.json>` -- admit a lane ledger against its
   predeclared roster and obligation inventory (`summary` or `json` output).
-- `pkcs11-check evidence-compare <baseline.jsonl> <candidate.jsonl>` —
+- `pkcs11-check evidence-compare <baseline.jsonl> <candidate.jsonl>` --
   compare two ledgers for one lane under rotation deltas, with quorum
   repeats (`--quorum-min-repeats`, `--quorum-frac`).
 
