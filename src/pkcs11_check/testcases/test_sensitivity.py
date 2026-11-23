@@ -4588,10 +4588,12 @@ def _skip_unless_sealed_unreadable(
     (no value present, so the seal question cannot be asked).
     Undefined RVs still fail loud. A malformed refusal (finite length
     retained without a write) terminates visibly: only a clean refusal
-    proves the seal, so the dependent search never runs on it.
+    proves the seal, so the dependent search never runs on it. The read
+    verifies delivery and judges strictly (R12-2): unproved bytes never
+    read back as clear.
     """
     try:
-        read = read_attributes(rs.raw, rs.sh, handle, [attr])
+        read = read_attributes(rs.raw, rs.sh, handle, [attr], verify_delivery=True)
     except CkrAssertionError as exc:
         if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
             record = classification.record_as(
@@ -4669,6 +4671,7 @@ def _skip_unless_sealed_unreadable(
         kind="policy",
         inherit_mechanism=False,
         sensitive_is_conformant=True,
+        strict_delivery=True,
     )
     if value is not MISSING_ATTRIBUTE:
         pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")

@@ -247,8 +247,9 @@ def test_success_without_write_omits_bool_with_unproved_mark() -> None:
     assert result.unproved_delivery == {int(CKA_TOKEN)}
 
 
-def test_untouched_kcv_omits_with_unproved_mark() -> None:
-    """R11-2: untouched multi-byte success omits visibly (never a fill value)."""
+def test_untouched_kcv_flagged_unproved_not_silenced() -> None:
+    """R12-2: untouched bytes stay present but flagged for strict callers."""
+    from pkcs11_check.raw.recipes import _PATTERN_BLOCK
     from pkcs11_check.raw.types_std import CKA_CHECK_VALUE
 
     def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
@@ -257,13 +258,51 @@ def test_untouched_kcv_omits_with_unproved_mark() -> None:
         return int(CKR_OK)
 
     result = read_attributes(_raw(_get), 1, 1, [CKA_CHECK_VALUE])
-    assert CKA_CHECK_VALUE not in result
+    assert result[CKA_CHECK_VALUE] == bytes(_PATTERN_BLOCK[:3])
     assert result.refusals == {}
     assert result.unproved_delivery == {int(CKA_CHECK_VALUE)}
 
 
-def test_attr_or_record_marks_unproved_delivery_visible() -> None:
-    """R11-2: unproved delivery deviates visibly, even for optional callers."""
+def test_verify_retry_accepts_stable_partial_content() -> None:
+    """R12-3: byte-stable content across fills is proven genuine (no mark)."""
+    from pkcs11_check.raw.recipes import _PATTERN_BLOCK, _PATTERN_BLOCK_ALT
+
+    blob = bytes([_PATTERN_BLOCK[0], _PATTERN_BLOCK_ALT[1], 0x00, 0x01])
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue:
+            ctypes.memmove(attrs[0].pValue, blob, len(blob))
+        attrs[0].ulValueLen = len(blob)
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert result[CKA_VALUE] == blob
+    assert result.unproved_delivery == set()
+
+
+def test_verify_retry_flags_fill_following_tail() -> None:
+    """R12-3: a tail that follows the fill stays unproved (marked, kept)."""
+    calls: list[bytes] = []
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 3
+        else:
+            calls.append(bytes(ctypes.string_at(attrs[0].pValue, 3)))
+            ctypes.memmove(attrs[0].pValue, b"\x66\x00\x00", 1)
+            attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert len(calls) == 2
+    assert result[CKA_VALUE] == b"\x66" + calls[1][1:]
+    assert result.unproved_delivery == {int(CKA_VALUE)}
+
+
+def test_attr_or_record_strict_marks_unproved_delivery_visible() -> None:
+    """R12-2: strict callers deviate on unproved delivery, even if optional."""
     from pkcs11_check.raw.recipes import AttrReadResult
 
     attrs = AttrReadResult()
@@ -274,12 +313,26 @@ def test_attr_or_record_marks_unproved_delivery_visible() -> None:
         label="unproved delivery",
         reason="honest_deviation",
         optional_if_absent=True,
+        strict_delivery=True,
     )
     assert value is MISSING_ATTRIBUTE
     record = get_records()[-1]
     assert record.reason == "honest_deviation"
     assert "unproved" in (record.summary or "")
     assert record.detail.get("unproved_delivery") is True
+
+
+def test_attr_or_record_lenient_keeps_today_shape_on_unproved() -> None:
+    """R12-2: lenient callers keep today's shape (no strict deviation)."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.unproved_delivery.add(CKA_VALUE)
+    value = attr_or_record(attrs, CKA_VALUE, label="unproved delivery", reason="honest_deviation")
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert (record.detail or {}).get("unproved_delivery") is not True
+    assert record.summary == "unproved delivery: attribute unavailable"
 
 
 def test_canary_valued_bytes_still_decode() -> None:

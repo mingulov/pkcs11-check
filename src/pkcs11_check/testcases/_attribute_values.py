@@ -92,12 +92,15 @@ def _sentinel_without_ckr(attrs: Mapping[Any, Any], attr: Any) -> bool:
         return False
 
 
-def _unproved_delivery(attrs: Mapping[Any, Any], attr: Any) -> bool:
+def delivery_unproved(attrs: Mapping[Any, Any], attr: Any) -> bool:
     """Whether ``read_attributes`` marked delivery unproved for ``attr`` (R11-2).
 
-    True only when the read claimed success over an untouched fill pattern
-    (its additive ``unproved_delivery`` channel); a plain ``Mapping`` with
-    no such channel reports ``False``.
+    True only when the read left residual doubt about delivery (its
+    additive ``unproved_delivery`` channel: untouched fill on success, or
+    a partial write the retry did not fully resolve); a plain ``Mapping``
+    with no such channel reports ``False``. The narrowly recognized
+    accessor for the channel (R12-1): probe and oracle callers consult
+    delivery state through this, never by direct sidecar access.
     """
     observed = getattr(attrs, "unproved_delivery", None)
     if not observed:
@@ -119,6 +122,7 @@ def attr_or_record(
     inherit_mechanism: bool = True,
     sensitive_is_conformant: bool = False,
     optional_if_absent: bool = False,
+    strict_delivery: bool = False,
 ) -> Any:
     """Return an attribute or record its absence without terminating the test.
 
@@ -126,6 +130,12 @@ def attr_or_record(
     ``read_attributes`` observed an actual refusal CKR for ``attr`` (carried via
     its additive ``refusals`` channel), that CKR rides on the emitted record as
     ``actual_ckr`` -- never invented when no CKR was actually observed.
+
+    With ``strict_delivery``, an unproved delivery (``read_attributes``
+    success that left residual doubt, e.g. untouched fill or an
+    unresolved partial write) is retained as a visible deviation instead
+    of a value -- and never as silent capability absence. Opt in at
+    callers whose verdicts must not rest on unproved bytes.
 
     Whether a ``CKR_ATTRIBUTE_SENSITIVE`` refusal is *conformant* or a *defect*
     depends on whether ``attr`` could legitimately be sensitive, which only the
@@ -156,6 +166,33 @@ def attr_or_record(
     """
     if reason not in ("honest_deviation", "not_operational"):
         raise ValueError(f"invalid missing-attribute reason: {reason!r}")
+    if strict_delivery and delivery_unproved(attrs, attr):
+        # Unproved delivery (untouched fill or an unresolved partial
+        # write): retained as a visible deviation for strict callers --
+        # never a value, and never silent capability absence for
+        # optional callers. Lenient callers keep today's shape. Checked
+        # before presence: the channel marks doubt about a value that
+        # may still sit in the mapping.
+        try:
+            strict_id: int | None = int(attr)
+        except (TypeError, ValueError, OverflowError):
+            strict_id = None
+        strict_name = ATTR_NAMES.get(strict_id, str(attr)) if strict_id is not None else str(attr)
+        record_as(
+            reason,
+            kind=kind,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            actual=None,
+            summary=f"{label}: attribute value unproved (delivery not established)",
+            detail={
+                "attribute": {"name": strict_name, "id": strict_id},
+                "unproved_delivery": True,
+            },
+        )
+        return MISSING_ATTRIBUTE
     if attr in attrs:
         return attrs[attr]
 
@@ -167,24 +204,6 @@ def attr_or_record(
     detail: dict[str, Any] = {"attribute": {"name": attr_name, "id": attr_id}}
 
     refusal = _refusal_for(attrs, attr)
-
-    if _unproved_delivery(attrs, attr):
-        # R11-2: success claimed but nothing delivered (fill pattern
-        # intact). Retained as a visible deviation -- never a value, and
-        # never silent capability absence for optional callers.
-        detail["unproved_delivery"] = True
-        record_as(
-            reason,
-            kind=kind,
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            inherit_mechanism=inherit_mechanism,
-            actual=None,
-            summary=f"{label}: attribute value unproved (success without delivery)",
-            detail=detail,
-        )
-        return MISSING_ATTRIBUTE
 
     if refusal is not None and refusal.leaked_len is not None:
         # Self-contradiction: the module answered a refusal CKR for this attribute

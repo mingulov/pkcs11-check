@@ -7,6 +7,7 @@ PKCS#11 operations. A recipe must be mentally expandable to its raw calls.
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
@@ -1292,35 +1293,53 @@ def _is_unavailable_length(val: int) -> bool:
 _PATTERN_PERIOD = 256
 _PATTERN_CHUNK = _PATTERN_PERIOD * 256
 _PATTERN_BLOCK = bytes((0xA5 + i) & 0xFF for i in range(_PATTERN_CHUNK))
+_PATTERN_BLOCK_ALT = bytes(b ^ 0xFF for b in _PATTERN_BLOCK)
 
 
-def _fill_pattern(buf: Any, size: int) -> None:
+def _fill_pattern(buf: Any, size: int, *, alternate: bool = False) -> None:
     """Fill ``buf[0:size]`` with the pattern in bounded chunks (R11-2)."""
+    block = _PATTERN_BLOCK_ALT if alternate else _PATTERN_BLOCK
     base = ctypes.addressof(buf)
     for off in range(0, size, _PATTERN_CHUNK):
         clen = min(_PATTERN_CHUNK, size - off)
-        ctypes.memmove(base + off, _PATTERN_BLOCK, clen)
+        ctypes.memmove(base + off, block, clen)
 
 
-def _changed_byte_count(buf: Any, size: int) -> int:
-    """Bytes in ``buf[0:size]`` differing from the pattern (R9-1b, R11-2).
+def _changed_byte_count(buf: Any, size: int, *, alternate: bool = False) -> int:
+    """Bytes in ``buf[0:size]`` differing from the fill (R9-1b, R11-2).
 
     Chunked raw reads: bounded space regardless of buffer size (no
     snapshot, no full copy, no int list). The range clamps to the
-    allocation; a lower bound, since pattern-matching bytes are
-    invisible (2^-8n per byte -- exact-pattern writes excepted). Call
-    only for pattern-filled single-attribute buffers.
+    allocation; a lower bound, since fill-matching bytes are invisible.
+    Call only for filled single-attribute buffers, with the matching
+    ``alternate`` selection.
     """
+    block = _PATTERN_BLOCK_ALT if alternate else _PATTERN_BLOCK
     bound = min(size, len(buf))
     base = ctypes.addressof(buf)
     changed = 0
     for off in range(0, bound, _PATTERN_CHUNK):
         clen = min(_PATTERN_CHUNK, bound - off)
         chunk = ctypes.string_at(base + off, clen)
-        want = _PATTERN_BLOCK[:clen]
+        want = block[:clen]
         if chunk != want:
             changed += sum(1 for a, b in zip(chunk, want) if a != b)
     return changed
+
+
+def _digest_range(buf: Any, size: int) -> bytes:
+    """SHA-256 over ``buf[0:size]`` in bounded chunks (R12-3).
+
+    O(1) space regardless of buffer size. Used to compare a retried
+    read against its baseline without retaining either buffer.
+    """
+    digest = hashlib.sha256()
+    bound = min(size, len(buf))
+    base = ctypes.addressof(buf)
+    for off in range(0, bound, _PATTERN_CHUNK):
+        clen = min(_PATTERN_CHUNK, bound - off)
+        digest.update(ctypes.string_at(base + off, clen))
+    return digest.digest()
 
 
 def read_attributes(
@@ -1330,6 +1349,9 @@ def read_attributes(
     attr_types: list[int] | tuple[int, ...] | set[int] | frozenset[int],
     *,
     raw_bool: bool = False,
+    verify_delivery: bool = False,
+    _alternate_fill: bool = False,
+    _baseline: tuple[bytes, int] | None = None,
 ) -> AttrReadResult:
     """Read attribute values from an object.
 
@@ -1356,6 +1378,16 @@ def read_attributes(
     the ``unproved_delivery`` channel (delivery unproved -- never a
     value, never silent). Genuine values always differ from the pattern
     somewhere, so they still decode. Never hand fill bytes back as data.
+
+    With ``verify_delivery``, a partially proven success (some bytes
+    match the fill) retries once with the alternate fill (R12-3): a tail
+    that follows the fill confirms unproved delivery, while byte-stable
+    content proves genuine (compared by digest, so stable genuine data
+    with coincidental fill bytes still decodes cleanly). The retry
+    supersedes the first read and never re-triggers (``_alternate_fill``
+    and ``_baseline`` are internal retry machinery, not caller knobs).
+    Opt in at callers whose verdicts must not rest on partially proven
+    bytes.
 
     Returns `dict[int, Any]`-shaped values (not a precise union) because
     callers typically know the expected attribute type and call
@@ -1392,7 +1424,7 @@ def read_attributes(
         # today's zero-fill (their refusal attribution stays the
         # documented residual gap below).
         if count == 1 and size > 0:
-            _fill_pattern(buf, size)
+            _fill_pattern(buf, size, alternate=_alternate_fill)
 
     # Second call: read values
     rv2 = raw.C_GetAttributeValue(session, handle, tmpl, count)
@@ -1410,8 +1442,12 @@ def read_attributes(
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
         buf = buffers[i]
-        # Whole-allocation change count, single-attribute canary reads only.
-        changed_all = _changed_byte_count(buf, len(buf)) if count == 1 and buf is not None else 0
+        # Whole-allocation change count, single-attribute filled reads only.
+        changed_all = (
+            _changed_byte_count(buf, len(buf), alternate=_alternate_fill)
+            if count == 1 and buf is not None
+            else 0
+        )
         if _is_unavailable_length(size) or buf is None:
             # Attribute sensitive or type invalid, correctly signalled via the
             # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
@@ -1451,22 +1487,44 @@ def read_attributes(
                     ckr=_observed_refusal_ckr, malformed=True, reported_len=size
                 )
             continue
-        if (
-            _observed_refusal_ckr is None
-            and count == 1
-            and size > 0
-            and _changed_byte_count(buf, size) == 0
-        ):
-            # R11-2: success claimed but the returned range matches the fill
-            # pattern exactly: nothing was delivered, so there is no value
-            # to surface. Never hand fill bytes back as data; mark
-            # unproved delivery (a visible deviation downstream, never a
-            # pass and never silent capability absence). A write outside
-            # the returned range does not validate it. Zero-size successes
-            # stay empty values (nothing observable); multi-attribute reads
-            # keep today's zero-fill behavior.
-            result.unproved_delivery.add(at)
-            continue
+        if _observed_refusal_ckr is None and count == 1 and size > 0:
+            changed = _changed_byte_count(buf, size, alternate=_alternate_fill)
+            if 0 < changed < size and verify_delivery and not _alternate_fill:
+                # R12-3: partially proven success on a verified read: one
+                # retry with the alternate fill distinguishes an unwritten
+                # tail (which follows the fill) from genuine content
+                # (which stays stable). The retry supersedes this read and
+                # never re-triggers; the baseline digest lets it recognize
+                # byte-stable genuine content.
+                return read_attributes(
+                    raw,
+                    session,
+                    handle,
+                    attr_types,
+                    raw_bool=raw_bool,
+                    verify_delivery=False,
+                    _alternate_fill=True,
+                    _baseline=(_digest_range(buf, size), size),
+                )
+            stable = (
+                _baseline is not None
+                and changed > 0
+                and size == _baseline[1]
+                and _digest_range(buf, size) == _baseline[0]
+            )
+            if changed < size and not stable:
+                # Delivery not fully proven: intact fill, or a partial
+                # write the caller did not ask to verify (or that proved
+                # unstable on retry). Mark it; bools additionally omit
+                # (flags fail closed -- a fabricated True must never read
+                # as enabled), while other types decode below with the
+                # mark riding for strict callers. Byte-stable retries
+                # skip the mark: identical bytes under both fills are
+                # proven genuine.
+                result.unproved_delivery.add(at)
+                vtype = ATTR_VALUE_TYPES.get(at, "bytes")
+                if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
+                    continue
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         raw_bytes = bytes(buffers[i][:size])
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):

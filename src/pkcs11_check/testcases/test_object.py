@@ -70,6 +70,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
+    delivery_unproved,
     refusal_rv_for,
 )
 from pkcs11_check.testcases._ec_export import SECP256R1_ORDER
@@ -663,9 +664,12 @@ def _qc7_read_single(
     unobserved CKR -- unless ``pass_on_absence`` marks absence itself
     as the asserted property (inverse-oracle checks), where the global
     evidence stays but nothing is raised.
+    Reads verify delivery and judge strictly (R12-2): unproved bytes
+    are never analyzed as data, and unproved absence never silently
+    passes -- not even for inverse-oracle callers.
     """
     try:
-        attrs = read_attributes(rs.raw, rs.sh, handle, [attr])
+        attrs = read_attributes(rs.raw, rs.sh, handle, [attr], verify_delivery=True)
     except CkrAssertionError as exc:
         reason = (
             "not_operational"
@@ -684,8 +688,6 @@ def _qc7_read_single(
             summary=f"{label}: attribute read returned {ckr_name(exc.rv)}",
         )
         return "error", None, [record]
-    if attr in attrs:
-        return "present", attrs[attr], []
     clean_rv = refusal_rv_for(attrs, attr)
     if clean_rv is not None:
         if int(clean_rv) == int(CKR_ATTRIBUTE_TYPE_INVALID):
@@ -704,22 +706,28 @@ def _qc7_read_single(
         )
         return "error", None, [record]
     # No clean refusal from a real read_attributes result can only be a
-    # refusal-with-data or the CKR_OK-plus-sentinel shape (a plain
-    # omission always carries one of those two channels). refusal_rv_for
-    # deliberately hides leaked_len, so compose with attr_or_record and
-    # sniff its just-emitted records (the documented composition; the
-    # optional_if_absent escape hatch is scoped to KCV and not used): a
-    # leaked refusal records self_contradiction, the sentinel shape an
-    # honest deviation kept as evidence while judged absent here.
+    # present value, a refusal-with-data, the CKR_OK-plus-sentinel shape,
+    # or unproved delivery (a plain omission always carries one of those
+    # channels). refusal_rv_for deliberately hides leaked_len, so compose
+    # with attr_or_record and sniff its just-emitted records (the
+    # documented composition; the optional_if_absent escape hatch is
+    # scoped to KCV and not used): a leaked refusal records
+    # self_contradiction, the sentinel shape an honest deviation kept as
+    # evidence while judged absent here, and unproved delivery is judged
+    # strictly (R12-2: never analyzed as data). Present values come back
+    # directly with nothing recorded.
     before = len(C.get_records())
-    attr_or_record(
+    value = attr_or_record(
         attrs,
         attr,
         label=label,
         reason="honest_deviation",
         kind="metadata",
         inherit_mechanism=False,
+        strict_delivery=True,
     )
+    if value is not MISSING_ATTRIBUTE:
+        return "present", value, []
     added = C.get_records()[before:]
     for record in added:
         if record.detail is None:
@@ -731,8 +739,11 @@ def _qc7_read_single(
         # R6-2: the sentinel deviation is evidence the caller must judge
         # (returned, not just global), so no second record with an
         # invented CKR is minted downstream. Inverse-oracle callers keep
-        # the old pass shape via pass_on_absence.
-        return "absent", None, ([] if pass_on_absence else added)
+        # the old pass shape via pass_on_absence -- except for unproved
+        # delivery (R12-2), which no absence assertion may silently pass.
+        if pass_on_absence and not delivery_unproved(attrs, attr):
+            return "absent", None, []
+        return "absent", None, added
     return "missing", None, []
 
 

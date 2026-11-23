@@ -349,7 +349,9 @@ def test_kcv_one_missing_leg_is_a_support_inconsistency(
     classification.clear()
     events: list[str] = []
 
-    def read(_raw: object, _sh: int, handle: int, _attrs: object) -> dict[int, object]:
+    def read(
+        _raw: object, _sh: int, handle: int, _attrs: object, **_kwargs: object
+    ) -> dict[int, object]:
         events.append(f"read:{handle}")
         if handle == 4:
             return {}
@@ -514,6 +516,37 @@ def test_generated_kcv_unproved_delivery_xfails_visible(
         tae.TestCheckValue().test_generated_key_has_check_value(_session())
     (record,) = [rec for rec in _records() if rec.outcome == "xfail"]
     assert record.reason == "honest_deviation", record.summary
+
+
+def test_generated_kcv_partial_write_deviates_not_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R12-3: a partially delivered KCV deviates (real reader, verified read)."""
+    import ctypes
+
+    from _pytest.outcomes import XFailed
+
+    classification.clear()
+    monkeypatch.setattr(tae, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(tae, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 3
+        else:
+            ctypes.memmove(attrs[0].pValue, b"\x66", 1)
+            attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    raw = SimpleNamespace(
+        C_GetAttributeValue=_get,
+        C_DestroyObject=lambda *_args: int(CKR_OK),
+    )
+    rs = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
+    with pytest.raises(XFailed, match="unproved"):
+        tae.TestCheckValue().test_generated_key_has_check_value(rs)
+    assert any(rec.reason == "honest_deviation" for rec in _records())
 
 
 def test_generated_kcv_attribute_type_invalid_is_optional_capability_skip(

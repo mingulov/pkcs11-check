@@ -78,7 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import refusal_for
+from pkcs11_check.testcases._attribute_values import delivery_unproved, refusal_for
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
 
@@ -188,7 +188,7 @@ def _finish_flag_probe(
             return
         twin_claim = _classify_readback(twin_vals, false_attr)
         if twin_claim.get("event") == "omitted":
-            if false_attr in getattr(twin_vals, "unproved_delivery", ()):
+            if delivery_unproved(twin_vals, false_attr):
                 print(
                     f"DEVIATION_XFAIL:control twin {attr_name} delivery unproved "
                     "(success without write); enforcement oracle disabled"
