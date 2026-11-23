@@ -18,9 +18,26 @@ from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
+    CK_MECHANISM,
     CK_ULONG,
+    CKA_CLASS,
     CKA_ENCRYPT,
+    CKA_KEY_TYPE,
+    CKA_SIGN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKK_GENERIC_SECRET,
+    CKM_AES_KEY_GEN,
+    CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_SHA256_HMAC,
+    CKO_PRIVATE_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
     CKR_PENDING,
 )
 from pkcs11_check.testcases._probes import ckr_raw_attrs as raw_probe
@@ -326,6 +343,157 @@ def test_child_emits_structured_marker_for_present_malformed_value(
     assert output.startswith("ATTRIBUTE_EVENT:")
     assert '"event":"malformed"' in output
     assert '"attribute":{"name":"CKA_ENCRYPT","id":260}' in output
+
+
+class _SignCaptureRaw:
+    """Capture the sign probe's key creation + SignInit calls (fw#96)."""
+
+    def __init__(
+        self,
+        *,
+        sign_rv: int,
+        refuse_keygen: set[int] | None = None,
+        refuse_create: bool = False,
+    ) -> None:
+        self._sign_rv = sign_rv
+        self._refuse_keygen = refuse_keygen or set()
+        self._refuse_create = refuse_create
+        self.keygen_calls: list[tuple[int, dict[int, bytes]]] = []
+        self.create_calls: list[dict[int, bytes]] = []
+        self.sign_mech: int | None = None
+
+    @staticmethod
+    def _decode_attrs(tmpl_ptr: Any, count: int) -> dict[int, bytes]:
+        array = ctypes.cast(tmpl_ptr, ctypes.POINTER(CK_ATTRIBUTE * count)).contents
+        out: dict[int, bytes] = {}
+        for i in range(count):
+            size = int(array[i].ulValueLen)
+            addr = array[i].pValue
+            out[int(array[i].type)] = bytes(ctypes.string_at(addr, size)) if addr and size else b""
+        return out
+
+    def C_GenerateKey(  # noqa: N802
+        self, _sh: int, mech_ptr: Any, tmpl_ptr: Any, count: int, out: Any
+    ) -> int:
+        mech = int(ctypes.cast(mech_ptr, ctypes.POINTER(CK_MECHANISM)).contents.mechanism)
+        self.keygen_calls.append((mech, self._decode_attrs(tmpl_ptr, int(count))))
+        if mech in self._refuse_keygen:
+            return int(CKR_MECHANISM_INVALID)
+        ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4242
+        return int(CKR_OK)
+
+    def C_CreateObject(self, _sh: int, tmpl_ptr: Any, count: int, out: Any) -> int:  # noqa: N802
+        self.create_calls.append(self._decode_attrs(tmpl_ptr, int(count)))
+        if self._refuse_create:
+            return int(CKR_FUNCTION_NOT_SUPPORTED)
+        ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4243
+        return int(CKR_OK)
+
+    def C_SignInit(self, _sh: int, mech_ptr: Any, _key: int) -> int:  # noqa: N802
+        self.sign_mech = int(ctypes.cast(mech_ptr, ctypes.POINTER(CK_MECHANISM)).contents.mechanism)
+        return self._sign_rv
+
+
+def _ulong_native(value: int) -> bytes:
+    return value.to_bytes(ctypes.sizeof(CK_ULONG), sys.byteorder)
+
+
+def test_sign_probe_builds_single_fault_hmac_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The sign probe uses a type-consistent generic-secret key (fw#96)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED))
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
+    assert raw.create_calls == []
+    attrs = raw.keygen_calls[0][1]
+    assert attrs.get(int(CKA_SIGN)) == b"\x00"
+    assert attrs.get(int(CKA_VERIFY)) == b"\x01"
+    assert int(CKA_ENCRYPT) not in attrs
+    assert attrs.get(int(CKA_VALUE_LEN)) == _ulong_native(32)
+    assert raw.sign_mech == int(CKM_SHA256_HMAC)
+    out = capsys.readouterr().out
+    assert f"CKR:0x{int(CKR_KEY_FUNCTION_NOT_PERMITTED):08x}" in out
+    assert out.rstrip().endswith("OK")
+    assert "SETUP_XFAIL" not in out
+
+
+def test_sign_probe_falls_back_to_create_object(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without generic keygen, the sign probe creates the HMAC key (fw#96)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN)},
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
+    assert len(raw.create_calls) == 1
+    created = raw.create_calls[0]
+    assert int.from_bytes(created[int(CKA_CLASS)], sys.byteorder) == int(CKO_PRIVATE_KEY)
+    assert int.from_bytes(created[int(CKA_KEY_TYPE)], sys.byteorder) == int(CKK_GENERIC_SECRET)
+    assert len(created[int(CKA_VALUE)]) == 32
+    assert created.get(int(CKA_SIGN)) == b"\x00"
+    assert created.get(int(CKA_VERIFY)) == b"\x01"
+    assert int(CKA_ENCRYPT) not in created
+    assert raw.sign_mech == int(CKM_SHA256_HMAC)
+    out = capsys.readouterr().out
+    assert out.rstrip().endswith("OK")
+    assert "SETUP_XFAIL" not in out
+
+
+def test_sign_probe_falls_back_to_aes_route(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without generic-secret support, the sign probe keeps today's AES route (fw#96)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN)},
+        refuse_create=True,
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    assert [mech for mech, _ in raw.keygen_calls] == [
+        int(CKM_GENERIC_SECRET_KEY_GEN),
+        int(CKM_AES_KEY_GEN),
+    ]
+    aes_attrs = raw.keygen_calls[1][1]
+    assert aes_attrs.get(int(CKA_SIGN)) == b"\x00"
+    assert aes_attrs.get(int(CKA_ENCRYPT)) == b"\x01"
+    assert raw.sign_mech == int(CKM_SHA256_HMAC)
+    out = capsys.readouterr().out
+    assert out.rstrip().endswith("OK")
+    assert "SETUP_XFAIL" not in out
+
+
+def test_sign_probe_setup_failure_reports_setup_xfail(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """All key creation refused: SETUP_XFAIL, no CKR judgment (fw#96 control)."""
+    monkeypatch.setattr(raw_probe, "read_attributes", lambda *_a, **_k: {CKA_SIGN: False})
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        refuse_keygen={int(CKM_GENERIC_SECRET_KEY_GEN), int(CKM_AES_KEY_GEN)},
+        refuse_create=True,
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed" in out
+    assert "CKR:" not in out
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
