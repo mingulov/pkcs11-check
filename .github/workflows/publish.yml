@@ -316,6 +316,12 @@ jobs:
           name: release-notes
           path: notes/
 
+      - name: Generate SHA256SUMS for the release assets
+        run: |
+          cd dist
+          sha256sum pkcs11_check-*.tar.gz pkcs11_check-*-py3-none-any.whl > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

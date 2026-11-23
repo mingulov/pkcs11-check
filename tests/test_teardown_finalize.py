@@ -125,7 +125,7 @@ def _teardown_records(report_log: _FakeReportLogPlugin) -> list[dict[str, object
 
 
 def _run(config: SimpleNamespace) -> SimpleNamespace:
-    # SimpleNamespace is intentional: hermetic fake; cast to satisfy Pyright.
+    # SimpleNamespace is intentional: hermetic fake; cast for type-checkers.
     session = SimpleNamespace(config=config, exitstatus=pytest.ExitCode.OK)
     plugin_mod.pytest_sessionfinish(cast(pytest.Session, session), 0)
     return session

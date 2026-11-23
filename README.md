@@ -19,7 +19,7 @@ Large xfail/fail counts are normal: PKCS#11 cannot express many constraints (for
 example, there is no per-curve capability flag), so one capability gap
 multiplies across thousands of vectors. Both xfail and fail are recorded
 findings - how the module differed from the checked expectation - not defects in
-pkcs11-check. See [docs/interpreting-results.md](docs/interpreting-results.md).
+pkcs11-check. See [docs/interpreting-results.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/interpreting-results.md).
 
 ## What it is not
 
@@ -44,18 +44,21 @@ project.
 ## Quick start
 
 ```bash
-# Install
-git clone https://github.com/mingulov/pkcs11-check
+# Install from PyPI
+pip install pkcs11-check
+
+# Or from source, pinned to this release (prefix the commands below with `uv run`)
+git clone --branch v0.3.1 https://github.com/mingulov/pkcs11-check
 cd pkcs11-check
 uv sync
 
 # Run against any PKCS#11 module you provide (needs an initialized token
 # with PIN 1234 - see "First run" below for a from-scratch SoftHSM2 setup)
-uv run pkcs11-check test --module /path/to/module.so --pin 1234
+pkcs11-check test --module /path/to/module.so --pin 1234
 ```
 
 (See "First run in 60 seconds" below for a complete SoftHSM2 example. For
-container-based walkthroughs see [docs/docker-examples.md](docs/docker-examples.md).)
+container-based walkthroughs see [docs/docker-examples.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/docker-examples.md).)
 
 ### First run in 60 seconds (from PyPI)
 
@@ -90,7 +93,7 @@ Two non-obvious rules:
 If anything fails, run **`pkcs11-check doctor`** first - it checks the module,
 slot, PIN, token, and data, and prints the exact next step for each problem.
 
-**New to this?** [docs/getting-started-softhsm2.md](docs/getting-started-softhsm2.md)
+**New to this?** [docs/getting-started-softhsm2.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/getting-started-softhsm2.md)
 is a complete copy-pasteable walkthrough - install, create a SoftHSM2 config and
 token from scratch, run the suite, and read the results.
 
@@ -173,20 +176,20 @@ Test categories:
 pkcs11-check runs against **any** PKCS#11 module. It is regularly exercised
 against a broad set of open-source implementations - software HSMs, a TPM stack,
 cloud KMS bridges, smart-card simulators, and a TEE - listed with upstream links
-in [docs/providers.md](docs/providers.md). Several C/C++ implementations are
+in [docs/providers.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/providers.md). Several C/C++ implementations are
 additionally run under a separate AddressSanitizer + UBSan build. Exact versions
 move over time and are intentionally not pinned here.
 
 ## Known limitations
 
-SO login and destructive `CKA_TRUSTED` import coverage ship in v0.1.8. Supply the distinct
+SO login and destructive `CKA_TRUSTED` import coverage require the distinct
 SO PIN through `P11TEST_SO_PIN`; these token-mutating tests still require `--destructive`.
 
 - Provider-generated in-band IV profiles, proxy/loader mutable-parameter
   preservation checks, and broader mutable-output simulator targets are tracked
   as future interop work.
 
-Planned and considered work is listed in [docs/roadmap.md](docs/roadmap.md).
+Planned and considered work is listed in [docs/roadmap.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/roadmap.md).
 
 ## Architecture
 
@@ -215,7 +218,7 @@ src/pkcs11_check/
 - `docs/configuration.md` - every setting, its env var and TOML key, and the merge order
 - `docs/architecture.md` - codebase structure and test writing guide
 - `docs/commands.md` - build, test, and Docker commands
-- `docs/test-universe.md` - collected product-test counts by group
+- `docs/test-universe.md` - collected product-test counts by group (point-in-time snapshot, May 2026 — illustrative, not current)
 - `docs/mechanism-output-parameters.md` - generated IV/nonce/tag output-parameter coverage
 - `docs/file-isolation.md` - isolation runner design
 - `docs/running-under-tracer.md` - running under an external tracer/profiler/observer
@@ -227,8 +230,8 @@ src/pkcs11_check/
 
 Licensed under either of
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/mingulov/pkcs11-check/blob/main/LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](https://github.com/mingulov/pkcs11-check/blob/main/LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
@@ -238,5 +241,5 @@ pkcs11-check ships ctypes bindings generated from the public-domain PKCS#11
 v3.2 header from `latchset/pkcs11-headers` (the header itself is a dev-time
 codegen input kept in the source repository, not shipped in the package), and
 its `fetch-data` command downloads test vectors from C2SP and NIST. See
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the full list and
+[`THIRD_PARTY_LICENSES.md`](https://github.com/mingulov/pkcs11-check/blob/main/THIRD_PARTY_LICENSES.md) for the full list and
 per-source license terms.
