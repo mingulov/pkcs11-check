@@ -197,12 +197,12 @@ src/pkcs11_check/
     ckr/        - CKR return code compliance tests
   plugin.py     - pytest plugin (markers, fixtures, collection)
   fixtures.py   - p11_session, p11_module, p11_config
-  config.py     - four-layer config (CLI > env > TOML > defaults)
+  config.py     - four-layer config (CLI > env > TOML > defaults; some keys CLI-only, a few dead - see docs/configuration.md)
 ```
 
 ## Key features
 
-- **`pkcs11_check.raw`** - pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
+- **`pkcs11_check.raw`** - pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, PQC mechanisms (ML-KEM, ML-DSA, SLH-DSA), all 68 standard functions
 - **Crash-safe by default** - `--isolation auto` runs each test unit in its own subprocess, so a provider crash is recorded as that unit's result instead of killing the suite. `disabled-tests` files are for hangs/crashes you deliberately exclude up front, not a crash workaround
 - **CKR return-code compliance** - `testcases/ckr/` checks exact OASIS spec CKR codes (not just "any error"). Bare pytest only, not a `pkcs11-check test` flag: `uv run pytest src/pkcs11_check/testcases/ckr/ --ckr-strict --p11-module <module> --p11-pin <pin>` for the strictest spec reading
 - **Wycheproof + ACVP vectors** - cross-verification against C2SP and NIST test vectors
