@@ -96,6 +96,11 @@ TEST_LAYER_TRUTH: tuple[ConfigKeyTruth, ...] = (
 NO_EFFECT = "(no effect)"
 
 
+def is_dead_config_key(key: str) -> bool:
+    """Whether ``key`` has no live layer (N3: exact deadness, not value match)."""
+    return any(not truth.live and truth.key == key for truth in TEST_LAYER_TRUTH)
+
+
 @dataclass(frozen=True)
 class ConfigRow:
     """One ``--show-config`` row: effective value + winning source."""

@@ -10,8 +10,9 @@ full provider round (see Known limitations).
 
 ### Added
 
-- Run totals at the end of every text-mode run, so a finished run states
-  its own outcome without opening a report file.
+- Run totals at the end of every text-mode isolated run, so a finished
+  run states its own outcome without opening a report file
+  (`--isolation none` keeps showing pytest's own summary).
 - `--version` flag printing the same string as the `version` subcommand.
 - A per-slot initialized marker in `info`, naming how many token slots
   are actually usable.
@@ -38,7 +39,8 @@ full provider round (see Known limitations).
 - Seal and absence checks no longer grant credit when a retry contradicts
   the first read.
 - RSA and EC private-value comparisons ignore leading-zero padding, so
-  providers returning short forms no longer fail against padded oracles.
+  providers returning short forms no longer fail against padded expected
+  values.
 - Wrong PIN in `test` now fails fast with one message and exit code 2
   instead of per-test login failures.
 - Empty `--match` selections exit before running any unit instead of
@@ -55,7 +57,8 @@ full provider round (see Known limitations).
 - Token-mint helper commands run under a 120-second timeout so a hung
   mint cannot hang the suite.
 - IV-sensitivity tests use fixed distinct IVs, so a ciphertext match
-  always proves provider behavior, never a test random-number collision.
+  always proves provider behavior, never a provider random-number
+  collision.
 - RSA PKCS#1 v1.5 decryption of in-bounds garbage is now reported as a
   minor deviation instead of a critical failure; telling valid controls
   apart stays future work.
