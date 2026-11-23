@@ -75,6 +75,25 @@ def test_slot_out_of_range_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert exc.value.exit_code == 1
 
 
+def test_slot_error_strips_exception_class_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """U8: doctor shows the message, not the exception class; hint kept."""
+    mod = tmp_path / "m.so"
+    mod.write_bytes(b"\x7fELF")
+    _patch(
+        monkeypatch,
+        _manifest("error", error="IndexError: slot 9 not found (token-present slots: 2)"),
+        LoginProbe("ok"),
+    )
+    with pytest.raises(typer.Exit):
+        doctor_cmd.doctor_command(module=mod, interface="auto", slot=9, pin=None, timeout=10)
+    out = capsys.readouterr().out
+    assert "IndexError" not in out
+    assert "slot 9 not found" in out
+    assert "0-based INDEX" in out
+
+
 def test_crash_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mod = tmp_path / "m.so"
     mod.write_bytes(b"\x7fELF")

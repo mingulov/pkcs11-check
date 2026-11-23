@@ -9,6 +9,7 @@ single login attempt (only when a PIN is supplied), never echoing the PIN.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -28,6 +29,12 @@ _SKIP = "[dim]–[/dim]"
 
 def _line(mark: str, label: str, detail: str = "") -> None:
     console.print(f"  {mark} {label}" + (f"  [dim]{detail}[/dim]" if detail else ""))
+
+
+def _strip_exception_class(message: str) -> str:
+    """U8: drop a leading 'XxxError: ' so users read the message, not the class."""
+    match = re.match(r"[A-Za-z_][A-Za-z0-9_.]*Error: ", message)
+    return message[match.end() :] if match else message
 
 
 def doctor_command(
@@ -82,7 +89,7 @@ def doctor_command(
     if manifest.status != "ok":
         ok = False
         err = manifest.error or "unknown error"
-        _line(_BAD, "module load / slots", err)
+        _line(_BAD, "module load / slots", _strip_exception_class(err))
         if "not found" in err and "slot" in err:
             _line(
                 _SKIP,

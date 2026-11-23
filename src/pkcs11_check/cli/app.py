@@ -31,12 +31,28 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    """U3: --version prints the same string as the version subcommand."""
+    if value:
+        from pkcs11_check import __version__
+
+        typer.echo(f"pkcs11-check {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
 def callback(
     log_level: LogLevelChoice = typer.Option(
         "INFO", "--log-level", help="Log level", case_sensitive=False
     ),
     trace: bool = typer.Option(False, "--trace", help="Trace PKCS#11 calls"),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit",
+    ),
 ) -> None:
     """CLI-first PKCS#11 test suite."""
     from pkcs11_check.core.logging import setup_logging

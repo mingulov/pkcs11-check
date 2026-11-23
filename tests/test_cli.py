@@ -78,6 +78,13 @@ class TestVersionCommand:
         assert result.exit_code == 0
         assert f"pkcs11-check {__version__}" in result.output
 
+    def test_version_flag_matches_subcommand(self) -> None:
+        """U3: pkcs11-check --version prints the same string, exit 0."""
+        flag = runner.invoke(app, ["--version"])
+        subcommand = runner.invoke(app, ["version"])
+        assert flag.exit_code == 0, flag.output
+        assert flag.output == subcommand.output
+
 
 def test_test_none_json_uses_output_directory_for_report_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
