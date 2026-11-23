@@ -130,15 +130,18 @@ class _FakeProbeChild:
         stderr: str = "",
         returncode: int = 0,
         hang: bool = False,
+        interrupt: bool = False,
         seen: dict[str, Any] | None = None,
     ) -> None:
         self.pid = pid
         self.returncode: int | None = None
         self.killed = False
+        self.waited = False
         self._stdout = stdout
         self._stderr = stderr
         self._returncode = returncode
         self._hang = hang
+        self._interrupt = interrupt
         self._seen = seen
 
     def __call__(self, cmd: Any, **kwargs: Any) -> _FakeProbeChild:
@@ -148,6 +151,8 @@ class _FakeProbeChild:
         return self
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        if self._interrupt:
+            raise KeyboardInterrupt
         if self._hang:
             raise subprocess.TimeoutExpired(cmd="probe", timeout=timeout or 0)
         self.returncode = self._returncode
@@ -157,6 +162,7 @@ class _FakeProbeChild:
         self.killed = True
 
     def wait(self) -> int:
+        self.waited = True
         self.returncode = -9
         return -9
 
@@ -191,6 +197,7 @@ class TestEngagedProbe:
             counters=counters,
         )
         assert (probe.status, probe.detail) == ("ok", "")
+        assert probe.returncode == 0
         assert _extracted_total(counters.evidence_path) == 8
         # Commit consumed the producer files; nothing left for a later pass.
         assert list((counters.counters_dir / "registrations").glob("*.json")) == []
@@ -240,6 +247,7 @@ class TestEngagedProbe:
         )
         assert probe.status == "crashed"
         assert "crashed" in probe.detail
+        assert probe.returncode == -11
         assert counters.evidence_path.read_bytes().strip() != b""
         assert list((counters.counters_dir / "registrations").glob("*.json")) == []
 
@@ -282,6 +290,26 @@ class TestEngagedProbe:
         assert probe.status == "error"
         assert probe.detail == "boom\nline2"
         assert counters.evidence_path.read_bytes().strip() != b""
+
+    def test_interrupt_kills_child_and_propagates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-5: Ctrl-C kills the probe child (run() parity), no verdict."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        fake = _FakeProbeChild(interrupt=True)
+        _patch_child(monkeypatch, fake)
+        with pytest.raises(KeyboardInterrupt):
+            run_login_probe_subprocess(
+                tmp_path / "module.so",
+                interface="auto",
+                slot=0,
+                pin=b"1234",
+                timeout=5,
+                counters=counters,
+            )
+        assert fake.killed is True
+        assert fake.waited is True
 
     def test_login_status_passes_through_while_counts_fold(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

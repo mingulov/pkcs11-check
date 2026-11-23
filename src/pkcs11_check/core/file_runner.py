@@ -1200,10 +1200,13 @@ _DISPLAY_NOISE_MARKERS: tuple[str, ...] = ("generated report log file:",)
 _DISPLAY_NOISE_MARKER_BYTES: tuple[bytes, ...] = tuple(
     marker.encode("utf-8") for marker in _DISPLAY_NOISE_MARKERS
 )
-# U6: backstop on held-back unterminated display bytes. Only dash-only
-# runs can still grow past this (anything else either resolves to
-# noise-definite or flushes as liveness); past the cap they flush.
+# U6: backstop on held-back unterminated display bytes. Only tails ending
+# in a marker prefix can still grow past this (anything else either
+# resolves to noise-definite or flushes as liveness); past the cap the
+# head flushes but a marker-length overlap is kept, so the flush can
+# never break a marker across the boundary (R19-3).
 _DISPLAY_HOLD_CAP = 1024
+_DISPLAY_MARKER_OVERLAP = max(len(marker) for marker in _DISPLAY_NOISE_MARKER_BYTES) - 1
 
 
 def _display_line_allowed(line: str) -> bool:
@@ -1217,14 +1220,22 @@ def _carry_holds_marker(carry: bytes) -> bool:
 
 
 def _carry_is_noise_prefix(carry: bytes) -> bool:
-    """U6: whether an unterminated tail could still grow a noise marker.
+    """U6: whether an unterminated tail is worth holding one more chunk.
 
-    Dash-tolerant: pytest-reportlog frames the line with write_sep
-    (``--- generated report log file: ... ---``), so leading dashes and
-    the separating space precede the marker.
+    Suffix-based: the marker may start anywhere in the tail (a wide
+    write_sep line buries it past a thousand dashes), so any tail whose
+    ending is a marker prefix is held. Pure dash/space framing is held
+    too (it may lead a noise line); past the cap it flushes with the
+    overlap kept, so framing alone may show but the marker and everything
+    after it never does, however the pipe chunks.
     """
-    stripped = carry.lstrip(b"- ")
-    return any(marker.startswith(stripped) for marker in _DISPLAY_NOISE_MARKER_BYTES)
+    if not carry.strip(b"- "):
+        return True
+    for marker in _DISPLAY_NOISE_MARKER_BYTES:
+        for size in range(1, min(len(carry), len(marker)) + 1):
+            if marker.startswith(carry[-size:]):
+                return True
+    return False
 
 
 class _QuietDisplayFilter:
@@ -1232,11 +1243,12 @@ class _QuietDisplayFilter:
 
     Complete lines filter on the noise markers. An unterminated tail is
     noise-definite (marker present) -> dropped, suppressing through the
-    next newline; noise-possible (a dash-tolerant marker prefix) -> held
-    for the next chunk; anything else -> shown immediately, so short
-    liveness output (pytest -q dots) never waits for EOF while the child
-    is quiet. Capture is untouched (the caller records every byte); this
-    only decides display.
+    next newline; noise-possible (ending in a marker prefix) -> held for
+    the next chunk; anything else -> shown immediately, so short liveness
+    output (pytest -q dots) never waits for EOF while the child is quiet.
+    Past the hold cap the head flushes but a marker-length overlap stays,
+    so chunking can never break a marker across the boundary. Capture is
+    untouched (the caller records every byte); this only decides display.
     """
 
     def __init__(self) -> None:
@@ -1260,7 +1272,10 @@ class _QuietDisplayFilter:
                 out += line + b"\n"
         if _carry_holds_marker(tail):
             self._suppressing = True
-        elif len(tail) > _DISPLAY_HOLD_CAP or not _carry_is_noise_prefix(tail):
+        elif len(tail) > _DISPLAY_HOLD_CAP:
+            out += tail[: len(tail) - _DISPLAY_MARKER_OVERLAP]
+            self._carry = tail[len(tail) - _DISPLAY_MARKER_OVERLAP :]
+        elif not _carry_is_noise_prefix(tail):
             out += tail
         else:
             self._carry = tail

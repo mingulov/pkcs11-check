@@ -192,3 +192,9 @@ def test_github_release_rerun_verifies_and_heals_assets() -> None:
     assert "isDraft" in run_body
     assert "--draft=false" in run_body
     assert "already exists with all assets; nothing to do" in run_body
+    # R19-6: an interrupted upload leaves a named-but-`starter` asset that
+    # a name check alone blesses; only `uploaded` counts. And the draft
+    # lookup must run outside the `[ ... ]` conditional, where `set -e`
+    # would swallow its failure.
+    assert '.state == "uploaded"' in run_body
+    assert 'is_draft="$(gh release view' in run_body

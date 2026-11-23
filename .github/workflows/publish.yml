@@ -336,7 +336,10 @@ jobs:
             # it: verify the assets, upload anything missing, publish a
             # leftover draft, and only then report success.
             echo "release $tag already exists; verifying its assets..."
-            assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            # Only `uploaded` assets count: an interrupted upload leaves a
+            # named-but-`starter` asset that a name check alone would bless.
+            assets="$(gh release view "$tag" --json assets \
+              --jq '.assets[] | select(.state == "uploaded") | .name')"
             missing=0
             for file in dist/*; do
               name="$(basename "$file")"
@@ -351,7 +354,10 @@ jobs:
               echo "uploading missing assets to $tag..."
               gh release upload "$tag" dist/* --clobber
             fi
-            if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "true" ]; then
+            # Outside the conditional: `set -e` does not fire inside
+            # `[ ... ]`, so a failed lookup there would silently skip this.
+            is_draft="$(gh release view "$tag" --json isDraft --jq '.isDraft')"
+            if [ "$is_draft" = "true" ]; then
               echo "publishing draft $tag..."
               gh release edit "$tag" --draft=false
             fi

@@ -10,6 +10,7 @@ downgraded to a timeout (review findings R2/R5).
 
 from __future__ import annotations
 
+import io
 import os
 import signal
 import sys
@@ -17,6 +18,7 @@ import time
 from typing import Any
 
 import pytest
+from _pytest._io import TerminalWriter
 
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
@@ -276,6 +278,13 @@ def _long_noise_line(total: int = 1153) -> bytes:
     return head + b"p" * (total - 1 - len(head)) + b"\n"
 
 
+def _terminal_writer_separator(width: int = 2220) -> bytes:
+    """The real pytest separator line: marker sits past the hold cap."""
+    buf = io.StringIO()
+    TerminalWriter(file=buf).sep("-", "generated report log file: /tmp/x.jsonl", fullwidth=width)
+    return buf.getvalue().encode("utf-8")
+
+
 @pytest.mark.parametrize("split_at", [None, 7, 10, 30, 1025, 1152])
 def test_quiet_filter_split_noise_line_stays_hidden(split_at: int | None) -> None:
     """R18-3a: a noise line is hidden however the pipe chunks it.
@@ -318,7 +327,45 @@ def test_quiet_filter_suppression_resumes_after_newline() -> None:
 def test_quiet_filter_cap_flushes_markerless_dash_run() -> None:
     """R18-3a: the cap backstops dash-only runs that never resolve."""
     display = _QuietDisplayFilter()
-    assert display.feed(b"-" * 2000) == b"-" * 2000
+    shown = display.feed(b"-" * 2000)
+    assert len(shown) > 1024
+    assert shown + display.finish() == b"-" * 2000
+
+
+def test_quiet_filter_wide_separator_split_mid_marker_stays_hidden() -> None:
+    """R19-3: Codex's 2220-wide separator hides marker+path whole and split.
+
+    The split lands past the hold cap, so leading framing dashes may show
+    (content-free, like any pytest separator); the marker, path, and
+    everything after them never do.
+    """
+    line = _terminal_writer_separator()
+    assert len(line) > 1024 and b"generated report log file:" in line
+    split_at = line.find(b"generated") + 5
+    assert split_at > 1024
+    whole = _QuietDisplayFilter()
+    assert whole.feed(line) + whole.finish() == b""
+    split = _QuietDisplayFilter()
+    shown = split.feed(line[:split_at]) + split.feed(line[split_at:]) + split.finish()
+    assert b"generated" not in shown
+    assert b"/tmp/x.jsonl" not in shown
+    assert shown.strip(b"- ") == b""
+
+
+def test_quiet_filter_holds_mid_line_marker_prefix() -> None:
+    """R19-3: a marker starting mid-tail still suppresses (suffix match)."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"foo gener") == b""
+    assert display.feed(b"ated report log file: /x\nOK\n") == b"OK\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_cap_overlap_preserves_split_marker() -> None:
+    """R19-3: a cap flush never breaks a marker across the boundary."""
+    display = _QuietDisplayFilter()
+    shown = display.feed(b"-" * 2000 + b"generated rep")
+    assert b"generated rep" not in shown
+    assert display.feed(b"ort log file: /p ---\nDONE\n") == b"DONE\n"
     assert display.finish() == b""
 
 

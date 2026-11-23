@@ -594,6 +594,170 @@ class TestTestCommand:
         assert "refusing to run the suite" in " ".join(result.output.split())
         assert called == []
 
+    def test_test_pin_probe_crashed_json_writes_results_and_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1: a crashed probe in JSON mode leaves results + report.jsonl."""
+        from pkcs11_check.core.preflight import append_preflight_evidence
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            append_preflight_evidence(kwargs["counters"].evidence_path, [{"probe": "evidence"}])
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["status"] == "crashed"
+        # The report writer abs-normalizes signal codes (shared with the
+        # manifest path): raw -11 renders as 11.
+        assert payload["units"][0]["returncode"] == 11
+        report_jsonl = output_path.parent / "report.jsonl"
+        assert "probe" in report_jsonl.read_text(encoding="utf-8")
+
+    def test_test_pin_probe_timeout_json_uses_124(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1: a hung probe in JSON mode reports timeout/124, incomplete."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def hung_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("timeout", "login probe timed out after 10s", 1)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", hung_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["status"] == "timeout"
+        assert payload["units"][0]["returncode"] == 124
+
+    def test_test_pin_probe_crashed_none_json_writes_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1: none-mode probe crash still leaves the requested report."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "none",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["status"] == "crashed"
+
+    def test_test_pin_probe_crashed_text_writes_no_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1 control: text mode keeps message-only refusal (no files)."""
+        monkeypatch.chdir(tmp_path)
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 1, result.output
+        assert not (tmp_path / "pkcs11-check-results.json").exists()
+        assert not (tmp_path / "report.jsonl").exists()
+
+    def test_test_pin_incorrect_json_writes_no_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1 control: usage errors (exit 2) write no report, as before."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def bad_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("pin_incorrect")
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", bad_pin_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "9999",
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert not output_path.exists()
+
     def test_test_pin_probe_error_warns_and_proceeds(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -623,6 +787,38 @@ class TestTestCommand:
         )
         assert result.exit_code == 0, result.output
         assert "login probe inconclusive" in result.output
+        assert called == ["run"]
+
+    def test_test_pin_probe_error_escapes_hostile_detail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-4: provider bytes in the probe detail render literally."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def hostile_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("error", "[/red]")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", hostile_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Traceback" not in result.output
+        assert "[/red]" in result.output
         assert called == ["run"]
 
     def test_test_resume_wrong_pin_preserves_prior_provider_exit(

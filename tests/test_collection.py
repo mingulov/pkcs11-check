@@ -461,6 +461,37 @@ def test_collect_items_with_skips_reports_module_skip(tmp_path: Path) -> None:
     assert skips[0].reason == "vectors not cloned"
 
 
+def test_collection_skip_pairs_empty_nodeid_with_started_collector() -> None:
+    """R19-win: an empty report nodeid (cross-rootpath target) resolves via
+    the most recent collectstart -- the shape Windows CI produces."""
+    from types import SimpleNamespace
+
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=Path("C:/Temp/test_skipped_mod.py")))
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=("C:/Temp/test_skipped_mod.py", 2, "Skipped: vectors not cloned"),
+        )
+    )
+    assert plugin.skips == [
+        col.CollectedSkip(nodeid="C:/Temp/test_skipped_mod.py", reason="vectors not cloned")
+    ]
+
+
+def test_collection_skip_ignores_stale_started_collector() -> None:
+    """R19-win: a mismatched pairing stays empty rather than misattributing."""
+    from types import SimpleNamespace
+
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="other.py", path=Path("/tmp/other.py")))
+    plugin.pytest_collectreport(
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: why")
+    )
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="why")]
+
+
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
     """R18-2a: the combined API returns the same items as the legacy one."""
     target = tmp_path / "test_demo.py"
@@ -516,3 +547,48 @@ def test_collection_manifest_malformed_skips_raise(tmp_path: Path, skips_payload
     )
     with pytest.raises(ValueError, match="skip"):
         load_collection_manifest_with_skips(manifest_path)
+
+
+def test_collection_digest_invalidates_on_external_target_edit(tmp_path: Path) -> None:
+    """R19-2: editing an external target file changes the cache digest."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    before = col._collection_inputs_digest([str(target)], [])
+    assert before is not None
+    target.write_text("def test_one(): pass\ndef test_two_added(): pass\n", encoding="utf-8")
+    after = col._collection_inputs_digest([str(target)], [])
+    assert after is not None
+    assert before != after
+
+
+def test_collection_digest_covers_nodeid_and_dir_targets(tmp_path: Path) -> None:
+    """R19-2: nodeid targets hash their file; dir targets hash their trees."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    nodeid_before = col._collection_inputs_digest([f"{target}::test_one"], [])
+    dir_before = col._collection_inputs_digest([str(tmp_path)], [])
+    target.write_text("def test_one(): pass\ndef test_two_added(): pass\n", encoding="utf-8")
+    assert col._collection_inputs_digest([f"{target}::test_one"], []) != nodeid_before
+    assert col._collection_inputs_digest([str(tmp_path)], []) != dir_before
+
+
+def test_collection_recollects_after_external_target_edit(tmp_path: Path) -> None:
+    """R19-2 end to end: a new matching test is collected, never stale-hit."""
+    first = tmp_path / "test_first.py"
+    second = tmp_path / "test_second.py"
+    first.write_text("def test_match_me(): pass\n", encoding="utf-8")
+    second.write_text("def test_unrelated(): pass\n", encoding="utf-8")
+    cache_env = {
+        key: value for key, value in os.environ.items() if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
+    }
+    args = ["-k", "match_me"]
+    # Warm the cache, then add a matching test to the second file.
+    assert len(collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)) == 1
+    second.write_text(
+        "def test_unrelated(): pass\ndef test_match_me_too(): pass\n", encoding="utf-8"
+    )
+    items = collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)
+    assert sorted(item.nodeid.split("::")[-1] for item in items) == [
+        "test_match_me",
+        "test_match_me_too",
+    ]

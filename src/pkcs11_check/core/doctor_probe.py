@@ -40,6 +40,7 @@ class LoginProbe:
         str  # ok | pin_incorrect | pin_locked | token_not_recognized | error | crashed | timeout
     )
     detail: str = ""
+    returncode: int | None = None
 
 
 def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginProbe:
@@ -155,6 +156,12 @@ def run_login_probe_subprocess(
         returncode = process.wait()
         out, err = "", ""
         timed_out = True
+    except KeyboardInterrupt:
+        # run() parity: Ctrl-C kills the direct child instead of orphaning
+        # it; the interrupt propagates (no verdict on an aborted probe).
+        process.kill()
+        process.wait()
+        raise
 
     def _retain(status: str, reason: str | None) -> None:
         # Mirror of run_preflight_subprocess._retain (kept local so the
@@ -191,12 +198,12 @@ def run_login_probe_subprocess(
     if timed_out:
         detail = f"login probe timed out after {timeout}s"
         _retain("timeout", detail)
-        return LoginProbe("timeout", detail)
+        return LoginProbe("timeout", detail, returncode)
     assert returncode is not None
     if is_crash_returncode(returncode):
         detail = f"login probe crashed ({crash_detail_name(returncode)})"
         _retain("crashed", detail)
-        return LoginProbe("crashed", detail)
+        return LoginProbe("crashed", detail, returncode)
     for line in reversed(out.strip().splitlines()):
         try:
             payload = json.loads(line)
@@ -204,10 +211,10 @@ def run_login_probe_subprocess(
             continue
         if isinstance(payload, dict) and "status" in payload:
             _retain("ok", None)
-            return LoginProbe(str(payload["status"]), str(payload.get("detail", "")))
+            return LoginProbe(str(payload["status"]), str(payload.get("detail", "")), returncode)
     detail = err.strip()[-200:] or "no probe result"
     _retain("error", detail)
-    return LoginProbe("error", detail)
+    return LoginProbe("error", detail, returncode)
 
 
 def _parse_args() -> argparse.Namespace:
