@@ -69,7 +69,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_SHA256_HMAC,
-    CKO_PRIVATE_KEY,
+    CKO_SECRET_KEY,
     CKR_OK,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
@@ -173,7 +173,7 @@ def _generate_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
 def _create_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
     """CreateObject a generic-secret key with CKA_SIGN=False; None when refused."""
     attrs = template(
-        attr_ulong(CKA_CLASS, int(CKO_PRIVATE_KEY)),
+        attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
         attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
         attr_bytes(CKA_VALUE, _HMAC_FALLBACK_VALUE),
         attr_bool(CKA_SIGN, False),
