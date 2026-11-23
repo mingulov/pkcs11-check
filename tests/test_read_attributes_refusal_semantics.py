@@ -493,6 +493,46 @@ def test_overrun_length_unverified_read_raises_typed() -> None:
         read_attributes(_raw(_overrun_get), 1, 1, [CKA_VALUE])
 
 
+def test_overrun_length_multi_attribute_read_raises_typed() -> None:
+    """R16-1: CKR_OK past capacity fails closed on every attribute."""
+    from pkcs11_check.raw.recipes import OutputLengthOverrunError
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 2
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 2
+            attrs[1].ulValueLen = 4
+        else:
+            ctypes.memmove(attrs[0].pValue, b"\x01\x02", 2)
+            ctypes.memmove(attrs[1].pValue, b"copy", 4)
+            attrs[0].ulValueLen = 2
+            attrs[1].ulValueLen = 5
+        return int(CKR_OK)
+
+    with pytest.raises(OutputLengthOverrunError) as exc_info:
+        read_attributes(_raw(_get), 1, 1, [CKA_VALUE, CKA_LABEL])
+    assert exc_info.value.capacity == 4
+    assert exc_info.value.reported == 5
+
+
+def test_overrun_length_beats_cached_size_query_refusal() -> None:
+    """R16-2: a successful overrun data call is not routed as a refusal."""
+    from pkcs11_check.raw.recipes import OutputLengthOverrunError
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 1
+            return int(CKR_ATTRIBUTE_TYPE_INVALID)
+        attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    with pytest.raises(OutputLengthOverrunError) as exc_info:
+        read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert exc_info.value.capacity == 1
+    assert exc_info.value.reported == 3
+
+
 def test_attr_or_record_marked_clean_refusal_retains_ckr() -> None:
     """R15-2: the mark record keeps a known refusal CKR."""
     from pkcs11_check.raw.recipes import AttrReadResult

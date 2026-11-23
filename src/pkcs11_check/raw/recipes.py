@@ -1450,6 +1450,22 @@ def read_attributes(
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
         buf = buffers[i]
+        if (
+            rv2 == CKR_OK
+            and buf is not None
+            and not _is_unavailable_length(size)
+            and size > len(buf)
+        ):
+            # R16-1/R16-2 (N-003): a successful data call claiming more
+            # bytes than the buffer holds is malformed provider output --
+            # fail closed with both lengths instead of hashing or
+            # decoding a clamped prefix. Checked for every attribute on
+            # the data call's own RV (not the cached size-query CKR), so
+            # a size-query refusal can never route an overrun into the
+            # refusal branches below.
+            raise OutputLengthOverrunError(
+                call="C_GetAttributeValue", capacity=len(buf), reported=size
+            )
         # Whole-allocation change count, single-attribute filled reads only.
         changed_all = (
             _changed_byte_count(buf, len(buf), alternate=_alternate_fill)
@@ -1510,14 +1526,6 @@ def read_attributes(
         # R14-3: a retry runs the stability check at every length --
         # including zero, which always contradicts a positive baseline.
         if _observed_refusal_ckr is None and count == 1 and (size > 0 or _baseline is not None):
-            if buf is not None and size > len(buf):
-                # R15-1 (N-003): CKR_OK claiming more bytes than the buffer
-                # holds is malformed provider output -- fail closed with
-                # both lengths instead of hashing/decoding a clamped
-                # prefix (which a retry could then "stabilize").
-                raise OutputLengthOverrunError(
-                    call="C_GetAttributeValue", capacity=len(buf), reported=size
-                )
             changed = _changed_byte_count(buf, size, alternate=_alternate_fill)
             if changed < size and verify_delivery and not _alternate_fill:
                 # R12-3/R13-2: unproven success on a verified read -- a
