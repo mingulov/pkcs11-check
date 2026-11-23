@@ -36,7 +36,7 @@ key_inject = "unwrap"
 | Setting | Env | Default | Layers | Meaning |
 |---|---|---|---|---|
 | `module` | `P11TEST_MODULE` | *(required)* | CLI only | Path to the PKCS#11 shared library. Required `--module` flag; env/TOML are never read. |
-| `slot` | `P11TEST_SLOT` | `0` | CLI only | Slot **index** into the present-token slot list, not a raw slot ID. NSS uses slot 1. Only `--slot` applies; env/TOML are silently dead without the warning this file describes. |
+| `slot` | `P11TEST_SLOT` | `0` | CLI only | Slot **index** into the present-token slot list, not a raw slot ID. NSS uses slot 1. Only `--slot` applies; provided env/TOML values warn (in `test` runs and `--show-config`) and are ignored. |
 | `pin` | `P11TEST_PIN` | none | CLI > env > TOML | User PIN. When unset, `C_Login` is never called. `--pin` bridges into the child environment. |
 | `so_pin` | `P11TEST_SO_PIN` | none | CLI > env > TOML | Security Officer PIN, for the tests that need a genuine `CKU_SO` session. Without it those tests fall back to guessing the user PIN. |
 | `interface` | `P11TEST_INTERFACE` | `auto` | CLI only | Interface version to request: `auto`, `2.40`, `3.0`, `3.1`, `3.2`. Only `--interface` applies. |
@@ -111,13 +111,39 @@ A daemon that is reachable but degraded -- answering, only ever more slowly -- i
 
 ## Environment variables that are not settings
 
-These are switches, with no TOML or CLI equivalent.
+These have no TOML or CLI equivalent. The operator knobs first, then the
+full inventory (most of it internal parent/child plumbing — do not export
+those by hand).
 
 | Variable | Meaning |
 |---|---|
 | `PKCS11_CHECK_NO_COLLECTION_CACHE=1` | Bypass the collection cache. First thing to try if test collection behaves oddly. |
 | `PKCS11_CHECK_RV_TRACE` | Switch the probe subprocesses read for the CK_RV trace. Distinct from `P11TEST_RV_TRACE`, which is the `rv_trace` setting above. |
 | `PKCS11_CHECK_RV_TRACE_COMPACT` | Ring-buffer window size the probe subprocesses read. |
+| `PKCS11_CHECK_DATA_DIR` | Override the vector-data directory (default: repo `data/` in dev checkouts, else `~/.local/share/pkcs11-check/data/`). |
+| `PKCS11_CHECK_COUNTERS_FLUSH_K=N` | Counter sidecar snapshots every N evidence units instead of every unit. `1` (the default) is exact; higher values trade crash-exactness for speed (a crash can lose the unflushed tail, always flagged incomplete). Garbage warns and falls back to `1`. |
+| `PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES` | Cap, in plain integer bytes, for one module-reported output allocation (default 1 GiB). Missing/empty quietly means the default; garbage or non-positive warns and falls back to 1 GiB. |
+
+Full inventory (operator knobs above plus internal bridges like
+`PKCS11_CHECK_RUN_ID`, `PKCS11_CHECK_ISOLATION`, or
+`PKCS11_CHECK_COUNTERS_DIR`, which the CLI/runner sets for its children
+itself): `PKCS11_CHECK_BUILD_PROVENANCE`,
+`PKCS11_CHECK_COUNTERS_ATTEMPT`, `PKCS11_CHECK_COUNTERS_DIR`,
+`PKCS11_CHECK_COUNTERS_FLUSH_K`, `PKCS11_CHECK_COUNTERS_ROLE`,
+`PKCS11_CHECK_COUNTERS_UNIT`, `PKCS11_CHECK_DATA_DIR`,
+`PKCS11_CHECK_DESELECT_FILE`, `PKCS11_CHECK_DISABLE_COLLECTION_PROBES`,
+`PKCS11_CHECK_FINGERPRINT_ENV_KEYS`, `PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES`,
+`PKCS11_CHECK_FRAMEWORK_VERSION`, `PKCS11_CHECK_ISOLATION`,
+`PKCS11_CHECK_KEEP_PROBE_PARAMS`, `PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES`,
+`PKCS11_CHECK_MODULE_ISSUES`, `PKCS11_CHECK_NO_COLLECTION_CACHE`,
+`PKCS11_CHECK_PREFLIGHT_EVIDENCE`, `PKCS11_CHECK_RUN_ID`,
+`PKCS11_CHECK_RV_TRACE`, `PKCS11_CHECK_RV_TRACE_COMPACT`,
+`PKCS11_CHECK_RV_TRACE_JOURNAL`, `PKCS11_CHECK_RV_TRACE_JOURNAL_DIR`,
+`PKCS11_CHECK_SELECTION_MANIFEST`, `PKCS11_CHECK_STATE_INLINE_RECORDS`,
+`PKCS11_CHECK_THROWAWAY_MODULE`, `PKCS11_CHECK_TOKEN_CONF_ENV`,
+`PKCS11_CHECK_TOKEN_MINT_CMD`, `PKCS11_CHECK_UNIT_CHILD`. This list rots;
+the authoritative inventory is always
+`grep -rho 'PKCS11_CHECK_[A-Z0-9_]*' src/ --include='*.py' | sort -u`.
 
 ## When a setting seems to be ignored
 

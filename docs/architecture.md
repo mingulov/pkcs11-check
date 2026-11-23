@@ -20,7 +20,7 @@
 - `core/preflight.py` - collection-safe capability probe written through a helper subprocess manifest
 - `core/collection.py` - pytest item metadata collection for marker-aware isolation planning
 - `core/report_log.py` - shared pytest-reportlog JSONL reader (record iterator, outcome mapper, user_property helpers)
-- `config.py` - four-layer config: CLI > env > TOML > defaults
+- `config.py` - four-layer config: CLI > env > TOML > defaults (some keys CLI-only, a few dead - see `configuration.md`)
 - `plugin.py` - pytest11 entry point, registers markers, fixtures, collection hooks
 - `fixtures.py` - p11_raw_session / p11_session (function-scoped, fresh session per test), p11_module_session (module-scoped, self-healing for fast verification tests), p11_module, p11_config, p11_interface_version
 - `testcases/conftest.py` - shared fixture and provider-operation helpers, including `get_pin_bytes()`
