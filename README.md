@@ -49,7 +49,8 @@ git clone https://github.com/mingulov/pkcs11-check
 cd pkcs11-check
 uv sync
 
-# Run against any PKCS#11 module you provide
+# Run against any PKCS#11 module you provide (needs an initialized token
+# with PIN 1234 - see "First run" below for a from-scratch SoftHSM2 setup)
 uv run pkcs11-check test --module /path/to/module.so --pin 1234
 ```
 
@@ -65,12 +66,12 @@ pip install pkcs11-check
 export SOFTHSM2_CONF="$HOME/softhsm2.conf"
 mkdir -p "$HOME/softhsm2-tokens"
 echo "directories.tokendir = $HOME/softhsm2-tokens" > "$SOFTHSM2_CONF"
-softhsm2-util --init-token --slot 0 --label demo --pin 1234 --so-pin 5678
+softhsm2-util --init-token --free --label demo --pin 1234 --so-pin 5678
 
 # 2. Diagnose the setup (module loads? slot / PIN / token OK?)
 pkcs11-check doctor --module /usr/lib/softhsm/libsofthsm2.so --slot 0 --pin 1234
 
-# 3. Fast first run (~2s)
+# 3. Fast first run
 pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 --marker smoke
 
 # 4. Optional: full coverage (downloads ~800 MB of vectors, then runs the suite)
