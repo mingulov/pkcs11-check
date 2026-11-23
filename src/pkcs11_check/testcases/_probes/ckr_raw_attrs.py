@@ -175,7 +175,13 @@ def _finish_flag_probe(
             return
         twin_claim = _classify_readback(twin_vals, false_attr)
         if twin_claim.get("event") == "omitted":
-            if twin_refusal is not None:
+            if twin_refusal is not None and twin_refusal.malformed:
+                print(
+                    f"DEVIATION_XFAIL:control twin omits {attr_name} "
+                    f"(malformed refusal: {ckr_name(twin_refusal.ckr)} with a "
+                    "retained finite length, no write); enforcement oracle disabled"
+                )
+            elif twin_refusal is not None:
                 print(
                     f"DEVIATION_XFAIL:control twin omits {attr_name} "
                     f"(refused with {ckr_name(twin_refusal.ckr)}); "

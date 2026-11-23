@@ -1127,6 +1127,34 @@ def test_cts_reporter_passes_selected_operation() -> None:
     assert excinfo.value.operation == "C_EncryptInit"
 
 
+def test_cts_not_operational_names_supplying_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R8-2: clean-refusal xfails name the refusing call, not bare C_Encrypt."""
+
+    def _import(_rs: Any, _key: bytes, **_kwargs: Any) -> int:
+        return 99
+
+    def _refuse_init(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("init refused", int(CKR_ARGUMENTS_BAD), "C_EncryptInit")
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", _import)
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(base_cts, "encrypt_single", _refuse_init)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+    assert result.status is base_cts.CtsDetectionStatus.NOT_OPERATIONAL
+
+    captured: dict[str, Any] = {}
+
+    def _capture(_reason: str, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(base_cts, "classify", _capture)
+    base_cts.report_cts_detection(result)
+    assert captured["operation"] == "C_EncryptInit"
+
+
 def test_detection_skip_reason_names_logged_out_login_refusal() -> None:
     """S2: logged-out skips tell the operator to configure a PIN."""
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
