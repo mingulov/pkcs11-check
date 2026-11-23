@@ -895,18 +895,20 @@ def gen_ec_keypair_or_xfail(
         )
     except CkrAssertionError as exc:
         if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
-            baseline_rv = _plain_curve_gen_refusal(rs, curve_oid)
-            if baseline_rv is None:
+            baseline_exc = _plain_curve_gen_refusal(rs, curve_oid)
+            if baseline_exc is None:
                 raise CkrAssertionError(
                     f"{exc} (baseline plain generation on the same curve succeeded)",
                     exc.rv,
                     getattr(exc, "operation", None),
                 ) from exc
+            if not is_known_error(baseline_exc, EC_CURVE_UNSUPPORTED_RVS):
+                raise baseline_exc from exc
             rv = getattr(exc, "rv", None)
             detail = ckr_name(rv) if rv is not None else str(exc)
             pytest.skip(
                 f"EC curve not supported by module: {detail} "
-                f"(baseline refused: {ckr_name(baseline_rv)})"
+                f"(baseline refused: {ckr_name(baseline_exc.rv)})"
             )
         if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
             _classification.xfail_as(
@@ -928,21 +930,51 @@ def gen_ec_keypair_or_xfail(
     raise
 
 
-def _plain_curve_gen_refusal(rs: Any, curve_oid: bytes) -> int | None:
-    """Refusing RV of a bare generation, or None when it works (R2-6 baseline).
+def _plain_curve_gen_refusal(rs: Any, curve_oid: bytes) -> CkrAssertionError | None:
+    """Refusing error of a bare EC generation, or None when it works (R2-6).
 
     A curve refusal with template extras is only attributable to the curve
     when the bare operation refuses too; a working baseline means the
     refusal is template-specific and stays loud. Baseline keys are
     destroyed; anything but a typed refusal propagates (confused
-    situations stay loud).
+    situations stay loud). Callers gate the returned RV on the explicit
+    curve set (R4-5): an unexpected baseline RV stays loud, never a skip.
     """
     from pkcs11_check.raw.recipes import destroy_quietly, gen_ec_keypair
 
     try:
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
     except CkrAssertionError as exc:
-        return exc.rv
+        return exc
+    try:
+        return None
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+
+
+def _plain_edwards_gen_refusal(rs: Any, curve_oid: bytes) -> CkrAssertionError | None:
+    """Refusing error of a bare Edwards generation, or None when it works (R4-5).
+
+    Edwards twin of ``_plain_curve_gen_refusal``: same contract, same
+    caller-side explicit-RV gate.
+    """
+    from pkcs11_check.raw.pack import attr_bytes
+    from pkcs11_check.raw.recipes import destroy_quietly, gen_keypair
+
+    try:
+        pub, priv = gen_keypair(
+            rs.raw,
+            rs.sh,
+            int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+            pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+            priv_base=[],
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={CKA_SIGN: True},
+            pub_skip={CKA_EC_PARAMS},
+        )
+    except CkrAssertionError as exc:
+        return exc
     try:
         return None
     finally:
@@ -983,9 +1015,23 @@ def gen_edwards_keypair_or_xfail(
         )
     except AssertionError as exc:
         if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            baseline_exc = _plain_edwards_gen_refusal(rs, curve_oid)
+            if baseline_exc is None:
+                exc_rv = getattr(exc, "rv", None)
+                assert isinstance(exc_rv, int)  # is_known_error matched a curve RV above
+                raise CkrAssertionError(
+                    f"{exc} (baseline plain generation on the same curve succeeded)",
+                    exc_rv,
+                    getattr(exc, "operation", None),
+                ) from exc
+            if not is_known_error(baseline_exc, EC_CURVE_UNSUPPORTED_RVS):
+                raise baseline_exc from exc
             rv = getattr(exc, "rv", None)
             detail = ckr_name(rv) if rv is not None else str(exc)
-            pytest.skip(f"Edwards curve not supported by module: {detail}")
+            pytest.skip(
+                f"Edwards curve not supported by module: {detail} "
+                f"(baseline refused: {ckr_name(baseline_exc.rv)})"
+            )
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,

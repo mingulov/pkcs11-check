@@ -3118,3 +3118,73 @@ def test_gen_ec_curve_refusal_with_refused_baseline_skips(
     """R2-6: baseline refusal confirms absence (skip names the baseline)."""
     monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_ckr(int(CKR_CURVE_NOT_SUPPORTED)))
     assert_skips(conftest.gen_ec_keypair_or_xfail, _gen_ec_rs(), b"fake-oid", match="baseline")
+
+
+def test_gen_ec_curve_refusal_with_unexpected_baseline_rv_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-5: a non-explicit baseline RV never confirms absence (loud)."""
+    calls: list[bool] = []
+
+    def _refuse_then_undefined(*args: Any, **kwargs: Any) -> tuple[int, int]:
+        calls.append(True)
+        if len(calls) == 1:
+            raise CkrAssertionError("refused", int(CKR_CURVE_NOT_SUPPORTED), "C_GenerateKeyPair")
+        raise CkrAssertionError("refused: 0xffffff", 0x00FFFFFF, "C_GenerateKeyPair")
+
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _refuse_then_undefined)
+    with pytest.raises(CkrAssertionError, match="0xffffff"):
+        conftest.gen_ec_keypair_or_xfail(_gen_ec_rs(), b"fake-oid")
+
+
+def _gen_edwards_rs() -> Any:
+    return SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: name == "EC_EDWARDS_KEY_PAIR_GEN"
+    )
+
+
+def test_gen_edwards_curve_refusal_with_working_baseline_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-5: Edwards mirrors EC: a working plain-gen baseline stays loud."""
+    calls: list[bool] = []
+
+    def _refuse_then_work(*args: Any, **kwargs: Any) -> tuple[int, int]:
+        calls.append(True)
+        if len(calls) == 1:
+            raise CkrAssertionError("refused", int(CKR_CURVE_NOT_SUPPORTED), "C_GenerateKeyPair")
+        return (11, 12)
+
+    destroyed: list[Any] = []
+    monkeypatch.setattr(raw_recipes, "gen_keypair", _refuse_then_work)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", lambda *a: destroyed.append(a))
+    with pytest.raises(CkrAssertionError, match="baseline"):
+        conftest.gen_edwards_keypair_or_xfail(_gen_edwards_rs(), b"fake-oid")
+    assert {c[2] for c in destroyed} == {11, 12}
+
+
+def test_gen_edwards_curve_refusal_with_refused_baseline_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-5: Edwards mirrors EC: baseline refusal confirms absence."""
+    monkeypatch.setattr(raw_recipes, "gen_keypair", _raise_ckr(int(CKR_CURVE_NOT_SUPPORTED)))
+    assert_skips(
+        conftest.gen_edwards_keypair_or_xfail, _gen_edwards_rs(), b"fake-oid", match="baseline"
+    )
+
+
+def test_gen_edwards_curve_refusal_with_unexpected_baseline_rv_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4-5: Edwards mirrors EC: a non-explicit baseline RV stays loud."""
+    calls: list[bool] = []
+
+    def _refuse_then_undefined(*args: Any, **kwargs: Any) -> tuple[int, int]:
+        calls.append(True)
+        if len(calls) == 1:
+            raise CkrAssertionError("refused", int(CKR_CURVE_NOT_SUPPORTED), "C_GenerateKeyPair")
+        raise CkrAssertionError("refused: 0xffffff", 0x00FFFFFF, "C_GenerateKeyPair")
+
+    monkeypatch.setattr(raw_recipes, "gen_keypair", _refuse_then_undefined)
+    with pytest.raises(CkrAssertionError, match="0xffffff"):
+        conftest.gen_edwards_keypair_or_xfail(_gen_edwards_rs(), b"fake-oid")

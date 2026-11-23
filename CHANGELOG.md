@@ -1,19 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Known limitations
-
-- Return-value counters distinguish two crash shapes. A call that never
-  returns (provider crash mid-call) is counted as a call with no return
-  code: none exists to record. Separately, a code that did return can be
-  lost before persistence: the call is recorded before the provider runs
-  but its return code is journaled after, so a crash in between orphans
-  the code (observed only in runs with intentional crash tests, and rare
-  there). Persisting every return before the counters rewrite would add
-  a flush per call for negligible gain, so it stays deferred; tracked
-  as follow-up work (fw#88).
-
 ## [0.3.0] - 2026-11-17
 
 Coverage and verdict-accuracy release: six new conformance areas,
