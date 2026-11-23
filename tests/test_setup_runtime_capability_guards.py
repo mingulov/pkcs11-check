@@ -24,7 +24,10 @@ from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_ENCRYPTED_DATA_INVALID,
+    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
@@ -35,6 +38,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import (
     _rsa_export,
+    conftest,
     test_access,
     test_access_levels,
     test_aead,
@@ -3050,3 +3054,39 @@ def test_v30_session_xfail_when_advertised_aes_keygen_rejects_runtime(
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_v30_session.TestLoginLogoutCycle().test_normal_login_logout(rs, SimpleNamespace())
+
+
+def _raise_ckr(rv: int) -> Any:
+    def _raiser(*args: Any, **kwargs: Any) -> tuple[int, int]:
+        raise CkrAssertionError(f"refused: {rv:#x}", rv, "C_GenerateKeyPair")
+
+    return _raiser
+
+
+def _gen_ec_rs() -> Any:
+    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "EC_KEY_PAIR_GEN")
+
+
+@pytest.mark.parametrize(
+    "rv",
+    [int(CKR_CURVE_NOT_SUPPORTED), int(CKR_DOMAIN_PARAMS_INVALID)],
+    ids=["curve_not_supported", "domain_params_invalid"],
+)
+def test_gen_ec_curve_refusal_skips(monkeypatch: pytest.MonkeyPatch, rv: int) -> None:
+    """S16: EC curve refusal skips like Edwards (unsupported capability)."""
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_ckr(rv))
+    assert_skips(conftest.gen_ec_keypair_or_xfail, _gen_ec_rs(), b"fake-oid")
+
+
+def test_gen_ec_keypair_set_refusal_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S16 control: KEYPAIR-set refusals still xfail, never skip."""
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_ckr(int(CKR_FUNCTION_FAILED)))
+    with pytest.raises(pytest.xfail.Exception, match="rejected setup"):
+        conftest.gen_ec_keypair_or_xfail(_gen_ec_rs(), b"fake-oid")
+
+
+def test_gen_ec_unlisted_refusal_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S16 control: unlisted RVs stay loud (the skip mapping is narrow)."""
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_ckr(int(CKR_ACTION_PROHIBITED)))
+    with pytest.raises(CkrAssertionError):
+        conftest.gen_ec_keypair_or_xfail(_gen_ec_rs(), b"fake-oid")
