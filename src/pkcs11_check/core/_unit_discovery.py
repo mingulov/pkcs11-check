@@ -219,7 +219,11 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
-from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.collection import (
+    CollectedPytestItem,
+    CollectedSkip,
+    collect_pytest_items_with_skips,
+)
 from pkcs11_check.core.collection_errors import collection_failure_message
 from pkcs11_check.core.nodeids import normalize_nodeid
 
@@ -317,8 +321,13 @@ def discover_pytest_units(
     pytest_args: list[str] | None = None,
     env: Mapping[str, str] | None = None,
     collected_out: list[CollectedPytestItem] | None = None,
+    skips_out: list[CollectedSkip] | None = None,
 ) -> list[str]:
-    """Expand pytest targets into an ordered list of file or test units."""
+    """Expand pytest targets into an ordered list of file or test units.
+
+    ``skips_out`` pairs with ``collected_out``: when provided, collection-skip
+    records from the same pass are appended to it (never a second pass).
+    """
     requested = targets or [str(default_root)]
 
     for target in requested:
@@ -329,13 +338,15 @@ def discover_pytest_units(
         # anchored to the actual file, independent of pytest's rootdir.
         collection_env = dict(env or os.environ)
         collection_env["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
-        collected_items = collect_pytest_item_metadata(
+        collected_items, collection_skips = collect_pytest_items_with_skips(
             requested,
             pytest_args or [],
             env=collection_env,
         )
         if collected_out is not None:
             collected_out.extend(collected_items)
+        if skips_out is not None:
+            skips_out.extend(collection_skips)
         return [
             _absolute_nodeid(normalize_policy_file_key(item.file_path), item.nodeid)
             for item in collected_items
@@ -433,6 +444,7 @@ def discover_auto_isolation_units(
     policy_file: Path | None = None,
     env: Mapping[str, str] | None = None,
     collected_out: list[CollectedPytestItem] | None = None,
+    skips_out: list[CollectedSkip] | None = None,
 ) -> list[str]:
     """Expand targets into a mixed file/test unit list for auto isolation.
 
@@ -440,17 +452,20 @@ def discover_auto_isolation_units(
     full ``--collect-only`` pass over the suite) is appended to it so the caller
     can reuse it — e.g. for the disabled-baseline selection plan — instead of
     running a second identical collection pass over ~all tests at startup.
+    ``skips_out`` pairs with it for collection-skip records from the same pass.
     """
     file_units = discover_pytest_units(targets, default_root, granularity="file")
     units: list[str] = []
     promoted_files = load_promoted_files(policy_file, pytest_args, env)
-    collected_items = collect_pytest_item_metadata(
+    collected_items, collection_skips = collect_pytest_items_with_skips(
         targets,
         pytest_args,
         env=dict(env or os.environ),
     )
     if collected_out is not None:
         collected_out.extend(collected_items)
+    if skips_out is not None:
+        skips_out.extend(collection_skips)
     markers_by_file = _markers_by_file(collected_items)
 
     # One pass over collected items builds BOTH the set of files that have

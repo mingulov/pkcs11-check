@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -157,10 +158,25 @@ class CollectedPytestItem:
     markers: list[str]
 
 
-def save_collection_manifest(path: Path, items: list[CollectedPytestItem]) -> None:
+@dataclass(frozen=True)
+class CollectedSkip:
+    """A collector (usually a module) skipped during ``--collect-only``."""
+
+    nodeid: str
+    reason: str
+
+
+def save_collection_manifest(
+    path: Path,
+    items: list[CollectedPytestItem],
+    skips: Sequence[CollectedSkip] = (),
+) -> None:
     """Persist collected pytest item metadata as JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"items": [asdict(item) for item in items]}
+    payload = {
+        "items": [asdict(item) for item in items],
+        "collection_skips": [asdict(skip) for skip in skips],
+    }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -171,6 +187,19 @@ def load_collection_manifest(path: Path) -> list[CollectedPytestItem]:
     reads as a miss and triggers fresh collection; for fresh helper output it
     fails collection visibly. Unknown extra keys stay tolerated for
     forward compatibility.
+    """
+    items, _ = load_collection_manifest_with_skips(path)
+    return items
+
+
+def load_collection_manifest_with_skips(
+    path: Path,
+) -> tuple[list[CollectedPytestItem], list[CollectedSkip]]:
+    """Load collected items plus collection-skip records from JSON.
+
+    Items stay strict (F-016); skips are advisory and fail just as
+    loudly when malformed, but a missing ``collection_skips`` key (old
+    manifests and cache entries) simply means no skips.
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw_items = raw.get("items", raw) if isinstance(raw, dict) else raw
@@ -215,7 +244,32 @@ def load_collection_manifest(path: Path) -> list[CollectedPytestItem]:
                 markers=list(markers),
             )
         )
-    return items
+    skips: list[CollectedSkip] = []
+    if isinstance(raw, dict) and "collection_skips" in raw:
+        raw_skips = raw["collection_skips"]
+        if not isinstance(raw_skips, list):
+            msg = f"invalid collection manifest skips in {path}"
+            raise ValueError(msg)
+        for index, skip in enumerate(raw_skips):
+            if not isinstance(skip, dict):
+                raise ValueError(
+                    f"invalid collection manifest skip #{index} in {path}: "
+                    f"expected an object, got {type(skip).__name__}"
+                )
+            skip_nodeid = skip.get("nodeid")
+            reason = skip.get("reason")
+            if not isinstance(skip_nodeid, str):
+                raise ValueError(
+                    f"invalid collection manifest skip #{index} in {path}: "
+                    f"nodeid must be a string, got {type(skip_nodeid).__name__}"
+                )
+            if not isinstance(reason, str):
+                raise ValueError(
+                    f"invalid collection manifest skip #{index} in {path}: "
+                    f"reason must be a string, got {type(reason).__name__}"
+                )
+            skips.append(CollectedSkip(nodeid=skip_nodeid, reason=reason))
+    return items, skips
 
 
 def collect_pytest_item_metadata(
@@ -229,6 +283,22 @@ def collect_pytest_item_metadata(
     Backed by a content-addressed cache (see module docstring): on a digest hit
     the ~13-18s --collect-only pass is skipped. Set
     PKCS11_CHECK_NO_COLLECTION_CACHE=1 to bypass it entirely.
+    """
+    items, _ = collect_pytest_items_with_skips(targets, pytest_args, env=env)
+    return items
+
+
+def collect_pytest_items_with_skips(
+    targets: list[str],
+    pytest_args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> tuple[list[CollectedPytestItem], list[CollectedSkip]]:
+    """Collect pytest item metadata plus collection-skip records.
+
+    Same cache contract as :func:`collect_pytest_item_metadata`; a cache
+    hit carries no skips (only non-empty collections are cached, and
+    skips only matter when nothing was collected).
     """
     effective_env = env if env is not None else os.environ
     cache_enabled = effective_env.get("PKCS11_CHECK_NO_COLLECTION_CACHE") not in {"1", "true"}
@@ -265,7 +335,7 @@ def collect_pytest_item_metadata(
     if cache_path is not None:
         cached = _read_collection_cache(cache_path)
         if cached is not None:
-            return cached
+            return cached, []
 
     input_fd, input_raw_path = tempfile.mkstemp(
         prefix="pkcs11-check-collect-input-",
@@ -317,22 +387,40 @@ def collect_pytest_item_metadata(
             )
 
         if not output_path.exists():
-            return []
+            return [], []
 
-        items = load_collection_manifest(output_path)
+        items, skips = load_collection_manifest_with_skips(output_path)
         if cache_path is not None and items:
             _write_collection_cache(cache_path, items)
-        return items
+        return items, skips
     finally:
         input_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
 
 
 class _CollectionPlugin:
-    """Collect marker metadata for each pytest item."""
+    """Collect marker metadata for each pytest item, plus collection skips."""
 
     def __init__(self) -> None:
         self.items: list[CollectedPytestItem] = []
+        self.skips: list[CollectedSkip] = []
+        self._skip_nodeids: set[str] = set()
+
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        if report.outcome != "skipped":
+            return
+        nodeid = str(report.nodeid)
+        if nodeid in self._skip_nodeids:
+            return
+        self._skip_nodeids.add(nodeid)
+        longrepr = report.longrepr
+        if isinstance(longrepr, tuple):
+            reason = str(longrepr[-1])
+        else:
+            reason = str(longrepr)
+        if reason.startswith("Skipped:"):
+            reason = reason[len("Skipped:") :].strip()
+        self.skips.append(CollectedSkip(nodeid=nodeid, reason=reason))
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         for item in session.items:
@@ -375,7 +463,7 @@ def main() -> None:
         ],
         plugins=[plugin],
     )
-    save_collection_manifest(Path(args.output), plugin.items)
+    save_collection_manifest(Path(args.output), plugin.items, plugin.skips)
     raise SystemExit(int(exit_code))
 
 

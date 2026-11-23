@@ -488,10 +488,15 @@ def test_discover_auto_isolation_units_keeps_regular_files(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-            CollectedPytestItem(nodeid=f"{target}::test_case", file_path=str(target), markers=[])
-        ],
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: (
+            [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=f"{target}::test_case", file_path=str(target), markers=[]
+                )
+            ],
+            [],
+        ),
     )
 
     units = discover_auto_isolation_units(
@@ -509,19 +514,22 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_one():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-            CollectedPytestItem(
-                nodeid=f"{target}::test_one",
-                file_path=str(target),
-                markers=["subprocess_per_test"],
-            ),
-            CollectedPytestItem(
-                nodeid=f"{target}::test_two",
-                file_path=str(target),
-                markers=["subprocess_per_test"],
-            ),
-        ],
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: (
+            [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=f"{target}::test_one",
+                    file_path=str(target),
+                    markers=["subprocess_per_test"],
+                ),
+                CollectedPytestItem(
+                    nodeid=f"{target}::test_two",
+                    file_path=str(target),
+                    markers=["subprocess_per_test"],
+                ),
+            ],
+            [],
+        ),
     )
 
     units = discover_auto_isolation_units(
@@ -556,14 +564,17 @@ def test_discover_auto_isolation_units_pins_absolute_nodeid_for_rootdir_mismatch
     target.write_text("def test_one():\n    assert True\n", encoding="utf-8")
     rootdir_relative_nodeid = f"{str(target).lstrip('/')}::test_one"
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-            CollectedPytestItem(
-                nodeid=rootdir_relative_nodeid,
-                file_path=str(target),
-                markers=["subprocess_per_test"],
-            ),
-        ],
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: (
+            [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=rootdir_relative_nodeid,
+                    file_path=str(target),
+                    markers=["subprocess_per_test"],
+                ),
+            ],
+            [],
+        ),
     )
 
     # Must not raise (validate runs inside) and must pin to the absolute path.
@@ -612,10 +623,13 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     )
 
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-            CollectedPytestItem(nodeid=f"{target}::test_one", file_path=str(target), markers=[])
-        ],
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: (
+            [  # type: ignore[arg-type]
+                CollectedPytestItem(nodeid=f"{target}::test_one", file_path=str(target), markers=[])
+            ],
+            [],
+        ),
     )
 
     units = discover_auto_isolation_units(
@@ -634,14 +648,17 @@ def test_discover_auto_isolation_units_preserves_nodeid_for_subprocess_file(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-            CollectedPytestItem(
-                nodeid=f"{target}::test_case",
-                file_path=str(target),
-                markers=["subprocess"],
-            )
-        ],
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: (
+            [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=f"{target}::test_case",
+                    file_path=str(target),
+                    markers=["subprocess"],
+                )
+            ],
+            [],
+        ),
     )
 
     units = discover_auto_isolation_units(
@@ -659,14 +676,17 @@ def test_discover_auto_isolation_units_keeps_bare_subprocess_file(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-            CollectedPytestItem(
-                nodeid=f"{target}::test_case",
-                file_path=str(target),
-                markers=["subprocess"],
-            )
-        ],
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: (
+            [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=f"{target}::test_case",
+                    file_path=str(target),
+                    markers=["subprocess"],
+                )
+            ],
+            [],
+        ),
     )
 
     units = discover_auto_isolation_units(
@@ -698,8 +718,8 @@ def test_discover_auto_isolation_units_falls_back_to_nodeid_collection_when_meta
         },
     )
     monkeypatch.setattr(
-        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
-        lambda targets, pytest_args, *, env=None: [],  # type: ignore[arg-type]
+        "pkcs11_check.core._unit_discovery.collect_pytest_items_with_skips",
+        lambda targets, pytest_args, *, env=None: ([], []),  # type: ignore[arg-type]
     )
     monkeypatch.setattr(
         "pkcs11_check.core._unit_discovery.discover_pytest_units",

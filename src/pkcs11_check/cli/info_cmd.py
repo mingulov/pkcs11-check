@@ -166,8 +166,10 @@ def _render_module_info(info: ModuleInfo) -> None:
     if info.interfaces:
         console.print(f"[bold]Available interfaces:[/bold] {', '.join(info.interfaces)}")
 
-    usable = sum(1 for slot in info.slots if slot.initialized)
-    console.print(f"\n[bold]Slots with tokens:[/bold] {len(info.slots)} ({usable} usable)")
+    initialized = sum(1 for slot in info.slots if slot.initialized)
+    console.print(
+        f"\n[bold]Slots with tokens:[/bold] {len(info.slots)} ({initialized} initialized)"
+    )
 
     for slot in info.slots:
         label = slot.label if slot.label else "(no label)"

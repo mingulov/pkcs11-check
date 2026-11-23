@@ -94,17 +94,25 @@ def mint_throwaway_token(
     token_dir = tempfile.mkdtemp(prefix=prefix)
     conf_path = os.path.join(token_dir, "module.conf")
     mint_cmd = cap.mint_cmd_template.format(token_dir=token_dir, conf_path=conf_path)
+    # Popen + communicate + kill + wait (never subprocess.run with a
+    # timeout): run() re-drains the pipes unbounded after kill() on
+    # Windows, where a surviving grandchild holding them stalls the reap
+    # forever. wait() cannot hang on grandchildren-held pipes (POSIX
+    # run() already reaps this way; this matches it on both platforms).
+    mint_proc = subprocess.Popen(
+        shell_invocation(mint_cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     try:
-        proc = subprocess.run(
-            shell_invocation(mint_cmd), capture_output=True, check=False, timeout=timeout
-        )
+        _mint_stdout, mint_stderr = mint_proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        mint_proc.kill()
+        mint_proc.wait()
         shutil.rmtree(token_dir, ignore_errors=True)
         raise ThrowawayMintError(f"mint command timed out after {timeout}s") from None
-    if proc.returncode != 0:
+    if mint_proc.returncode != 0:
         shutil.rmtree(token_dir, ignore_errors=True)
-        tail = proc.stderr.decode("utf-8", errors="replace")[-300:]
-        raise ThrowawayMintError(f"mint command failed with exit {proc.returncode}: {tail}")
+        tail = mint_stderr.decode("utf-8", errors="replace")[-300:]
+        raise ThrowawayMintError(f"mint command failed with exit {mint_proc.returncode}: {tail}")
     if not os.path.isfile(conf_path):
         shutil.rmtree(token_dir, ignore_errors=True)
         raise ThrowawayMintError(

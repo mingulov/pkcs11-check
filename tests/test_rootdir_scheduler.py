@@ -100,11 +100,11 @@ def test_explicit_test_discovery_anchors_collected_item_to_file_path(
 
     def fake_collect(*args, **kwargs):
         seen_env.update(kwargs["env"])
-        return [CollectedPytestItem(nodeid=raw_nodeid, file_path=str(target), markers=[])]
+        return [CollectedPytestItem(nodeid=raw_nodeid, file_path=str(target), markers=[])], []
 
     monkeypatch.setattr(
         discovery_mod,
-        "collect_pytest_item_metadata",
+        "collect_pytest_items_with_skips",
         fake_collect,
     )
     monkeypatch.setattr(

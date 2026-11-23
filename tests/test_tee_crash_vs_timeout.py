@@ -20,7 +20,7 @@ import pytest
 
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
-from pkcs11_check.core.file_runner import _run_subprocess_tee
+from pkcs11_check.core.file_runner import _QuietDisplayFilter, _run_subprocess_tee
 from pkcs11_check.core.process_observation import build_process_observation
 
 # Direct child spawns a grandchild that inherits stdout/stderr (close_fds keeps
@@ -267,3 +267,95 @@ def test_quiet_display_eof_withholds_noise_tail(
     assert rc == 0, rc
     assert "generated report log file" not in shown, shown
     assert "generated report log file" in out, out
+
+
+def _long_noise_line(total: int = 1153) -> bytes:
+    """A write_sep-framed noise line of exactly ``total`` bytes (with newline)."""
+    head = b"------ generated report log file: "
+    assert len(head) < total - 1
+    return head + b"p" * (total - 1 - len(head)) + b"\n"
+
+
+@pytest.mark.parametrize("split_at", [None, 7, 10, 30, 1025, 1152])
+def test_quiet_filter_split_noise_line_stays_hidden(split_at: int | None) -> None:
+    """R18-3a: a noise line is hidden however the pipe chunks it.
+
+    Split points cover whole delivery, right after the dashes, mid-marker
+    (twice), the old hold-cap trip point, and just before the newline.
+    """
+    line = _long_noise_line()
+    assert len(line) == 1153
+    chunks = [line] if split_at is None else [line[:split_at], line[split_at:]]
+    display = _QuietDisplayFilter()
+    shown = b"".join(display.feed(chunk) for chunk in chunks) + display.finish()
+    assert shown == b""
+
+
+def test_quiet_filter_shows_dots_immediately() -> None:
+    """R18-3b: short liveness output never waits for EOF in quiet mode."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"." * 40) == b"." * 40
+    assert display.feed(b"more\n") == b"more\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_holds_noise_prefix_across_chunks() -> None:
+    """R18-3a: a dash-tolerant marker prefix holds until it resolves."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"--- gen") == b""
+    assert display.feed(b"erated report log file: /x ---\nOK\n") == b"OK\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_suppression_resumes_after_newline() -> None:
+    """R18-3a: a mid-line marker drops through the next newline, then shows."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"------ generated report log file: /par") == b""
+    assert display.feed(b"tial-path ---\nvisible\n") == b"visible\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_cap_flushes_markerless_dash_run() -> None:
+    """R18-3a: the cap backstops dash-only runs that never resolve."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"-" * 2000) == b"-" * 2000
+    assert display.finish() == b""
+
+
+def test_quiet_filter_finish_shows_held_non_noise() -> None:
+    """R18-3: an unresolved held prefix still shows at EOF (evidence)."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"--- gen") == b""
+    assert display.finish() == b"--- gen"
+
+
+def test_quiet_filter_finish_withholds_noise() -> None:
+    """R18-3: an unterminated noise tail stays hidden at EOF."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"------ generated report log file: /x ---") == b""
+    assert display.finish() == b""
+
+
+def test_quiet_display_hides_chunked_long_noise_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R18-3a end to end: a two-write noise line hides however chunked."""
+    head = "------ generated report log file: " + "p" * 990
+    tail = "q" * 100 + "\n"
+    script = (
+        "import sys\n"
+        f"sys.stdout.write({head!r})\n"
+        "sys.stdout.flush()\n"
+        f"sys.stdout.write({tail!r})\n"
+        "sys.stdout.flush()\n"
+    )
+    rc, out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "generated report log file" not in shown, shown
+    assert "p" * 990 in out and "q" * 100 in out, out

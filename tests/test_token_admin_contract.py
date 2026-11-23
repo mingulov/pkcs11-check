@@ -1074,21 +1074,61 @@ def test_mint_defaults_to_120s_timeout() -> None:
     assert inspect.signature(throwaway.mint_throwaway_token).parameters["timeout"].default == 120
 
 
+class _HangingMintProc:
+    """A mint child that never exits; records the reap sequence."""
+
+    def __init__(self) -> None:
+        self.communicate_calls = 0
+        self.killed = False
+        self.waited = False
+        self.returncode: int | None = None
+
+    def __call__(self, *args: object, **kwargs: object) -> _HangingMintProc:
+        return self
+
+    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
+        self.communicate_calls += 1
+        raise subprocess.TimeoutExpired(cmd="mint", timeout=timeout or 0)
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self) -> int:
+        self.waited = True
+        self.returncode = -9
+        return -9
+
+
 def test_mint_timeout_raises_and_cleans_up(
     _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_capability_env(monkeypatch)
     cap = throwaway.require_throwaway_capability()
 
-    def _hang(*args: object, **kwargs: object) -> object:
-        raise subprocess.TimeoutExpired(cmd=args[0] if args else "", timeout=120)
-
-    monkeypatch.setattr(subprocess, "run", _hang)
+    fake = _HangingMintProc()
+    monkeypatch.setattr(subprocess, "Popen", fake)
     before = set(os.listdir(tempfile.gettempdir()))
     with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
         throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
     after = set(os.listdir(tempfile.gettempdir()))
     assert after - before == set()
+
+
+def test_mint_timeout_kills_without_redrain(
+    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R18-5: reap with kill+wait; never a second communicate that a
+    surviving grandchild holding the pipe could stall forever."""
+    _set_capability_env(monkeypatch)
+    cap = throwaway.require_throwaway_capability()
+
+    fake = _HangingMintProc()
+    monkeypatch.setattr(subprocess, "Popen", fake)
+    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
+        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
+    assert fake.communicate_calls == 1
+    assert fake.killed is True
+    assert fake.waited is True
 
 
 @needs_posix
@@ -1102,6 +1142,28 @@ def test_mint_hanging_command_times_out_for_real(
         throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_", timeout=2)
     after = set(os.listdir(tempfile.gettempdir()))
     assert after - before == set()
+
+
+@needs_posix
+def test_mint_grandchild_holding_pipe_times_out_for_real(
+    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R18-5: a surviving grandchild holding the pipe must not stall the
+    timeout reap. CPython's run() re-drains unbounded after kill() on
+    Windows only (POSIX already reaps with wait()); the portable
+    kill+wait mechanism is pinned by test_mint_timeout_kills_without_redrain."""
+    import time
+
+    _set_capability_env(monkeypatch, PKCS11_CHECK_TOKEN_MINT_CMD="sleep 30 & wait")
+    cap = throwaway.require_throwaway_capability()
+    before = set(os.listdir(tempfile.gettempdir()))
+    started = time.monotonic()
+    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
+        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_", timeout=2)
+    elapsed = time.monotonic() - started
+    after = set(os.listdir(tempfile.gettempdir()))
+    assert after - before == set()
+    assert elapsed < 20, f"reap stalled on the grandchild-held pipe ({elapsed:.1f}s)"
 
 
 def test_reset_rejects_directory_outside_temp() -> None:

@@ -17,6 +17,9 @@ from typing import Any
 # (96-key survey of the _probes tree; only _P11CHECK_PIN itself hits, and
 # that name must never appear as a params key either). `passwd` extends the
 # review's triple: the standard credential abbreviation, same reasoning.
+# Known tradeoff: an innocent future key containing one of these (e.g. a
+# hypothetical `wrapping_mech`) fails LOUDLY here at development time and
+# must be renamed -- fail-closed by design, never a silent leak.
 _PIN_SUBSTRINGS: tuple[str, ...] = ("pin", "password", "passwd", "secret")
 
 

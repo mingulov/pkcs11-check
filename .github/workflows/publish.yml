@@ -330,7 +330,31 @@ jobs:
         run: |
           tag="v$VERSION"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists; nothing to do."
+            # `gh release view` also finds drafts: an interrupted first run
+            # may have left the release published-but-incomplete (or an old
+            # draft) without SHA256SUMS. A rerun must heal that, never bless
+            # it: verify the assets, upload anything missing, publish a
+            # leftover draft, and only then report success.
+            echo "release $tag already exists; verifying its assets..."
+            assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            missing=0
+            for file in dist/*; do
+              name="$(basename "$file")"
+              if ! printf '%s\n' "$assets" | grep -qxF "$name"; then
+                echo "missing asset: $name"
+                missing=1
+              fi
+            done
+            if [ "$missing" -eq 0 ]; then
+              echo "release $tag already exists with all assets; nothing to do."
+            else
+              echo "uploading missing assets to $tag..."
+              gh release upload "$tag" dist/* --clobber
+            fi
+            if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "true" ]; then
+              echo "publishing draft $tag..."
+              gh release edit "$tag" --draft=false
+            fi
             exit 0
           fi
           gh release create "$tag" \

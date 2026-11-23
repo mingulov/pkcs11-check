@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -22,6 +23,12 @@ from pkcs11_check.core.crash_codes import (
     crash_detail_name,
     ctypes_access_violation_code,
     is_crash_returncode,
+)
+from pkcs11_check.core.preflight import (
+    PreflightCounters,
+    append_preflight_evidence,
+    collect_preflight_counters,
+    preflight_child_env,
 )
 
 
@@ -96,10 +103,23 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
 
 
 def run_login_probe_subprocess(
-    module: Path, *, interface: str, slot: int, pin: bytes, timeout: int
+    module: Path,
+    *,
+    interface: str,
+    slot: int,
+    pin: bytes,
+    timeout: int,
+    counters: PreflightCounters | None = None,
 ) -> LoginProbe:
-    """Run the login probe in a fresh subprocess (crash survival)."""
-    env = dict(os.environ)
+    """Run the login probe in a fresh subprocess (crash survival).
+
+    ``counters`` engages counter collection for the probe child (the
+    test-path U1 probe, preflight unit / attempt 1); ``None`` (doctor)
+    keeps today's uncounted behavior with a scrubbed child env.
+    Collection never alters the returned verdict and never raises:
+    evidence failures warn.
+    """
+    env = preflight_child_env(counters)
     env["P11TEST_PIN"] = pin.decode("utf-8", "surrogateescape")
     cmd = [
         sys.executable,
@@ -112,33 +132,82 @@ def run_login_probe_subprocess(
         "--slot",
         str(slot),
     ]
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        # F18: provider bytes on the pipe must not lose the login verdict.
+        errors="replace",
+        env=env,
+    )
+    raw_pid = getattr(process, "pid", None)
+    child_pid = raw_pid if isinstance(raw_pid, int) else None
     try:
-        completed = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            # F18: provider bytes on the pipe must not lose the login verdict.
-            errors="replace",
-            timeout=timeout,
-            env=env,
-        )
+        out, err = process.communicate(timeout=timeout)
+        returncode: int | None = process.returncode
+        timed_out = False
     except subprocess.TimeoutExpired:
-        return LoginProbe("timeout", f"login probe timed out after {timeout}s")
-    if is_crash_returncode(completed.returncode):
-        return LoginProbe(
-            "crashed", f"login probe crashed ({crash_detail_name(completed.returncode)})"
-        )
-    out = completed.stdout.strip().splitlines()
-    for line in reversed(out):
+        # Reap without draining: wait() cannot hang on grandchildren-held
+        # pipes the way a second communicate() could (R18-5 hang class).
+        process.kill()
+        returncode = process.wait()
+        out, err = "", ""
+        timed_out = True
+
+    def _retain(status: str, reason: str | None) -> None:
+        # Mirror of run_preflight_subprocess._retain (kept local so the
+        # shipped manifest flow stays untouched); keep in sync.
+        if counters is None:
+            return
+        try:
+            records, commit = collect_preflight_counters(
+                counters,
+                child_pid=child_pid,
+                returncode=returncode,
+                timed_out=timed_out,
+                manifest_status=status,
+                manifest_reason=reason,
+            )
+        except Exception as exc:  # noqa: BLE001 -- counters never fail the probe; warn
+            warnings.warn(
+                f"login probe counter evidence not collected: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        try:
+            append_preflight_evidence(counters.evidence_path, records)
+        except OSError as exc:
+            warnings.warn(
+                f"login probe counter evidence not retained: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        commit()
+
+    if timed_out:
+        detail = f"login probe timed out after {timeout}s"
+        _retain("timeout", detail)
+        return LoginProbe("timeout", detail)
+    assert returncode is not None
+    if is_crash_returncode(returncode):
+        detail = f"login probe crashed ({crash_detail_name(returncode)})"
+        _retain("crashed", detail)
+        return LoginProbe("crashed", detail)
+    for line in reversed(out.strip().splitlines()):
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict) and "status" in payload:
+            _retain("ok", None)
             return LoginProbe(str(payload["status"]), str(payload.get("detail", "")))
-    return LoginProbe("error", completed.stderr.strip()[-200:] or "no probe result")
+    detail = err.strip()[-200:] or "no probe result"
+    _retain("error", detail)
+    return LoginProbe("error", detail)
 
 
 def _parse_args() -> argparse.Namespace:

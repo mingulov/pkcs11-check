@@ -168,3 +168,27 @@ def test_production_upload_is_oidc_only_and_uses_reviewed_action_pins() -> None:
         if job.get("permissions", {}).get("id-token") == "write"
     }
     assert oidc_jobs == {"publish"}
+
+
+def test_github_release_rerun_verifies_and_heals_assets() -> None:
+    """R18-6: a rerun must not report success for an incomplete release.
+
+    ``gh release view`` also finds drafts, so "already exists" alone can
+    bless an interrupted run that never uploaded SHA256SUMS. The
+    existing-release branch must list the release assets, upload anything
+    missing from dist/, publish a leftover draft, and only then exit 0.
+    """
+    create = next(
+        step
+        for step in _workflow()["jobs"]["github-release"]["steps"]
+        if step.get("name") == "Create the release"
+    )
+    run_body = str(create["run"])
+    assert 'gh release view "$tag"' in run_body
+    assert "--json assets" in run_body
+    assert "grep -qxF" in run_body
+    assert "gh release upload" in run_body
+    assert "--clobber" in run_body
+    assert "isDraft" in run_body
+    assert "--draft=false" in run_body
+    assert "already exists with all assets; nothing to do" in run_body
