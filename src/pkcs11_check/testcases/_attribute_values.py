@@ -253,7 +253,9 @@ def attr_or_record(
             operation="C_GetAttributeValue",
             mechanism=mechanism,
             inherit_mechanism=inherit_mechanism,
-            actual=None,
+            # R15-2: a known refusal CKR (e.g. a contradicting retry
+            # refusal) rides on the mark record instead of being dropped.
+            actual=refusal.ckr if refusal is not None else None,
             summary=f"{label}: attribute value unproved (delivery not established)",
             detail={
                 "attribute": {"name": strict_name, "id": strict_id},
