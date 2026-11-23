@@ -572,21 +572,63 @@ class TestCamelliaCTR:
             from pkcs11_check.raw.pack import mech_ctr
             from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
 
+            # fw#92: the width alone does not diversify the keystream (from a
+            # zero counter block, widths 32 and 64 emit identical sequences
+            # for short plaintexts), so differ the counter block at equal bits.
             ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
                 CKM_CAMELLIA_CTR,
                 plaintext,
-                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=32),
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64, cb=bytes(16)),
             )
-            ct2 = encrypt_single(
+            ct2 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
                 CKM_CAMELLIA_CTR,
                 plaintext,
-                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64),
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64, cb=bytes(15) + b"\x01"),
+            )
+            assert ct1 != ct2
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_camellia_ctr_width_wrap_divergence(self, p11_raw_session: Any) -> None:
+        """CTR widths 32/64 diverge once the low 32 counter bits wrap (fw#92)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
+            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
+        if not rs.has_mechanism("CAMELLIA_CTR"):
+            pytest.skip("CKM_CAMELLIA_CTR not supported")
+        key = _camellia_key(
+            rs.raw,
+            rs.sh,
+            128,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
+        )
+        plaintext = b"CTR nonce independence test!!"
+        try:
+            from pkcs11_check.raw.pack import mech_ctr
+            from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
+
+            cb = bytes(12) + b"\xff\xff\xff\xff"
+            ct1 = _encrypt_or_xfail(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CAMELLIA_CTR,
+                plaintext,
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=32, cb=cb),
+            )
+            ct2 = _encrypt_or_xfail(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CAMELLIA_CTR,
+                plaintext,
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64, cb=cb),
             )
             assert ct1 != ct2
         finally:
