@@ -611,3 +611,59 @@ def test_teardown_entry_rejects_reserved_unknown_run_id(
     _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
     with pytest.raises(call_counters.CounterPersistenceError, match="reserved run_id"):
         _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
+
+
+def _write_fault_stub(pytester: pytest.Pytester, *, direct_raise: bool) -> None:
+    if direct_raise:
+        body = (
+            "from pkcs11_check.core.call_counters import CounterPersistenceError\n"
+            "\n\n"
+            "def test_fault():\n"
+            '    raise CounterPersistenceError("synthetic persistence fault")\n'
+        )
+    else:
+        body = (
+            "from pkcs11_check.core import call_counters\n"
+            "\n\n"
+            "def test_fault():\n"
+            '    call_counters.record_call("C_Login")\n'
+        )
+    (pytester.path / "test_fault_c.py").write_text(
+        body + "\n\n"
+        "def test_never_runs():\n"
+        "    import pathlib\n"
+        '    pathlib.Path("ran-marker.txt").write_text("ran", encoding="utf-8")\n',
+        encoding="utf-8",
+    )
+
+
+def test_persistence_fault_aborts_session_as_harness_error(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """F11 live: an uncaught persistence fault aborts with ONE harness error (exit 2)."""
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a dir", encoding="utf-8")
+    monkeypatch.setenv(COUNTERS_DIR_ENV, str(blocker))
+    _write_fault_stub(pytester, direct_raise=False)
+    result = pytester.runpytest_subprocess("--p11-module=/nonexistent/fake.so", "-q")
+    assert result.ret == pytest.ExitCode.INTERRUPTED
+    out = result.stdout.str() + result.stderr.str()
+    assert out.count("counter persistence failed") == 1
+    assert not (pytester.path / "ran-marker.txt").exists()
+
+
+def test_persistence_fault_disengaged_stays_per_test_error(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F11 control: disengaged runs keep per-test errors (no abort)."""
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV
+
+    monkeypatch.delenv(COUNTERS_DIR_ENV, raising=False)
+    _write_fault_stub(pytester, direct_raise=True)
+    result = pytester.runpytest_subprocess("--p11-module=/nonexistent/fake.so", "-q")
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    out = result.stdout.str() + result.stderr.str()
+    assert "counter persistence failed" not in out
+    assert (pytester.path / "ran-marker.txt").exists()
