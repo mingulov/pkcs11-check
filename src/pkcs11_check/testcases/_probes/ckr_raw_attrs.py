@@ -2,8 +2,9 @@
 
 Ported verbatim from the legacy ``ckr/test_ckr_raw_attrs.py`` child scripts, which
 drove the module through a logged-in ``RawPKCS11`` session built by
-``subprocess_session_preamble``.  Each probe generates an AES key with one usage
-attribute (``CKA_ENCRYPT`` / ``CKA_SIGN`` / ``CKA_DECRYPT``) set to False, reads the
+``subprocess_session_preamble``.  Each probe generates a key with one usage
+attribute (``CKA_ENCRYPT`` / ``CKA_SIGN`` / ``CKA_DECRYPT``) set to False (AES for
+encrypt/decrypt; generic-secret-first with an AES fallback for sign), reads the
 flag back (claim check), then issues the matching raw ``C_*Init`` -- bypassing the
 python-pkcs11 wrapper's attribute checks -- so the parent can classify whether the
 module honored the restriction (PKCS#11 v3.2 requires ``CKR_KEY_FUNCTION_NOT_PERMITTED``).
@@ -17,7 +18,8 @@ params (Invariant I3).  Session teardown + rv-trace are handled by ``probe_main`
 
 Dispatch on ``extra["probe"]`` (one child body each):
   ``"encrypt"`` -> key with CKA_ENCRYPT=False, then ``C_EncryptInit`` (CKM_AES_ECB)
-  ``"sign"``    -> key with CKA_SIGN=False, then ``C_SignInit`` (CKM_SHA256_HMAC)
+  ``"sign"``    -> key with CKA_SIGN=False, then ``C_SignInit`` (CKM_SHA256_HMAC
+                 on a generic-secret key; AES fallback, then setup-xfail)
   ``"decrypt"`` -> key with CKA_DECRYPT=False, then ``C_DecryptInit`` (CKM_AES_ECB)
 
 Output protocol (for ``assert_ckr_subprocess_ok`` plus the parent's
@@ -47,20 +49,27 @@ from ctypes import byref, cast
 from typing import Any
 
 from pkcs11_check.raw.metadata_std import ATTR_NAMES
-from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKA_KEY_TYPE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKA_VALUE,
     CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKK_GENERIC_SECRET,
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
+    CKM_GENERIC_SECRET_KEY_GEN,
     CKM_SHA256_HMAC,
+    CKO_PRIVATE_KEY,
     CKR_OK,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
@@ -104,6 +113,19 @@ def _claim(ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: 
     print("ATTRIBUTE_EVENT:" + json.dumps(event, separators=(",", ":")))
 
 
+def _finish_flag_probe(
+    ctx: ProbeContext, sh: int, key: int, *, false_attr: int, op_mech: int, op_init: str
+) -> None:
+    """Claim the flag, call *op_init*, and report the CKR without asserting."""
+    _claim(ctx, sh, key, false_attr, operation=op_init)
+    mech = mech_simple(op_mech)
+    init = getattr(ctx.raw, op_init)
+    rv = init(sh, mech.byref(), key)
+    print(f"CKR:0x{rv:08x}")
+    # Report result without asserting -- outer test checks security compliance
+    print("OK")
+
+
 def _flag_not_permitted(
     ctx: ProbeContext,
     *,
@@ -128,13 +150,39 @@ def _flag_not_permitted(
     if rv != CKR_OK:
         print(f"SETUP_XFAIL:C_GenerateKey for {false_attr_name}=False failed: {ckr_name(rv)}")
         return
-    _claim(ctx, sh, key.value, false_attr, operation=op_init)
-    mech = mech_simple(op_mech)
-    init = getattr(ctx.raw, op_init)
-    rv = init(sh, mech.byref(), key.value)
-    print(f"CKR:0x{rv:08x}")
-    # Report result without asserting -- outer test checks security compliance
-    print("OK")
+    _finish_flag_probe(ctx, sh, key.value, false_attr=false_attr, op_mech=op_mech, op_init=op_init)
+
+
+_HMAC_FALLBACK_VALUE = bytes([0x07]) * 32
+
+
+def _generate_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
+    """Generate a generic-secret key with CKA_SIGN=False; None when refused."""
+    attrs = template(
+        attr_ulong(CKA_VALUE_LEN, 32),
+        attr_bool(CKA_SIGN, False),
+        attr_bool(CKA_VERIFY, True),
+        attr_bool(CKA_TOKEN, False),
+    )
+    mech_kg = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
+    key = CK_OBJECT_HANDLE(0)
+    rv = ctx.raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
+    return key.value if rv == CKR_OK else None
+
+
+def _create_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
+    """CreateObject a generic-secret key with CKA_SIGN=False; None when refused."""
+    attrs = template(
+        attr_ulong(CKA_CLASS, int(CKO_PRIVATE_KEY)),
+        attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+        attr_bytes(CKA_VALUE, _HMAC_FALLBACK_VALUE),
+        attr_bool(CKA_SIGN, False),
+        attr_bool(CKA_VERIFY, True),
+        attr_bool(CKA_TOKEN, False),
+    )
+    key = CK_OBJECT_HANDLE(0)
+    rv = ctx.raw.C_CreateObject(sh, _template_ptr(attrs), attrs.count, byref(key))
+    return key.value if rv == CKR_OK else None
 
 
 def _encrypt(ctx: ProbeContext) -> None:
@@ -149,13 +197,29 @@ def _encrypt(ctx: ProbeContext) -> None:
 
 
 def _sign(ctx: ProbeContext) -> None:
-    _flag_not_permitted(
-        ctx,
-        false_attr=CKA_SIGN,
-        false_attr_name="CKA_SIGN",
-        counterpart_attr=CKA_ENCRYPT,
-        op_mech=CKM_SHA256_HMAC,
-        op_init="C_SignInit",
+    """CKA_SIGN=False, then C_SignInit (CKM_SHA256_HMAC) on a type-consistent key.
+
+    fw#96: an AES key makes the SignInit refusal ambiguous (key type vs
+    key function), so the probe prefers a generic-secret HMAC key and only
+    falls back to the AES route (then SETUP_XFAIL) without generic support.
+    """
+    assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
+    sh: int = ctx.sh
+    key = _generate_hmac_key(ctx, sh)
+    if key is None:
+        key = _create_hmac_key(ctx, sh)
+    if key is None:
+        _flag_not_permitted(
+            ctx,
+            false_attr=CKA_SIGN,
+            false_attr_name="CKA_SIGN",
+            counterpart_attr=CKA_ENCRYPT,
+            op_mech=CKM_SHA256_HMAC,
+            op_init="C_SignInit",
+        )
+        return
+    _finish_flag_probe(
+        ctx, sh, key, false_attr=CKA_SIGN, op_mech=CKM_SHA256_HMAC, op_init="C_SignInit"
     )
 
 
