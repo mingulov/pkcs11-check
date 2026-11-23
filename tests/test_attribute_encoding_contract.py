@@ -438,6 +438,41 @@ def test_public_value_sentinel_without_ckr_passes() -> None:
     _assert_cleanup(fake)
 
 
+def test_public_value_retry_refusal_after_partial_stays_visible() -> None:
+    """R14-1: a marked retry refusal gets no absence credit (no silent pass)."""
+
+    class _FlakyRaw(_EncodingRaw):
+        def __init__(self) -> None:
+            super().__init__()
+            self.value_reads = 0
+
+        def C_GetAttributeValue(  # noqa: N802
+            self, _sh: int, handle: int, tmpl: Any, count: int
+        ) -> int:
+            if int(count) == 1 and int(tmpl[0].type) == _VALUE:
+                self.value_reads += 1
+                if self.value_reads <= 2:
+                    tmpl[0].ulValueLen = 3
+                    if tmpl[0].pValue:
+                        ctypes.memset(tmpl[0].pValue, 0x66, 1)
+                    return _OK
+                tmpl[0].ulValueLen = _UNAVAILABLE
+                return _TYPE_INVALID
+            return super().C_GetAttributeValue(_sh, handle, tmpl, count)
+
+    fake = _FlakyRaw()
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_public_value_absent,
+        _rs(fake),
+        "rsa",
+    )
+    assert any(
+        rec.detail is not None and rec.detail.get("unproved_delivery") is True for rec in _records()
+    )
+    assert any(rec.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID" for rec in _records())
+    _assert_cleanup(fake)
+
+
 # --- QC7a: DSA / DH raw Y (#4) ---------------------------------------------
 
 

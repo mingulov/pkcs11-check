@@ -119,6 +119,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
+    delivery_unproved,
     refusal_for,
 )
 from pkcs11_check.testcases.conftest import (
@@ -4661,6 +4662,26 @@ def _skip_unless_sealed_unreadable(
                 "write); seal unproved"
             ),
             detail={"malformed_refusal": True},
+        )
+        classification.raise_for_record(record)
+    if delivery_unproved(read, attr):
+        # R14-1: the retry contradicted a successful first read, so this
+        # outcome proves nothing about the seal -- terminate here instead
+        # of granting seal credit (or silence) below. Only a clean
+        # refusal proves the seal, so the dependent search never runs on
+        # it. The observed retry RV rides on the record when there is one.
+        record = classification.record_as(
+            "not_operational",
+            kind="policy",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal.ckr if refusal is not None else None,
+            summary=(
+                f"{label}: sealed {attr_name} seal check unproved "
+                "(retry contradicted the first read); seal unproved"
+            ),
+            detail={"unproved_delivery": True},
         )
         classification.raise_for_record(record)
     value = attr_or_record(

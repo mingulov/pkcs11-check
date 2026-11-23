@@ -135,7 +135,10 @@ def attr_or_record(
     success that left residual doubt, e.g. untouched fill or an
     unresolved partial write) is retained as a visible deviation instead
     of a value -- and never as silent capability absence. Opt in at
-    callers whose verdicts must not rest on unproved bytes.
+    callers whose verdicts must not rest on unproved bytes. Concrete
+    refusal evidence still takes precedence over the mark: a
+    refusal-with-data (always a self-contradiction) or a malformed
+    refusal is reported as itself, with the mark riding on the record.
 
     Whether a ``CKR_ATTRIBUTE_SENSITIVE`` refusal is *conformant* or a *defect*
     depends on whether ``attr`` could legitimately be sensitive, which only the
@@ -166,13 +169,78 @@ def attr_or_record(
     """
     if reason not in ("honest_deviation", "not_operational"):
         raise ValueError(f"invalid missing-attribute reason: {reason!r}")
+    try:
+        attr_id: int | None = int(attr)
+    except (TypeError, ValueError, OverflowError):
+        attr_id = None
+    attr_name = ATTR_NAMES.get(attr_id, str(attr)) if attr_id is not None else str(attr)
+    detail: dict[str, Any] = {"attribute": {"name": attr_name, "id": attr_id}}
+
+    refusal = _refusal_for(attrs, attr)
+
+    if refusal is not None and refusal.leaked_len is not None:
+        # Self-contradiction: the module answered a refusal CKR for this attribute
+        # but still wrote real bytes into the template -- a finding regardless of
+        # whether this attribute could legitimately be sensitive. Bounded length
+        # only; the bytes themselves are never carried into the record.
+        # R14-2: concrete refusal evidence beats the delivery mark (a
+        # refusing retry that also wrote stays a hard finding, never a
+        # mark-deviation xfail); the mark rides on the record when set.
+        detail["leaked_len"] = refusal.leaked_len
+        if refusal.reported_len is not None:
+            detail["reported_len"] = refusal.reported_len
+        if delivery_unproved(attrs, attr):
+            detail["unproved_delivery"] = True
+        record_as(
+            "self_contradiction",
+            kind="policy",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: module answered {ckr_name(refusal.ckr)} for this attribute "
+                f"but still wrote {refusal.leaked_len} bytes into the template"
+            ),
+            detail=detail,
+        )
+        return MISSING_ATTRIBUTE
+
+    if refusal is not None and refusal.malformed:
+        # R8-1: refusal honored (no value surfaced) but a finite length was
+        # retained without a write -- sloppy, not a leak. Named as malformed
+        # (never forwarded as clean), proportionate xfail: nothing unsafe
+        # happened, so this notes the shape without failing the run.
+        # R14-2b: same precedence as the leak above -- the concrete shape
+        # and its CKR survive a retry mark.
+        detail["malformed_refusal"] = True
+        if delivery_unproved(attrs, attr):
+            detail["unproved_delivery"] = True
+        record_as(
+            reason,
+            kind=kind,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: attribute refusal malformed "
+                f"({ckr_name(refusal.ckr)} with a retained finite length, no write)"
+            ),
+            detail=detail,
+        )
+        return MISSING_ATTRIBUTE
+
     if strict_delivery and delivery_unproved(attrs, attr):
         # Unproved delivery (untouched fill or an unresolved partial
         # write): retained as a visible deviation for strict callers --
         # never a value, and never silent capability absence for
         # optional callers. Lenient callers keep today's shape. Checked
         # before presence: the channel marks doubt about a value that
-        # may still sit in the mapping.
+        # may still sit in the mapping. Concrete refusal evidence above
+        # still takes precedence (R14-2).
         try:
             strict_id: int | None = int(attr)
         except (TypeError, ValueError, OverflowError):
@@ -195,61 +263,6 @@ def attr_or_record(
         return MISSING_ATTRIBUTE
     if attr in attrs:
         return attrs[attr]
-
-    try:
-        attr_id: int | None = int(attr)
-    except (TypeError, ValueError, OverflowError):
-        attr_id = None
-    attr_name = ATTR_NAMES.get(attr_id, str(attr)) if attr_id is not None else str(attr)
-    detail: dict[str, Any] = {"attribute": {"name": attr_name, "id": attr_id}}
-
-    refusal = _refusal_for(attrs, attr)
-
-    if refusal is not None and refusal.leaked_len is not None:
-        # Self-contradiction: the module answered a refusal CKR for this attribute
-        # but still wrote real bytes into the template -- a finding regardless of
-        # whether this attribute could legitimately be sensitive. Bounded length
-        # only; the bytes themselves are never carried into the record.
-        detail["leaked_len"] = refusal.leaked_len
-        if refusal.reported_len is not None:
-            detail["reported_len"] = refusal.reported_len
-        record_as(
-            "self_contradiction",
-            kind="policy",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            inherit_mechanism=inherit_mechanism,
-            actual=refusal.ckr,
-            summary=(
-                f"{label}: module answered {ckr_name(refusal.ckr)} for this attribute "
-                f"but still wrote {refusal.leaked_len} bytes into the template"
-            ),
-            detail=detail,
-        )
-        return MISSING_ATTRIBUTE
-
-    if refusal is not None and refusal.malformed:
-        # R8-1: refusal honored (no value surfaced) but a finite length was
-        # retained without a write -- sloppy, not a leak. Named as malformed
-        # (never forwarded as clean), proportionate xfail: nothing unsafe
-        # happened, so this notes the shape without failing the run.
-        detail["malformed_refusal"] = True
-        record_as(
-            reason,
-            kind=kind,
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            inherit_mechanism=inherit_mechanism,
-            actual=refusal.ckr,
-            summary=(
-                f"{label}: attribute refusal malformed "
-                f"({ckr_name(refusal.ckr)} with a retained finite length, no write)"
-            ),
-            detail=detail,
-        )
-        return MISSING_ATTRIBUTE
 
     if optional_if_absent and refusal is not None and refusal.ckr == CKR_ATTRIBUTE_TYPE_INVALID:
         return MISSING_ATTRIBUTE
