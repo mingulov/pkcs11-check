@@ -463,6 +463,59 @@ def test_verify_retry_zero_length_after_success_stays_marked() -> None:
     assert result.unproved_delivery == {int(CKA_VALUE)}
 
 
+def _overrun_get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+    """CKR_OK claiming 3 bytes in a 1-byte buffer (N-003 overrun shape)."""
+    assert count == 1
+    if attrs[0].pValue is None:
+        attrs[0].ulValueLen = 1
+    else:
+        ctypes.memmove(attrs[0].pValue, b"\x66", 1)
+        attrs[0].ulValueLen = 3
+    return int(CKR_OK)
+
+
+def test_overrun_length_verified_read_raises_typed() -> None:
+    """R15-1: CKR_OK claiming past capacity fails closed, never stabilizes."""
+    from pkcs11_check.raw.recipes import OutputLengthOverrunError
+
+    with pytest.raises(OutputLengthOverrunError) as exc_info:
+        read_attributes(_raw(_overrun_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert exc_info.value.call == "C_GetAttributeValue"
+    assert exc_info.value.capacity == 1
+    assert exc_info.value.reported == 3
+
+
+def test_overrun_length_unverified_read_raises_typed() -> None:
+    """R15-1: the overrun guard is not gated on verification."""
+    from pkcs11_check.raw.recipes import OutputLengthOverrunError
+
+    with pytest.raises(OutputLengthOverrunError):
+        read_attributes(_raw(_overrun_get), 1, 1, [CKA_VALUE])
+
+
+def test_attr_or_record_marked_clean_refusal_retains_ckr() -> None:
+    """R15-2: the mark record keeps a known refusal CKR."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.refusals[CKA_VALUE] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_TYPE_INVALID))
+    attrs.unproved_delivery.add(CKA_VALUE)
+    value = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label="marked clean refusal",
+        reason="honest_deviation",
+        optional_if_absent=True,
+        strict_delivery=True,
+    )
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert record.reason == "honest_deviation"
+    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert record.detail is not None
+    assert record.detail.get("unproved_delivery") is True
+
+
 def test_attr_or_record_leak_beats_unproved_mark() -> None:
     """R14-2: refusal-with-write stays a hard finding under a retry mark."""
     from pkcs11_check.raw.recipes import AttrReadResult

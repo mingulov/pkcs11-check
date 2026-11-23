@@ -1510,6 +1510,14 @@ def read_attributes(
         # R14-3: a retry runs the stability check at every length --
         # including zero, which always contradicts a positive baseline.
         if _observed_refusal_ckr is None and count == 1 and (size > 0 or _baseline is not None):
+            if buf is not None and size > len(buf):
+                # R15-1 (N-003): CKR_OK claiming more bytes than the buffer
+                # holds is malformed provider output -- fail closed with
+                # both lengths instead of hashing/decoding a clamped
+                # prefix (which a retry could then "stabilize").
+                raise OutputLengthOverrunError(
+                    call="C_GetAttributeValue", capacity=len(buf), reported=size
+                )
             changed = _changed_byte_count(buf, size, alternate=_alternate_fill)
             if changed < size and verify_delivery and not _alternate_fill:
                 # R12-3/R13-2: unproven success on a verified read -- a
