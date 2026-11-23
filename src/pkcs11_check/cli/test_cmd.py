@@ -1248,7 +1248,8 @@ def test_command(
                 if not counters_barrier_plan.get("barrier_ok", False):
                     console.print(
                         "[red]Error:[/red] counter resume barrier failed; "
-                        "refusing to run without proven quiescence"
+                        "refusing to run without proven quiescence "
+                        "(re-run without --resume for a fresh series)"
                     )
                     setup_exit_code = _resume_exit_code(state_file, 2)
                     raise typer.Exit(code=setup_exit_code)
