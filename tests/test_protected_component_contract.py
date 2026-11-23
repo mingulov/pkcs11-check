@@ -953,6 +953,15 @@ def test_unsealed_rsa_import_wrong_integer_still_fails() -> None:
     assert _records_by_reason("wrong_result")
 
 
+def test_unsealed_rsa_import_overlong_integer_still_fails() -> None:
+    """An overlong integer encoding still fails: minimal-or-full width only (fw#95)."""
+    fake = _MinimalEncodingFake({int(CKA_EXPONENT_1): ("overlong", 200)}, claim=b"\x00")
+    with pytest.raises(Failed) as excinfo:
+        _unsealed(_rs(fake), "rsa", "import", "unsealed")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    assert _records_by_reason("wrong_result")
+
+
 def test_sealed_rsa_import_minimal_encoding_still_fails() -> None:
     """Minimal bytes on a sealed read still disclose: the leak verdict holds (fw#95)."""
     behaviors = dict(_RSA_SENSITIVE)

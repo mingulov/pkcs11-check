@@ -701,6 +701,24 @@ def test_mldsa44_import_attribute_type_invalid_skips() -> None:
     _assert_cleanup(fake)
 
 
+def test_montgomery_import_without_mechanism_skips() -> None:
+    """No advertised family mechanism skips before attempting the import (fw#93)."""
+    fake = _EncodingRaw()
+    rs = SimpleNamespace(
+        raw=fake,
+        sh=7,
+        slot_id=0,
+        has_mechanism=lambda *_a: False,
+        has_mechanism_flag=lambda *_a: False,
+    )
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        rs,
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
 # --- QC7a: generated/imported equivalence (#7) -------------------------------
 
 

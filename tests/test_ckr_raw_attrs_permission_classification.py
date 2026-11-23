@@ -32,7 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_SHA256_HMAC,
-    CKO_PRIVATE_KEY,
+    CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
@@ -438,7 +438,7 @@ def test_sign_probe_falls_back_to_create_object(
     assert [mech for mech, _ in raw.keygen_calls] == [int(CKM_GENERIC_SECRET_KEY_GEN)]
     assert len(raw.create_calls) == 1
     created = raw.create_calls[0]
-    assert int.from_bytes(created[int(CKA_CLASS)], sys.byteorder) == int(CKO_PRIVATE_KEY)
+    assert int.from_bytes(created[int(CKA_CLASS)], sys.byteorder) == int(CKO_SECRET_KEY)
     assert int.from_bytes(created[int(CKA_KEY_TYPE)], sys.byteorder) == int(CKK_GENERIC_SECRET)
     assert len(created[int(CKA_VALUE)]) == 32
     assert created.get(int(CKA_SIGN)) == b"\x00"
