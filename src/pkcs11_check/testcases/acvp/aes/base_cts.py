@@ -514,22 +514,24 @@ def _selectable_off_contract_ckr(attempt: object) -> int | None:
     return ckr
 
 
-def _last_off_contract_ckr(attempts: Any) -> int | None:
-    """Off-contract attempt CKR, else None (R4-7, R5-2).
+def _select_off_contract_attempt(attempts: Any) -> tuple[dict[str, Any], int] | None:
+    """Priority-correct off-contract (attempt, CKR), else None (R5-2, R6-3).
 
     Operation stage wins over setup (the detector's own priority); last
-    within a stage. Returns None when no attempt is selectable, keeping
-    the detector's primary.
+    within a stage. Only detector-classified off-contract attempts
+    qualify. The caller pins the winning attempt's operation/stage in
+    the result detail so reporting names it even when another attempt
+    shares its CKR.
     """
-    fallback: int | None = None
+    fallback: tuple[dict[str, Any], int] | None = None
     for attempt in reversed(attempts):
         ckr = _selectable_off_contract_ckr(attempt)
         if ckr is None:
             continue
-        if isinstance(attempt, dict) and attempt.get("stage") == "operation":
-            return ckr
+        if attempt.get("stage") == "operation":
+            return attempt, ckr
         if fallback is None:
-            fallback = ckr
+            fallback = (attempt, ckr)
     return fallback
 
 
@@ -574,12 +576,18 @@ def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
                 },
             )
         elif result.status is CtsDetectionStatus.SETUP_ERROR and not all_login_caused:
-            reselected = _last_off_contract_ckr(attempts)
-            if reselected is not None and reselected != result.error_rv:
+            selected = _select_off_contract_attempt(attempts)
+            if selected is not None:
+                attempt, reselected = selected
+                detail = dict(result.detail) if result.detail else {}
+                detail["primary_attempt"] = {
+                    "operation": attempt.get("operation"),
+                    "stage": attempt.get("stage"),
+                }
                 result = CtsDetectionResult(
                     CtsDetectionStatus.SETUP_ERROR,
                     error_rv=reselected,
-                    detail=result.detail,
+                    detail=detail,
                 )
         _cts_detection_result = result
     return _cts_detection_result
@@ -647,15 +655,23 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
                 f"CTS detection setup failed: {reason} ({ckr_name(rv)} outside the known contract)",
                 int(rv),
             )
-        # error_rv carries operation priority, so the naming attempt is the
-        # last one that recorded this CKR -- not necessarily the last attempt.
-        last = next(
-            (attempt for attempt in reversed(attempts) if attempt.get("ckr") == rv),
-            attempts[-1],
-        )
+        # R6-3: the selector-pinned attempt names the finding when present
+        # (it survives same-RV collisions across stages); otherwise the
+        # naming attempt is the last one that recorded this CKR -- not
+        # necessarily the last attempt.
+        primary = (result.detail or {}).get("primary_attempt")
+        if isinstance(primary, dict) and primary.get("operation") is not None:
+            naming_stage = primary.get("stage", "detection")
+            naming_operation = primary["operation"]
+        else:
+            last = next(
+                (attempt for attempt in reversed(attempts) if attempt.get("ckr") == rv),
+                attempts[-1],
+            )
+            naming_stage = last.get("stage", "detection")
+            naming_operation = last.get("operation", "C_CreateObject")
         raise CkrAssertionError(
-            f"CTS detection {last.get('stage', 'detection')} "
-            f"{last.get('operation', 'C_CreateObject')} rejected with "
+            f"CTS detection {naming_stage} {naming_operation} rejected with "
             f"{ckr_name(rv)} outside the known contract",
             int(rv),
         )

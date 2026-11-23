@@ -1029,6 +1029,54 @@ def test_cts_mixed_off_contract_prefers_operation_stage(
     assert excinfo.value.rv == 0x00FFFFFF
 
 
+def test_cts_mixed_same_rv_names_operation_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R6-3: the same RV in both stages names the operation attempt."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {
+                        "ckr": 0x00FFFFFF,
+                        "operation": "C_Encrypt",
+                        "stage": "operation",
+                        "key_bits": 192,
+                        "case": "aligned",
+                    },
+                    {
+                        "ckr": 0x00FFFFFF,
+                        "operation": "C_CreateObject",
+                        "stage": "setup",
+                        "key_bits": 128,
+                        "case": None,
+                    },
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    with pytest.raises(CkrAssertionError, match="C_Encrypt") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+    assert "C_CreateObject" not in str(excinfo.value)
+
+
 def test_detection_skip_reason_names_logged_out_login_refusal() -> None:
     """S2: logged-out skips tell the operator to configure a PIN."""
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
