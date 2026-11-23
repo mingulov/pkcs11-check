@@ -649,11 +649,14 @@ def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> 
     resolved_path = Path(resolved)
     try:
         old = resolved_path.read_bytes()
-    except OSError:
+    except FileNotFoundError:
         old = None
-    if old is None and resolved_path.exists():
-        # Present but unstashable: refuse the destructive path rather than
-        # risk an unrestorable delete (F2b). The caller raises loudly.
+    except OSError:
+        # Present but unstashable (or unreadable): refuse the destructive
+        # path rather than risk an unrestorable delete (F2b). Only
+        # FileNotFoundError counts as absence; any other read error --
+        # including a stat this probe never performs -- refuses, so the
+        # caller raises CounterPersistenceError and cleans the tmp.
         return False
     try:
         resolved_path.unlink()

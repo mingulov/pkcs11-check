@@ -6,7 +6,7 @@ key pair attributes, and object lifecycle.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -778,28 +778,42 @@ def _qc7_scalar_point_binding_record(
     """Wrong-value record unless the scalar derives the generated point (F8).
 
     A module reporting one key's scalar for another keypair's point is key
-    confusion the scalar-only legs cannot see. Returns None when the public
-    point is absent or undecodable (binding unjudgeable; point readability
-    is other tests' property) or when the derived point matches.
+    confusion the scalar-only legs cannot see. Points parse leniently (raw
+    uncompressed or DER-wrapped compressed/uncompressed SEC1) and compare
+    as public numbers, so encodings never cause false mismatches. Absent
+    points skip binding silently (point readability is other tests'
+    property, pinned by the no-point equivalence test); present but
+    undecodable points fail (garbage is assessed broken, matching the
+    import/export suites).
     """
     from cryptography.hazmat.primitives.asymmetric import ec
 
-    from pkcs11_check.raw.der import decode_ec_point
+    from pkcs11_check.testcases._ec_export import (
+        InvalidProviderECPointError,
+        ProviderECPointEncodingError,
+        parse_provider_ec_point,
+    )
 
     if not isinstance(point, bytes):
         return None
     try:
-        raw = decode_ec_point(point)
-    except ValueError:
-        return None
-    if len(raw) != 65 or raw[0] != 0x04:
-        return None
+        parsed = parse_provider_ec_point(point, ec.SECP256R1(), label=label)
+    except (InvalidProviderECPointError, ProviderECPointEncodingError):
+        return _qc7_record_wrong_value(
+            CKA_EC_POINT,
+            label=label,
+            producer_operation="C_GenerateKeyPair",
+            summary=f"{label}: generated public point is not valid P-256 SEC1",
+            expected_len=65,
+            actual_len=len(point),
+        )
+    reported = parsed.public_key.public_numbers()
     derived = (
         ec.derive_private_key(int.from_bytes(generated, "big"), ec.SECP256R1())
         .public_key()
         .public_numbers()
     )
-    if derived.x.to_bytes(32, "big") != raw[1:33] or derived.y.to_bytes(32, "big") != raw[33:65]:
+    if (derived.x, derived.y) != (reported.x, reported.y):
         return _qc7_record_wrong_value(
             CKA_VALUE,
             label=label,
@@ -911,16 +925,89 @@ def _gen_pqc_pair_or_xfail(
         raise
 
 
-def _import_or_xfail(attempt: Any, *, purpose: str, skip_rvs: tuple[Any, ...] = ()) -> int:
+def _import_or_xfail(attempt: Any, *, purpose: str) -> int:
     try:
         return int(attempt())
     except AssertionError as exc:
-        if skip_rvs and is_known_error(exc, skip_rvs):
-            rv = getattr(exc, "rv", None)
-            name = ckr_name(rv) if isinstance(rv, int) else "unknown"
-            pytest.skip(f"{purpose} not supported: {name}")
         xfail_if_known_ckr(exc, KEYPAIR_RUNTIME_REJECT_RVS, f"{purpose} is not operational")
         raise
+
+
+def _baseline_curve_gen_or_skip(
+    rs: Any, family: str, ec_params: bytes, exc: CkrAssertionError
+) -> NoReturn:
+    """Same-curve generation baseline for import curve refusals (R2-6).
+
+    A refusal is attributable to the curve only when a bare generation on
+    the same curve refuses too; a working baseline means the refusal is
+    template-specific and stays loud. Baseline keys are destroyed;
+    anything but a typed refusal or an explicit skip propagates (confused
+    situations stay loud).
+    """
+    try:
+        if family == "montgomery":
+            pub, priv = _gen_montgomery_pair_or_xfail(rs)
+        elif family == "edwards":
+            pub, priv = gen_edwards_keypair_or_xfail(rs, ec_params)
+        elif family == "ec":
+            pub, priv = gen_ec_keypair_or_xfail(rs, ec_params)
+        else:
+            raise ValueError(f"unknown QC7a private family: {family}")
+    except pytest.skip.Exception as exc2:
+        pytest.skip(
+            f"QC7a {family} private import not supported ({exc}); "
+            f"baseline generation unavailable: {exc2}"
+        )
+    try:
+        raise CkrAssertionError(
+            f"{exc} (baseline generation on the same curve succeeded)",
+            exc.rv,
+            getattr(exc, "operation", None),
+        ) from exc
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+
+
+def _baseline_mldsa_import_or_skip(rs: Any, exc: CkrAssertionError) -> NoReturn:
+    """Minimal-template baseline for ML-DSA import refusals (R2-6).
+
+    Retries without CKA_SIGN and the seal attributes: success proves the
+    refusal is template-specific (loud); any refusal concedes absence
+    (skip naming the baseline RV). The baseline key is destroyed.
+    """
+    from pkcs11_check.testcases.test_sensitivity import _MATRIX_MLDSA44_SK
+
+    try:
+        baseline = create_object_negotiated(
+            rs,
+            {
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_ML_DSA,
+                CKA_TOKEN: False,
+                CKA_PARAMETER_SET: int(CKP_ML_DSA_44),
+                CKA_VALUE: _MATRIX_MLDSA44_SK,
+            },
+            purpose="QC7a ML-DSA-44 private import (minimal baseline)",
+            preserve_policy_attrs=True,
+        )
+    except pytest.skip.Exception as exc2:
+        pytest.skip(
+            f"QC7a ML-DSA-44 private import not supported ({exc}); baseline unavailable: {exc2}"
+        )
+    except CkrAssertionError as bexc:
+        pytest.skip(
+            f"QC7a ML-DSA-44 private import not supported ({exc}); "
+            f"baseline minimal import refused: {ckr_name(bexc.rv)}"
+        )
+    try:
+        raise CkrAssertionError(
+            f"{exc} (baseline minimal import succeeded)",
+            exc.rv,
+            getattr(exc, "operation", None),
+        ) from exc
+    finally:
+        destroy_quietly(rs.raw, rs.sh, baseline)
 
 
 def _qc7_skip_unless_family_import_supported(rs: Any, family: str) -> None:
@@ -999,25 +1086,27 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
     if family == "ml_dsa_44":
         from pkcs11_check.testcases.test_sensitivity import _MATRIX_MLDSA44_SK
 
-        handle = _import_or_xfail(
-            lambda: create_object_negotiated(
-                rs,
-                {
-                    CKA_CLASS: CKO_PRIVATE_KEY,
-                    CKA_KEY_TYPE: CKK_ML_DSA,
-                    CKA_TOKEN: False,
-                    CKA_PARAMETER_SET: int(CKP_ML_DSA_44),
-                    CKA_VALUE: _MATRIX_MLDSA44_SK,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SIGN: True,
-                },
+        try:
+            handle = _import_or_xfail(
+                lambda: create_object_negotiated(
+                    rs,
+                    {
+                        CKA_CLASS: CKO_PRIVATE_KEY,
+                        CKA_KEY_TYPE: CKK_ML_DSA,
+                        CKA_TOKEN: False,
+                        CKA_PARAMETER_SET: int(CKP_ML_DSA_44),
+                        CKA_VALUE: _MATRIX_MLDSA44_SK,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_SIGN: True,
+                    },
+                    purpose="QC7a ML-DSA-44 private import",
+                    preserve_policy_attrs=True,
+                ),
                 purpose="QC7a ML-DSA-44 private import",
-                preserve_policy_attrs=True,
-            ),
-            purpose="QC7a ML-DSA-44 private import",
-            skip_rvs=(CKR_ATTRIBUTE_TYPE_INVALID,),
-        )
+            )
+        except CkrAssertionError as exc:
+            _baseline_mldsa_import_or_skip(rs, exc)
         return handle, _MATRIX_MLDSA44_SK, None
 
     der_format = serialization.PrivateFormat.PKCS8
@@ -1048,19 +1137,21 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
     else:
         raise ValueError(f"unknown QC7a private family: {family}")
     der = key.private_bytes(serialization.Encoding.DER, der_format, serialization.NoEncryption())
-    handle = _import_or_xfail(
-        lambda: import_ec_private_key_negotiated(
-            rs,
-            ec_params=ec_params,
-            value=raw,
-            key_type=key_type,
-            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+    try:
+        handle = _import_or_xfail(
+            lambda: import_ec_private_key_negotiated(
+                rs,
+                ec_params=ec_params,
+                value=raw,
+                key_type=key_type,
+                attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+                purpose=f"QC7a {family} private import",
+                preserve_policy_attrs=True,
+            ),
             purpose=f"QC7a {family} private import",
-            preserve_policy_attrs=True,
-        ),
-        purpose=f"QC7a {family} private import",
-        skip_rvs=EC_CURVE_UNSUPPORTED_RVS,
-    )
+        )
+    except CkrAssertionError as exc:
+        _baseline_curve_gen_or_skip(rs, family, ec_params, exc)
     return handle, raw, der
 
 

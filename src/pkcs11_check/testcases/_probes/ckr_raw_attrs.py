@@ -44,6 +44,7 @@ Launch with ``coverage="session"`` and ``pin=pin_from_config(p11_config)``.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Mapping
 from ctypes import byref, cast
 from typing import Any
@@ -218,11 +219,15 @@ def _sign(ctx: ProbeContext) -> None:
     key, rv = _generate_hmac_key(ctx, sh)
     if key is None:
         if not _is_routable_setup_rv(rv):
-            print(f"SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
             return
+        print(
+            f"setup fallback: C_GenerateKey refused with {ckr_name(rv)}, trying CreateObject",
+            file=sys.stderr,
+        )
         key, rv = _create_hmac_key(ctx, sh)
         if key is None and not _is_routable_setup_rv(rv):
-            print(f"SETUP_XFAIL:C_CreateObject for CKA_SIGN=False failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_CreateObject:0x{rv:08x}")
             return
     if key is None:
         _flag_not_permitted(

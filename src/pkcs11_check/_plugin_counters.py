@@ -181,7 +181,8 @@ def _abort_on_persistence_fault(call: pytest.CallInfo[Any]) -> None:
         return
     pytest.exit(
         f"counter persistence failed: {exc}; provider calls can no longer be "
-        "counted -- aborting the run (harness error, not a provider finding). "
+        "counted -- aborting this pytest session "
+        "(harness error, not a provider finding). "
         "Check disk space and counters-dir writability.",
         returncode=2,
     )

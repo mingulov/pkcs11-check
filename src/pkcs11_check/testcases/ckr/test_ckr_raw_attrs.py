@@ -445,7 +445,11 @@ def _check_permission_probe(
     # the shared subprocess helper. Do not manufacture missing-event/CKR
     # harness findings for a child that never reached the measurement.
     lines = out.splitlines()
-    setup_lines = [line for line in lines if line.startswith("SETUP_XFAIL:")]
+    setup_lines = [
+        line
+        for line in lines
+        if line.startswith("SETUP_XFAIL:") or line.startswith("SETUP_REFUSED:")
+    ]
     event_lines = [line for line in lines if line.startswith(_EVENT_PREFIX)]
     ckr_lines = [line for line in lines if line.startswith("CKR:")]
     if setup_lines and not event_lines and not ckr_lines:

@@ -895,9 +895,19 @@ def gen_ec_keypair_or_xfail(
         )
     except CkrAssertionError as exc:
         if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            baseline_rv = _plain_curve_gen_refusal(rs, curve_oid)
+            if baseline_rv is None:
+                raise CkrAssertionError(
+                    f"{exc} (baseline plain generation on the same curve succeeded)",
+                    exc.rv,
+                    getattr(exc, "operation", None),
+                ) from exc
             rv = getattr(exc, "rv", None)
             detail = ckr_name(rv) if rv is not None else str(exc)
-            pytest.skip(f"EC curve not supported by module: {detail}")
+            pytest.skip(
+                f"EC curve not supported by module: {detail} "
+                f"(baseline refused: {ckr_name(baseline_rv)})"
+            )
         if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
             _classification.xfail_as(
                 "not_operational",
@@ -916,6 +926,28 @@ def gen_ec_keypair_or_xfail(
             "EC_KEY_PAIR_GEN advertised but keypair generation is not operational",
         )
     raise
+
+
+def _plain_curve_gen_refusal(rs: Any, curve_oid: bytes) -> int | None:
+    """Refusing RV of a bare generation, or None when it works (R2-6 baseline).
+
+    A curve refusal with template extras is only attributable to the curve
+    when the bare operation refuses too; a working baseline means the
+    refusal is template-specific and stays loud. Baseline keys are
+    destroyed; anything but a typed refusal propagates (confused
+    situations stay loud).
+    """
+    from pkcs11_check.raw.recipes import destroy_quietly, gen_ec_keypair
+
+    try:
+        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+    except CkrAssertionError as exc:
+        return exc.rv
+    try:
+        return None
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
 
 
 def gen_edwards_keypair_or_xfail(
