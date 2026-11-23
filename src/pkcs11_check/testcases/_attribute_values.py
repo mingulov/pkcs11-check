@@ -214,7 +214,23 @@ def attr_or_record(
         # happened, so this notes the shape without failing the run.
         # R14-2b: same precedence as the leak above -- the concrete shape
         # and its CKR survive a retry mark.
+        # R17-1: an overrun withheld under an aggregate multi-attribute
+        # refusal reports through this same site (no new emitter): the
+        # record keeps capacity + reported length + the aggregate call RV,
+        # and the summary names the RV aggregate so no per-attribute cause
+        # is implied. Proportionate xfail like the plain malformed shape:
+        # no per-attribute write is proven against zero-fill, and the call
+        # itself signaled failure (success-claimed overruns stay fail-loud
+        # via the N-003 raise instead).
+        overrun = (
+            refusal.capacity is not None
+            and refusal.reported_len is not None
+            and refusal.reported_len > refusal.capacity
+        )
         detail["malformed_refusal"] = True
+        if overrun:
+            detail["reported_len"] = refusal.reported_len
+            detail["capacity"] = refusal.capacity
         if delivery_unproved(attrs, attr):
             detail["unproved_delivery"] = True
         record_as(
@@ -226,7 +242,11 @@ def attr_or_record(
             inherit_mechanism=inherit_mechanism,
             actual=refusal.ckr,
             summary=(
-                f"{label}: attribute refusal malformed "
+                f"{label}: attribute claims {refusal.reported_len} bytes in a "
+                f"{refusal.capacity}-byte buffer on a call returning "
+                f"{ckr_name(refusal.ckr)} (aggregate RV, unattributed)"
+                if overrun
+                else f"{label}: attribute refusal malformed "
                 f"({ckr_name(refusal.ckr)} with a retained finite length, no write)"
             ),
             detail=detail,

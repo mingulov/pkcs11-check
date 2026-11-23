@@ -533,6 +533,59 @@ def test_overrun_length_beats_cached_size_query_refusal() -> None:
     assert exc_info.value.reported == 3
 
 
+def test_overrun_multi_attribute_refusal_withholds_and_records() -> None:
+    """R17-1: an oversized attr under an aggregate refusal is withheld."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 2
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 4
+            attrs[1].ulValueLen = 2
+        else:
+            ctypes.memmove(attrs[0].pValue, b"copy", 4)
+            ctypes.memmove(attrs[1].pValue, b"\x01\x02", 2)
+            attrs[0].ulValueLen = 5
+            attrs[1].ulValueLen = 2
+        return int(CKR_ATTRIBUTE_TYPE_INVALID)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL, CKA_VALUE])
+    assert result[CKA_VALUE] == b"\x01\x02"
+    assert CKA_LABEL not in result
+    refusal = result.refusals[CKA_LABEL]
+    assert refusal.ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
+    assert refusal.malformed is True
+    assert refusal.reported_len == 5
+    assert refusal.capacity == 4
+
+
+def test_attr_or_record_overrun_refusal_reports_evidence() -> None:
+    """R17-1: the overrun record keeps capacity, length, and call RV."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.refusals[CKA_LABEL] = AttrRefusal(
+        ckr=int(CKR_ATTRIBUTE_TYPE_INVALID),
+        malformed=True,
+        reported_len=5,
+        capacity=4,
+    )
+    value = attr_or_record(
+        attrs,
+        CKA_LABEL,
+        label="oversized label",
+        reason="not_operational",
+        kind="metadata",
+    )
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert record.reason == "not_operational"
+    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert record.detail is not None
+    assert record.detail.get("reported_len") == 5
+    assert record.detail.get("capacity") == 4
+    assert "aggregate" in (record.summary or "")
+
+
 def test_attr_or_record_marked_clean_refusal_retains_ckr() -> None:
     """R15-2: the mark record keeps a known refusal CKR."""
     from pkcs11_check.raw.recipes import AttrReadResult

@@ -1227,6 +1227,15 @@ class AttrRefusal:
     resized after writing. ``None`` when no finite length was reported
     (sentinel-shaped refusals).
 
+    ``capacity`` is set only for an overrun withheld under an aggregate
+    multi-attribute refusal (R17-1): the allocated buffer size the
+    ``reported_len`` exceeded. The ``ckr`` on such a refusal is the
+    aggregate call RV -- contextual call evidence, never this
+    attribute's attributed cause (per-attribute cause stays the
+    documented residual gap); the overrun itself (own length vs own
+    buffer) is per-attribute proven, and the value is withheld, never
+    a sliced prefix.
+
     Whether a given refusal is *conformant* (the attribute may legitimately
     be sensitive, e.g. a private-key component) or a *defect* (refused an
     attribute -- e.g. public metadata -- that can never legitimately be
@@ -1239,6 +1248,7 @@ class AttrRefusal:
     leaked_len: int | None = None
     malformed: bool = False
     reported_len: int | None = None
+    capacity: int | None = None
 
 
 class AttrReadResult(dict[int, Any]):
@@ -1522,6 +1532,22 @@ def read_attributes(
                 # contradicts it -- keep the refusal, and mark the delivery
                 # so strict callers stay loud instead of skipping.
                 result.unproved_delivery.add(at)
+            continue
+        if count != 1 and buf is not None and not _is_unavailable_length(size) and size > len(buf):
+            # R17-1: an overrun under an aggregate multi-attribute refusal.
+            # Success-claimed overruns never reach here (raised above), so
+            # the data call refused: withhold this attribute from decoding
+            # (never a silently sliced prefix) and retain capacity +
+            # reported length + the aggregate call RV. The RV stays
+            # explicitly aggregate (see AttrRefusal.capacity): no
+            # per-attribute cause is guessed. Bounded peers keep decoding
+            # below; single-attribute shapes never reach here.
+            result.refusals[at] = AttrRefusal(
+                ckr=int(_observed_refusal_ckr) if _observed_refusal_ckr is not None else int(rv2),
+                malformed=True,
+                reported_len=size,
+                capacity=len(buf),
+            )
             continue
         # R14-3: a retry runs the stability check at every length --
         # including zero, which always contradicts a positive baseline.
