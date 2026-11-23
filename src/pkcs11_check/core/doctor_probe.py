@@ -109,11 +109,11 @@ def _scrub_pin(detail: str, pin: bytes) -> str:
     Applied to the stderr tail and child JSON details at construction, so
     neither the console, the doctor output, nor the counter evidence can
     leak it (R20-1). Our own format strings stay unscrubbed (a numeric PIN
-    would otherwise eat the numbers they report). An empty PIN scrubs
-    nothing (no-op, never corrupts).
+    would otherwise eat the numbers they report). An empty or blank PIN
+    scrubs nothing (no-op, never corrupts or mangles).
     """
     secret = pin.decode("utf-8", "surrogateescape")
-    if secret and secret in detail:
+    if secret and not secret.isspace() and secret in detail:
         return detail.replace(secret, "[redacted]")
     return detail
 
@@ -233,9 +233,10 @@ def run_login_probe_subprocess(
                 _scrub_pin(str(payload.get("detail", "")), pin),
                 returncode,
             )
-    # Scrub BEFORE truncating: a PIN straddling the 200-char cutoff
-    # would otherwise leak its suffix (R21-1).
-    detail = _scrub_pin(err.strip(), pin)[-200:] or "no probe result"
+    # Scrub the RAW stderr before trimming or truncating: strip()
+    # would eat a space-padded PIN's edge spaces and break exact-match
+    # (R22-1), and slicing first would leak a straddling suffix (R21-1).
+    detail = _scrub_pin(err, pin).strip()[-200:] or "no probe result"
     _retain("error", detail)
     return LoginProbe("error", detail, returncode)
 

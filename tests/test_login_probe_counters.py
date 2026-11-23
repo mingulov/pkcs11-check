@@ -361,6 +361,37 @@ class TestEngagedProbe:
         assert "1234" not in blob
         assert "34" not in blob
 
+    def test_error_detail_space_padded_pin_scrubs_before_strip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R22-1: a space-padded PIN echo is redacted, not trimmed-then-leaked."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout="not json\n", stderr="  1234  \n"),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"  1234  ",
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.status == "error"
+        assert probe.detail == "[redacted]"
+        blob = counters.evidence_path.read_bytes().decode("utf-8")
+        assert "1234" not in blob
+
+    def test_scrub_pin_ignores_empty_and_blank_pins(self) -> None:
+        """R22-1: empty/blank PINs scrub nothing (never corrupt the text)."""
+        from pkcs11_check.core.doctor_probe import _scrub_pin
+
+        assert _scrub_pin("provider said boom", b"") == "provider said boom"
+        assert _scrub_pin("a b c", b" ") == "a b c"
+        assert _scrub_pin("used 1234 here", b"1234") == "used [redacted] here"
+
     def test_json_detail_scrubs_pin(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """R20-1: child JSON details are scrubbed like stderr tails."""
         counters = _counters(tmp_path)

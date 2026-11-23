@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -142,10 +143,39 @@ def _iter_target_files(targets: list[str]) -> list[Path]:
     return files
 
 
+def _iter_config_flag_files(args: list[str]) -> list[Path]:
+    """Config files named by -c/--config-file flags (R22-2).
+
+    Mirrors argparse store semantics: `-c PATH`, `-cPATH`,
+    `--config-file PATH`, `--config-file=PATH`. Missing files contribute
+    nothing (collection fails loudly before anything is cached).
+    """
+    files: list[Path] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        value: str | None = None
+        if arg == "-c" or arg == "--config-file":
+            if index + 1 < len(args):
+                value = args[index + 1]
+                index += 1
+        elif arg.startswith("-c") and len(arg) > 2 and not arg.startswith("--"):
+            value = arg[2:]
+        elif arg.startswith("--config-file="):
+            value = arg.split("=", 1)[1]
+        if value:
+            candidate = Path(value)
+            if candidate.is_file():
+                files.append(candidate)
+        index += 1
+    return files
+
+
 def _collection_inputs_digest(
     targets: list[str],
     pytest_args: list[str],
     data_dir_override: str | None = None,
+    pytest_addopts: str = "",
 ) -> str | None:
     """Digest every input that affects collection, or None to bypass the cache.
 
@@ -153,8 +183,15 @@ def _collection_inputs_digest(
     digest runs in the parent while collection runs in the child, so without
     it two children with different data dirs would alias to one cache entry
     (stale fetch-then-test ordering). The override string itself is digested
-    so distinct-but-empty dirs still key apart.
+    so distinct-but-empty dirs still key apart. `pytest_addopts` is the
+    child's PYTEST_ADDOPTS for the same reason (it injects -k/-m/-c and
+    more); its -c file's contents ride along, since flag text alone would
+    miss an edited config (R22-2). Unparseable addopts bypass the cache.
     """
+    try:
+        addopts_args = shlex.split(pytest_addopts) if pytest_addopts else []
+    except ValueError:
+        return None
     try:
         from pkcs11_check import __version__ as pkg_version
 
@@ -166,6 +203,7 @@ def _collection_inputs_digest(
             f"targets={sorted(str(Path(t)) for t in targets)}",
             f"args={_digest_args(pytest_args)}",
             f"data_dir={data_dir_override or ''}",
+            f"addopts={pytest_addopts}",
         ]
         stats: list[str] = []
         for path in _iter_input_files(data_dir_override):
@@ -175,6 +213,10 @@ def _collection_inputs_digest(
             resolved = path.resolve()
             st = resolved.stat()
             stats.append(f"{resolved}:{st.st_mtime_ns}:{st.st_size}")
+        for path in _iter_config_flag_files([*pytest_args, *addopts_args]):
+            resolved = path.resolve()
+            st = resolved.stat()
+            stats.append(f"config:{resolved}:{st.st_mtime_ns}:{st.st_size}")
         stats.sort()
         parts.extend(stats)
     except OSError:
@@ -382,7 +424,12 @@ def collect_pytest_items_with_skips(
     cache_usable = cache_enabled and not drops_data_override and not shifts_home_root
     cache_dir = _collection_cache_dir() if cache_usable else None
     digest = (
-        _collection_inputs_digest(targets, pytest_args, effective_env.get("PKCS11_CHECK_DATA_DIR"))
+        _collection_inputs_digest(
+            targets,
+            pytest_args,
+            effective_env.get("PKCS11_CHECK_DATA_DIR"),
+            effective_env.get("PYTEST_ADDOPTS", ""),
+        )
         if cache_dir is not None
         else None
     )
@@ -486,17 +533,31 @@ class _CollectionPlugin:
     def __init__(self) -> None:
         self.items: list[CollectedPytestItem] = []
         self.skips: list[CollectedSkip] = []
-        self._skip_nodeids: set[str] = set()
+        self._skip_keys: set[tuple[str, str]] = set()
+        self._start_stack: list[tuple[str, str, bool]] = []
+        self._completed_files: set[str] = set()
+
+    def pytest_collectstart(self, collector: pytest.Collector) -> None:
+        try:
+            is_file = Path(collector.path).is_file()
+        except (OSError, ValueError):
+            is_file = False
+        self._start_stack.append((str(collector.nodeid), str(collector.path), is_file))
+
+    def pytest_itemcollected(self, item: pytest.Item) -> None:
+        self._completed_files.add(os.path.normcase(str(item.path)))
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        nodeid = str(report.nodeid)
+        paired = ""
+        if not nodeid and report.outcome == "skipped":
+            paired = self._pair_empty_skip()
+        if self._start_stack and self._start_stack[-1][0] == nodeid:
+            self._start_stack.pop()
         if report.outcome != "skipped":
             return
-        nodeid = str(report.nodeid)
         if not nodeid:
-            nodeid = _skip_path_from_longrepr(report.longrepr)
-        if nodeid in self._skip_nodeids:
-            return
-        self._skip_nodeids.add(nodeid)
+            nodeid = paired or _skip_path_from_longrepr(report.longrepr)
         longrepr = report.longrepr
         if isinstance(longrepr, tuple):
             reason = str(longrepr[-1])
@@ -504,7 +565,31 @@ class _CollectionPlugin:
             reason = str(longrepr)
         if reason.startswith("Skipped:"):
             reason = reason[len("Skipped:") :].strip()
+        key = (nodeid, reason)
+        if key in self._skip_keys:
+            return
+        self._skip_keys.add(key)
         self.skips.append(CollectedSkip(nodeid=nodeid, reason=reason))
+
+    def _pair_empty_skip(self) -> str:
+        """Attribute an empty-nodeid skip to its collector, else "".
+
+        Reports alone cannot tell two same-helper skips apart (R22-3),
+        and a bare most-recent-start misattributes once exact-node
+        selection prunes an intermediate passed report (R20-4). Fuse both
+        streams: the skipped collector is the most recent started file
+        with no collected items yet (a completed file's pruned report is
+        the stale-top case). Sessions and directories never pair -- their
+        skips fall through to the longrepr path (usually the conftest
+        that raised them).
+        """
+        for _, path, is_file in reversed(self._start_stack):
+            if not is_file:
+                continue
+            if os.path.normcase(path) in self._completed_files:
+                continue
+            return path
+        return ""
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         for item in session.items:
