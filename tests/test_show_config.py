@@ -143,7 +143,11 @@ class TestResolveConfigRows:
             env={"P11TEST_SLOT": "9"},
             toml={"slot": 7},
         )
-        assert _row(rows, "slot") == ("0", "cli (default)")
+        # S12: still ignored (effective stays the default), but shown, not hidden.
+        assert _row(rows, "slot") == (
+            "0",
+            "cli (default) (ignored: env P11TEST_SLOT=9, toml slot=7)",
+        )
 
         cli = {**_cli_defaults(), "slot": 2}
         rows = resolve_config_rows(cli_values=cli, env={}, toml={})
@@ -167,6 +171,18 @@ class TestResolveConfigRows:
         effective, source = _row(rows, "timeout_test")
         assert effective == "(no effect)"
         assert source.startswith("env")
+
+    def test_cli_only_key_shows_ignored_env_toml_values(self) -> None:
+        """S12: provided-but-unread slot values show as ignored, not hidden."""
+        rows = resolve_config_rows(
+            cli_values=_cli_defaults(),
+            env={"P11TEST_SLOT": "5"},
+            toml={"slot": 7},
+        )
+        effective, source = _row(rows, "slot")
+        assert effective == "0"
+        assert "P11TEST_SLOT=5" in source
+        assert "slot=7" in source
 
 
 class TestShowConfigCommand:
@@ -206,6 +222,22 @@ class TestShowConfigCommand:
         assert result.exit_code == 0, result.output
         assert "force-unwrap" in result.output
         assert "CKM_RSA_AES_KEY_WRAP" in result.output
+
+    def test_show_config_warns_on_dead_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """S12: --show-config emits the same dead-setting warnings as test."""
+        from pkcs11_check.cli.app import app
+        from tests._plain_cli_runner import PlainCliRunner
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("P11TEST_SLOT", "5")
+        result = PlainCliRunner().invoke(
+            app, ["test", "--module", str(tmp_path / "x.so"), "--show-config"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Warning" in result.output
+        assert "P11TEST_SLOT" in result.output
 
     def test_show_config_redacts_secrets(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pkcs11_check.cli.app import app

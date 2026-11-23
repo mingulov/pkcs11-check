@@ -889,6 +889,9 @@ def test_command(
         # H-10: report-only; exits before validation, module checks, preflight.
         # log_level belongs to the global callback, so read back its effective
         # value from the root logger the callback already configured.
+        # S12: same dead-setting warnings as a real run (parity, not silence).
+        for ignored in find_ignored_settings(env=os.environ, toml=read_toml_settings()):
+            console.print(f"[yellow]Warning:[/yellow] {ignored}")
         _print_show_config(
             {
                 "module": str(module),

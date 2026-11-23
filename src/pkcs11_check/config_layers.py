@@ -166,6 +166,18 @@ def _resolve_row(
             return ConfigRow(truth.key, NO_EFFECT, f"toml (ignored: {truth.dead_note})")
         return ConfigRow(truth.key, NO_EFFECT, f"default (ignored: {truth.dead_note})")
     cli_value = cli_values.get(truth.key, truth.cli_default)
+    ignored_note = ""
+    if truth.live == ("cli",):
+        # S12: CLI-only keys never read env/TOML -- but when provided,
+        # show them as ignored instead of hiding them. (Secret keys all
+        # have live env/TOML layers, so this branch never sees a secret.)
+        ignored: list[str] = []
+        if truth.env_var in env:
+            ignored.append(f"env {truth.env_var}={env[truth.env_var]}")
+        if truth.key in toml:
+            ignored.append(f"toml {truth.key}={toml[truth.key]}")
+        if ignored:
+            ignored_note = f" (ignored: {', '.join(ignored)})"
     if (
         "cli" in truth.live
         and truth.cli_flag is not None
@@ -173,7 +185,7 @@ def _resolve_row(
         and cli_value != truth.cli_default
     ):
         effective = "set" if truth.secret else _display(cli_value)
-        return ConfigRow(truth.key, effective, "cli")
+        return ConfigRow(truth.key, effective, f"cli{ignored_note}")
     if "env" in truth.live and truth.env_var in env:
         effective = "set" if truth.secret else env[truth.env_var]
         return ConfigRow(truth.key, effective, "env")
@@ -183,7 +195,7 @@ def _resolve_row(
     if truth.secret:
         return ConfigRow(truth.key, "unset", "default")
     if truth.live == ("cli",):
-        return ConfigRow(truth.key, _display(cli_value), "cli (default)")
+        return ConfigRow(truth.key, _display(cli_value), f"cli (default){ignored_note}")
     if truth.default_display is not None:
         return ConfigRow(truth.key, truth.default_display, "default")
     return ConfigRow(truth.key, _display(truth.cli_default), "default")
