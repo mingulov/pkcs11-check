@@ -116,6 +116,11 @@ class RawToken:
     def model(self) -> str:
         return decode_token_field(bytes(self._get_info().model))
 
+    @property
+    def flags(self) -> int:
+        """Raw CK_TOKEN_INFO flags (U9: CKF_TOKEN_INITIALIZED et al)."""
+        return int(self._get_info().flags)
+
     def open(self, rw: bool = False) -> Any:
         """Not implemented in the raw loader -- use fixtures.py raw bootstrap."""
         raise NotImplementedError(
