@@ -922,6 +922,39 @@ def test_sign_probe_out_of_range_write_leaves_twin_unproved(
     assert len(raw.sign_calls) == 1
 
 
+def test_sign_probe_control_twin_unproved_deviates(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R11-2: unproved twin delivery deviates by name (uncredited)."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    def _unproved_twin(
+        _raw: Any, _sh: int, handle: int, _attrs: Any, **_kwargs: Any
+    ) -> dict[int, Any]:
+        if int(handle) == 4242:
+            return {CKA_SIGN: False}
+        result = AttrReadResult()
+        result.unproved_delivery.add(int(CKA_SIGN))
+        return result
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _unproved_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "DEVIATION_XFAIL:" in out
+    assert "unproved" in out
+    assert "BREAK:" not in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
 def test_deviation_transcript_xfails_without_missing_ckr_noise() -> None:
     """R6-1: DEVIATION is terminal (xfail); no missing-CKR harness record."""
     out = (

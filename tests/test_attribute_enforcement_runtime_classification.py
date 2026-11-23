@@ -498,6 +498,24 @@ def test_generated_kcv_absence_is_optional_capability_skip(
     assert _records() == []
 
 
+def test_generated_kcv_unproved_delivery_xfails_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R11-2: unproved KCV delivery xfails visibly, never silent-skips."""
+    from _pytest.outcomes import XFailed
+
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    classification.clear()
+    unproved = AttrReadResult()
+    unproved.unproved_delivery.add(int(CKA_CHECK_VALUE))
+    _setup(monkeypatch, reads=lambda *_a, **_k: unproved)
+    with pytest.raises(XFailed, match="unproved"):
+        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+    (record,) = [rec for rec in _records() if rec.outcome == "xfail"]
+    assert record.reason == "honest_deviation", record.summary
+
+
 def test_generated_kcv_attribute_type_invalid_is_optional_capability_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

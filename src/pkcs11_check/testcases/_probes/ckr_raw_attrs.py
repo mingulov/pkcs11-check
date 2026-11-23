@@ -188,6 +188,12 @@ def _finish_flag_probe(
             return
         twin_claim = _classify_readback(twin_vals, false_attr)
         if twin_claim.get("event") == "omitted":
+            if false_attr in getattr(twin_vals, "unproved_delivery", ()):
+                print(
+                    f"DEVIATION_XFAIL:control twin {attr_name} delivery unproved "
+                    "(success without write); enforcement oracle disabled"
+                )
+                return
             if twin_refusal is not None and twin_refusal.malformed:
                 print(
                     f"DEVIATION_XFAIL:control twin omits {attr_name} "

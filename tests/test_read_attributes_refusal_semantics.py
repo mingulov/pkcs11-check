@@ -231,8 +231,8 @@ def test_false_write_is_detected_despite_zero_bytes() -> None:
     assert refusal.malformed is False
 
 
-def test_success_without_write_omits_bool_not_bytes() -> None:
-    """R10-2: pristine-canary omission applies to bools (out-of-domain canary)."""
+def test_success_without_write_omits_bool_with_unproved_mark() -> None:
+    """R11-2: untouched bool success omits visibly (never a fill value)."""
     from pkcs11_check.raw.types_std import CKA_TOKEN
 
     def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
@@ -244,6 +244,42 @@ def test_success_without_write_omits_bool_not_bytes() -> None:
     assert CKA_TOKEN not in result
     assert result.refusals == {}
     assert result.unavailable_without_ckr == set()
+    assert result.unproved_delivery == {int(CKA_TOKEN)}
+
+
+def test_untouched_kcv_omits_with_unproved_mark() -> None:
+    """R11-2: untouched multi-byte success omits visibly (never a fill value)."""
+    from pkcs11_check.raw.types_std import CKA_CHECK_VALUE
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        attrs[0].ulValueLen = 3  # claims KCV bytes, writes nothing
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_CHECK_VALUE])
+    assert CKA_CHECK_VALUE not in result
+    assert result.refusals == {}
+    assert result.unproved_delivery == {int(CKA_CHECK_VALUE)}
+
+
+def test_attr_or_record_marks_unproved_delivery_visible() -> None:
+    """R11-2: unproved delivery deviates visibly, even for optional callers."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.unproved_delivery.add(CKA_VALUE)
+    value = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label="unproved delivery",
+        reason="honest_deviation",
+        optional_if_absent=True,
+    )
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert record.reason == "honest_deviation"
+    assert "unproved" in (record.summary or "")
+    assert record.detail.get("unproved_delivery") is True
 
 
 def test_canary_valued_bytes_still_decode() -> None:
@@ -300,11 +336,11 @@ def test_large_compare_stays_bounded_without_int_list() -> None:
     """R9-2: buffer comparison never materializes an int list (MemoryError fix)."""
     import tracemalloc
 
-    from pkcs11_check.raw.recipes import _changed_byte_count
+    from pkcs11_check.raw.recipes import _changed_byte_count, _fill_pattern
 
     n = 4 * 1024 * 1024
     buf = (ctypes.c_ubyte * n)()
-    ctypes.memset(buf, 0xA5, n)
+    _fill_pattern(buf, n)
     tracemalloc.start()
     try:
         assert _changed_byte_count(buf, n) == 0

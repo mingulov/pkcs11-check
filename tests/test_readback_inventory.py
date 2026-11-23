@@ -1891,8 +1891,8 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 2478, characterization.total),
-        ("candidate_total", 1950, characterization.candidate_total),
+        ("total", 2479, characterization.total),
+        ("candidate_total", 1951, characterization.candidate_total),
         ("file_total", 261, characterization.file_total),
         (
             "statuses",
@@ -1901,18 +1901,18 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_readback", 61),
                 ("non_readback", 528),
                 ("safe_mechanism_free_readback", 303),
-                ("unresolved", 797),
+                ("unresolved", 798),
             ),
             characterization.statuses,
         ),
         (
             "digest",
-            "3ce4eb410e90167d4882d2eed187fde95b3ff2b69f1085b0ae63fd797977d4fa",
+            "047cdf5129718fe3fafb4171cb9b3106502ff365f33f0d464130ee1316b918cf",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "6787ea12a945f3259c94df5e9e50727fac7796bcddd086cdaeaaf7871cd112f9",
+            "834d6b54131d4dd18cd4b6f719b1403d3cbb550be3acd24872549360636b54a4",
             characterization.candidate_digest,
         ),
         (
@@ -1921,7 +1921,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 2146),
                 ("explicit_mechanism_readback", 357),
                 ("non_readback", 1721),
-                ("safe_mechanism_free_readback", 2839),
+                ("safe_mechanism_free_readback", 3309),
                 ("unresolved", 2975),
                 ("unsafe_inherited_readback", 22),
             ),
@@ -1938,7 +1938,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("assert_correct", 288),
                 ("classify", 599),
                 ("fail_as", 492),
-                ("record_as", 491),
+                ("record_as", 492),
                 ("xfail_as", 398),
             ),
             characterization.direct_emitter_census,
