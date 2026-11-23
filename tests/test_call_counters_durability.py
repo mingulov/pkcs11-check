@@ -15,6 +15,7 @@ import os
 import signal
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -6147,6 +6148,138 @@ class TestTransientWriteRetry:
         assert is_transient(OSError(errno.EACCES, "denied")) is True
         assert is_transient(OSError(errno.EPERM, "denied")) is True
         assert is_transient(OSError(errno.ENOSPC, "no space")) is False
+
+    # -- M7: rename-over-existing fallback for filesystems refusing it (vboxsf) --
+
+    def test_sidecar_eperm_uses_unlink_replace_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+        real_replace = os.replace
+        calls = 0
+
+        def _vboxsf(src: Any, dst: Any) -> None:
+            nonlocal calls
+            calls += 1
+            if os.path.exists(dst):
+                raise OSError(errno.EPERM, "Operation not permitted")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _vboxsf)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+        assert calls >= 2
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_sidecar_plain_write_leg_when_replace_impossible(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_replace_fallback_returns_false_when_all_fail(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nope" / "s.json"
+        assert durability._replace_with_fallback(tmp_path / "t.tmp-1", missing, "{}") is False
+
+    def test_sidecar_fallback_failure_stays_loud(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr(durability, "_replace_with_fallback", lambda *a: False, raising=False)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
+
+    def test_replace_fallback_warns_once_per_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            durability.write_sidecar_atomic(tmp_path / "a.json", {"a": 1})
+            durability.write_sidecar_atomic(tmp_path / "b.json", {"b": 2})
+        assert len([w for w in caught if "fallback" in str(w.message)]) == 1
+
+    def test_probe_sidecar_eperm_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "probe-aaaaaaaa-0-bead1234.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            durability.write_probe_sidecar(
+                target,
+                worker_uuid=_UUID_A,
+                probe_seq=0,
+                counters=[{"total_calls": 5}],
+                finalized=True,
+            )
+        assert json.loads(target.read_text(encoding="utf-8"))["counters"] == [{"total_calls": 5}]
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_mark_consumed_eperm_renames_via_unlink(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sidecar = tmp_path / "probe-aaaaaaaa-0-bead1234.json"
+        sidecar.write_text(json.dumps({"v": 1}), encoding="utf-8")
+        stale = tmp_path / "probe-consumed-aaaaaaaa-0-bead1234.json"
+        stale.write_text(json.dumps({"stale": True}), encoding="utf-8")
+        real_replace = os.replace
+
+        def _vboxsf(src: Any, dst: Any) -> None:
+            if os.path.exists(dst):
+                raise OSError(errno.EPERM, "Operation not permitted")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _vboxsf)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            marked = durability.mark_probe_consumed(sidecar)
+        assert marked == stale
+        assert json.loads(stale.read_text(encoding="utf-8")) == {"v": 1}
+        assert not sidecar.exists()
+
+    def test_mark_consumed_fallback_failure_preserves_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sidecar = tmp_path / "probe-aaaaaaaa-0-bead1234.json"
+        sidecar.write_text(json.dumps({"v": 1}), encoding="utf-8")
+        stale = tmp_path / "probe-consumed-aaaaaaaa-0-bead1234.json"
+        stale.write_text(json.dumps({"stale": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.mark_probe_consumed(sidecar)
+        assert json.loads(sidecar.read_text(encoding="utf-8")) == {"v": 1}
+        assert json.loads(stale.read_text(encoding="utf-8")) == {"stale": True}
 
     def test_journal_partial_write_completes_exactly_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
