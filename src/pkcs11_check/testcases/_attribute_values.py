@@ -158,6 +158,8 @@ def attr_or_record(
         # whether this attribute could legitimately be sensitive. Bounded length
         # only; the bytes themselves are never carried into the record.
         detail["leaked_len"] = refusal.leaked_len
+        if refusal.reported_len is not None:
+            detail["reported_len"] = refusal.reported_len
         record_as(
             "self_contradiction",
             kind="policy",

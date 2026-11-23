@@ -424,6 +424,19 @@ class _SignCaptureRaw:
         return self._sign_rv
 
 
+class _FalseWriteRaw(_SignCaptureRaw):
+    """Twin writes FALSE bytes but refuses (R9-1 integrated canary proof)."""
+
+    def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        assert int(count) == 1
+        if tmpl[0].pValue:
+            ctypes.memmove(tmpl[0].pValue, b"\x00", 1)
+        tmpl[0].ulValueLen = 1
+        if int(handle) == 4242:
+            return int(CKR_OK)
+        return int(CKR_ATTRIBUTE_TYPE_INVALID)
+
+
 def _ulong_native(value: int) -> bytes:
     return value.to_bytes(ctypes.sizeof(CK_ULONG), sys.byteorder)
 
@@ -811,6 +824,26 @@ def test_sign_probe_control_twin_malformed_refusal_deviates(
     assert "DEVIATION_XFAIL:" in out
     assert "malformed refusal" in out
     assert "BREAK:" not in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_sign_probe_false_write_detected_through_real_reader(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R9-1: FALSE twin-write caught end to end (real reader, no read stubs)."""
+    raw = _FalseWriteRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "BREAK:" in out
+    assert "wrote 1 bytes" in out
     assert "CKR:" not in out
     assert "OK" not in out.splitlines()
     assert len(raw.sign_calls) == 1

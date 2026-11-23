@@ -425,10 +425,27 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
                 detail={"attempts": attempted},
             )
         if operation_attempted:
+            # R9-4: pin the supplying attempt (the detector chose the
+            # operation-stage RV, so reporting must name it even when a
+            # later setup attempt shares the RV).
+            supplying = next(
+                (
+                    attempt
+                    for attempt in reversed(attempted)
+                    if attempt["stage"] == "operation" and attempt["ckr"] == last_operation_error_rv
+                ),
+                None,
+            )
+            result_detail: dict[str, Any] = {"attempts": attempted}
+            if supplying is not None:
+                result_detail["primary_attempt"] = {
+                    "operation": supplying["operation"],
+                    "stage": "operation",
+                }
             return CtsDetectionResult(
                 CtsDetectionStatus.NOT_OPERATIONAL,
                 error_rv=last_operation_error_rv,
-                detail={"attempts": attempted},
+                detail=result_detail,
             )
         if setup_unavailable:
             return CtsDetectionResult(
@@ -619,20 +636,25 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
     if result.status is CtsDetectionStatus.NOT_OPERATIONAL:
         # R8-2: name the attempt that supplied the reported RV (a listed
         # Init refusal is not a C_Encrypt call); bare C_Encrypt only when
-        # no attempt carries it.
+        # no attempt carries it. R9-4: the detector-pinned attempt wins
+        # over last-match when another stage shares the RV.
         attempts = result.detail.get("attempts", []) if result.detail else []
-        supplying = next(
-            (
-                attempt
-                for attempt in reversed(attempts)
-                if isinstance(attempt, dict) and attempt.get("ckr") == result.error_rv
-            ),
-            None,
-        )
-        if supplying is not None and supplying.get("operation") is not None:
-            naming_operation: Any = supplying["operation"]
+        primary = (result.detail or {}).get("primary_attempt")
+        if isinstance(primary, dict) and primary.get("operation") is not None:
+            naming_operation: Any = primary["operation"]
         else:
-            naming_operation = "C_Encrypt"
+            supplying = next(
+                (
+                    attempt
+                    for attempt in reversed(attempts)
+                    if isinstance(attempt, dict) and attempt.get("ckr") == result.error_rv
+                ),
+                None,
+            )
+            if supplying is not None and supplying.get("operation") is not None:
+                naming_operation = supplying["operation"]
+            else:
+                naming_operation = "C_Encrypt"
         classify(
             "not_operational",
             kind="crypto",
