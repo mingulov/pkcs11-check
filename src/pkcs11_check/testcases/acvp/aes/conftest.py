@@ -21,6 +21,7 @@ import pytest
 
 from pkcs11_check.raw.recipes import ImplausibleModuleLengthError
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.types_std import CKR_USER_NOT_LOGGED_IN
 from pkcs11_check.testcases.acvp.aes.base_cts import (
     CtsDetectionResult as _CtsDetectionResult,
 )
@@ -113,6 +114,15 @@ def _detection_skip_reason(detection: _CtsDetectionResult) -> str:
         return (
             f"CKM_AES_CTS variant detection failed with {ckr}; "
             "the selected CTS reporter records the provider finding"
+        )
+    if (
+        detection.status is _CtsDetectionStatus.NOT_OPERATIONAL
+        and detection.error_rv is not None
+        and int(detection.error_rv) == int(CKR_USER_NOT_LOGGED_IN)
+    ):
+        return (
+            "probe ran logged out (no PIN configured) and the module refused "
+            "with CKR_USER_NOT_LOGGED_IN; configure a PIN to exercise CTS vectors"
         )
     return (
         "CKM_AES_CTS variant detection failed; the selected CTS reporter records "
@@ -282,7 +292,28 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
         # Use the structured process cache so the selected sentinel/vector
         # runtime guard reuses this collection result instead of touching the
         # provider a second time.
-        return get_cts_detection(rs)
+        result = get_cts_detection(rs)
+        if (
+            not logged_in
+            and result.status is _CtsDetectionStatus.SETUP_ERROR
+            and result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+        ):
+            # S2: genuine no-PIN on a strict provider is not a provider
+            # finding -- the probe never logged in. Downgrade to
+            # not-operational (xfail) instead of a setup-error FAIL.
+            # Logged-in meetings with the same RV stay loud below.
+            return _CtsDetectionResult(
+                _CtsDetectionStatus.NOT_OPERATIONAL,
+                error_rv=result.error_rv,
+                detail={
+                    **result.detail,
+                    "reason": (
+                        "logged-out probe refused with CKR_USER_NOT_LOGGED_IN; "
+                        "configure a PIN to exercise CTS vectors"
+                    ),
+                },
+            )
+        return result
     finally:
         if logged_in:
             logout_quietly(raw, sh)
