@@ -347,6 +347,22 @@ def check(raw, session, handle):
     assert _kinds(source) == ["taint_escape", "taint_escape"]
 
 
+def test_delivery_unproved_accessor_is_recognized() -> None:
+    """R12-1: the unproved-delivery channel accessor is guard-recognized."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import delivery_unproved
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if delivery_unproved(attrs, CKA_VALUE):
+        return None
+    return attrs
+"""
+
+    assert _kinds(source) == ["taint_escape"]
+
+
 def test_for_loop_over_provider_mapping_reports_taint_escape() -> None:
     """``for k in attrs:`` iterates a provider-backed mapping directly, so it must
     be flagged the same as ``list(attrs)``/``attrs.items()`` -- ``_exec_loop`` did
