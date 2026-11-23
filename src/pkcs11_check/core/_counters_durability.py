@@ -637,12 +637,18 @@ def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> 
 
     Tries unlink+replace (atomicity preserved: a crash leaves resolved
     missing, which readers treat as absent), then a direct plain write
-    (torn-on-crash, likewise fail-visible). Returns True when the payload
-    landed; False leaves tmp for the caller to clean and the original
-    error to raise. Callers warn on success.
+    (torn-on-crash, likewise fail-visible). The committed bytes are
+    stashed first and restored best-effort when nothing lands, so total
+    failure preserves the old snapshot instead of deleting it. Returns
+    True when the payload landed; False leaves tmp for the caller to
+    clean and the original error to raise. Callers warn on success.
     """
     tmp_path = Path(tmp)
     resolved_path = Path(resolved)
+    try:
+        old = resolved_path.read_bytes()
+    except OSError:
+        old = None
     try:
         resolved_path.unlink()
     except OSError:
@@ -659,6 +665,11 @@ def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> 
             fh.write(text)
             fh.flush()
     except OSError:
+        if old is not None:
+            try:
+                resolved_path.write_bytes(old)
+            except OSError:
+                pass
         return False
     try:
         tmp_path.unlink(missing_ok=True)
