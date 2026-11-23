@@ -181,6 +181,9 @@ class _SealedNodeFake:
                 elif mode == "leak":
                     self._fill(tmpl, i, blob)
                     call_rv = int(CKR_ATTRIBUTE_SENSITIVE)
+                elif mode == "malformed":
+                    tmpl[i].ulValueLen = len(blob)
+                    call_rv = int(CKR_ATTRIBUTE_SENSITIVE)
                 else:
                     assert mode == "clear", mode
                     self._fill(tmpl, i, blob)
@@ -585,6 +588,18 @@ def test_node_refusal_with_data_fails() -> None:
         assert "wrote" in str(exc), str(exc)
     else:
         pytest.fail("refusal-with-data passed instead of failing")
+
+
+def test_node_malformed_refusal_terminates_without_search() -> None:
+    """R9-3: a malformed seal refusal terminates; the dependent search never runs."""
+    fake = _SealedNodeFake()
+    fake.value_mode = "malformed"
+    with pytest.raises(XFailed, match="malformed"):
+        _run_aes(fake)
+    assert fake._active is None
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert record.reason == "not_operational", record.summary
+    assert record.operation == "C_GetAttributeValue", record.operation
 
 
 def test_node_typeless_component_skips_moot() -> None:

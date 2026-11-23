@@ -1220,6 +1220,12 @@ class AttrRefusal:
     honored (no value is surfaced), yet the length field contradicts it.
     Report as malformed, never as clean and never as leaked.
 
+    ``reported_len`` is the provider's own finite length alongside the
+    refusal, kept distinct from the proven ``leaked_len`` (R9-1): the two
+    agree except when the write contains canary bytes or the length was
+    resized after writing. ``None`` when no finite length was reported
+    (sentinel-shaped refusals).
+
     Whether a given refusal is *conformant* (the attribute may legitimately
     be sensitive, e.g. a private-key component) or a *defect* (refused an
     attribute -- e.g. public metadata -- that can never legitimately be
@@ -1231,6 +1237,7 @@ class AttrRefusal:
     ckr: int
     leaked_len: int | None = None
     malformed: bool = False
+    reported_len: int | None = None
 
 
 class AttrReadResult(dict[int, Any]):
@@ -1270,6 +1277,28 @@ def _is_unavailable_length(val: int) -> bool:
     host the two values coincide.
     """
     return val in (int(CK_UNAVAILABLE_INFORMATION), int(CK_UNAVAILABLE_INFORMATION_32))
+
+
+#: Canary byte prefilling single-attribute read buffers (R9-1). Non-boolean
+#: (distinct from both FALSE and canonical TRUE) so even a zero/false write
+#: provably differs from untouched allocation.
+_READ_CANARY_BYTE = 0xA5
+
+
+def _proven_write_len(buf: Any, snapshot: bytes | None) -> int | None:
+    """Proven-changed byte count against a canary snapshot, else None (R9-1).
+
+    Compares through a buffer view (bounded space: one snapshot-sized
+    copy at most, never a materialized int list). ``None`` when no
+    snapshot exists or nothing changed. A lower bound: bytes matching
+    the canary are invisible.
+    """
+    if not snapshot:
+        return None
+    current = bytes(memoryview(buf))
+    if current == snapshot:
+        return None
+    return sum(1 for a, b in zip(current, snapshot) if a != b)
 
 
 def read_attributes(
@@ -1324,11 +1353,18 @@ def read_attributes(
         tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
         tmpl[i].ulValueLen = size
         buffers.append(buf)
-        # R8-1: snapshot the pristine buffer so a refusal-with-data claim
-        # is proven by changed bytes, never inferred from a bare length.
-        # Only single-attribute reads use it (multi-attribute refusal
-        # attribution stays the documented residual gap below).
-        snapshots.append(bytes(buf[:size]) if count == 1 else None)
+        # R9-1: canary-fill single-attribute buffers (non-boolean 0xA5, so
+        # even a FALSE/zero write provably differs) and snapshot them, so
+        # a refusal-with-data claim is proven by changed bytes, never
+        # inferred from a bare length. Multi-attribute reads keep today's
+        # zero-fill (their refusal attribution stays the documented
+        # residual gap below). Snapshots copy through a buffer view: one
+        # bounded allocation, never a materialized int list.
+        if count == 1 and size > 0:
+            ctypes.memset(buf, _READ_CANARY_BYTE, size)
+            snapshots.append(bytes(memoryview(buf)))
+        else:
+            snapshots.append(None)
 
     # Second call: read values
     rv2 = raw.C_GetAttributeValue(session, handle, tmpl, count)
@@ -1346,11 +1382,7 @@ def read_attributes(
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
         snapshot = snapshots[i]
-        changed_len: int | None = None
-        if snapshot is not None:
-            current = bytes(buffers[i][: len(snapshot)])
-            if current != snapshot:
-                changed_len = sum(1 for a, b in zip(current, snapshot) if a != b)
+        changed_len = _proven_write_len(buffers[i], snapshot) if count == 1 else None
         if _is_unavailable_length(size) or buffers[i] is None:
             # Attribute sensitive or type invalid, correctly signalled via the
             # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
@@ -1379,9 +1411,29 @@ def read_attributes(
             # attribution is not reliable from the overall rv alone, so it is
             # intentionally left as a residual gap (documented, not guessed at).
             if changed_len is not None:
-                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr, leaked_len=changed_len)
+                result.refusals[at] = AttrRefusal(
+                    ckr=_observed_refusal_ckr,
+                    leaked_len=changed_len,
+                    reported_len=size,
+                )
             else:
-                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr, malformed=True)
+                result.refusals[at] = AttrRefusal(
+                    ckr=_observed_refusal_ckr, malformed=True, reported_len=size
+                )
+            continue
+        if (
+            _observed_refusal_ckr is None
+            and count == 1
+            and size > 0
+            and snapshot
+            and changed_len is None
+        ):
+            # R9-1: success claimed but the canary is pristine -- nothing was
+            # written, so there is no value to surface. Never hand canary
+            # bytes back as data; treat as a plain omission (downstream
+            # deviation, never a pass). Zero-size successes stay empty
+            # values (nothing observable); multi-attribute reads keep
+            # today's zero-fill behavior.
             continue
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):

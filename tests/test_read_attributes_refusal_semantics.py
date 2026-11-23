@@ -152,6 +152,7 @@ def test_refusal_with_data_is_never_returned_as_present() -> None:
     refusal = result.refusals[CKA_PRIVATE_EXPONENT]
     assert refusal.ckr == int(CKR_ATTRIBUTE_SENSITIVE)
     assert refusal.leaked_len == len(secret)
+    assert refusal.reported_len == len(secret)
     # The bytes themselves must never be reachable through the refusal channel --
     # AttrRefusal structurally carries only ckr/leaked_len, never a value field.
     assert not hasattr(refusal, "value")
@@ -189,6 +190,7 @@ def test_retained_finite_length_without_write_is_malformed_not_leaked() -> None:
     assert refusal.ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
     assert refusal.leaked_len is None
     assert refusal.malformed is True
+    assert refusal.reported_len == 1
 
 
 def test_write_behind_sentinel_is_still_a_leak() -> None:
@@ -208,6 +210,96 @@ def test_write_behind_sentinel_is_still_a_leak() -> None:
     refusal = result.refusals[CKA_LABEL]
     assert refusal.ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
     assert refusal.leaked_len == 1
+    assert refusal.reported_len is None
+
+
+def test_false_write_is_detected_despite_zero_bytes() -> None:
+    """R9-1: a FALSE/zero write differs from the canary (the twin case)."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue:
+            ctypes.memmove(attrs[0].pValue, b"\x00", 1)
+        attrs[0].ulValueLen = 1
+        return int(CKR_ATTRIBUTE_TYPE_INVALID)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
+    assert CKA_LABEL not in result
+    refusal = result.refusals[CKA_LABEL]
+    assert refusal.leaked_len == 1
+    assert refusal.reported_len == 1
+    assert refusal.malformed is False
+
+
+def test_success_without_write_is_omission_not_canary_value() -> None:
+    """R9-1: CKR_OK with a pristine canary surfaces nothing (never canary bytes)."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        attrs[0].ulValueLen = 1  # claims a byte, writes nothing
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
+    assert CKA_LABEL not in result
+    assert result.refusals == {}
+    assert result.unavailable_without_ckr == set()
+
+
+def test_canary_collision_undercounts_transparently() -> None:
+    """R9-1: leaked is proven-changed (lower bound); reported keeps the claim."""
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue:
+            ctypes.memmove(attrs[0].pValue, b"\xa5\x01", 2)
+        attrs[0].ulValueLen = 2
+        return int(CKR_ATTRIBUTE_SENSITIVE)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
+    assert CKA_LABEL not in result
+    refusal = result.refusals[CKA_LABEL]
+    assert refusal.leaked_len == 1
+    assert refusal.reported_len == 2
+
+
+def test_large_compare_stays_bounded_without_int_list() -> None:
+    """R9-2: buffer comparison never materializes an int list (MemoryError fix)."""
+    import tracemalloc
+
+    from pkcs11_check.raw.recipes import _proven_write_len
+
+    n = 4 * 1024 * 1024
+    buf = (ctypes.c_ubyte * n)()
+    ctypes.memset(buf, 0xA5, n)
+    tracemalloc.start()
+    try:
+        snapshot = bytes(memoryview(buf))
+        assert _proven_write_len(buf, snapshot) is None
+        buf[n - 1] = 0x00
+        assert _proven_write_len(buf, snapshot) == 1
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 3 * n
+
+
+def test_large_sentinel_refusal_survives_snapshot() -> None:
+    """R9-2: multi-megabyte reads reach the data call and record refusals."""
+    n = 4 * 1024 * 1024
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue:
+            attrs[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
+        else:
+            attrs[0].ulValueLen = n
+        return int(CKR_ATTRIBUTE_SENSITIVE)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_LABEL])
+    assert CKA_LABEL not in result
+    refusal = result.refusals[CKA_LABEL]
+    assert refusal.ckr == int(CKR_ATTRIBUTE_SENSITIVE)
+    assert refusal.leaked_len is None
 
 
 def test_attr_or_record_reports_malformed_refusal_as_named_deviation() -> None:

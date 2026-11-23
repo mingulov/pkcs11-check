@@ -4586,7 +4586,9 @@ def _skip_unless_sealed_unreadable(
     failure xfails visibly; a refusal that still wrote bytes fails;
     TYPE_INVALID or any other answered-nothing shape skips as moot
     (no value present, so the seal question cannot be asked).
-    Undefined RVs still fail loud.
+    Undefined RVs still fail loud. A malformed refusal (finite length
+    retained without a write) terminates visibly: only a clean refusal
+    proves the seal, so the dependent search never runs on it.
     """
     try:
         read = read_attributes(rs.raw, rs.sh, handle, [attr])
@@ -4623,17 +4625,6 @@ def _skip_unless_sealed_unreadable(
             f"{label}: sealed {attr_name} seal check inconclusive "
             f"({ckr_name(exc.rv)}); seal unproved"
         )
-    value = attr_or_record(
-        read,
-        attr,
-        label=f"{label}: seal check",
-        reason="not_operational",
-        kind="policy",
-        inherit_mechanism=False,
-        sensitive_is_conformant=True,
-    )
-    if value is not MISSING_ATTRIBUTE:
-        pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
     refusal = refusal_for(read, attr)
     if refusal is not None and refusal.leaked_len is not None:
         record = classification.record_as(
@@ -4651,6 +4642,36 @@ def _skip_unless_sealed_unreadable(
             detail={"leaked_len": refusal.leaked_len},
         )
         classification.raise_for_record(record)
+    if refusal is not None and refusal.malformed:
+        # R9-3: a malformed refusal proves nothing about the seal (only a
+        # clean refusal does), so terminate here instead of running the
+        # dependent search on an unproved premise.
+        record = classification.record_as(
+            "not_operational",
+            kind="policy",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: sealed {attr_name} seal check refused malformed "
+                f"({ckr_name(refusal.ckr)} with a retained finite length, no "
+                "write); seal unproved"
+            ),
+            detail={"malformed_refusal": True},
+        )
+        classification.raise_for_record(record)
+    value = attr_or_record(
+        read,
+        attr,
+        label=f"{label}: seal check",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
+    if value is not MISSING_ATTRIBUTE:
+        pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
     if refusal is not None and refusal.ckr == int(CKR_ATTRIBUTE_SENSITIVE):
         return
     pytest.skip(f"{label}: sealed {attr_name} has no value present; seal question moot")
