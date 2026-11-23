@@ -306,6 +306,11 @@ class _MatrixFake:
             assert isinstance(behavior, tuple)
             data = bytes(behavior[1])
             return _OK, len(data), data
+        if tag == "padded":
+            assert isinstance(behavior, tuple)
+            data = self._secret_for(handle, attr)
+            padded = b"\x00" * int(behavior[1]) + data
+            return _OK, len(padded), padded
         if tag == "refuse":
             assert isinstance(behavior, tuple)
             return int(behavior[1]), _U64, None
@@ -956,6 +961,15 @@ def test_unsealed_rsa_import_wrong_integer_still_fails() -> None:
 def test_unsealed_rsa_import_overlong_integer_still_fails() -> None:
     """An overlong integer encoding still fails: minimal-or-full width only (fw#95)."""
     fake = _MinimalEncodingFake({int(CKA_EXPONENT_1): ("overlong", 200)}, claim=b"\x00")
+    with pytest.raises(Failed) as excinfo:
+        _unsealed(_rs(fake), "rsa", "import", "unsealed")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    assert _records_by_reason("wrong_result")
+
+
+def test_unsealed_rsa_import_overlong_padded_integer_still_fails() -> None:
+    """Overlong same-integer encodings fail: width is pinned, not just capacity (fw#95)."""
+    fake = _MinimalEncodingFake({int(CKA_EXPONENT_1): ("padded", 72)}, claim=b"\x00")
     with pytest.raises(Failed) as excinfo:
         _unsealed(_rs(fake), "rsa", "import", "unsealed")
     assert not isinstance(excinfo.value, pytest.xfail.Exception)

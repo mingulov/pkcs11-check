@@ -289,6 +289,39 @@ def test_ensure_manifest_cli_wins_over_env(tmp_path: Path, monkeypatch: pytest.M
     assert manifest is not None
 
 
+def test_ensure_manifest_invalid_config_creates_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F11: invalid config fails before any manifest temp file exists (no leak)."""
+    import tempfile
+
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    monkeypatch.delenv("P11TEST_PIN", raising=False)
+    monkeypatch.delenv("P11TEST_SLOT", raising=False)
+    monkeypatch.delenv("P11TEST_INTERFACE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("P11TEST_SLOT", "abc")
+    options = {
+        "p11_module": str(module_path),
+        "p11_manifest": None,
+        "p11_interface": None,
+        "p11_slot": None,
+    }
+    config, _calls = _manifest_probe_harness(monkeypatch, options)
+    mkstemp_calls: list[bool] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def _spy_mkstemp(*args: Any, **kwargs: Any) -> Any:
+        mkstemp_calls.append(True)
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "mkstemp", _spy_mkstemp)
+    with pytest.raises(pytest.UsageError, match="invalid pkcs11-check configuration"):
+        plugin_mod._ensure_manifest(config)
+    assert mkstemp_calls == []
+
+
 def test_explicit_non_green_manifest_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = CapabilityManifest(
         status="error",

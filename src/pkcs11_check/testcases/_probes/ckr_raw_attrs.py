@@ -51,7 +51,7 @@ from typing import Any
 from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import read_attributes
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
@@ -156,8 +156,8 @@ def _flag_not_permitted(
 _HMAC_FALLBACK_VALUE = bytes([0x07]) * 32
 
 
-def _generate_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
-    """Generate a generic-secret key with CKA_SIGN=False; None when refused."""
+def _generate_hmac_key(ctx: ProbeContext, sh: int) -> tuple[int | None, int]:
+    """Generate a generic-secret key with CKA_SIGN=False; (None, rv) when refused."""
     attrs = template(
         attr_ulong(CKA_VALUE_LEN, 32),
         attr_bool(CKA_SIGN, False),
@@ -167,11 +167,11 @@ def _generate_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
     mech_kg = mech_simple(CKM_GENERIC_SECRET_KEY_GEN)
     key = CK_OBJECT_HANDLE(0)
     rv = ctx.raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-    return key.value if rv == CKR_OK else None
+    return (key.value, rv) if rv == CKR_OK else (None, rv)
 
 
-def _create_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
-    """CreateObject a generic-secret key with CKA_SIGN=False; None when refused."""
+def _create_hmac_key(ctx: ProbeContext, sh: int) -> tuple[int | None, int]:
+    """CreateObject a generic-secret key with CKA_SIGN=False; (None, rv) when refused."""
     attrs = template(
         attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
         attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
@@ -182,7 +182,17 @@ def _create_hmac_key(ctx: ProbeContext, sh: int) -> int | None:
     )
     key = CK_OBJECT_HANDLE(0)
     rv = ctx.raw.C_CreateObject(sh, _template_ptr(attrs), attrs.count, byref(key))
-    return key.value if rv == CKR_OK else None
+    return (key.value, rv) if rv == CKR_OK else (None, rv)
+
+
+def _is_routable_setup_rv(rv: int) -> bool:
+    """Whether a setup refusal may fall back (F6a): defined RVs route onward.
+
+    An undefined (neither standard nor vendor) setup RV is itself the
+    finding -- falling back would silently erase it -- so the probe
+    reports setup-xfail immediately instead.
+    """
+    return bool(is_standard_ckr(rv) or is_vendor_defined_ckr(rv))
 
 
 def _encrypt(ctx: ProbeContext) -> None:
@@ -205,9 +215,15 @@ def _sign(ctx: ProbeContext) -> None:
     """
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
-    key = _generate_hmac_key(ctx, sh)
+    key, rv = _generate_hmac_key(ctx, sh)
     if key is None:
-        key = _create_hmac_key(ctx, sh)
+        if not _is_routable_setup_rv(rv):
+            print(f"SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {ckr_name(rv)}")
+            return
+        key, rv = _create_hmac_key(ctx, sh)
+        if key is None and not _is_routable_setup_rv(rv):
+            print(f"SETUP_XFAIL:C_CreateObject for CKA_SIGN=False failed: {ckr_name(rv)}")
+            return
     if key is None:
         _flag_not_permitted(
             ctx,

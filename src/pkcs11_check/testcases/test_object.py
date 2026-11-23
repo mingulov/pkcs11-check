@@ -772,6 +772,45 @@ def _qc7_is_p256_scalar(blob: bytes) -> bool:
     )
 
 
+def _qc7_scalar_point_binding_record(
+    generated: bytes, point: bytes | None, *, label: str
+) -> C.Classification | None:
+    """Wrong-value record unless the scalar derives the generated point (F8).
+
+    A module reporting one key's scalar for another keypair's point is key
+    confusion the scalar-only legs cannot see. Returns None when the public
+    point is absent or undecodable (binding unjudgeable; point readability
+    is other tests' property) or when the derived point matches.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from pkcs11_check.raw.der import decode_ec_point
+
+    if not isinstance(point, bytes):
+        return None
+    try:
+        raw = decode_ec_point(point)
+    except ValueError:
+        return None
+    if len(raw) != 65 or raw[0] != 0x04:
+        return None
+    derived = (
+        ec.derive_private_key(int.from_bytes(generated, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    if derived.x.to_bytes(32, "big") != raw[1:33] or derived.y.to_bytes(32, "big") != raw[33:65]:
+        return _qc7_record_wrong_value(
+            CKA_VALUE,
+            label=label,
+            producer_operation="C_GenerateKeyPair",
+            summary=f"{label}: generated scalar does not derive the generated public point",
+            expected_len=32,
+            actual_len=len(generated),
+        )
+    return None
+
+
 def _qc7_is_der_public_key(blob: bytes) -> bool:
     try:
         from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -1415,6 +1454,17 @@ class TestAttributeValueEncodings:
                         actual_len=len(generated),
                     )
                 )
+                _qc7_raise_strongest(records)
+                return
+            status_p, point, point_records = _qc7_read_single(
+                rs, pub, CKA_EC_POINT, label=label, producer_operation="C_GenerateKeyPair"
+            )
+            records.extend(point_records)
+            binding = _qc7_scalar_point_binding_record(
+                generated, point if status_p == "present" else None, label=label
+            )
+            if binding is not None:
+                records.append(binding)
                 _qc7_raise_strongest(records)
                 return
             imported = _import_or_xfail(

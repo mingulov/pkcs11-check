@@ -131,11 +131,6 @@ def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
         except Exception as exc:
             pytest.exit(f"Unable to load p11 manifest: {exc}", returncode=2)
     else:
-        manifest_fd, manifest_raw_path = tempfile.mkstemp(
-            prefix="pkcs11-check-manifest-", suffix=".json"
-        )
-        os.close(manifest_fd)
-        manifest_path = Path(manifest_raw_path)
         from tomllib import TOMLDecodeError
 
         from pydantic import ValidationError
@@ -146,6 +141,11 @@ def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
             raise pytest.UsageError(f"invalid pkcs11-check configuration: {exc}") from exc
         interface = merged.interface or "auto"
         slot = merged.slot
+        manifest_fd, manifest_raw_path = tempfile.mkstemp(
+            prefix="pkcs11-check-manifest-", suffix=".json"
+        )
+        os.close(manifest_fd)
+        manifest_path = Path(manifest_raw_path)
         try:
             manifest = run_preflight_subprocess(
                 Path(module_path),

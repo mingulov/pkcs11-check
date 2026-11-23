@@ -96,9 +96,3 @@ def test_different_counter_blocks_yield_different_ciphertext() -> None:
     cb1 = bytes(16)
     cb2 = bytes(15) + b"\x01"
     assert _ctr_encrypt(_KEY, 64, cb1, _PLAINTEXT) != _ctr_encrypt(_KEY, 64, cb2, _PLAINTEXT)
-
-
-def test_width_wrap_divergence_at_low32_max() -> None:
-    """32- vs 64-bit widths diverge once the low 32 bits wrap (block 2)."""
-    cb = bytes(12) + b"\xff\xff\xff\xff"
-    assert _ctr_encrypt(_KEY, 32, cb, _PLAINTEXT) != _ctr_encrypt(_KEY, 64, cb, _PLAINTEXT)

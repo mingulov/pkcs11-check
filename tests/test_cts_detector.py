@@ -658,7 +658,7 @@ def test_cts_probe_coerces_missing_interface_to_auto(
 
 
 def _install_collection_probe_stubs(
-    monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any], *, stub_detection: bool = True
 ) -> None:
     """Stub the provider surface behind the collection CTS probe."""
 
@@ -674,7 +674,7 @@ def _install_collection_probe_stubs(
     def fake_login(raw: Any, sh: int, user: int, pin: bytes) -> None:
         captured.setdefault("logins", []).append((sh, user, pin))
 
-    def fake_detected(rs: Any) -> base_cts.CtsDetectionResult:
+    def fake_detected(rs: Any, **kwargs: Any) -> base_cts.CtsDetectionResult:
         return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
 
     monkeypatch.setattr("pkcs11_check.core.loader.load_module", fake_load_module)
@@ -690,7 +690,8 @@ def _install_collection_probe_stubs(
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.login_user", fake_login)
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.logout_quietly", lambda *a: None)
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.close_session_quietly", lambda *a: None)
-    monkeypatch.setattr(base_cts, "get_cts_detection", fake_detected)
+    if stub_detection:
+        monkeypatch.setattr(base_cts, "get_cts_detection", fake_detected)
 
 
 def _collection_config(opts: dict[str, Any]) -> Any:
@@ -723,8 +724,15 @@ def test_cts_collection_probe_logs_in_with_env_pin(
     assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
 
 
+@pytest.fixture
+def _fresh_detection_cache() -> Any:
+    base_cts.reset_cts_detection_cache()
+    yield
+    base_cts.reset_cts_detection_cache()
+
+
 def test_cts_collection_probe_env_pin_yields_detection_not_setup_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
 ) -> None:
     """#89 end-to-end: env pin logs in, so a login-enforcing module detects."""
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
@@ -732,35 +740,9 @@ def test_cts_collection_probe_env_pin_yields_detection_not_setup_error(
     _isolate_pin_env(monkeypatch, tmp_path)
     monkeypatch.setenv("P11TEST_PIN", "envpin")
     captured: dict[str, Any] = {}
-    _install_collection_probe_stubs(monkeypatch, captured)
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
 
-    def login_enforcing_detection(rs: Any) -> base_cts.CtsDetectionResult:
-        if not captured.get("logins"):
-            return base_cts.CtsDetectionResult(
-                base_cts.CtsDetectionStatus.SETUP_ERROR,
-                detail={"ckr": "CKR_USER_NOT_LOGGED_IN"},
-            )
-        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
-
-    monkeypatch.setattr(base_cts, "get_cts_detection", login_enforcing_detection)
-
-    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
-
-    assert result.status is base_cts.CtsDetectionStatus.DETECTED
-    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
-
-
-def test_cts_collection_probe_without_pin_surfaces_not_operational(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """S2: logged-out login refusal is not-operational (xfail), not a FAIL."""
-    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
-
-    _isolate_pin_env(monkeypatch, tmp_path)
-    captured: dict[str, Any] = {}
-    _install_collection_probe_stubs(monkeypatch, captured)
-
-    def login_enforcing_detection(rs: Any) -> base_cts.CtsDetectionResult:
+    def login_enforcing_inner(rs: Any) -> base_cts.CtsDetectionResult:
         if not captured.get("logins"):
             return base_cts.CtsDetectionResult(
                 base_cts.CtsDetectionStatus.SETUP_ERROR,
@@ -769,7 +751,36 @@ def test_cts_collection_probe_without_pin_surfaces_not_operational(
             )
         return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
 
-    monkeypatch.setattr(base_cts, "get_cts_detection", login_enforcing_detection)
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", login_enforcing_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+def test_cts_collection_probe_without_pin_surfaces_not_operational(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """S2: logged-out login refusal is not-operational (xfail), not a FAIL."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    inner_calls: list[Any] = []
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def login_enforcing_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        inner_calls.append(rs)
+        if not captured.get("logins"):
+            return base_cts.CtsDetectionResult(
+                base_cts.CtsDetectionStatus.SETUP_ERROR,
+                error_rv=int(CKR_USER_NOT_LOGGED_IN),
+                detail={"attempts": [{"ckr": int(CKR_USER_NOT_LOGGED_IN)}]},
+            )
+        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", login_enforcing_inner)
 
     result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
 
@@ -777,10 +788,15 @@ def test_cts_collection_probe_without_pin_surfaces_not_operational(
     assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
     assert "logged-out" in result.detail.get("reason", "")
     assert not captured.get("logins")
+    # The converted result is what the cache holds: the sentinel and the
+    # standalone vector guard consume it converted, not as setup-error.
+    again = base_cts.get_cts_detection(SimpleNamespace())
+    assert again.status is base_cts.CtsDetectionStatus.NOT_OPERATIONAL
+    assert len(inner_calls) == 1
 
 
 def test_cts_collection_probe_logged_in_login_refusal_stays_loud(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
 ) -> None:
     """S2 control: logged-in meetings with the same RV stay SETUP_ERROR (loud)."""
     from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
@@ -788,16 +804,16 @@ def test_cts_collection_probe_logged_in_login_refusal_stays_loud(
     _isolate_pin_env(monkeypatch, tmp_path)
     monkeypatch.setenv("P11TEST_PIN", "envpin")
     captured: dict[str, Any] = {}
-    _install_collection_probe_stubs(monkeypatch, captured)
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
 
-    def always_refusing_detection(rs: Any) -> base_cts.CtsDetectionResult:
+    def always_refusing_inner(rs: Any) -> base_cts.CtsDetectionResult:
         return base_cts.CtsDetectionResult(
             base_cts.CtsDetectionStatus.SETUP_ERROR,
             error_rv=int(CKR_USER_NOT_LOGGED_IN),
             detail={"attempts": [{"ckr": int(CKR_USER_NOT_LOGGED_IN)}]},
         )
 
-    monkeypatch.setattr(base_cts, "get_cts_detection", always_refusing_detection)
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", always_refusing_inner)
 
     result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
 
