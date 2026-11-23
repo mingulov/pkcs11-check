@@ -301,6 +301,144 @@ def test_verify_retry_flags_fill_following_tail() -> None:
     assert result.unproved_delivery == {int(CKA_VALUE)}
 
 
+def test_verify_retry_disagreeing_full_content_stays_unproved() -> None:
+    """R13-1: a retry that disagrees with the first read never passes clean."""
+    data_calls = 0
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        nonlocal data_calls
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 3
+        else:
+            data_calls += 1
+            if data_calls == 1:
+                ctypes.memmove(attrs[0].pValue, b"\x66", 1)
+            else:
+                ctypes.memmove(attrs[0].pValue, b"\x12\x34\x56", 3)
+            attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert data_calls == 2
+    assert result.unproved_delivery == {int(CKA_VALUE)}
+
+
+def test_verify_retry_refusal_after_success_stays_visible() -> None:
+    """R13-1: a retry refusal cannot erase a first-read success into a skip."""
+    from pkcs11_check.raw.types_std import CKA_CHECK_VALUE
+
+    calls = 0
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        nonlocal calls
+        assert count == 1
+        calls += 1
+        if calls == 1:
+            attrs[0].ulValueLen = 3
+            return int(CKR_OK)
+        if calls == 2:
+            ctypes.memmove(attrs[0].pValue, b"\x66", 1)
+            attrs[0].ulValueLen = 3
+            return int(CKR_OK)
+        attrs[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
+        return int(CKR_ATTRIBUTE_TYPE_INVALID)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_CHECK_VALUE], verify_delivery=True)
+    assert calls == 4
+    assert result.refusals[CKA_CHECK_VALUE].ckr == int(CKR_ATTRIBUTE_TYPE_INVALID)
+    assert result.unproved_delivery == {int(CKA_CHECK_VALUE)}
+    value = attr_or_record(
+        result,
+        CKA_CHECK_VALUE,
+        label="KCV",
+        reason="honest_deviation",
+        optional_if_absent=True,
+        strict_delivery=True,
+    )
+    assert value is MISSING_ATTRIBUTE
+    assert get_records()[-1].detail.get("unproved_delivery") is True
+
+
+def test_verify_retry_resolves_exact_fill_collision() -> None:
+    """R13-2: a wholly matching verified read retries; stable bytes pass clean."""
+    from pkcs11_check.raw.recipes import _PATTERN_BLOCK
+
+    data_calls = 0
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        nonlocal data_calls
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 3
+        else:
+            data_calls += 1
+            ctypes.memmove(attrs[0].pValue, bytes(_PATTERN_BLOCK[:3]), 3)
+            attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert data_calls == 2
+    assert result[CKA_VALUE] == bytes(_PATTERN_BLOCK[:3])
+    assert result.unproved_delivery == set()
+
+
+def test_verify_retry_untouched_buffer_retries_then_marks() -> None:
+    """R13-2: untouched verified reads retry once, then stay marked."""
+    data_calls = 0
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        nonlocal data_calls
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 3
+        else:
+            data_calls += 1
+            attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert data_calls == 2
+    assert result.unproved_delivery == {int(CKA_VALUE)}
+
+
+def test_verify_retry_releases_first_buffer_before_realloc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R13-3: the retry never holds two provider buffers at once."""
+    import weakref
+
+    from pkcs11_check.raw import recipes as raw_recipes
+
+    live: list[weakref.ReferenceType[Any]] = []
+    max_live = 0
+    orig = raw_recipes._alloc_module_output
+
+    def _tracking(size: int, *, what: str) -> Any:
+        nonlocal max_live
+        buf = orig(size, what=what)
+        live[:] = [ref for ref in live if ref() is not None]
+        live.append(weakref.ref(buf))
+        max_live = max(max_live, len(live))
+        return buf
+
+    monkeypatch.setattr(raw_recipes, "_alloc_module_output", _tracking)
+    n = 1024 * 1024
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = n
+        else:
+            ctypes.memmove(attrs[0].pValue, b"\x66", 1)
+            attrs[0].ulValueLen = 3
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert result.unproved_delivery == {int(CKA_VALUE)}
+    assert max_live == 1
+
+
 def test_attr_or_record_strict_marks_unproved_delivery_visible() -> None:
     """R12-2: strict callers deviate on unproved delivery, even if optional."""
     from pkcs11_check.raw.recipes import AttrReadResult
