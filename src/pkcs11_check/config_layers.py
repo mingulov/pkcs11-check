@@ -91,6 +91,11 @@ TEST_LAYER_TRUTH: tuple[ConfigKeyTruth, ...] = (
 )
 
 
+#: Effective-value marker for dead config keys (U13: hidden from --show-config
+#: output; the keys stay documented in docs/configuration.md instead).
+NO_EFFECT = "(no effect)"
+
+
 @dataclass(frozen=True)
 class ConfigRow:
     """One ``--show-config`` row: effective value + winning source."""
@@ -156,10 +161,10 @@ def _resolve_row(
 ) -> ConfigRow:
     if not truth.live:
         if truth.env_var in env:
-            return ConfigRow(truth.key, "(no effect)", f"env (ignored: {truth.dead_note})")
+            return ConfigRow(truth.key, NO_EFFECT, f"env (ignored: {truth.dead_note})")
         if truth.key in toml:
-            return ConfigRow(truth.key, "(no effect)", f"toml (ignored: {truth.dead_note})")
-        return ConfigRow(truth.key, "(no effect)", f"default (ignored: {truth.dead_note})")
+            return ConfigRow(truth.key, NO_EFFECT, f"toml (ignored: {truth.dead_note})")
+        return ConfigRow(truth.key, NO_EFFECT, f"default (ignored: {truth.dead_note})")
     cli_value = cli_values.get(truth.key, truth.cli_default)
     if (
         "cli" in truth.live

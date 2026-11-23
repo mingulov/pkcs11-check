@@ -181,7 +181,10 @@ class TestShowConfigCommand:
         assert result.exit_code == 0, result.output
         assert "slot" in result.output
         assert "key_inject" in result.output
-        assert "timeout_test" in result.output
+        # U13: dead keys are documented in docs/configuration.md, not shown here.
+        assert "(no effect)" not in result.output
+        for dead in ("timeout_operation", "timeout_test", "max_sessions", "skip_unsupported"):
+            assert dead not in result.output
 
     def test_show_config_reflects_cli_env_toml(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

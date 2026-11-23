@@ -26,6 +26,7 @@ from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.config_layers import (
+    NO_EFFECT,
     find_ignored_settings,
     read_toml_settings,
     resolve_config_rows,
@@ -138,6 +139,9 @@ def _print_show_config(cli_values: dict[str, Any]) -> None:
     table.add_column("Effective value")
     table.add_column("Source")
     for row in rows:
+        # U13: dead keys live in docs/configuration.md, not in this table.
+        if row.effective == NO_EFFECT:
+            continue
         table.add_row(row.key, row.effective, row.source)
     Console().print(table)
 
@@ -687,7 +691,11 @@ def test_command(
         "auto", "--interface", "-i", help="Interface version"
     ),
     sessions: int = typer.Option(
-        1, "--sessions", "-s", help="Concurrent sessions", rich_help_panel="Advanced"
+        1,
+        "--sessions",
+        "-s",
+        help="Concurrent sessions (U13: dead knob, ignored; kept so old scripts still parse)",
+        hidden=True,
     ),
     timeout: int = typer.Option(180, "--timeout", "-t", help="Per-test timeout (seconds)"),
     category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
@@ -1384,6 +1392,10 @@ def test_command(
         run_provenance = _build_run_provenance(manifest, resolve_data_dir())
         fw = run_provenance.get("framework") or {}
         fw_version = fw.get("version") or "?"
+        if fw.get("source") == "git-describe":
+            # U4: the describe suffix is truthful (computed live from this
+            # checkout) but cryptic -- say once, in one clause, what it is.
+            fw_version = f"{fw_version} (dev checkout)"
         prov_info = run_provenance.get("provider") or {}
         if prov_info.get("name"):
             commit_short = (prov_info.get("commit") or "")[:8]
@@ -1465,13 +1477,14 @@ def test_command(
             setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
             raise typer.Exit(code=setup_exit_code) from exc
 
+        if sessions != 1:
+            # U13: --sessions is dead in every mode (nothing reads it) --
+            # warn wherever it is passed, not just isolated runs.
+            console.print(
+                f"[yellow]Warning:[/yellow] --sessions is ignored in --isolation {isolation} mode"
+            )
         if isolation in {"auto", "file", "test"}:
             collection_phase = True
-            if sessions != 1:
-                console.print(
-                    "[yellow]Warning:[/yellow] "
-                    f"--sessions is ignored in --isolation {isolation} mode"
-                )
 
             try:
                 collected_items = None
