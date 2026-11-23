@@ -91,6 +91,19 @@ def _iter_input_files(data_dir_override: str | None = None) -> list[Path]:
     return files
 
 
+# Collection-affecting files pytest loads above a target: conftest.py at
+# every level plus the rootdir config files (markers, options). Walked per
+# target so an edit above an external target invalidates the cache (R20-2);
+# in-tree files duplicate the package walk harmlessly (same key material).
+_COLLECTION_CONFIG_NAMES: tuple[str, ...] = (
+    "conftest.py",
+    "pytest.ini",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini",
+)
+
+
 def _iter_target_files(targets: list[str]) -> list[Path]:
     """Target files whose content affects collection (R19-2).
 
@@ -98,7 +111,9 @@ def _iter_target_files(targets: list[str]) -> list[Path]:
     target otherwise reuses a stale cache entry (M3b then refuses a
     runnable test). Directories contribute their ``*.py`` files, nodeids
     their file part; missing targets contribute nothing (their path
-    string already keys them, and collection fails loudly).
+    string already keys them, and collection fails loudly). Ancestor
+    conftest/config files ride along: pytest loads them above the target,
+    so editing one must rekey just like editing the target itself.
     """
     files: list[Path] = []
     for target in targets:
@@ -106,10 +121,20 @@ def _iter_target_files(targets: list[str]) -> list[Path]:
         try:
             if candidate.is_dir():
                 files.extend(p for p in candidate.rglob("*.py") if p.is_file())
+                anchor = candidate
             elif candidate.is_file():
                 files.append(candidate)
+                anchor = candidate.parent
+            else:
+                continue
+            resolved_anchor = anchor.resolve()
         except OSError:
             continue
+        for directory in (resolved_anchor, *resolved_anchor.parents):
+            for name in _COLLECTION_CONFIG_NAMES:
+                conf = directory / name
+                if conf.is_file():
+                    files.append(conf)
     return files
 
 
@@ -431,25 +456,26 @@ class _CollectionPlugin:
         self.items: list[CollectedPytestItem] = []
         self.skips: list[CollectedSkip] = []
         self._skip_nodeids: set[str] = set()
-        self._last_started: tuple[str, str] | None = None
+        self._start_stack: list[tuple[str, str]] = []
 
     def pytest_collectstart(self, collector: pytest.Collector) -> None:
-        self._last_started = (str(collector.nodeid), str(collector.path))
+        self._start_stack.append((str(collector.nodeid), str(collector.path)))
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        nodeid = str(report.nodeid)
+        if self._start_stack and self._start_stack[-1][0] == nodeid:
+            # Starts and reports nest (a collector's report follows its
+            # whole subtree), so the matching start is always on top; a
+            # mismatch means an unexpected sequence -- leave the stack
+            # alone and fall back to the report's own nodeid.
+            _, started_path = self._start_stack.pop()
+            if not nodeid:
+                # A target outside rootpath gets nodeid "" by pytest design
+                # (cross-drive on Windows); the report carries nothing else
+                # (fspath/location derive from the nodeid too).
+                nodeid = started_path
         if report.outcome != "skipped":
             return
-        nodeid = str(report.nodeid)
-        if not nodeid and self._last_started is not None:
-            # A target outside rootpath gets nodeid "" by pytest design
-            # (cross-drive on Windows); the report carries nothing else
-            # (fspath/location derive from the nodeid too). Pair with the
-            # most recent collectstart: the skip aborts descent, so nothing
-            # can start between a collector's start and its skipped report.
-            # The equality check keeps a stale pairing honest (stay empty).
-            started_nodeid, started_path = self._last_started
-            if started_nodeid == nodeid:
-                nodeid = started_path
         if nodeid in self._skip_nodeids:
             return
         self._skip_nodeids.add(nodeid)

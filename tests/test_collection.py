@@ -466,8 +466,9 @@ def test_collection_skip_pairs_empty_nodeid_with_started_collector() -> None:
     the most recent collectstart -- the shape Windows CI produces."""
     from types import SimpleNamespace
 
+    collected_path = Path("C:/Temp/test_skipped_mod.py")
     plugin = col._CollectionPlugin()
-    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=Path("C:/Temp/test_skipped_mod.py")))
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=collected_path))
     plugin.pytest_collectreport(
         SimpleNamespace(
             outcome="skipped",
@@ -475,8 +476,10 @@ def test_collection_skip_pairs_empty_nodeid_with_started_collector() -> None:
             longrepr=("C:/Temp/test_skipped_mod.py", 2, "Skipped: vectors not cloned"),
         )
     )
+    # R20-3: compare through the same str(Path) the worker stores, so the
+    # assertion holds under Windows backslashes as well as POSIX slashes.
     assert plugin.skips == [
-        col.CollectedSkip(nodeid="C:/Temp/test_skipped_mod.py", reason="vectors not cloned")
+        col.CollectedSkip(nodeid=str(collected_path), reason="vectors not cloned")
     ]
 
 
@@ -490,6 +493,23 @@ def test_collection_skip_ignores_stale_started_collector() -> None:
         SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: why")
     )
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="why")]
+
+
+def test_collection_skip_pairs_nested_empty_nodeids_by_stack() -> None:
+    """R20-4: a session skip after a successful module attributes to the
+    session (stack discipline), not to the most recently started module."""
+    from types import SimpleNamespace
+
+    collected_root = Path("/tmp/collected")
+    collected_mod = collected_root / "test_mod.py"
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=collected_root))
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=collected_mod))
+    plugin.pytest_collectreport(SimpleNamespace(outcome="passed", nodeid="", longrepr=None))
+    plugin.pytest_collectreport(
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    )
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(collected_root), reason="no dice")]
 
 
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
@@ -572,6 +592,24 @@ def test_collection_digest_covers_nodeid_and_dir_targets(tmp_path: Path) -> None
     assert col._collection_inputs_digest([str(tmp_path)], []) != dir_before
 
 
+def test_collection_digest_invalidates_on_ancestor_conftest_edit(tmp_path: Path) -> None:
+    """R20-2: editing a conftest.py or config above a file target rekeys."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("# empty\n", encoding="utf-8")
+    before = col._collection_inputs_digest([str(target)], [])
+    assert before is not None
+    conftest.write_text("# edited: markers for the suite below\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], []) != before
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\n", encoding="utf-8")
+    middle = col._collection_inputs_digest([str(target)], [])
+    assert middle is not None and middle != before
+    config.write_text("[pytest]\nmarkers = smoke: a smoke test\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], []) != middle
+
+
 def test_collection_recollects_after_external_target_edit(tmp_path: Path) -> None:
     """R19-2 end to end: a new matching test is collected, never stale-hit."""
     first = tmp_path / "test_first.py"
@@ -592,3 +630,36 @@ def test_collection_recollects_after_external_target_edit(tmp_path: Path) -> Non
         "test_match_me",
         "test_match_me_too",
     ]
+
+
+def test_collection_recollects_after_conftest_marks_new_file(tmp_path: Path) -> None:
+    """R20-2 end to end: a conftest edit that marks a new file invalidates."""
+    first = tmp_path / "test_first.py"
+    second = tmp_path / "test_second.py"
+    first.write_text("def test_alpha(): pass\n", encoding="utf-8")
+    second.write_text("def test_beta(): pass\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(
+        "import pytest\n"
+        "\n"
+        "def pytest_collection_modifyitems(items):\n"
+        "    for item in items:\n"
+        '        if item.path.name == "test_first.py":\n'
+        "            item.add_marker(pytest.mark.smoke)\n",
+        encoding="utf-8",
+    )
+    cache_env = {
+        key: value for key, value in os.environ.items() if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
+    }
+    args = ["-m", "smoke"]
+    assert len(collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)) == 1
+    conftest.write_text(
+        "import pytest\n"
+        "\n"
+        "def pytest_collection_modifyitems(items):\n"
+        "    for item in items:\n"
+        "        item.add_marker(pytest.mark.smoke)\n",
+        encoding="utf-8",
+    )
+    items = collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)
+    assert len(items) == 2

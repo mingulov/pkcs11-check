@@ -311,6 +311,49 @@ class TestEngagedProbe:
         assert fake.killed is True
         assert fake.waited is True
 
+    def test_error_detail_scrubs_pin_from_verdict_and_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R20-1: child stderr echoing the PIN is redacted everywhere."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout="not json\n", stderr="provider said 1234 loudly\n"),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"1234",
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.status == "error"
+        assert "1234" not in probe.detail
+        assert "[redacted]" in probe.detail
+        blob = counters.evidence_path.read_bytes().decode("utf-8")
+        assert "1234" not in blob
+        assert "[redacted]" in blob
+
+    def test_json_detail_scrubs_pin(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """R20-1: child JSON details are scrubbed like stderr tails."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout='{"status": "ok", "detail": "used 1234"}\n'),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"1234",
+            timeout=5,
+            counters=counters,
+        )
+        assert (probe.status, probe.detail) == ("ok", "used [redacted]")
+
     def test_login_status_passes_through_while_counts_fold(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
