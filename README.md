@@ -218,7 +218,7 @@ src/pkcs11_check/
 - `docs/configuration.md` - every setting, its env var and TOML key, and the merge order
 - `docs/architecture.md` - codebase structure and test writing guide
 - `docs/commands.md` - build, test, and Docker commands
-- `docs/test-universe.md` - collected product-test counts by group (point-in-time snapshot, May 2026 — illustrative, not current)
+- `docs/test-universe.md` - collected product-test counts by group (point-in-time snapshot, May 2026 -- illustrative, not current)
 - `docs/mechanism-output-parameters.md` - generated IV/nonce/tag output-parameter coverage
 - `docs/file-isolation.md` - isolation runner design
 - `docs/running-under-tracer.md` - running under an external tracer/profiler/observer

@@ -127,7 +127,7 @@ current truth):
 ## Environment variables that are not settings
 
 These have no TOML or CLI equivalent. The operator knobs first, then the
-full inventory (most of it internal parent/child plumbing — do not export
+full inventory (most of it internal parent/child plumbing -- do not export
 those by hand).
 
 | Variable | Meaning |

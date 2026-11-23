@@ -94,7 +94,7 @@ head ./pk-demo/reports/report.jsonl           # one JSON record per test
 `./pk-demo/reports/` then contains `results.json` (summary), `report.jsonl`
 (per-test records) and `quality.json` (per-outcome classification), plus
 `coverage.json` (mechanism coverage) only when the run collected coverage
-data — otherwise that file is absent, not empty.
+data -- otherwise that file is absent, not empty.
 
 ## 5. Run the full suite
 

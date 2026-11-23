@@ -82,7 +82,7 @@ Only targets missing from saved results run. Failed, crashed, timed-out, unverif
 `--resume` when those targets must be revalidated. An escalated parent remains in the saved
 results while any missing expanded child still runs.
 
-> **Warning — back up reports before resuming.** If a resumed run fails its
+> **Warning -- back up reports before resuming.** If a resumed run fails its
 > startup checks, it can overwrite the previous report files. Keep a copy of
 > any report you need. (Known limitation; a code fix is deferred follow-up
 > work. Fresh runs never touch prior reports.)
