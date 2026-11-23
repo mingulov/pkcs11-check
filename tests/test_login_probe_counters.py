@@ -392,6 +392,30 @@ class TestEngagedProbe:
         assert _scrub_pin("a b c", b" ") == "a b c"
         assert _scrub_pin("used 1234 here", b"1234") == "used [redacted] here"
 
+    def test_error_detail_cr_pin_scrubs_after_pipe_normalization(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R23-3: a PIN with an embedded CR redacts fully even though the
+        text-mode pipe converted the CR to a newline before the scrubber."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout="not json\n", stderr="pin ab\ncd leaked\n"),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"ab\rcd",
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.status == "error"
+        assert probe.detail == "pin [redacted] leaked"
+        blob = counters.evidence_path.read_bytes().decode("utf-8")
+        assert "ab\ncd" not in blob
+
     def test_json_detail_scrubs_pin(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """R20-1: child JSON details are scrubbed like stderr tails."""
         counters = _counters(tmp_path)

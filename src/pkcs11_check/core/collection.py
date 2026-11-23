@@ -146,27 +146,40 @@ def _iter_target_files(targets: list[str]) -> list[Path]:
 def _iter_config_flag_files(args: list[str]) -> list[Path]:
     """Config files named by -c/--config-file flags (R22-2).
 
-    Mirrors argparse store semantics: `-c PATH`, `-cPATH`,
-    `--config-file PATH`, `--config-file=PATH`. Missing files contribute
-    nothing (collection fails loudly before anything is cached).
+    Mirrors argparse store semantics: `-c PATH`, `-cPATH`, `-c=PATH`,
+    `--config-file PATH`, `--config-file=PATH`, plus combined shorts
+    with a c-taking-value (`-qc PATH`, `-qcPATH`; R23-2). Deliberately
+    overcollects (a -k value resembling a flag only adds harmless key
+    material, never a stale hit); combined forms never consume the next
+    token, so a `-kc`-style false positive cannot swallow a real flag.
+    Missing files contribute nothing (collection fails loudly before
+    anything is cached). Long-flag prefix abbreviations (`--config …`)
+    are not covered (vanishingly rare in practice).
     """
     files: list[Path] = []
     index = 0
     while index < len(args):
         arg = args[index]
-        value: str | None = None
+        values: list[str] = []
         if arg == "-c" or arg == "--config-file":
             if index + 1 < len(args):
-                value = args[index + 1]
+                values.append(args[index + 1])
                 index += 1
-        elif arg.startswith("-c") and len(arg) > 2 and not arg.startswith("--"):
-            value = arg[2:]
         elif arg.startswith("--config-file="):
-            value = arg.split("=", 1)[1]
-        if value:
-            candidate = Path(value)
-            if candidate.is_file():
-                files.append(candidate)
+            values.append(arg.split("=", 1)[1])
+        elif arg.startswith("-") and not arg.startswith("--") and len(arg) > 2:
+            pos = arg.find("c", 1)
+            if pos != -1:
+                rest = arg[pos + 1 :]
+                if rest:
+                    values.append(rest[1:] if rest.startswith("=") else rest)
+                elif index + 1 < len(args):
+                    values.append(args[index + 1])
+        for value in values:
+            if value:
+                candidate = Path(value)
+                if candidate.is_file():
+                    files.append(candidate)
         index += 1
     return files
 
@@ -534,31 +547,36 @@ class _CollectionPlugin:
         self.items: list[CollectedPytestItem] = []
         self.skips: list[CollectedSkip] = []
         self._skip_keys: set[tuple[str, str]] = set()
-        self._start_stack: list[tuple[str, str, bool]] = []
-        self._completed_files: set[str] = set()
+        self._file_starts: list[str] = []
+        self._deselected_files: set[str] = set()
+        self._pending: list[tuple[int, object]] = []
 
     def pytest_collectstart(self, collector: pytest.Collector) -> None:
         try:
             is_file = Path(collector.path).is_file()
         except (OSError, ValueError):
             is_file = False
-        self._start_stack.append((str(collector.nodeid), str(collector.path), is_file))
+        if is_file:
+            self._file_starts.append(str(collector.path))
 
-    def pytest_itemcollected(self, item: pytest.Item) -> None:
-        self._completed_files.add(os.path.normcase(str(item.path)))
+    def pytest_deselected(self, items: list[pytest.Item]) -> None:
+        for item in items:
+            item_path = getattr(item, "path", None)
+            if item_path is not None:
+                self._deselected_files.add(os.path.normcase(str(item_path)))
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
-        nodeid = str(report.nodeid)
-        paired = ""
-        if not nodeid and report.outcome == "skipped":
-            paired = self._pair_empty_skip()
-        if self._start_stack and self._start_stack[-1][0] == nodeid:
-            self._start_stack.pop()
         if report.outcome != "skipped":
             return
-        if not nodeid:
-            nodeid = paired or _skip_path_from_longrepr(report.longrepr)
-        longrepr = report.longrepr
+        nodeid = str(report.nodeid)
+        if nodeid:
+            self._record_skip(nodeid, report.longrepr)
+        else:
+            # Empty nodeids (cross-rootpath targets) resolve at finish,
+            # when the final item set disambiguates them (R23-1).
+            self._pending.append((len(self._file_starts), report.longrepr))
+
+    def _record_skip(self, nodeid: str, longrepr: object) -> None:
         if isinstance(longrepr, tuple):
             reason = str(longrepr[-1])
         else:
@@ -571,25 +589,33 @@ class _CollectionPlugin:
         self._skip_keys.add(key)
         self.skips.append(CollectedSkip(nodeid=nodeid, reason=reason))
 
-    def _pair_empty_skip(self) -> str:
-        """Attribute an empty-nodeid skip to its collector, else "".
+    def _resolve_pending(self) -> None:
+        """Attribute deferred empty-nodeid skips (called at finish).
 
-        Reports alone cannot tell two same-helper skips apart (R22-3),
-        and a bare most-recent-start misattributes once exact-node
-        selection prunes an intermediate passed report (R20-4). Fuse both
-        streams: the skipped collector is the most recent started file
-        with no collected items yet (a completed file's pruned report is
-        the stale-top case). Sessions and directories never pair -- their
-        skips fall through to the longrepr path (usually the conftest
-        that raised them).
+        Reports alone cannot tell two same-helper skips apart (R22-3);
+        eager pairing misattributes once exact-node selection prunes an
+        intermediate passed report (R20-4/R23-1), because items may arrive
+        after the skip. With the FINAL item set the pairing is exact: each
+        pending skip belongs to the nearest preceding file start with no
+        collected or deselected items (a skipped file is always barren;
+        anything completed is a stale top). Unmatched skips fall through
+        to the longrepr path.
         """
-        for _, path, is_file in reversed(self._start_stack):
-            if not is_file:
-                continue
-            if os.path.normcase(path) in self._completed_files:
-                continue
-            return path
-        return ""
+        completed = {os.path.normcase(item.file_path) for item in self.items}
+        completed |= self._deselected_files
+        consumed: set[int] = set()
+        for seen_count, longrepr in self._pending:
+            paired = ""
+            for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
+                if index in consumed:
+                    continue
+                if os.path.normcase(self._file_starts[index]) in completed:
+                    continue
+                paired = self._file_starts[index]
+                consumed.add(index)
+                break
+            self._record_skip(paired or _skip_path_from_longrepr(longrepr), longrepr)
+        self._pending.clear()
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         for item in session.items:
@@ -606,6 +632,7 @@ class _CollectionPlugin:
                     markers=markers,
                 )
             )
+        self._resolve_pending()
 
 
 def _parse_args() -> argparse.Namespace:
