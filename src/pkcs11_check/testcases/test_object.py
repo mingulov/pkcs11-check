@@ -877,7 +877,9 @@ def _import_or_xfail(attempt: Any, *, purpose: str, skip_rvs: tuple[Any, ...] = 
         return int(attempt())
     except AssertionError as exc:
         if skip_rvs and is_known_error(exc, skip_rvs):
-            pytest.skip(f"{purpose} not supported: {ckr_name(getattr(exc, 'rv', None))}")
+            rv = getattr(exc, "rv", None)
+            name = ckr_name(rv) if isinstance(rv, int) else "unknown"
+            pytest.skip(f"{purpose} not supported: {name}")
         xfail_if_known_ckr(exc, KEYPAIR_RUNTIME_REJECT_RVS, f"{purpose} is not operational")
         raise
 
