@@ -13,9 +13,12 @@ import pytest
 from pkcs11_check.core import collection as col
 from pkcs11_check.core.collection import (
     CollectedPytestItem,
+    CollectedSkip,
     _read_collection_cache,
     collect_pytest_item_metadata,
+    collect_pytest_items_with_skips,
     load_collection_manifest,
+    load_collection_manifest_with_skips,
     save_collection_manifest,
 )
 
@@ -437,3 +440,79 @@ def test_explicit_env_carrying_data_override_uses_cache(
     monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
     collect_pytest_item_metadata(["anything.py"], [], env={"PKCS11_CHECK_DATA_DIR": str(data_a)})
     assert len(consulted) == 1, "cache not consulted despite carried override"
+
+
+def test_collect_items_with_skips_reports_module_skip(tmp_path: Path) -> None:
+    """R18-2a: a module-level skip yields no items and one skip record."""
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text(
+        "import pytest\n"
+        'pytest.skip("vectors not cloned", allow_module_level=True)\n'
+        "\n"
+        "def test_never():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
+    items, skips = collect_pytest_items_with_skips([str(target)], [], env=env)
+    assert items == []
+    assert len(skips) == 1
+    assert skips[0].nodeid.endswith(target.name)
+    assert skips[0].reason == "vectors not cloned"
+
+
+def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
+    """R18-2a: the combined API returns the same items as the legacy one."""
+    target = tmp_path / "test_demo.py"
+    target.write_text(
+        "def test_case():\n    assert True\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
+    items, skips = collect_pytest_items_with_skips([str(target)], [], env=env)
+    assert skips == []
+    assert items == collect_pytest_item_metadata([str(target)], [], env=env)
+    assert len(items) == 1
+
+
+def test_collection_manifest_skips_round_trip(tmp_path: Path) -> None:
+    """R18-2a: skips survive a manifest round trip; legacy load ignores them."""
+    manifest_path = tmp_path / "collection.json"
+    items = [
+        CollectedPytestItem(
+            nodeid="test_demo.py::test_case",
+            file_path=str((tmp_path / "test_demo.py").resolve()),
+            markers=[],
+        )
+    ]
+    skips = [CollectedSkip(nodeid="test_skipped.py", reason="vectors not cloned")]
+    save_collection_manifest(manifest_path, items, skips)
+    assert load_collection_manifest_with_skips(manifest_path) == (items, skips)
+    assert load_collection_manifest(manifest_path) == items
+
+
+def test_collection_manifest_missing_skips_means_none(tmp_path: Path) -> None:
+    """R18-2a: old manifests without the skips key load with no skips."""
+    manifest_path = tmp_path / "collection.json"
+    manifest_path.write_text('{"items": []}\n', encoding="utf-8")
+    assert load_collection_manifest_with_skips(manifest_path) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "skips_payload",
+    [
+        {"nodeid": "x.py"},
+        {"reason": "why"},
+        {"nodeid": 1, "reason": "why"},
+        {"nodeid": "x.py", "reason": None},
+        "not-an-object",
+    ],
+)
+def test_collection_manifest_malformed_skips_raise(tmp_path: Path, skips_payload: object) -> None:
+    """R18-2a: malformed skip records fail loudly, like malformed items."""
+    manifest_path = tmp_path / "collection.json"
+    manifest_path.write_text(
+        json.dumps({"items": [], "collection_skips": [skips_payload]}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="skip"):
+        load_collection_manifest_with_skips(manifest_path)

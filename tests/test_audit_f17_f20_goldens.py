@@ -127,13 +127,50 @@ def test_unit_discovery_keeps_good_nodeids_despite_bad_line(
     assert collect_pytest_nodeids(["test_a.py"], []) == ["test_a.py::test_1"]
 
 
+class _DecodingPopen:
+    """Fake ``subprocess.Popen`` that decodes exactly the way CPython would.
+
+    Same F18 contract as :func:`_decoding_run`: the caller must pass
+    ``errors="replace"`` or strict decoding raises on ``_BAD_BYTES``.
+    """
+
+    def __init__(self, stdout_bytes: bytes, stderr_bytes: bytes, returncode: int) -> None:
+        self.pid = 4242
+        self.returncode: int | None = None
+        self._stdout_bytes = stdout_bytes
+        self._stderr_bytes = stderr_bytes
+        self._returncode = returncode
+        self._errors = "strict"
+        self._encoding = "utf-8"
+
+    def __call__(self, cmd: Any, **kwargs: Any) -> _DecodingPopen:
+        self._errors = str(kwargs.get("errors", "strict"))
+        self._encoding = str(kwargs.get("encoding", "utf-8"))
+        return self
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        del timeout
+        self.returncode = self._returncode
+        return (
+            self._stdout_bytes.decode(self._encoding, self._errors),
+            self._stderr_bytes.decode(self._encoding, self._errors),
+        )
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    def wait(self) -> int:
+        self.returncode = -9
+        return -9
+
+
 def test_login_probe_survives_bad_bytes_on_stderr(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
 
     stdout = b'{"status": "ok", "detail": "fine"}\n'
-    monkeypatch.setattr(subprocess, "run", _decoding_run(stdout, stderr_bytes=_BAD_BYTES))
+    monkeypatch.setattr(subprocess, "Popen", _DecodingPopen(stdout, _BAD_BYTES, 0))
     probe = run_login_probe_subprocess(
         tmp_path / "module.so", interface="auto", slot=0, pin=b"1234", timeout=5
     )

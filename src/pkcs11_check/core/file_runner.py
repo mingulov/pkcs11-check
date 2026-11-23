@@ -1197,16 +1197,82 @@ def _kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
 # pytest-reportlog plugin unconditionally prints its tmp report-log path in
 # the terminal summary; users should never see internal per-process paths.
 _DISPLAY_NOISE_MARKERS: tuple[str, ...] = ("generated report log file:",)
-# U6: cap on held-back unterminated display bytes. An incomplete line is
-# held only until it completes (so a noise line never partially shows) --
-# but a line longer than this (e.g. pytest -q progress dots) flushes
-# through, so quiet display never stalls liveness output.
+_DISPLAY_NOISE_MARKER_BYTES: tuple[bytes, ...] = tuple(
+    marker.encode("utf-8") for marker in _DISPLAY_NOISE_MARKERS
+)
+# U6: backstop on held-back unterminated display bytes. Only dash-only
+# runs can still grow past this (anything else either resolves to
+# noise-definite or flushes as liveness); past the cap they flush.
 _DISPLAY_HOLD_CAP = 1024
 
 
 def _display_line_allowed(line: str) -> bool:
     """U6: whether a child output line may reach live display."""
     return not any(marker in line for marker in _DISPLAY_NOISE_MARKERS)
+
+
+def _carry_holds_marker(carry: bytes) -> bool:
+    """U6: whether an unterminated tail already contains a noise marker."""
+    return any(marker in carry for marker in _DISPLAY_NOISE_MARKER_BYTES)
+
+
+def _carry_is_noise_prefix(carry: bytes) -> bool:
+    """U6: whether an unterminated tail could still grow a noise marker.
+
+    Dash-tolerant: pytest-reportlog frames the line with write_sep
+    (``--- generated report log file: ... ---``), so leading dashes and
+    the separating space precede the marker.
+    """
+    stripped = carry.lstrip(b"- ")
+    return any(marker.startswith(stripped) for marker in _DISPLAY_NOISE_MARKER_BYTES)
+
+
+class _QuietDisplayFilter:
+    """U6: chunking-independent live-display filter for quiet unit output.
+
+    Complete lines filter on the noise markers. An unterminated tail is
+    noise-definite (marker present) -> dropped, suppressing through the
+    next newline; noise-possible (a dash-tolerant marker prefix) -> held
+    for the next chunk; anything else -> shown immediately, so short
+    liveness output (pytest -q dots) never waits for EOF while the child
+    is quiet. Capture is untouched (the caller records every byte); this
+    only decides display.
+    """
+
+    def __init__(self) -> None:
+        self._carry = b""
+        self._suppressing = False
+
+    def feed(self, chunk: bytes) -> bytes:
+        """Filter one pipe chunk; return the bytes to display now."""
+        data = self._carry + chunk
+        self._carry = b""
+        if self._suppressing:
+            _, sep, rest = data.partition(b"\n")
+            if not sep:
+                return b""
+            self._suppressing = False
+            data = rest
+        *lines, tail = data.split(b"\n")
+        out = bytearray()
+        for line in lines:
+            if _display_line_allowed(line.decode("utf-8", errors="replace")):
+                out += line + b"\n"
+        if _carry_holds_marker(tail):
+            self._suppressing = True
+        elif len(tail) > _DISPLAY_HOLD_CAP or not _carry_is_noise_prefix(tail):
+            out += tail
+        else:
+            self._carry = tail
+        return bytes(out)
+
+    def finish(self) -> bytes:
+        """Flush a held tail at EOF (still withholding a noise tail)."""
+        tail, self._carry = self._carry, b""
+        self._suppressing = False
+        if tail and _display_line_allowed(tail.decode("utf-8", errors="replace")):
+            return tail
+        return b""
 
 
 def _run_subprocess_tee(
@@ -1243,7 +1309,7 @@ def _run_subprocess_tee(
     console_lock = threading.Lock()
 
     def _pump(stream: IO[bytes], buf: _BoundedCapture, is_stdout: bool) -> None:
-        carry = b""
+        display_filter = _QuietDisplayFilter() if quiet_unit_display else None
         try:
             while True:
                 chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)
@@ -1252,31 +1318,27 @@ def _run_subprocess_tee(
                 buf.write(chunk)
                 target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
                 with console_lock:
-                    if not quiet_unit_display:
+                    if display_filter is None:
                         target.write(chunk)
                     else:
-                        data = carry + chunk
-                        *lines, carry = data.split(b"\n")
-                        for line in lines:
-                            if _display_line_allowed(line.decode("utf-8", errors="replace")):
-                                target.write(line + b"\n")
-                        if len(carry) > _DISPLAY_HOLD_CAP:
-                            target.write(carry)
-                            carry = b""
+                        shown = display_filter.feed(chunk)
+                        if shown:
+                            target.write(shown)
                     target.flush()
         except (OSError, ValueError):
             # stream closed underneath us (e.g. proc.kill on the timeout path).
             pass
         finally:
-            if quiet_unit_display and carry:
-                try:
-                    target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
-                    with console_lock:
-                        if _display_line_allowed(carry.decode("utf-8", errors="replace")):
-                            target.write(carry)
-                        target.flush()
-                except (OSError, ValueError):
-                    pass
+            if display_filter is not None:
+                tail = display_filter.finish()
+                if tail:
+                    try:
+                        target = sys.stdout.buffer if is_stdout else sys.stderr.buffer
+                        with console_lock:
+                            target.write(tail)
+                            target.flush()
+                    except (OSError, ValueError):
+                        pass
             try:
                 stream.close()
             except OSError:

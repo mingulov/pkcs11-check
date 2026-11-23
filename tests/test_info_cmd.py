@@ -231,7 +231,7 @@ def test_render_names_usable_slot_and_skips_uninitialized_table(
     )
     info_cmd._render_module_info(info)
     out = capsys.readouterr().out
-    assert "(1 usable)" in out
+    assert "(1 initialized)" in out
     assert "Slot 0:" in out
     assert "not initialized" in out
     assert out.count("Mechanisms (") == 1

@@ -15,7 +15,7 @@ full provider round (see Known limitations).
   (`--isolation none` keeps showing pytest's own summary).
 - `--version` flag printing the same string as the `version` subcommand.
 - A per-slot initialized marker in `info`, naming how many token slots
-  are actually usable.
+  are actually initialized.
 - A `docs/round-evidence.md` page stating honestly what the round-evidence
   commands and receipt checks do and do not verify.
 - A documented inventory of every `PKCS11_CHECK_*` environment variable
@@ -43,8 +43,19 @@ full provider round (see Known limitations).
   values.
 - Wrong PIN in `test` now fails fast with one message and exit code 2
   instead of per-test login failures.
+- The `--pin` login probe's own calls now join the session totals
+  instead of vanishing; a crashed or timed-out probe retains its
+  counter evidence alongside its verdict.
+- A `--pin` login probe that crashes or hangs now refuses the suite
+  with exit code 1 instead of running on silently; an inconclusive
+  probe warns loudly, and resumed runs keep the saved outcome's exit
+  code through these gates.
 - Empty `--match` selections exit before running any unit instead of
   running the whole suite vacuously.
+- Empty selections now report collection-skip reasons (such as missing
+  vector data) instead of a bare "0 matched", and a selection whose
+  every matched test is excluded by the disabled baseline fails fast
+  instead of running the remaining files vacuously.
 - Default output no longer shows internal per-process report-log paths
   (still visible with `--verbose`).
 - `--show-config` now emits the same dead-setting warnings as a real run
@@ -59,9 +70,6 @@ full provider round (see Known limitations).
 - IV-sensitivity tests use fixed distinct IVs, so a ciphertext match
   always proves provider behavior, never a provider random-number
   collision.
-- RSA PKCS#1 v1.5 decryption of in-bounds garbage is now reported as a
-  minor deviation instead of a critical failure; telling valid controls
-  apart stays future work.
 - Dead settings (`timeout_operation`, `timeout_test`, `max_sessions`,
   `skip_unsupported`, `--sessions`) hidden from help and `--show-config`
   output; they remain documented in `docs/configuration.md`.
@@ -88,6 +96,8 @@ full provider round (see Known limitations).
   `evidence-compare`) are included for an upcoming CI workflow that is
   not yet active; receipt checks verify file shape and linkage, not
   the recorded digests themselves.
+- Startup-check counter evidence can fail warn-only under disk I/O
+  pathology (loud warning, no loss record).
 - No complete provider round has been run for this release; results
   against your module may differ from the SoftHSM2-based testing.
 

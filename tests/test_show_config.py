@@ -240,6 +240,37 @@ class TestShowConfigCommand:
         assert result.exit_code == 0, result.output
         assert "wrap_key_label" in result.output
 
+    def test_show_config_escapes_markup_in_ignored_values(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-4: hostile env values render literally, never crash."""
+        from pkcs11_check.cli.app import app
+        from tests._plain_cli_runner import PlainCliRunner
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("P11TEST_SLOT", "[/red]")
+        result = PlainCliRunner().invoke(
+            app, ["test", "--module", str(tmp_path / "x.so"), "--show-config"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Traceback" not in result.output
+        assert "[/red]" in result.output
+
+    def test_show_config_warns_on_ignored_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-4: report-only path warns about --sessions like real runs."""
+        from pkcs11_check.cli.app import app
+        from tests._plain_cli_runner import PlainCliRunner
+
+        monkeypatch.chdir(tmp_path)
+        result = PlainCliRunner().invoke(
+            app,
+            ["test", "--module", str(tmp_path / "x.so"), "--show-config", "--sessions", "2"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "--sessions is ignored" in result.output
+
     def test_show_config_warns_on_ignored_settings(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

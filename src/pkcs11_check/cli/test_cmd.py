@@ -20,6 +20,7 @@ import pytest
 import typer
 from pydantic import SecretStr
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from pkcs11_check import provenance as provenance_mod
@@ -51,7 +52,11 @@ from pkcs11_check.core.call_counters import (
     RUN_ID_ENV,
     CounterPersistenceError,
 )
-from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.collection import (
+    CollectedPytestItem,
+    CollectedSkip,
+    collect_pytest_items_with_skips,
+)
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
     ensure_failed_collection_report,
@@ -103,6 +108,7 @@ from pkcs11_check.core.test_selection import (
     CaseSelection,
     DisabledSelectionPlan,
     _resolve_candidate_file,
+    all_matched_items_disabled,
     build_disabled_selection_plan,
     get_testcases_root,
     load_case_selection,
@@ -143,7 +149,9 @@ def _print_show_config(cli_values: dict[str, Any]) -> None:
         # N3: keyed on deadness, never on the value text.
         if is_dead_config_key(row.key):
             continue
-        table.add_row(row.key, row.effective, row.source)
+        # R18-4: rows are data, never markup -- a hostile value like
+        # "[/red]" must render literally, never crash the table.
+        table.add_row(escape(row.key), escape(row.effective), escape(row.source))
     Console().print(table)
 
 
@@ -177,7 +185,7 @@ def _print_run_totals(state_file: Path) -> None:
         for result in state.results:
             counts[result.status] = counts.get(result.status, 0) + 1
         parts = ", ".join(f"{n} {status}" for status, n in sorted(counts.items()))
-        console.print(f"Totals: {parts} ({len(state.results)} total)")
+        console.print(f"Totals: {parts} ({len(state.results)} total)", markup=False)
     except Exception:  # noqa: BLE001  # M2: best-effort line must never mask the run exit
         return
 
@@ -902,6 +910,7 @@ def test_command(
         # S12: same dead-setting warnings as a real run (parity, not silence).
         for ignored in find_ignored_settings(env=os.environ, toml=read_toml_settings()):
             console.print(f"[yellow]Warning:[/yellow] {ignored}")
+        _warn_ignored_sessions(sessions, isolation)
         _print_show_config(
             {
                 "module": str(module),
@@ -1389,18 +1398,44 @@ def test_command(
         # (CLI flag or env); other probe outcomes proceed to the run.
         effective_pin = pin or os.environ.get("P11TEST_PIN")
         if effective_pin:
+            # Attempt 1 of the preflight unit: the same counters dir/run as
+            # the manifest preflight (attempt 0), same evidence file, so the
+            # probe's 8 calls join the session instead of vanishing.
+            probe_counters = PreflightCounters(
+                counters_dir=counters_root,
+                run_id=os.environ[RUN_ID_ENV],
+                unit=PREFLIGHT_UNIT,
+                attempt=1,
+                evidence_path=preflight_evidence_path,
+            )
             login_probe = run_login_probe_subprocess(
                 module,
                 interface=interface,
                 slot=slot,
                 pin=effective_pin.encode("utf-8", "surrogateescape"),
                 timeout=max(10, min(timeout, 60)),
+                counters=probe_counters,
             )
             if login_probe.status == "pin_incorrect":
                 console.print(
                     f"[red]✗[/red] PIN incorrect for slot {slot} — run `pkcs11-check doctor`"
                 )
-                raise typer.Exit(code=2)
+                raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2)
+            if login_probe.status in {"crashed", "timeout"}:
+                # A provider that dies or hangs on a single login cannot
+                # produce a meaningful suite result; refusing to run beats a
+                # green public-only finish that hides the crash. Omit --pin
+                # to run login-independent tests without this gate.
+                console.print(
+                    f"[red]✗[/red] login probe {login_probe.status} for slot {slot}"
+                    f" ({login_probe.detail}) — refusing to run the suite"
+                )
+                raise typer.Exit(code=_resume_exit_code(state_file, 1) if resume else 1)
+            if login_probe.status == "error":
+                console.print(
+                    "[yellow]Warning:[/yellow] login probe inconclusive "
+                    f"({login_probe.detail}) — proceeding anyway"
+                )
 
         assert manifest_path is not None
         run_provenance = _build_run_provenance(manifest, resolve_data_dir())
@@ -1497,12 +1532,16 @@ def test_command(
 
             try:
                 collected_items = None
+                collection_skips: list[CollectedSkip] | None = None
                 auto_collected: list[CollectedPytestItem] | None = None
                 if isolation == "auto":
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
                         units = prior_state.units
-                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        collected_items, prior_skips = collect_pytest_items_with_skips(
+                            target_args, pytest_args
+                        )
+                        collection_skips = prior_skips
                         auto_collected = collected_items
                         collection_phase = False
                         validate_subprocess_per_test_expansion(
@@ -1515,19 +1554,25 @@ def test_command(
                         # discovery so we don't run a second identical
                         # --collect-only pass below for the disabled plan.
                         auto_collected = []
+                        auto_skips: list[CollectedSkip] = []
                         units = discover_auto_isolation_units(
                             target_args,
                             Path(_TESTCASES_DIR),
                             pytest_args=pytest_args,
                             policy_file=policy_file,
                             collected_out=auto_collected,
+                            skips_out=auto_skips,
                         )
                         collected_items = auto_collected
+                        collection_skips = auto_skips
                     runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
                 else:
                     isolated_mode = cast(Literal["file", "test"], isolation)
                     explicit_collected: list[CollectedPytestItem] | None = (
                         [] if isolated_mode == "test" and disabled_nodeids else None
+                    )
+                    explicit_skips: list[CollectedSkip] | None = (
+                        [] if explicit_collected is not None else None
                     )
                     if explicit_collected is None:
                         units = discover_pytest_units(
@@ -1537,25 +1582,33 @@ def test_command(
                             pytest_args=pytest_args,
                         )
                     else:
+                        assert explicit_skips is not None
                         units = discover_pytest_units(
                             target_args,
                             Path(_TESTCASES_DIR),
                             granularity=isolated_mode,
                             pytest_args=pytest_args,
                             collected_out=explicit_collected,
+                            skips_out=explicit_skips,
                         )
                     if explicit_collected is not None:
                         collected_items = explicit_collected
+                        collection_skips = explicit_skips
                     runner_granularity = isolated_mode
                 if disabled_nodeids:
                     if isolation == "auto":
-                        collected_items = (
-                            auto_collected
-                            if auto_collected is not None
-                            else collect_pytest_item_metadata(target_args, pytest_args)
-                        )
+                        if auto_collected is not None:
+                            collected_items = auto_collected
+                        else:
+                            collected_items, plan_skips = collect_pytest_items_with_skips(
+                                target_args, pytest_args
+                            )
+                            collection_skips = plan_skips
                     elif runner_granularity == "file":
-                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        collected_items, plan_skips = collect_pytest_items_with_skips(
+                            target_args, pytest_args
+                        )
+                        collection_skips = plan_skips
                     collection_phase = False
                     selection_plan = build_disabled_selection_plan(
                         units=units,
@@ -1622,9 +1675,20 @@ def test_command(
                     elif collected_items is not None:
                         selected_count = len(collected_items)
                     else:
-                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        collected_items, gate_skips = collect_pytest_items_with_skips(
+                            target_args, pytest_args
+                        )
+                        collection_skips = gate_skips
                         selected_count = len(collected_items)
-                if selected_count == 0 or (not selection_plan.units and has_selection):
+                if (
+                    selected_count == 0
+                    or (not selection_plan.units and has_selection)
+                    or (
+                        bool(selected_count)
+                        and bool(selection_plan.units)
+                        and all_matched_items_disabled(collected_items, disabled_nodeids)
+                    )
+                ):
                     if selected_count and not selection_plan.units:
                         # M3: tests matched but every unit was excluded
                         # (e.g. the disabled baseline) -- say so exactly.
@@ -1633,10 +1697,30 @@ def test_command(
                             f"{selected_count} tests matched but all units were "
                             "excluded (nothing to run)"
                         )
+                    elif selected_count and selection_plan.units:
+                        # M3b: tests matched but the baseline excluded every
+                        # matched node while a zero-match target file stayed
+                        # scheduled -- running on would be vacuous.
+                        console.print(
+                            "[red]Error:[/red] "
+                            f"{selected_count} tests matched but every matched test "
+                            "was excluded (nothing to run)"
+                        )
                     else:
                         console.print(
                             "[red]Error:[/red] 0 tests matched the selection (nothing to run)"
                         )
+                        if collection_skips:
+                            for skip in collection_skips[:10]:
+                                console.print(
+                                    f"  {escape(skip.nodeid)}: skipped at collection: "
+                                    f"{escape(skip.reason)}"
+                                )
+                            if len(collection_skips) > 10:
+                                console.print(
+                                    f"  ...and {len(collection_skips) - 10} more "
+                                    "skipped at collection"
+                                )
                     empty_exit_code = _resume_exit_code(state_file, 2) if resume else 2
                     raise typer.Exit(code=empty_exit_code)
                 collection_phase = False
