@@ -375,6 +375,7 @@ def _preflight_partial_record(
         "attempt": attempt,
         "role": "preflight",
         "isolation": "none",
+        "probe_snapshots": [],
     }
     if pid is not None:
         record["pid"] = pid
@@ -434,7 +435,7 @@ def collect_preflight_counters(
     Non-consuming: returns ``(records, commit)`` where collection itself
     is read-only. The caller appends and closes the retained JSONL
     evidence FIRST and calls the (best-effort, never-raising) commit
-    only on success; on failure the source files stay for a later pass.
+    only on success; on failure the source files stay for a retry.
     A repeated collection returns the same records -- the extractor
     folds uuid-bearing sessions first-wins, so a torn-append retry
     counts exactly once. Only after commit does a second collection
@@ -786,7 +787,7 @@ def run_preflight_subprocess(
                 UserWarning,
                 stacklevel=2,
             )
-            # The source files stay for a later pass: only a retained
+            # The source files stay for a retry: only a retained
             # (appended and closed) scope may consume its evidence.
             return
         commit()
