@@ -1891,8 +1891,8 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 2479, characterization.total),
-        ("candidate_total", 1951, characterization.candidate_total),
+        ("total", 2481, characterization.total),
+        ("candidate_total", 1953, characterization.candidate_total),
         ("file_total", 261, characterization.file_total),
         (
             "statuses",
@@ -1900,19 +1900,19 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 789),
                 ("explicit_mechanism_readback", 61),
                 ("non_readback", 528),
-                ("safe_mechanism_free_readback", 303),
+                ("safe_mechanism_free_readback", 305),
                 ("unresolved", 798),
             ),
             characterization.statuses,
         ),
         (
             "digest",
-            "047cdf5129718fe3fafb4171cb9b3106502ff365f33f0d464130ee1316b918cf",
+            "2252f9f3d2e75e24d80871294d2d22da94e14a8a245abeadac81e8c84371e517",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "834d6b54131d4dd18cd4b6f719b1403d3cbb550be3acd24872549360636b54a4",
+            "54fea761624e0dc65a9b7433cf536c125b6d99c9be4848111970173ac51e6250",
             characterization.candidate_digest,
         ),
         (
@@ -1921,7 +1921,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 2146),
                 ("explicit_mechanism_readback", 357),
                 ("non_readback", 1721),
-                ("safe_mechanism_free_readback", 3309),
+                ("safe_mechanism_free_readback", 3320),
                 ("unresolved", 2975),
                 ("unsafe_inherited_readback", 22),
             ),
@@ -1938,7 +1938,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("assert_correct", 288),
                 ("classify", 599),
                 ("fail_as", 492),
-                ("record_as", 492),
+                ("record_as", 494),
                 ("xfail_as", 398),
             ),
             characterization.direct_emitter_census,

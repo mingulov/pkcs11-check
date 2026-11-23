@@ -439,6 +439,80 @@ def test_verify_retry_releases_first_buffer_before_realloc(
     assert max_live == 1
 
 
+def test_verify_retry_zero_length_after_success_stays_marked() -> None:
+    """R14-3: a zero-length retry contradicts the baseline length."""
+    data_calls = 0
+
+    def _get(_session: int, _handle: int, attrs: Any, count: int) -> int:
+        nonlocal data_calls
+        assert count == 1
+        if attrs[0].pValue is None:
+            attrs[0].ulValueLen = 0 if data_calls else 3
+        else:
+            data_calls += 1
+            if data_calls == 1:
+                ctypes.memmove(attrs[0].pValue, b"\x66", 1)
+                attrs[0].ulValueLen = 3
+            else:
+                attrs[0].ulValueLen = 0
+        return int(CKR_OK)
+
+    result = read_attributes(_raw(_get), 1, 1, [CKA_VALUE], verify_delivery=True)
+    assert data_calls == 2
+    assert result[CKA_VALUE] == b""
+    assert result.unproved_delivery == {int(CKA_VALUE)}
+
+
+def test_attr_or_record_leak_beats_unproved_mark() -> None:
+    """R14-2: refusal-with-write stays a hard finding under a retry mark."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.refusals[CKA_VALUE] = AttrRefusal(
+        ckr=int(CKR_ATTRIBUTE_SENSITIVE), leaked_len=1, reported_len=1
+    )
+    attrs.unproved_delivery.add(CKA_VALUE)
+    value = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label="leak under mark",
+        reason="honest_deviation",
+        strict_delivery=True,
+    )
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.actual_ckr == "CKR_ATTRIBUTE_SENSITIVE"
+    assert record.detail is not None
+    assert record.detail["leaked_len"] == 1
+    assert record.detail.get("unproved_delivery") is True
+
+
+def test_attr_or_record_malformed_beats_unproved_mark() -> None:
+    """R14-2b: a malformed retry refusal keeps its CKR under a retry mark."""
+    from pkcs11_check.raw.recipes import AttrReadResult
+
+    attrs = AttrReadResult()
+    attrs.refusals[CKA_VALUE] = AttrRefusal(
+        ckr=int(CKR_ATTRIBUTE_TYPE_INVALID), malformed=True, reported_len=1
+    )
+    attrs.unproved_delivery.add(CKA_VALUE)
+    value = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label="malformed under mark",
+        reason="honest_deviation",
+        strict_delivery=True,
+    )
+    assert value is MISSING_ATTRIBUTE
+    record = get_records()[-1]
+    assert record.reason == "honest_deviation"
+    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert record.detail is not None
+    assert record.detail.get("malformed_refusal") is True
+    assert record.detail.get("unproved_delivery") is True
+
+
 def test_attr_or_record_strict_marks_unproved_delivery_visible() -> None:
     """R12-2: strict callers deviate on unproved delivery, even if optional."""
     from pkcs11_check.raw.recipes import AttrReadResult

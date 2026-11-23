@@ -690,6 +690,29 @@ def _qc7_read_single(
         return "error", None, [record]
     clean_rv = refusal_rv_for(attrs, attr)
     if clean_rv is not None:
+        if delivery_unproved(attrs, attr):
+            # R14-1: the retry contradicted a successful first read, so
+            # this refusal proves nothing -- no absence or sensitivity
+            # credit. The observed RV rides on the deviation (never
+            # invented: it came from the retry's own calls).
+            record = C.record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                actual=clean_rv,
+                detail=_qc7_detail(
+                    attr,
+                    producer_operation=producer_operation,
+                    unproved_delivery=True,
+                ),
+                summary=(
+                    f"{label}: attribute delivery unproved (retry refused "
+                    f"with {ckr_name(clean_rv)} after a successful first read)"
+                ),
+            )
+            return "error", None, [record]
         if int(clean_rv) == int(CKR_ATTRIBUTE_TYPE_INVALID):
             return "absent", None, []
         if int(clean_rv) == int(CKR_ATTRIBUTE_SENSITIVE):

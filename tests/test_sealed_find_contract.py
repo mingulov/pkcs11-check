@@ -602,6 +602,44 @@ def test_node_malformed_refusal_terminates_without_search() -> None:
     assert record.operation == "C_GetAttributeValue", record.operation
 
 
+def test_node_retry_refusal_after_partial_terminates_without_search() -> None:
+    """R14-1: a marked seal refusal proves nothing; the search never runs."""
+
+    class _FlakySealedFake(_SealedNodeFake):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seal_reads = 0
+
+        def C_GetAttributeValue(  # noqa: N802
+            self, _sh: int, handle: int, tmpl: Any, count: int
+        ) -> int:
+            if (
+                int(count) == 1
+                and int(tmpl[0].type) == int(CKA_VALUE)
+                and self.sealed.get(int(handle), False)
+            ):
+                self.seal_reads += 1
+                if self.seal_reads <= 2:
+                    tmpl[0].ulValueLen = 3
+                    if tmpl[0].pValue:
+                        ctypes.memmove(tmpl[0].pValue, b"\x66", 1)
+                    return int(CKR_OK)
+                tmpl[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
+                return int(CKR_ATTRIBUTE_SENSITIVE)
+            return super().C_GetAttributeValue(_sh, handle, tmpl, count)
+
+    fake = _FlakySealedFake()
+    with pytest.raises(XFailed, match="unproved"):
+        _run_aes(fake)
+    assert fake._active is None
+    (record,) = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
+    assert record.reason == "not_operational", record.summary
+    assert record.operation == "C_GetAttributeValue", record.operation
+    assert record.actual_ckr == "CKR_ATTRIBUTE_SENSITIVE", record.actual_ckr
+    assert record.detail is not None
+    assert record.detail.get("unproved_delivery") is True
+
+
 def test_node_typeless_component_skips_moot() -> None:
     """R4-F4: no value present means the seal question is moot (void)."""
     fake = _SealedNodeFake()

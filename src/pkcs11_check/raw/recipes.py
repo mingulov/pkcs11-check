@@ -1507,7 +1507,9 @@ def read_attributes(
                 # so strict callers stay loud instead of skipping.
                 result.unproved_delivery.add(at)
             continue
-        if _observed_refusal_ckr is None and count == 1 and size > 0:
+        # R14-3: a retry runs the stability check at every length --
+        # including zero, which always contradicts a positive baseline.
+        if _observed_refusal_ckr is None and count == 1 and (size > 0 or _baseline is not None):
             changed = _changed_byte_count(buf, size, alternate=_alternate_fill)
             if changed < size and verify_delivery and not _alternate_fill:
                 # R12-3/R13-2: unproven success on a verified read -- a
