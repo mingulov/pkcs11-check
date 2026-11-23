@@ -78,6 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
 )
+from pkcs11_check.testcases._attribute_values import refusal_for
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
 
@@ -163,12 +164,27 @@ def _finish_flag_probe(
         if control_key == key:
             print(f"BREAK:control twin aliases the disabled key (handle {key})")
             return
-        twin_claim = _classify_readback(
-            read_attributes(ctx.raw, sh, control_key, [false_attr]), false_attr
-        )
+        twin_vals = read_attributes(ctx.raw, sh, control_key, [false_attr])
+        twin_refusal = refusal_for(twin_vals, false_attr)
         attr_name = ATTR_NAMES.get(int(false_attr), str(false_attr))
+        if twin_refusal is not None and twin_refusal.leaked_len is not None:
+            print(
+                f"BREAK:control twin answered {ckr_name(twin_refusal.ckr)} "
+                f"for {attr_name} but wrote {twin_refusal.leaked_len} bytes"
+            )
+            return
+        twin_claim = _classify_readback(twin_vals, false_attr)
         if twin_claim.get("event") == "omitted":
-            print(f"DEVIATION_XFAIL:control twin omits {attr_name}; enforcement oracle disabled")
+            if twin_refusal is not None:
+                print(
+                    f"DEVIATION_XFAIL:control twin omits {attr_name} "
+                    f"(refused with {ckr_name(twin_refusal.ckr)}); "
+                    "enforcement oracle disabled"
+                )
+            else:
+                print(
+                    f"DEVIATION_XFAIL:control twin omits {attr_name}; enforcement oracle disabled"
+                )
             return
         if twin_claim.get("event") != "boolean" or twin_claim.get("value") is not True:
             print(

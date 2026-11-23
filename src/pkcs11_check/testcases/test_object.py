@@ -721,11 +721,11 @@ def _qc7_read_single(
         inherit_mechanism=False,
     )
     added = C.get_records()[before:]
+    for record in added:
+        if record.detail is None:
+            record.detail = {}
+        record.detail.setdefault("producer_operation", producer_operation)
     if any(record.reason == "self_contradiction" for record in added):
-        for record in added:
-            if record.detail is None:
-                record.detail = {}
-            record.detail.setdefault("producer_operation", producer_operation)
         return "error", None, added
     if added:
         # R6-2: the sentinel deviation is evidence the caller must judge

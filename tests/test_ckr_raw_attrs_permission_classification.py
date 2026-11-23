@@ -34,6 +34,8 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_MECHANISM_INVALID,
@@ -712,6 +714,70 @@ def test_sign_probe_control_twin_malformed_breaks(
 
     out = capsys.readouterr().out
     assert "BREAK:" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_sign_probe_control_twin_refusal_with_data_breaks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R7-1: twin refusal-with-data is a hard break (RV + length kept)."""
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    def _leak_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+        if int(handle) == 4242:
+            return {CKA_SIGN: False}
+        result = AttrReadResult()
+        result.refusals[int(CKA_SIGN)] = AttrRefusal(
+            ckr=int(CKR_ATTRIBUTE_TYPE_INVALID), leaked_len=1
+        )
+        return result
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _leak_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "BREAK:" in out
+    assert "CKR_ATTRIBUTE_TYPE_INVALID" in out
+    assert "1 bytes" in out
+    assert "CKR:" not in out
+    assert "OK" not in out.splitlines()
+    assert len(raw.sign_calls) == 1
+
+
+def test_sign_probe_control_twin_clean_refusal_names_rv(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R7-1: a clean twin refusal deviates, naming the observed RV."""
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    def _refuse_twin(_raw: Any, _sh: int, handle: int, _attrs: Any) -> dict[int, Any]:
+        if int(handle) == 4242:
+            return {CKA_SIGN: False}
+        result = AttrReadResult()
+        result.refusals[int(CKA_SIGN)] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_SENSITIVE))
+        return result
+
+    monkeypatch.setattr(raw_probe, "read_attributes", _refuse_twin)
+    raw = _SignCaptureRaw(
+        sign_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+        sign_rvs=[int(CKR_KEY_FUNCTION_NOT_PERMITTED), int(CKR_OK)],
+    )
+    ctx = cast(ProbeContext, SimpleNamespace(raw=raw, sh=1))
+
+    raw_probe._sign(ctx)
+
+    out = capsys.readouterr().out
+    assert "DEVIATION_XFAIL:" in out
+    assert "CKR_ATTRIBUTE_SENSITIVE" in out
+    assert "BREAK:" not in out
     assert "CKR:" not in out
     assert "OK" not in out.splitlines()
     assert len(raw.sign_calls) == 1
