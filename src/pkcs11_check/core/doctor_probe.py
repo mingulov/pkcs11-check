@@ -119,6 +119,28 @@ def _scrub_pin(data: bytes, pin: bytes) -> bytes:
     return data
 
 
+def _scrub_pin_text(detail: str, pin: bytes) -> str:
+    """Redact the PIN from a decoded JSON detail (R25-1).
+
+    Stdout parses intact (bytes-scrubbing it would rewrite JSON
+    structure, including the verdict status itself); the decoded
+    diagnostic detail is scrubbed over every spelling the PIN bytes can
+    take as text (plain, errors=replace, surrogateescape), since
+    JSON-escaped bytes reappear decoded. Defense in depth: today's
+    child details are our own static strings.
+    """
+    if not pin or pin.isspace():
+        return detail
+    for errors in ("strict", "replace", "surrogateescape"):
+        try:
+            spelling = pin.decode("utf-8", errors=errors)
+        except UnicodeDecodeError:
+            continue
+        if spelling and spelling in detail:
+            detail = detail.replace(spelling, "[redacted]")
+    return detail
+
+
 def run_login_probe_subprocess(
     module: Path,
     *,
@@ -174,10 +196,12 @@ def run_login_probe_subprocess(
         process.kill()
         process.wait()
         raise
-    # Binary pipes: scrub the PIN from raw bytes first (decoding would
-    # mangle exotic PINs past exact-match), then decode lossily so
-    # provider bytes never lose the verdict (F18).
-    out = _scrub_pin(raw_out, pin).decode("utf-8", errors="replace")
+    # Binary pipes: stderr is scrubbed as raw bytes first (decoding
+    # would mangle exotic PINs past exact-match); stdout parses intact
+    # (scrubbing it would rewrite JSON structure, including the verdict
+    # status) and only its diagnostic detail is scrubbed after parsing.
+    # Both decode lossily so provider bytes never lose the verdict (F18).
+    out = raw_out.decode("utf-8", errors="replace")
     err = _scrub_pin(raw_err, pin).decode("utf-8", errors="replace")
 
     def _retain(status: str, reason: str | None) -> None:
@@ -230,7 +254,11 @@ def run_login_probe_subprocess(
             continue
         if isinstance(payload, dict) and "status" in payload:
             _retain("ok", None)
-            return LoginProbe(str(payload["status"]), str(payload.get("detail", "")), returncode)
+            return LoginProbe(
+                str(payload["status"]),
+                _scrub_pin_text(str(payload.get("detail", "")), pin),
+                returncode,
+            )
     detail = err.strip()[-200:] or "no probe result"
     _retain("error", detail)
     return LoginProbe("error", detail, returncode)

@@ -580,8 +580,11 @@ class _CollectionPlugin:
         pairing/longrepr below.
         """
         report = yield
-        if report.outcome == "skipped":
-            report._p11c_nodeid = str(collector.path)  # type: ignore[attr-defined]
+        # Stamp unconditionally: a later wrapper (conftest/-p plugin) may
+        # flip the outcome after we see it, and outcome-gated stamping
+        # would then leave a skipped report unmarked (R25-2). Stamps on
+        # non-skipped reports are simply never read.
+        report._p11c_nodeid = str(collector.path)  # type: ignore[attr-defined]
         return report
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:

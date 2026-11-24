@@ -613,8 +613,9 @@ def _drive_make_wrapper(plugin: col._CollectionPlugin, collector: object, report
     raise AssertionError("wrapper hook must return via StopIteration")
 
 
-def test_make_wrapper_marks_skipped_collector_only(tmp_path: Path) -> None:
-    """R24-1: the wrapper stamps skipped reports, leaves passed alone."""
+def test_make_wrapper_marks_every_collector(tmp_path: Path) -> None:
+    """R25-2: the wrapper stamps regardless of outcome, so a later wrapper
+    flipping passed->skipped cannot leave a skip unmarked."""
     from types import SimpleNamespace
 
     target = tmp_path / "test_skipped_mod.py"
@@ -625,7 +626,7 @@ def test_make_wrapper_marks_skipped_collector_only(tmp_path: Path) -> None:
     assert skipped._p11c_nodeid == str(target)
     passed = SimpleNamespace(outcome="passed", nodeid="")
     assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), passed) is passed
-    assert not hasattr(passed, "_p11c_nodeid")
+    assert passed._p11c_nodeid == str(target)
 
 
 def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
