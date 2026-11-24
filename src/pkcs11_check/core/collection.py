@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypeGuard
@@ -518,25 +518,35 @@ def _ignore_hookcall(hook_name: str, hook_impls: Any, kwargs: Any) -> None:
     """No-op before-tracer (monitoring requires both callbacks)."""
 
 
-def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwargs: Any) -> None:
-    """Stamp a made collect report with its collector's path (R24-1).
+def _stamp_report(collector: object, report: object) -> None:
+    """Stamp a report with (collector path, is-session) (R24-1/R30-1).
 
-    Registered via pluggy hook-call monitoring, so it observes the FINAL
-    result -- whatever wrappers ran, in whatever order or priority,
-    including replacements. Only make_collect_report calls are stamped;
-    the stamp rides the report object into pytest_collectreport, pairing
-    exactly what no hook-order reasoning can misattribute. Unstamped
-    reports (paths that never route through make, e.g. default-rootdir
-    files) fall through to pairing/longrepr.
+    The kind travels with the path: session skips resolve to a conftest
+    longrepr when one names the raising hook, and to the session path
+    otherwise; file/dir stamps resolve to their own path.
+    """
+    collector_path = getattr(collector, "path", None)
+    if collector_path is None:
+        return
+    mark = (str(collector_path), isinstance(collector, pytest.Session))
+    report._p11c_nodeid = mark  # type: ignore[attr-defined]
+
+
+def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwargs: Any) -> None:
+    """Stamp a made collect report via hook-call monitoring (R24-1/R27-1).
+
+    Monitoring observes the FINAL result -- whatever wrappers ran, in
+    whatever order or priority, including replacements. Only
+    make_collect_report calls are stamped; the stamp rides the report
+    object into pytest_collectreport. Complements the wrapper below,
+    which survives tracing teardown that removes monitoring.
     """
     if hook_name != "pytest_make_collect_report":
         return
     report = result.get_result()
     if report is None:
         return
-    collector_path = getattr(kwargs.get("collector"), "path", None)
-    if collector_path is not None:
-        report._p11c_nodeid = str(collector_path)
+    _stamp_report(kwargs.get("collector"), report)
 
 
 def _is_path_tuple(longrepr: object) -> TypeGuard[tuple[str, Any, Any]]:
@@ -547,6 +557,11 @@ def _is_path_tuple(longrepr: object) -> TypeGuard[tuple[str, Any, Any]]:
         and isinstance(longrepr[0], str)
         and bool(longrepr[0])
     )
+
+
+def _names_conftest(longrepr: object) -> TypeGuard[tuple[str, Any, Any]]:
+    """Whether a skip longrepr names a conftest (hook-raised session skip)."""
+    return _is_path_tuple(longrepr) and Path(longrepr[0]).name == "conftest.py"
 
 
 def _skip_path_from_longrepr(longrepr: object) -> str:
@@ -580,7 +595,7 @@ class _CollectionPlugin:
         self._skip_keys: set[tuple[str, str]] = set()
         self._file_starts: list[str] = []
         self._deselected_files: set[str] = set()
-        self._pending: list[tuple[str, int, object]] = []
+        self._pending: list[tuple[tuple[str, bool] | None, int, object]] = []
 
     def pytest_collectstart(self, collector: pytest.Collector) -> None:
         try:
@@ -597,10 +612,21 @@ class _CollectionPlugin:
                 self._deselected_files.add(os.path.normcase(str(item_path)))
 
     def pytest_configure(self, config: pytest.Config) -> None:
-        # Hook-call monitoring (not a wrapper): it observes the FINAL
-        # result of every make_collect_report call, so no wrapper
-        # ordering or priority tie can discard the stamp (R27-1).
+        # Hook-call monitoring observes the FINAL result of every
+        # make_collect_report call, so no wrapper ordering or priority
+        # tie can discard the stamp (R27-1). The tryfirst wrapper below
+        # stamps the same way and survives tracing teardown that removes
+        # monitoring (R30-1); either layer suffices alone.
         config.pluginmanager.add_hookcall_monitoring(_ignore_hookcall, _stamp_make_collect_report)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_make_collect_report(
+        self, collector: pytest.Collector
+    ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+        """Stamp made reports (survives monitoring removal) (R30-1)."""
+        report = yield
+        _stamp_report(collector, report)
+        return report
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.outcome != "skipped":
@@ -611,7 +637,9 @@ class _CollectionPlugin:
         else:
             # Empty nodeids (cross-rootpath targets) resolve at finish,
             # when the final item set disambiguates them (R23-1).
-            marked = str(getattr(report, "_p11c_nodeid", "") or "")
+            marked = getattr(report, "_p11c_nodeid", None)
+            if not (isinstance(marked, tuple) and len(marked) == 2):
+                marked = None
             self._pending.append((marked, len(self._file_starts), report.longrepr))
 
     def _record_skip(self, nodeid: str, longrepr: object) -> None:
@@ -643,8 +671,12 @@ class _CollectionPlugin:
         completed |= self._deselected_files
         consumed: set[int] = set()
         for marked, seen_count, longrepr in self._pending:
-            if marked:
-                self._record_skip(marked, longrepr)
+            if marked is not None:
+                mark_path, mark_is_session = marked
+                if mark_is_session and _names_conftest(longrepr):
+                    self._record_skip(str(Path(longrepr[0])), longrepr)
+                else:
+                    self._record_skip(mark_path, longrepr)
                 continue
             paired = ""
             # Pair only module-shaped skips (tuple longrepr naming the
@@ -659,7 +691,7 @@ class _CollectionPlugin:
             # Completed files are excluded from pairing AND fallback alike:
             # a file that yielded items cannot have skipped.
             if _is_path_tuple(longrepr):
-                if Path(longrepr[0]).name != "conftest.py":
+                if not _names_conftest(longrepr):
                     for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
                         if index in consumed:
                             continue

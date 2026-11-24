@@ -674,7 +674,7 @@ def test_make_monitoring_marks_final_report(tmp_path: Path) -> None:
         )
         is None
     )
-    assert report._p11c_nodeid == str(target)
+    assert report._p11c_nodeid == (str(target), False)
     other: object = SimpleNamespace(outcome="skipped", nodeid="")
     col._stamp_make_collect_report(
         _fake_result(other),
@@ -691,6 +691,37 @@ def test_make_monitoring_marks_final_report(tmp_path: Path) -> None:
     )
 
 
+def _drive_make_wrapper(plugin: col._CollectionPlugin, collector: object, report: object) -> object:
+    """Drive the make_collect_report wrapper hook manually (pluggy protocol)."""
+    gen = plugin.pytest_make_collect_report(collector)  # type: ignore[arg-type]
+    next(gen)
+    try:
+        gen.send(report)
+    except StopIteration as stop:
+        return stop.value
+    raise AssertionError("wrapper hook must return via StopIteration")
+
+
+def test_make_wrapper_marks_with_kind(tmp_path: Path) -> None:
+    """R30-1: the restored wrapper stamps (path, is-session) tuples."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import pytest as _pytest
+
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text("def test_never(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    skipped: object = SimpleNamespace(outcome="skipped", nodeid="")
+    assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), skipped) is skipped
+    assert skipped._p11c_nodeid == (str(target), False)
+    session = MagicMock(spec=_pytest.Session)
+    session.path = tmp_path
+    session_report: object = SimpleNamespace(outcome="skipped", nodeid="")
+    _drive_make_wrapper(plugin, session, session_report)
+    assert session_report._p11c_nodeid == (str(tmp_path), True)
+
+
 def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
     """R24-1: a stamped session skip resolves to the stamp, never the module."""
     from types import SimpleNamespace
@@ -702,10 +733,33 @@ def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
     plugin = col._CollectionPlugin()
     plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
     session_report = SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
-    session_report._p11c_nodeid = str(root)
+    session_report._p11c_nodeid = (str(root), True)
     plugin.pytest_collectreport(session_report)
     _finish(plugin, [])
     assert plugin.skips == [col.CollectedSkip(nodeid=str(root), reason="no dice")]
+
+
+def test_collection_skip_session_mark_prefers_conftest_longrepr(
+    tmp_path: Path,
+) -> None:
+    """R29-1 preserved: a session mark with a conftest tuple resolves to
+    the raising conftest, not the session root."""
+    from types import SimpleNamespace
+
+    root = tmp_path / "root"
+    root.mkdir()
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("# hook\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    report = SimpleNamespace(
+        outcome="skipped",
+        nodeid="",
+        longrepr=(str(conftest), 7, "Skipped: hook says no"),
+    )
+    report._p11c_nodeid = (str(root), True)
+    plugin.pytest_collectreport(report)
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(conftest), reason="hook says no")]
 
 
 def test_collect_items_shared_helper_skips_stay_distinct(tmp_path: Path) -> None:
@@ -735,6 +789,54 @@ def test_collect_items_shared_helper_skips_stay_distinct(tmp_path: Path) -> None
     }
     items, skips = collect_pytest_items_with_skips(
         [str(first), str(second)], ["--rootdir", str(root)], env=env
+    )
+    assert items == []
+    assert skips == [
+        CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
+        CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
+    ]
+
+
+def test_collect_items_generate_tests_skips_stay_per_module(tmp_path: Path) -> None:
+    """R30-1 end to end: a conftest hook skipping two modules keeps both
+    module records (no collapse onto the conftest), even when a -p plugin
+    toggles tracing and thereby removes hook-call monitoring."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n"
+        "\n"
+        "def pytest_generate_tests(metafunc):\n"
+        '    pytest.skip("vectors unavailable", allow_module_level=True)\n',
+        encoding="utf-8",
+    )
+    first = tmp_path / "test_one.py"
+    second = tmp_path / "test_two.py"
+    for target in (first, second):
+        target.write_text("def test_never(): pass\n", encoding="utf-8")
+    (tmp_path / "tracing_toggle.py").write_text(
+        "import pytest\n"
+        "\n"
+        "_undos = []\n"
+        "\n"
+        "@pytest.hookimpl(tryfirst=True)\n"
+        "def pytest_configure(config):\n"
+        "    _undos.append(config.pluginmanager.enable_tracing())\n"
+        "\n"
+        "def pytest_sessionstart(session):\n"
+        "    while _undos:\n"
+        "        _undos.pop()()\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [str(first), str(second)],
+        ["--rootdir", str(root), "--confcutdir", str(tmp_path), "-p", "tracing_toggle"],
+        env=env,
     )
     assert items == []
     assert skips == [
