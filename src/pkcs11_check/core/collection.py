@@ -539,6 +539,16 @@ def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwa
         report._p11c_nodeid = str(collector_path)
 
 
+def _is_path_tuple(longrepr: object) -> bool:
+    """Whether a skip longrepr names a raising file (module-shaped)."""
+    return (
+        isinstance(longrepr, tuple)
+        and len(longrepr) == 3
+        and isinstance(longrepr[0], str)
+        and bool(longrepr[0])
+    )
+
+
 def _skip_path_from_longrepr(longrepr: object) -> str:
     """Resolve an empty skip nodeid to the raising file, else "".
 
@@ -642,15 +652,25 @@ class _CollectionPlugin:
                 self._record_skip(marked, longrepr)
                 continue
             paired = ""
-            for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
-                if index in consumed:
-                    continue
-                if os.path.normcase(self._file_starts[index]) in completed:
-                    continue
-                paired = self._file_starts[index]
-                consumed.add(index)
-                break
-            self._record_skip(paired or _skip_path_from_longrepr(longrepr), longrepr)
+            # Pair only module-shaped skips (tuple longrepr naming the
+            # raising file): string longreprs are session-ish and must
+            # never absorb a file start, whatever the hook order (R28-1).
+            # Completed files are excluded from pairing AND fallback alike:
+            # a file that yielded items cannot have skipped.
+            if _is_path_tuple(longrepr):
+                for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
+                    if index in consumed:
+                        continue
+                    if os.path.normcase(self._file_starts[index]) in completed:
+                        continue
+                    paired = self._file_starts[index]
+                    consumed.add(index)
+                    break
+                if not paired:
+                    candidate = _skip_path_from_longrepr(longrepr)
+                    if candidate and os.path.normcase(candidate) not in completed:
+                        paired = candidate
+            self._record_skip(paired, longrepr)
         self._pending.clear()
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
