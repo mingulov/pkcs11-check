@@ -103,28 +103,20 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
             pass  # finalize is best-effort during a probe
 
 
-def _scrub_pin(detail: str, pin: bytes) -> str:
-    """Redact the PIN from an untrusted probe detail (child bytes may echo it).
+def _scrub_pin(data: bytes, pin: bytes) -> bytes:
+    """Redact the PIN from raw child pipe bytes (R24-2).
 
-    Applied to the stderr tail and child JSON details at construction, so
-    neither the console, the doctor output, nor the counter evidence can
-    leak it (R20-1). Our own format strings stay unscrubbed (a numeric PIN
-    would otherwise eat the numbers they report). An empty or blank PIN
-    scrubs nothing (no-op, never corrupts or mangles).
+    Runs BEFORE text decoding: decoding first would mangle the evidence
+    (universal newlines rewrite carriage returns, errors=replace swaps
+    invalid bytes for U+FFFD), letting fragments of an exotic PIN leak
+    past an exact match. An empty or blank PIN scrubs nothing (no-op,
+    never corrupts or mangles).
     """
-    secret = pin.decode("utf-8", "surrogateescape")
-    if not secret or secret.isspace():
-        return detail
-    # Normalize like the text-mode pipe already did (universal newlines):
-    # a PIN with an embedded carriage return would otherwise survive as
-    # fragments (R23-3). The detail is normalized too (a no-op for pipe
-    # text, required for raw JSON details); newline flavor in a
-    # diagnostic carries no meaning.
-    normalized_secret = secret.replace("\r\n", "\n").replace("\r", "\n")
-    normalized = detail.replace("\r\n", "\n").replace("\r", "\n")
-    if normalized_secret in normalized:
-        return normalized.replace(normalized_secret, "[redacted]")
-    return detail
+    if not pin or pin.isspace():
+        return data
+    if pin in data:
+        return data.replace(pin, b"[redacted]")
+    return data
 
 
 def run_login_probe_subprocess(
@@ -161,16 +153,12 @@ def run_login_probe_subprocess(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        # F18: provider bytes on the pipe must not lose the login verdict.
-        errors="replace",
         env=env,
     )
     raw_pid = getattr(process, "pid", None)
     child_pid = raw_pid if isinstance(raw_pid, int) else None
     try:
-        out, err = process.communicate(timeout=timeout)
+        raw_out, raw_err = process.communicate(timeout=timeout)
         returncode: int | None = process.returncode
         timed_out = False
     except subprocess.TimeoutExpired:
@@ -178,7 +166,7 @@ def run_login_probe_subprocess(
         # pipes the way a second communicate() could (R18-5 hang class).
         process.kill()
         returncode = process.wait()
-        out, err = "", ""
+        raw_out, raw_err = b"", b""
         timed_out = True
     except KeyboardInterrupt:
         # run() parity: Ctrl-C kills the direct child instead of orphaning
@@ -186,6 +174,11 @@ def run_login_probe_subprocess(
         process.kill()
         process.wait()
         raise
+    # Binary pipes: scrub the PIN from raw bytes first (decoding would
+    # mangle exotic PINs past exact-match), then decode lossily so
+    # provider bytes never lose the verdict (F18).
+    out = _scrub_pin(raw_out, pin).decode("utf-8", errors="replace")
+    err = _scrub_pin(raw_err, pin).decode("utf-8", errors="replace")
 
     def _retain(status: str, reason: str | None) -> None:
         # Mirror of run_preflight_subprocess._retain (kept local so the
@@ -237,15 +230,8 @@ def run_login_probe_subprocess(
             continue
         if isinstance(payload, dict) and "status" in payload:
             _retain("ok", None)
-            return LoginProbe(
-                str(payload["status"]),
-                _scrub_pin(str(payload.get("detail", "")), pin),
-                returncode,
-            )
-    # Scrub the RAW stderr before trimming or truncating: strip()
-    # would eat a space-padded PIN's edge spaces and break exact-match
-    # (R22-1), and slicing first would leak a straddling suffix (R21-1).
-    detail = _scrub_pin(err, pin).strip()[-200:] or "no probe result"
+            return LoginProbe(str(payload["status"]), str(payload.get("detail", "")), returncode)
+    detail = err.strip()[-200:] or "no probe result"
     _retain("error", detail)
     return LoginProbe("error", detail, returncode)
 

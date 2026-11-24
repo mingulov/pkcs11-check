@@ -23,7 +23,7 @@ def test_preflight_windows_crash_is_crashed(tmp_path):
 
 def test_doctor_windows_crash_is_crashed(tmp_path):
     with patch.object(doctor_probe.subprocess, "Popen") as popen:
-        popen.return_value.communicate.return_value = ("", "")
+        popen.return_value.communicate.return_value = (b"", b"")
         popen.return_value.returncode = 0xC0000005
         probe = doctor_probe.run_login_probe_subprocess(
             tmp_path / "m.dll",

@@ -126,8 +126,8 @@ class _FakeProbeChild:
         self,
         *,
         pid: int = 4242,
-        stdout: str = "",
-        stderr: str = "",
+        stdout: bytes = b"",
+        stderr: bytes = b"",
         returncode: int = 0,
         hang: bool = False,
         interrupt: bool = False,
@@ -150,7 +150,7 @@ class _FakeProbeChild:
             self._seen["env"] = kwargs.get("env")
         return self
 
-    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
         if self._interrupt:
             raise KeyboardInterrupt
         if self._hang:
@@ -186,7 +186,7 @@ class TestEngagedProbe:
         seen: dict[str, Any] = {}
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout='{"status": "ok"}\n', seen=seen),
+            _FakeProbeChild(stdout=b'{"status": "ok"}\n', seen=seen),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -216,7 +216,7 @@ class TestEngagedProbe:
         counters = _counters(tmp_path)
         _plant_attempt(counters.counters_dir, attempt=0, uuid=_UUID_CENSUS)
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
-        _patch_child(monkeypatch, _FakeProbeChild(stdout='{"status": "ok"}\n'))
+        _patch_child(monkeypatch, _FakeProbeChild(stdout=b'{"status": "ok"}\n'))
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
             interface="auto",
@@ -277,7 +277,7 @@ class TestEngagedProbe:
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout="not json\n", stderr="boom\nline2\n", returncode=1),
+            _FakeProbeChild(stdout=b"not json\n", stderr=b"boom\nline2\n", returncode=1),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -319,7 +319,7 @@ class TestEngagedProbe:
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout="not json\n", stderr="provider said 1234 loudly\n"),
+            _FakeProbeChild(stdout=b"not json\n", stderr=b"provider said 1234 loudly\n"),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -344,7 +344,7 @@ class TestEngagedProbe:
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout="not json\n", stderr="A" * 8 + "1234" + "B" * 198 + "\n"),
+            _FakeProbeChild(stdout=b"not json\n", stderr=b"A" * 8 + b"1234" + b"B" * 198 + b"\n"),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -369,7 +369,7 @@ class TestEngagedProbe:
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout="not json\n", stderr="  1234  \n"),
+            _FakeProbeChild(stdout=b"not json\n", stderr=b"  1234  \n"),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -385,23 +385,24 @@ class TestEngagedProbe:
         assert "1234" not in blob
 
     def test_scrub_pin_ignores_empty_and_blank_pins(self) -> None:
-        """R22-1: empty/blank PINs scrub nothing (never corrupt the text)."""
+        """R22-1: empty/blank PINs scrub nothing (never corrupt the bytes)."""
         from pkcs11_check.core.doctor_probe import _scrub_pin
 
-        assert _scrub_pin("provider said boom", b"") == "provider said boom"
-        assert _scrub_pin("a b c", b" ") == "a b c"
-        assert _scrub_pin("used 1234 here", b"1234") == "used [redacted] here"
+        assert _scrub_pin(b"provider said boom", b"") == b"provider said boom"
+        assert _scrub_pin(b"a b c", b" ") == b"a b c"
+        assert _scrub_pin(b"used 1234 here", b"1234") == b"used [redacted] here"
+        assert _scrub_pin(b"pin ab\rcd x", b"ab\rcd") == b"pin [redacted] x"
 
-    def test_error_detail_cr_pin_scrubs_after_pipe_normalization(
+    def test_error_detail_cr_pin_scrubs_before_decoding(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """R23-3: a PIN with an embedded CR redacts fully even though the
-        text-mode pipe converted the CR to a newline before the scrubber."""
+        """R24-2: binary pipes preserve the CR so an embedded-CR PIN matches
+        exactly (no newline translation before the scrubber)."""
         counters = _counters(tmp_path)
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout="not json\n", stderr="pin ab\ncd leaked\n"),
+            _FakeProbeChild(stdout=b"not json\n", stderr=b"pin ab\rcd leaked\n"),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -414,7 +415,34 @@ class TestEngagedProbe:
         assert probe.status == "error"
         assert probe.detail == "pin [redacted] leaked"
         blob = counters.evidence_path.read_bytes().decode("utf-8")
-        assert "ab\ncd" not in blob
+        assert "ab\rcd" not in blob
+        assert "ab" not in blob.replace("[redacted]", "X")
+
+    def test_error_detail_invalid_byte_pin_scrubs_before_decoding(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R24-2: a PIN with invalid UTF-8 bytes redacts fully; decoding
+        cannot fragment it past the scrubber."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        pin = b"ab\xffcd"
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout=b"not json\n", stderr=b"pin " + pin + b" leaked\n"),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=pin,
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.status == "error"
+        assert probe.detail == "pin [redacted] leaked"
+        blob = counters.evidence_path.read_bytes().decode("utf-8")
+        assert "ab" not in blob.replace("[redacted]", "X")
+        assert "cd leaked" not in blob
 
     def test_json_detail_scrubs_pin(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """R20-1: child JSON details are scrubbed like stderr tails."""
@@ -422,7 +450,7 @@ class TestEngagedProbe:
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout='{"status": "ok", "detail": "used 1234"}\n'),
+            _FakeProbeChild(stdout=b'{"status": "ok", "detail": "used 1234"}\n'),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -441,7 +469,7 @@ class TestEngagedProbe:
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout='{"status": "pin_incorrect", "detail": "nope"}\n'),
+            _FakeProbeChild(stdout=b'{"status": "pin_incorrect", "detail": "nope"}\n'),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so",
@@ -467,7 +495,7 @@ class TestDisengagedProbe:
         seen: dict[str, Any] = {}
         _patch_child(
             monkeypatch,
-            _FakeProbeChild(stdout='{"status": "ok"}\n', seen=seen),
+            _FakeProbeChild(stdout=b'{"status": "ok"}\n', seen=seen),
         )
         probe = run_login_probe_subprocess(
             tmp_path / "module.so", interface="auto", slot=0, pin=b"1234", timeout=5
@@ -493,7 +521,7 @@ class TestEvidenceFailureIsWarning:
 
         counters = _counters(tmp_path)
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
-        _patch_child(monkeypatch, _FakeProbeChild(stdout='{"status": "ok"}\n'))
+        _patch_child(monkeypatch, _FakeProbeChild(stdout=b'{"status": "ok"}\n'))
 
         def _boom(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("torn registry")
@@ -524,7 +552,7 @@ class TestEvidenceFailureIsWarning:
             evidence_path=blocker / "preflight-counters.jsonl",
         )
         _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
-        _patch_child(monkeypatch, _FakeProbeChild(stdout='{"status": "ok"}\n'))
+        _patch_child(monkeypatch, _FakeProbeChild(stdout=b'{"status": "ok"}\n'))
         with pytest.warns(UserWarning, match="counter evidence not retained"):
             probe = run_login_probe_subprocess(
                 tmp_path / "module.so",
