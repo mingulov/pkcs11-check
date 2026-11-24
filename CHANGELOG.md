@@ -32,7 +32,7 @@ full provider round (see Known limitations).
   boundaries are now counted or explicitly named, never silently missed.
 - Crash recovery for counters: a run that crashes and is fully recovered
   reports exact totals; anything less is reported incomplete rather
-  than quietly wrong, except for the narrow unreadable-evidence cases
+  than quietly wrong, except for the narrow recovery cases
   listed under Known limitations.
 - Attribute reads the provider did not fully deliver are now flagged as
   unproved instead of silently accepted; reads claiming more bytes than
@@ -83,11 +83,14 @@ full provider round (see Known limitations).
   exact totals; in rare multiple-fault situations (for example a crash
   while results are being collected, or during a resumed run) the
   report may say the counts are incomplete instead of recovering them
-  exactly. Exception: counter-evidence files that cannot be read when
-  results are collected (a resumed run whose prior report is present
-  but unreadable, or counter files unreadable through a disk or
-  permission fault) lose their counts from the totals, which can
-  still report complete. Apart from that exception, counts are never
+  exactly. Exception: counts can still be dropped silently when
+  counter-evidence files cannot be used at collection time: a resumed
+  run whose prior report is present but unreadable; counter files
+  unreadable through a disk or permission fault; and counter files
+  discarded during cleanup because their matching files are missing
+  or their run was already treated as collected. In these cases the
+  totals can still report complete. Apart from that exception, counts
+  are never
   silently wrong as "complete", and they never change any test result.
   For exact totals, use a fresh run.
 - Resumed runs: if a resumed run fails its startup checks, it can
