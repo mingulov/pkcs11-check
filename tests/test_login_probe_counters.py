@@ -462,6 +462,62 @@ class TestEngagedProbe:
         )
         assert (probe.status, probe.detail) == ("ok", "used [redacted]")
 
+    def test_pin_shaped_like_status_keeps_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R25-1: scrubbing never rewrites the verdict status itself."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout=b'{"status": "pin_incorrect"}\n'),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"pin_incorrect",
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.status == "pin_incorrect"
+
+    def test_json_detail_escaped_pin_scrubs_after_parse(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R25-1: JSON-escaped PIN bytes (CR, invalid byte) redact once the
+        detail is decoded -- stdout parses intact, then scrubs."""
+        counters = _counters(tmp_path)
+        _plant_attempt(counters.counters_dir, attempt=1, uuid=_UUID_PROBE)
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(stdout=b'{"status": "ok", "detail": "used ab\\rcd and ab\\ufffdcd"}\n'),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"ab\rcd",
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.detail == "used [redacted] and ab\ufffdcd"
+        _patch_child(
+            monkeypatch,
+            _FakeProbeChild(
+                stdout=b'{"status": "ok", "detail": "saw ab\\ufffdcd and ab\\udcffcd"}\n'
+            ),
+        )
+        probe = run_login_probe_subprocess(
+            tmp_path / "module.so",
+            interface="auto",
+            slot=0,
+            pin=b"ab\xffcd",
+            timeout=5,
+            counters=counters,
+        )
+        assert probe.detail == "saw [redacted] and [redacted]"
+
     def test_login_status_passes_through_while_counts_fold(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
