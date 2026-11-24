@@ -13,7 +13,7 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import pytest
 
@@ -539,7 +539,7 @@ def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwa
         report._p11c_nodeid = str(collector_path)
 
 
-def _is_path_tuple(longrepr: object) -> bool:
+def _is_path_tuple(longrepr: object) -> TypeGuard[tuple[str, Any, Any]]:
     """Whether a skip longrepr names a raising file (module-shaped)."""
     return (
         isinstance(longrepr, tuple)
@@ -563,12 +563,7 @@ def _skip_path_from_longrepr(longrepr: object) -> str:
     exact-node selection prunes intermediate reports.)
     """
     try:
-        if not (
-            isinstance(longrepr, tuple)
-            and len(longrepr) == 3
-            and isinstance(longrepr[0], str)
-            and longrepr[0]
-        ):
+        if not _is_path_tuple(longrepr):
             return ""
         candidate = Path(longrepr[0])
         return str(candidate) if candidate.is_file() else ""
@@ -655,17 +650,24 @@ class _CollectionPlugin:
             # Pair only module-shaped skips (tuple longrepr naming the
             # raising file): string longreprs are session-ish and must
             # never absorb a file start, whatever the hook order (R28-1).
+            # A tuple naming a conftest is a hook-raised session skip, not
+            # a module skip: it skips pairing but still falls through to
+            # the longrepr path, which names the raising conftest
+            # truthfully (R29-1). (A -p plugin hook raising with a tuple
+            # is indistinguishable from a helper-raise via public APIs --
+            # accepted residual; real plugins never do this.)
             # Completed files are excluded from pairing AND fallback alike:
             # a file that yielded items cannot have skipped.
             if _is_path_tuple(longrepr):
-                for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
-                    if index in consumed:
-                        continue
-                    if os.path.normcase(self._file_starts[index]) in completed:
-                        continue
-                    paired = self._file_starts[index]
-                    consumed.add(index)
-                    break
+                if Path(longrepr[0]).name != "conftest.py":
+                    for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
+                        if index in consumed:
+                            continue
+                        if os.path.normcase(self._file_starts[index]) in completed:
+                            continue
+                        paired = self._file_starts[index]
+                        consumed.add(index)
+                        break
                 if not paired:
                     candidate = _skip_path_from_longrepr(longrepr)
                     if candidate and os.path.normcase(candidate) not in completed:

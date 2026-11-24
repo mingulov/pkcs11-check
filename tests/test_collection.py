@@ -626,6 +626,31 @@ def test_collection_skip_string_longrepr_never_pairs(tmp_path: Path) -> None:
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
 
 
+def test_collection_skip_conftest_tuple_names_conftest_not_module(
+    tmp_path: Path,
+) -> None:
+    """R29-1: a tuple longrepr from a conftest hook is a session skip: it
+    must not pair with an eligible module start, and resolves to the
+    raising conftest instead."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("# hook\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(conftest), 7, "Skipped: hook says no"),
+        )
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(conftest), reason="hook says no")]
+
+
 def _fake_result(value: object | None) -> object:
     from types import SimpleNamespace
 
@@ -681,6 +706,41 @@ def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
     plugin.pytest_collectreport(session_report)
     _finish(plugin, [])
     assert plugin.skips == [col.CollectedSkip(nodeid=str(root), reason="no dice")]
+
+
+def test_collect_items_shared_helper_skips_stay_distinct(tmp_path: Path) -> None:
+    """R22-3 end to end: two files skipping from one shared helper keep
+    both records, each naming its own module."""
+    root = tmp_path / "root"
+    root.mkdir()
+    first = tmp_path / "test_xts.py"
+    second = tmp_path / "test_ccm.py"
+    helper = tmp_path / "acvp_loader.py"
+    helper.write_text(
+        "import pytest\n"
+        "\n"
+        "def require_vectors():\n"
+        '    pytest.skip("vectors unavailable", allow_module_level=True)\n',
+        encoding="utf-8",
+    )
+    for target in (first, second):
+        target.write_text(
+            "from acvp_loader import require_vectors\nrequire_vectors()\ndef test_never(): pass\n",
+            encoding="utf-8",
+        )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [str(first), str(second)], ["--rootdir", str(root)], env=env
+    )
+    assert items == []
+    assert skips == [
+        CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
+        CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
+    ]
 
 
 def test_collect_items_forced_rootdir_skip_names_module(tmp_path: Path) -> None:
