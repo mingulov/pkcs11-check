@@ -663,6 +663,45 @@ def test_collect_items_forced_rootdir_skip_names_module(tmp_path: Path) -> None:
     assert skips == [CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
 
 
+def test_collect_items_replacing_plugin_session_skip_not_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R26-1 end to end: a -p plugin replacing the session report with a
+    skip attributes to the session root, never the successful module."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    plug = tmp_path / "replacing_plugin.py"
+    plug.write_text(
+        "import pytest\n"
+        "from _pytest.reports import CollectReport\n"
+        "\n"
+        "@pytest.hookimpl(wrapper=True)\n"
+        "def pytest_make_collect_report(collector):\n"
+        "    from _pytest.main import Session\n"
+        "    report = yield\n"
+        "    if isinstance(collector, Session):\n"
+        "        return CollectReport(\n"
+        '            collector.nodeid, "skipped", "Skipped: session says no", []\n'
+        "        )\n"
+        "    return report\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [f"{target}::test_case"],
+        ["--rootdir", str(root), "-p", "replacing_plugin"],
+        env=env,
+    )
+    assert items == []
+    assert skips == [CollectedSkip(nodeid=str(root), reason="session says no")]
+
+
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
     """R18-2a: the combined API returns the same items as the legacy one."""
     target = tmp_path / "test_demo.py"
