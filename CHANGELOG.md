@@ -86,11 +86,12 @@ full provider round (see Known limitations).
   exactly. Exception: counts can still be dropped silently when
   counter-evidence files cannot be used at collection time: a resumed
   run whose prior report is present but unreadable; counter files
-  unreadable through a disk or permission fault; and counter files
-  discarded during cleanup because their matching files are missing
-  or their run was already treated as collected. In these cases the
-  totals can still report complete. Apart from that exception, counts
-  are never
+  unreadable through a disk or permission fault; counter files discarded
+  during cleanup because their matching files are missing or their run
+  was already treated as collected; and counter files held for a later
+  pass because the process slot they name looks still occupied. In these
+  cases the totals can still report complete. Apart from that exception,
+  counts are never
   silently wrong as "complete", and they never change any test result.
   For exact totals, use a fresh run.
 - Resumed runs: if a resumed run fails its startup checks, it can
@@ -107,6 +108,18 @@ full provider round (see Known limitations).
   the recorded digests themselves.
 - Startup-check counter evidence can fail warn-only under disk I/O
   pathology (loud warning, no loss record).
+- Sign-permission checks: on modules where generic-secret keys are
+  unavailable, the sign-permission result is reported as inconclusive
+  instead of passed.
+- Key-derivation policy checks read the allowed-mechanism list strictly:
+  a derivation the list excludes is reported as a failure even when the
+  module performs it. This reading is intentional and will be revisited
+  if a conforming module disputes it.
+- Object-copy checks treat inconsistent copy answers as failures:
+  accepting an exact restatement while refusing a changed copy, or
+  answering the same question differently across attempts, is reported
+  as a failure. This consistency rule is intentional and will be
+  revisited if a conforming module disputes it.
 - No complete provider round has been run for this release; results
   against your module may differ from the SoftHSM2-based testing.
 
