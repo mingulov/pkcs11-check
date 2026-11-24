@@ -110,16 +110,17 @@ full provider round (see Known limitations).
   pathology (loud warning, no loss record).
 - Sign-permission checks: on modules where generic-secret keys are
   unavailable, the sign-permission result is reported as inconclusive
-  instead of passed.
-- Key-derivation policy checks read the allowed-mechanism list strictly:
-  a derivation the list excludes is reported as a failure even when the
-  module performs it. This reading is intentional and will be revisited
-  if a conforming module disputes it.
-- Object-copy checks treat inconsistent copy answers as failures:
-  accepting an exact restatement while refusing a changed copy, or
-  answering the same question differently across attempts, is reported
-  as a failure. This consistency rule is intentional and will be
-  revisited if a conforming module disputes it.
+  instead of passed, unless the comparison key confirms the module
+  enforces signing permission.
+- Key-derivation policy checks read the second key's allowed-mechanism
+  list strictly: a two-key derivation the list excludes is reported as
+  a failure even when the module performs it. This reading is intentional
+  and will be revisited if a conforming module disputes it.
+- Object-copy checks treat inconsistent copy answers as failures: one
+  guess accepted while the other is refused, or two different standard
+  refusals for the same question, is reported as a failure. This
+  consistency rule is intentional and will be revisited if a conforming
+  module disputes it.
 - No complete provider round has been run for this release; results
   against your module may differ from the SoftHSM2-based testing.
 
