@@ -602,31 +602,44 @@ def test_collection_skip_deselected_file_never_pairs(tmp_path: Path) -> None:
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
 
 
-def _drive_make_wrapper(plugin: col._CollectionPlugin, collector: object, report: object) -> object:
-    """Drive the make_collect_report wrapper hook manually (pluggy protocol)."""
-    gen = plugin.pytest_make_collect_report(collector)  # type: ignore[arg-type]
-    next(gen)
-    try:
-        gen.send(report)
-    except StopIteration as stop:
-        return stop.value
-    raise AssertionError("wrapper hook must return via StopIteration")
+def _fake_result(value: object | None) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(get_result=lambda: value)
 
 
-def test_make_wrapper_marks_every_collector(tmp_path: Path) -> None:
-    """R25-2: the wrapper stamps regardless of outcome, so a later wrapper
-    flipping passed->skipped cannot leave a skip unmarked."""
+def test_make_monitoring_marks_final_report(tmp_path: Path) -> None:
+    """R27-1: the monitor stamps whatever make returns (incl. replacements)
+    and ignores other hooks and empty outcomes."""
     from types import SimpleNamespace
 
     target = tmp_path / "test_skipped_mod.py"
     target.write_text("def test_never(): pass\n", encoding="utf-8")
-    plugin = col._CollectionPlugin()
-    skipped = SimpleNamespace(outcome="skipped", nodeid="")
-    assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), skipped) is skipped
-    assert skipped._p11c_nodeid == str(target)
-    passed = SimpleNamespace(outcome="passed", nodeid="")
-    assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), passed) is passed
-    assert passed._p11c_nodeid == str(target)
+    report: object = SimpleNamespace(outcome="skipped", nodeid="")
+    assert (
+        col._stamp_make_collect_report(
+            _fake_result(report),
+            "pytest_make_collect_report",
+            [],
+            {"collector": SimpleNamespace(path=target)},
+        )
+        is None
+    )
+    assert report._p11c_nodeid == str(target)
+    other: object = SimpleNamespace(outcome="skipped", nodeid="")
+    col._stamp_make_collect_report(
+        _fake_result(other),
+        "pytest_collection",
+        [],
+        {"collector": SimpleNamespace(path=target)},
+    )
+    assert not hasattr(other, "_p11c_nodeid")
+    col._stamp_make_collect_report(
+        _fake_result(None),
+        "pytest_make_collect_report",
+        [],
+        {"collector": SimpleNamespace(path=target)},
+    )
 
 
 def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
@@ -663,11 +676,13 @@ def test_collect_items_forced_rootdir_skip_names_module(tmp_path: Path) -> None:
     assert skips == [CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
 
 
+@pytest.mark.parametrize("priority", ["", ", tryfirst=True"])
 def test_collect_items_replacing_plugin_session_skip_not_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, priority: str
 ) -> None:
-    """R26-1 end to end: a -p plugin replacing the session report with a
-    skip attributes to the session root, never the successful module."""
+    """R26-1/R27-1 end to end: a -p wrapper replacing the session report
+    with a skip attributes to the session root at any wrapper priority,
+    never the successful module."""
     root = tmp_path / "root"
     root.mkdir()
     target = tmp_path / "test_external.py"
@@ -677,7 +692,7 @@ def test_collect_items_replacing_plugin_session_skip_not_module(
         "import pytest\n"
         "from _pytest.reports import CollectReport\n"
         "\n"
-        "@pytest.hookimpl(wrapper=True)\n"
+        f"@pytest.hookimpl(wrapper=True{priority})\n"
         "def pytest_make_collect_report(collector):\n"
         "    from _pytest.main import Session\n"
         "    report = yield\n"

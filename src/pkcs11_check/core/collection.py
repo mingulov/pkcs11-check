@@ -10,9 +10,10 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Generator, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -513,6 +514,31 @@ def collect_pytest_items_with_skips(
         output_path.unlink(missing_ok=True)
 
 
+def _ignore_hookcall(hook_name: str, hook_impls: Any, kwargs: Any) -> None:
+    """No-op before-tracer (monitoring requires both callbacks)."""
+
+
+def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwargs: Any) -> None:
+    """Stamp a made collect report with its collector's path (R24-1).
+
+    Registered via pluggy hook-call monitoring, so it observes the FINAL
+    result -- whatever wrappers ran, in whatever order or priority,
+    including replacements. Only make_collect_report calls are stamped;
+    the stamp rides the report object into pytest_collectreport, pairing
+    exactly what no hook-order reasoning can misattribute. Unstamped
+    reports (paths that never route through make, e.g. default-rootdir
+    files) fall through to pairing/longrepr.
+    """
+    if hook_name != "pytest_make_collect_report":
+        return
+    report = result.get_result()
+    if report is None:
+        return
+    collector_path = getattr(kwargs.get("collector"), "path", None)
+    if collector_path is not None:
+        report._p11c_nodeid = str(collector_path)
+
+
 def _skip_path_from_longrepr(longrepr: object) -> str:
     """Resolve an empty skip nodeid to the raising file, else "".
 
@@ -565,30 +591,11 @@ class _CollectionPlugin:
             if item_path is not None:
                 self._deselected_files.add(os.path.normcase(str(item_path)))
 
-    @pytest.hookimpl(wrapper=True, tryfirst=True)
-    def pytest_make_collect_report(
-        self, collector: pytest.Collector
-    ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
-        """Stamp skipped reports with their collector's path (R24-1).
-
-        Fires per collector only on collection paths that route through
-        _collect_one_node (forced/outside rootdir -- exactly the shape
-        that yields empty nodeids); file collectors on the default path
-        never arrive here (verified). tryfirst runs outermost, so the
-        stamp lands on whatever comes back -- including a replacement
-        report from another wrapper (R26-1); without it an outer
-        replacer discards the stamp with the original. The stamp rides
-        the report object into pytest_collectreport, pairing exactly
-        what no hook-order reasoning can misattribute. Unstamped reports
-        fall through to pairing/longrepr below.
-        """
-        report = yield
-        # Stamp unconditionally: a later wrapper (conftest/-p plugin) may
-        # flip the outcome after we see it, and outcome-gated stamping
-        # would then leave a skipped report unmarked (R25-2). Stamps on
-        # non-skipped reports are simply never read.
-        report._p11c_nodeid = str(collector.path)  # type: ignore[attr-defined]
-        return report
+    def pytest_configure(self, config: pytest.Config) -> None:
+        # Hook-call monitoring (not a wrapper): it observes the FINAL
+        # result of every make_collect_report call, so no wrapper
+        # ordering or priority tie can discard the stamp (R27-1).
+        config.pluginmanager.add_hookcall_monitoring(_ignore_hookcall, _stamp_make_collect_report)
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.outcome != "skipped":
