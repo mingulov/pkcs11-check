@@ -109,9 +109,11 @@ full provider round (see Known limitations).
 - Startup-check counter evidence can fail warn-only under disk I/O
   pathology (loud warning, no loss record).
 - Sign-permission checks: on modules where generic-secret keys are
-  unavailable, the sign-permission result is reported as inconclusive
-  instead of passed, unless the comparison key confirms the module
-  enforces signing permission.
+  unavailable, a refusal on the signing-disabled key earns a pass only
+  when the signing-enabled comparison key initializes signing. If the
+  comparison key gives a normal refusal instead, the result is
+  inconclusive; if a key reports signing disabled yet performs signing,
+  that contradiction is reported as a failure.
 - Key-derivation policy checks read the second key's allowed-mechanism
   list strictly: a two-key derivation the list excludes is reported as
   a failure even when the module performs it. This reading is intentional
