@@ -903,6 +903,56 @@ def test_collect_items_replacing_plugin_session_skip_not_module(
     assert skips == [CollectedSkip(nodeid=str(root), reason="session says no")]
 
 
+def test_collect_items_teardown_plus_replacer_still_attributes_session(
+    tmp_path: Path,
+) -> None:
+    """R31-1 end to end: startup tracing teardown plus a tryfirst
+    replacing wrapper still attributes the session skip to the session
+    root -- monitoring registers at collection entry, after teardown."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    plug = tmp_path / "teardown_replacer.py"
+    plug.write_text(
+        "import pytest\n"
+        "from _pytest.reports import CollectReport\n"
+        "\n"
+        "_undos = []\n"
+        "\n"
+        "@pytest.hookimpl(tryfirst=True)\n"
+        "def pytest_configure(config):\n"
+        "    _undos.append(config.pluginmanager.enable_tracing())\n"
+        "\n"
+        "def pytest_sessionstart(session):\n"
+        "    while _undos:\n"
+        "        _undos.pop()()\n"
+        "\n"
+        "@pytest.hookimpl(wrapper=True, tryfirst=True)\n"
+        "def pytest_make_collect_report(collector):\n"
+        "    from _pytest.main import Session\n"
+        "    report = yield\n"
+        "    if isinstance(collector, Session):\n"
+        "        return CollectReport(\n"
+        '            collector.nodeid, "skipped", "Skipped: session says no", []\n'
+        "        )\n"
+        "    return report\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [f"{target}::test_case"],
+        ["--rootdir", str(root), "-p", "teardown_replacer"],
+        env=env,
+    )
+    assert items == []
+    assert skips == [CollectedSkip(nodeid=str(root), reason="session says no")]
+
+
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
     """R18-2a: the combined API returns the same items as the legacy one."""
     target = tmp_path / "test_demo.py"
