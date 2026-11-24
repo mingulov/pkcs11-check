@@ -393,6 +393,13 @@ class TestEngagedProbe:
         assert _scrub_pin(b"used 1234 here", b"1234") == b"used [redacted] here"
         assert _scrub_pin(b"pin ab\rcd x", b"ab\rcd") == b"pin [redacted] x"
 
+    def test_scrub_pin_text_never_nests_markers(self) -> None:
+        """R26 nit: identical spellings apply once (short PIN "a" vs
+        the "a" inside its own "[redacted]" marker)."""
+        from pkcs11_check.core.doctor_probe import _scrub_pin_text
+
+        assert _scrub_pin_text("use a here", b"a") == "use [redacted] here"
+
     def test_error_detail_cr_pin_scrubs_before_decoding(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

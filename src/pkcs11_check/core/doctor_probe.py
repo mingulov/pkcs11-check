@@ -131,12 +131,16 @@ def _scrub_pin_text(detail: str, pin: bytes) -> str:
     """
     if not pin or pin.isspace():
         return detail
+    seen: set[str] = set()
     for errors in ("strict", "replace", "surrogateescape"):
         try:
             spelling = pin.decode("utf-8", errors=errors)
         except UnicodeDecodeError:
             continue
-        if spelling and spelling in detail:
+        # Dedupe identical spellings: reprocessing would nest markers
+        # ("a" also matches inside "[redacted]").
+        if spelling and spelling not in seen and spelling in detail:
+            seen.add(spelling)
             detail = detail.replace(spelling, "[redacted]")
     return detail
 

@@ -565,7 +565,7 @@ class _CollectionPlugin:
             if item_path is not None:
                 self._deselected_files.add(os.path.normcase(str(item_path)))
 
-    @pytest.hookimpl(wrapper=True)
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_make_collect_report(
         self, collector: pytest.Collector
     ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
@@ -574,10 +574,13 @@ class _CollectionPlugin:
         Fires per collector only on collection paths that route through
         _collect_one_node (forced/outside rootdir -- exactly the shape
         that yields empty nodeids); file collectors on the default path
-        never arrive here (verified). The stamp rides the report object
-        into pytest_collectreport, pairing exactly what no hook-order
-        reasoning can misattribute. Unstamped reports fall through to
-        pairing/longrepr below.
+        never arrive here (verified). tryfirst runs outermost, so the
+        stamp lands on whatever comes back -- including a replacement
+        report from another wrapper (R26-1); without it an outer
+        replacer discards the stamp with the original. The stamp rides
+        the report object into pytest_collectreport, pairing exactly
+        what no hook-order reasoning can misattribute. Unstamped reports
+        fall through to pairing/longrepr below.
         """
         report = yield
         # Stamp unconditionally: a later wrapper (conftest/-p plugin) may
