@@ -536,10 +536,11 @@ def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwa
     """Stamp a made collect report via hook-call monitoring (R24-1/R27-1).
 
     Monitoring observes the FINAL result -- whatever wrappers ran, in
-    whatever order or priority, including replacements. Only
-    make_collect_report calls are stamped; the stamp rides the report
-    object into pytest_collectreport. Complements the wrapper below,
-    which survives tracing teardown that removes monitoring.
+    whatever order or priority, including replacements. It registers at
+    collection entry (see below), which also survives startup tracing
+    teardown. Only make_collect_report calls are stamped; the stamp
+    rides the report object into pytest_collectreport. Complements the
+    tryfirst wrapper below, which stamps the same way.
     """
     if hook_name != "pytest_make_collect_report":
         return
@@ -611,13 +612,17 @@ class _CollectionPlugin:
             if item_path is not None:
                 self._deselected_files.add(os.path.normcase(str(item_path)))
 
-    def pytest_configure(self, config: pytest.Config) -> None:
-        # Hook-call monitoring observes the FINAL result of every
-        # make_collect_report call, so no wrapper ordering or priority
-        # tie can discard the stamp (R27-1). The tryfirst wrapper below
-        # stamps the same way and survives tracing teardown that removes
-        # monitoring (R30-1); either layer suffices alone.
-        config.pluginmanager.add_hookcall_monitoring(_ignore_hookcall, _stamp_make_collect_report)
+    @pytest.hookimpl(wrapper=True)
+    def pytest_collection(self, session: pytest.Session) -> Generator[Any, Any, Any]:
+        # Register monitoring at collection entry (not configure): a
+        # startup plugin that enables tracing in pytest_configure and
+        # stops it in pytest_sessionstart would otherwise remove it
+        # before the first make call (R31-1). Collection runs after all
+        # startup hooks regardless of their relative order.
+        session.config.pluginmanager.add_hookcall_monitoring(
+            _ignore_hookcall, _stamp_make_collect_report
+        )
+        return (yield)
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_make_collect_report(
