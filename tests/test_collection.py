@@ -580,7 +580,11 @@ def test_collection_skip_completed_file_never_pairs(tmp_path: Path) -> None:
     plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=tmp_path))
     plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
     plugin.pytest_collectreport(
-        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(mod), 3, "Skipped: no dice"),
+        )
     )
     _finish(plugin, [_fake_item(f"{mod}::test_case", mod)])
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
@@ -595,6 +599,26 @@ def test_collection_skip_deselected_file_never_pairs(tmp_path: Path) -> None:
     plugin = col._CollectionPlugin()
     plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
     plugin.pytest_deselected([SimpleNamespace(path=mod)])
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(mod), 3, "Skipped: no dice"),
+        )
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_string_longrepr_never_pairs(tmp_path: Path) -> None:
+    """R28-1: a string longrepr (session-shaped) never absorbs a file
+    start, however eligible -- pairing needs a module-shaped tuple."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
     plugin.pytest_collectreport(
         SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
     )
