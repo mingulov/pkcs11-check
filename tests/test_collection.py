@@ -602,6 +602,66 @@ def test_collection_skip_deselected_file_never_pairs(tmp_path: Path) -> None:
     assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
 
 
+def _drive_make_wrapper(plugin: col._CollectionPlugin, collector: object, report: object) -> object:
+    """Drive the make_collect_report wrapper hook manually (pluggy protocol)."""
+    gen = plugin.pytest_make_collect_report(collector)  # type: ignore[arg-type]
+    next(gen)
+    try:
+        gen.send(report)
+    except StopIteration as stop:
+        return stop.value
+    raise AssertionError("wrapper hook must return via StopIteration")
+
+
+def test_make_wrapper_marks_skipped_collector_only(tmp_path: Path) -> None:
+    """R24-1: the wrapper stamps skipped reports, leaves passed alone."""
+    from types import SimpleNamespace
+
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text("def test_never(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    skipped = SimpleNamespace(outcome="skipped", nodeid="")
+    assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), skipped) is skipped
+    assert skipped._p11c_nodeid == str(target)
+    passed = SimpleNamespace(outcome="passed", nodeid="")
+    assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), passed) is passed
+    assert not hasattr(passed, "_p11c_nodeid")
+
+
+def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
+    """R24-1: a stamped session skip resolves to the stamp, never the module."""
+    from types import SimpleNamespace
+
+    root = tmp_path / "root"
+    root.mkdir()
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    session_report = SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    session_report._p11c_nodeid = str(root)
+    plugin.pytest_collectreport(session_report)
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(root), reason="no dice")]
+
+
+def test_collect_items_forced_rootdir_skip_names_module(tmp_path: Path) -> None:
+    """R24-1 end to end: a cross-rootdir skipped target resolves to itself."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text(
+        "import pytest\n"
+        'pytest.skip("vectors not cloned", allow_module_level=True)\n'
+        "def test_never(): pass\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
+    items, skips = collect_pytest_items_with_skips([str(target)], ["--rootdir", str(root)], env=env)
+    assert items == []
+    assert skips == [CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
+
+
 def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
     """R18-2a: the combined API returns the same items as the legacy one."""
     target = tmp_path / "test_demo.py"

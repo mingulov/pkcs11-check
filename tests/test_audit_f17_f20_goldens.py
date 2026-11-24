@@ -128,10 +128,10 @@ def test_unit_discovery_keeps_good_nodeids_despite_bad_line(
 
 
 class _DecodingPopen:
-    """Fake ``subprocess.Popen`` that decodes exactly the way CPython would.
+    """Fake ``subprocess.Popen`` with byte pipes (R24-2).
 
-    Same F18 contract as :func:`_decoding_run`: the caller must pass
-    ``errors="replace"`` or strict decoding raises on ``_BAD_BYTES``.
+    Returns raw bytes like binary-mode pipes; the caller under test
+    decodes lossily itself (errors=replace), which the tests below pin.
     """
 
     def __init__(self, stdout_bytes: bytes, stderr_bytes: bytes, returncode: int) -> None:
@@ -140,21 +140,15 @@ class _DecodingPopen:
         self._stdout_bytes = stdout_bytes
         self._stderr_bytes = stderr_bytes
         self._returncode = returncode
-        self._errors = "strict"
-        self._encoding = "utf-8"
 
     def __call__(self, cmd: Any, **kwargs: Any) -> _DecodingPopen:
-        self._errors = str(kwargs.get("errors", "strict"))
-        self._encoding = str(kwargs.get("encoding", "utf-8"))
+        assert "text" not in kwargs, "login probe must use binary pipes"
         return self
 
-    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
         del timeout
         self.returncode = self._returncode
-        return (
-            self._stdout_bytes.decode(self._encoding, self._errors),
-            self._stderr_bytes.decode(self._encoding, self._errors),
-        )
+        return (self._stdout_bytes, self._stderr_bytes)
 
     def kill(self) -> None:
         self.returncode = -9
@@ -175,6 +169,20 @@ def test_login_probe_survives_bad_bytes_on_stderr(
         tmp_path / "module.so", interface="auto", slot=0, pin=b"1234", timeout=5
     )
     assert (probe.status, probe.detail) == ("ok", "fine")
+
+
+def test_login_probe_replaces_bad_bytes_in_error_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R24-2: caller-side decoding stays errors=replace on byte pipes."""
+    from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
+
+    monkeypatch.setattr(subprocess, "Popen", _DecodingPopen(b"not json\n", _BAD_BYTES, 1))
+    probe = run_login_probe_subprocess(
+        tmp_path / "module.so", interface="auto", slot=0, pin=b"1234", timeout=5
+    )
+    assert probe.status == "error"
+    assert "marker-line � garbage" in probe.detail
 
 
 def test_collection_worker_survives_bad_bytes_on_stdout(

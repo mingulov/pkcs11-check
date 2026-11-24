@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -549,7 +549,7 @@ class _CollectionPlugin:
         self._skip_keys: set[tuple[str, str]] = set()
         self._file_starts: list[str] = []
         self._deselected_files: set[str] = set()
-        self._pending: list[tuple[int, object]] = []
+        self._pending: list[tuple[str, int, object]] = []
 
     def pytest_collectstart(self, collector: pytest.Collector) -> None:
         try:
@@ -565,6 +565,25 @@ class _CollectionPlugin:
             if item_path is not None:
                 self._deselected_files.add(os.path.normcase(str(item_path)))
 
+    @pytest.hookimpl(wrapper=True)
+    def pytest_make_collect_report(
+        self, collector: pytest.Collector
+    ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+        """Stamp skipped reports with their collector's path (R24-1).
+
+        Fires per collector only on collection paths that route through
+        _collect_one_node (forced/outside rootdir -- exactly the shape
+        that yields empty nodeids); file collectors on the default path
+        never arrive here (verified). The stamp rides the report object
+        into pytest_collectreport, pairing exactly what no hook-order
+        reasoning can misattribute. Unstamped reports fall through to
+        pairing/longrepr below.
+        """
+        report = yield
+        if report.outcome == "skipped":
+            report._p11c_nodeid = str(collector.path)  # type: ignore[attr-defined]
+        return report
+
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.outcome != "skipped":
             return
@@ -574,7 +593,8 @@ class _CollectionPlugin:
         else:
             # Empty nodeids (cross-rootpath targets) resolve at finish,
             # when the final item set disambiguates them (R23-1).
-            self._pending.append((len(self._file_starts), report.longrepr))
+            marked = str(getattr(report, "_p11c_nodeid", "") or "")
+            self._pending.append((marked, len(self._file_starts), report.longrepr))
 
     def _record_skip(self, nodeid: str, longrepr: object) -> None:
         if isinstance(longrepr, tuple):
@@ -604,7 +624,10 @@ class _CollectionPlugin:
         completed = {os.path.normcase(item.file_path) for item in self.items}
         completed |= self._deselected_files
         consumed: set[int] = set()
-        for seen_count, longrepr in self._pending:
+        for marked, seen_count, longrepr in self._pending:
+            if marked:
+                self._record_skip(marked, longrepr)
+                continue
             paired = ""
             for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
                 if index in consumed:
