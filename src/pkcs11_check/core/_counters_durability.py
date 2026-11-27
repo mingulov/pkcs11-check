@@ -22262,7 +22262,7 @@ def sweep_orphans(
             # anyway. Fuzzy conflicts inside _record_identity keep
             # mapped-fresh handling (their exit already reruns; no
             # unmapped residue); the leg-merge arms below withhold
-            # on any match, exact or equivalent-spelling.
+            # on any conflicting match, exact or equivalent-spelling.
             conflicted_spellings: set[str] = set()
 
             def _record_identity(lexical: str, value: str | None) -> bool:
