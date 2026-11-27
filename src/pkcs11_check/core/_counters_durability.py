@@ -40,6 +40,7 @@ This module imports only stdlib plus ``counters_schema`` and
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import errno
 import hashlib
@@ -49,14 +50,16 @@ import select
 import signal
 import stat
 import sys
+import threading
 import time
 import warnings
 from collections.abc import Callable, Collection, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, BinaryIO, Literal, NamedTuple
 from uuid import uuid4
 
+from pkcs11_check.core._run_guard import try_lock_file, unlock_file
 from pkcs11_check.core.counters_schema import (
     LOST_REPORT_TYPE,
     PARTIAL_ALLOWED_KEYS,
@@ -181,6 +184,15 @@ SPAWN_FILE_PREFIX = "spawn-"
 #: any source file is consumed, so a controller death between the barrier
 #: and its application loses nothing. Matches no collector/sweep glob.
 BARRIER_STAGING_FILENAME = "barrier-staging.json"
+#: Per-root resume-barrier lock: the inter-process mutex serializing
+#: barrier passes (read-decide-write-consume) per counters dir
+#: (#88R44-[C]r3). The admission seal is idempotent and admits a
+#: second barrier, and generation checks cannot close the
+#: check-then-replace window -- only the lock does. Lives next to
+#: the staging it guards; matches no collector/sweep glob (like the
+#: staging file itself); never unlinked (the OS drops the lock on
+#: close/process death, so it can never go stale).
+BARRIER_LOCK_FILENAME = BARRIER_STAGING_FILENAME + ".lock"
 
 
 def _is_authoritative_staged_record(record: Any) -> bool:
@@ -375,6 +387,73 @@ def unseal(root: Path | str) -> None:
         path.unlink(missing_ok=True)
     except OSError as exc:
         raise CounterPersistenceError(f"cannot unseal counters dir {Path(root)}: {exc}") from exc
+
+
+#: Live per-root barrier locks held by this process (#88R44-[C]r3):
+#: resolved root string -> held lock handle. The registry pairs
+#: acquisition (at barrier entry) with release (at seal release,
+#: which every post-seal exit funnels through).
+_BARRIER_LOCKS: dict[str, BinaryIO] = {}
+#: In-process gates for the same roots: OS locks are
+#: process-scoped, so same-process threads need their own
+#: exclusion (two threaded barriers would interleave
+#: read-decide-write exactly like two processes). The meta lock
+#: guards gate creation only; acquisition order is always
+#: meta -> gate -> file lock, and gates are never reentrant, so
+#: nesting fails fast instead of deadlocking. Fork inherits gate
+#: state: a child forked mid-hold refuses loudly (never hangs),
+#: and production never forks around a barrier.
+_BARRIER_THREAD_META = threading.Lock()
+_BARRIER_THREAD_GATES: dict[str, threading.Lock] = {}
+
+
+def try_acquire_barrier_lock(root: Path | str) -> bool:
+    """Take the per-root resume-barrier lock once, non-blocking (#88R44-[C]r3).
+
+    Returns True holding the lock (paired with
+    :func:`release_barrier_lock`), False when another process or
+    thread holds it, or when this thread already does (a nested
+    barrier is a bug, and fails loud like contention). Raises
+    OSError when the lock file cannot be created or opened --
+    distinct from contention, so the caller can voice "cannot lock"
+    apart from "another barrier holds". Two layers: an in-process
+    gate per root (OS locks cannot see threads) plus the OS file
+    lock (cross-process, never stale).
+    """
+    key = str(Path(root).resolve(strict=False))
+    with _BARRIER_THREAD_META:
+        gate = _BARRIER_THREAD_GATES.setdefault(key, threading.Lock())
+    if not gate.acquire(blocking=False):
+        return False
+    try:
+        handle = try_lock_file(
+            Path(root) / BARRIER_LOCK_FILENAME,
+            marker=b"pkcs11-check barrier guard\n",
+        )
+    except OSError:
+        gate.release()
+        raise
+    if handle is None:
+        gate.release()
+        return False
+    _BARRIER_LOCKS[key] = handle
+    return True
+
+
+def release_barrier_lock(root: Path | str) -> None:
+    """Release this process's per-root resume-barrier lock. Never raises."""
+    key = str(Path(root).resolve(strict=False))
+    handle = _BARRIER_LOCKS.pop(key, None)
+    if handle is None:
+        return
+    try:
+        unlock_file(handle)
+    finally:
+        with _BARRIER_THREAD_META:
+            gate = _BARRIER_THREAD_GATES.get(key)
+        if gate is not None:
+            with contextlib.suppress(RuntimeError):
+                gate.release()
 
 
 def _pid_representable(pid: object) -> bool:
@@ -2534,17 +2613,25 @@ def _recordless_exit_text() -> str:
     )
 
 
-def _staged_target_bears_evidence(path_str: str, staged_digest: str) -> bool:
+def _staged_target_bears_evidence(
+    path_str: str, staged_digest: str, validated: frozenset[str] | None = None
+) -> bool:
     """Whether a staged marker/rewrite target carries releasable evidence (#88R44-F6r2).
 
     The omitted-report cover check reads only staged markers and
     rewrites through here: debris (torn/unparseable), content-free
     bodies, evolved bytes (adoption's byte gate blocks their release
     anyway), and unreadable files (adoption retains them) all read
-    vacuous, so a genuinely vacuous cleanup releases. A consumed
-    marker with valid linkage bears its consumption fact; a rewrite
-    with rows, losses, keys, or a checkpoint snapshot bears its
-    version. Never raises.
+    vacuous, so a genuinely vacuous cleanup still releases. A consumed
+    marker bears its consumption fact exactly when staged adoption
+    would link it (content-exact uuid, full-uuid filename owner, or
+    unique legacy prefix match -- the SAME linkage rule, so the cover
+    check and adoption never disagree, #88R44-F6r3); ambiguous
+    linkage bears evidence too (fail closed), while foreign markers
+    defer to adoption's silent retain; without a validated census
+    every linkage reads bearing (fail closed). A rewrite with rows,
+    losses, keys, or a checkpoint snapshot bears its version. Never
+    raises.
     """
     try:
         data = Path(path_str).read_bytes()
@@ -2560,9 +2647,11 @@ def _staged_target_bears_evidence(path_str: str, staged_digest: str) -> bool:
         return False
     name = Path(path_str).name
     if name.startswith(PROBE_CONSUMED_PREFIX):
-        parent = content.get("parent_uuid")
-        seq = content.get("probe_seq")
-        return is_worker_uuid(parent) and is_probe_seq(seq)
+        if validated is None:
+            return True
+        return (
+            _staged_parent_link(Path(path_str), content.get("parent_uuid"), validated) is not False
+        )
     for field in ("counters", "in_progress", "lost_keys", "receipts"):
         value = content.get(field)
         if isinstance(value, (list, tuple, dict)) and len(value) > 0:
@@ -2592,6 +2681,7 @@ def _recordless_hold_reason(
     census_complete: bool,
     attestations: (Mapping[tuple[str, str, str], Mapping[tuple[str, int], str]] | None) = None,
     staged_targets: Mapping[str, str] | None = None,
+    validated: frozenset[str] | None = None,
 ) -> str | None:
     """Why one recordless uuid's cleanup must hold, else None (#88R42-1, #88R43-F1).
 
@@ -2684,7 +2774,7 @@ def _recordless_hold_reason(
                         continue
                     kind = "probe" if is_orphan else ("marker" if is_marker else "rewrite")
                     if not is_orphan and not _staged_target_bears_evidence(
-                        staged_path, staged_digest
+                        staged_path, staged_digest, validated
                     ):
                         # Debris, content-free, evolved, or unreadable:
                         # staged adoption cannot release anything
@@ -2896,6 +2986,7 @@ def _recordless_veto_entries(
     census_complete: bool,
     attestations: (Mapping[tuple[str, str, str], Mapping[tuple[str, int], str]] | None) = None,
     staged_targets_by_owner: Mapping[str, Mapping[str, str]] | None = None,
+    validated: frozenset[str] | None = None,
 ) -> dict[str, str]:
     """Recordless veto reasons for owners with no staged partial, keyed by uuid (#88R42-1).
 
@@ -2937,6 +3028,7 @@ def _recordless_veto_entries(
             census_complete=census_complete,
             attestations=attestations,
             staged_targets=staged_targets,
+            validated=validated,
         )
         if reason is not None:
             vetoes[uuid] = reason
@@ -4505,6 +4597,10 @@ class _DeferProducerError(Exception):
     validated sidecar unit for deferrals raised before adoption (the
     orphan loop cannot re-read it without racing the writer); it stays
     out of the ``args`` tuple so existing constructions match.
+    ``coverage_kind`` names the actual coverage behind a
+    coverage-voiced deferral (see :func:`_orphan_coverage_kind`):
+    the divergent/rewrite voices select on it instead of hardcoding
+    "marker coverage" (#88R44-[A]r3). Same ``args`` rule as ``unit``.
     """
 
     def __init__(
@@ -4515,6 +4611,7 @@ class _DeferProducerError(Exception):
         reason: str = "",
         *,
         unit: str | None = None,
+        coverage_kind: str | None = None,
     ) -> None:
         super().__init__(uuid, pid, source, reason)
         self.uuid = uuid
@@ -4522,6 +4619,7 @@ class _DeferProducerError(Exception):
         self.source = source
         self.reason = reason
         self.unit = unit
+        self.coverage_kind = coverage_kind
 
     @property
     def detail(self) -> str:
@@ -4537,7 +4635,8 @@ class _DeferProducerError(Exception):
         if self.pid is not None:
             return f"live probe writer (pid {self.pid}) unfenceable"
         if self.reason == "rewrite":
-            return f"rewrite newer than marker coverage ({self.source or 'unknown file'})"
+            kind = self.coverage_kind or "marker"
+            return f"rewrite newer than {kind} coverage ({self.source or 'unknown file'})"
         if self.reason == "unpublished":
             return (
                 "marker-covered returns lack a checkpoint publication "
@@ -4559,7 +4658,8 @@ class _DeferProducerError(Exception):
                 f"({self.source or 'unknown file'})"
             )
         if self.reason == "divergent":
-            return f"divergent rewrites under marker coverage ({self.source or 'unknown file'})"
+            kind = self.coverage_kind or "marker"
+            return f"divergent rewrites under {kind} coverage ({self.source or 'unknown file'})"
         if self.reason == "quarantine":
             return (
                 f"quarantine archival failed ({self.source or 'unknown file'}); originals retained"
@@ -4587,6 +4687,31 @@ class _DeferProducerError(Exception):
         if self.source:
             return f"unreadable evidence ({self.source})"
         return "unreadable evidence"
+
+
+def _orphan_coverage_kind(
+    receipt: tuple[str, int],
+    *,
+    marker_snapshot: Any,
+    durable_cover: Collection[tuple[str, int]],
+    session_claim_cover: Collection[tuple[str, int]],
+) -> str:
+    """Name the coverage kind behind a covered receipt (read-only, #88R44-[A]r3).
+
+    Returns "marker" (absorption is parent-specific proof),
+    "checkpoint" (durable receipt cover), "session-claim", or "claim"
+    (bare JSONL-claim cover). Coverage-voiced deferrals and holds
+    select on this instead of hardcoding "marker coverage": a
+    checkpoint-covered orphan with no marker must never hear about
+    marker coverage. Never raises.
+    """
+    if marker_snapshot is not None:
+        return "marker"
+    if receipt in durable_cover:
+        return "checkpoint"
+    if receipt in session_claim_cover:
+        return "session-claim"
+    return "claim"
 
 
 def _note_persistent_conflict(
@@ -5089,6 +5214,7 @@ def _adopt_probe_orphans(
     committed_route: bool = False,
     probe_attribution_out: dict[str, str] | None = None,
     version_paths_out: dict[tuple[str, int], list[str]] | None = None,
+    quarantined_out: set[str] | None = None,
 ) -> tuple[
     dict[str, Any] | None,
     list[dict[str, Any]],
@@ -5113,7 +5239,11 @@ def _adopt_probe_orphans(
     retry proves byte-identity before acting on the old adjudication
     (#88R13-2). Replay-bound tmp paths record in ``bound_out`` when
     given, merged only on normal return (a raise discards them, so a
-    failed producer grants nothing -- #88R39-1). ``probe_volumes_out``
+    failed producer grants nothing -- #88R39-1). ``quarantined_out``
+    records this pass's quarantine-moved original tmp paths when
+    given (diagnostic, not authority: filesystem moves are not
+    rolled back, so a raise keeps them -- #88R44-F3r3-voice).
+    ``probe_volumes_out``
     records ``(child_uuid, probe_seq) -> {"returns", "entries"}``
     per-probe volumes for every UNCOVERED fold (covered suppressions
     record nothing: their counts sit in the checkpoint, proved via
@@ -5349,7 +5479,12 @@ def _adopt_probe_orphans(
     rewrite_held_slots: set[str] = set()
     observed_slot_tmps: dict[str, set[str]] = {}
     replay_seen: dict[str, str] = {}
-    replay_quarantined: set[str] = set()
+    # The caller's moved-set aliases directly (#88R44-F3r3-voice):
+    # quarantine moves are filesystem facts (never rolled back),
+    # so they record on move -- including on paths that later
+    # raise -- unlike cleanup authority, which merges on success
+    # only (#88R39-1, bound_local below).
+    replay_quarantined: set[str] = quarantined_out if quarantined_out is not None else set()
     # Defer-local bindings (#88R39-1): replay and debris binds land
     # here and merge into the caller's set only on normal return. Any
     # raise (revalidation, fence, defer) skips the merge, so a failed
@@ -5613,12 +5748,26 @@ def _adopt_probe_orphans(
             and not _is_nonneg_int(raw_snapshot.get("probes_lost"))
         )
         if (child_uuid, seq) in coverage:
+            marker_snapshot = coverage_snapshots.get((child_uuid, seq))
             if replay_divergent:
                 # An unresolved conflict must never clear silently
                 # under coverage: the baseline, marker, and loss claim
                 # stay associated for forensic resolution (#88R8-2).
-                raise _DeferProducerError(worker_uuid, None, source=path.name, reason="divergent")
-            marker_snapshot = coverage_snapshots.get((child_uuid, seq))
+                # The voice names the actual coverage kind (#88R44-[A]r3):
+                # a checkpoint-covered orphan with no marker must not
+                # hear about marker coverage.
+                raise _DeferProducerError(
+                    worker_uuid,
+                    None,
+                    source=path.name,
+                    reason="divergent",
+                    coverage_kind=_orphan_coverage_kind(
+                        (child_uuid, seq),
+                        marker_snapshot=marker_snapshot,
+                        durable_cover=durable_cover,
+                        session_claim_cover=session_claim_cover,
+                    ),
+                )
             # Stability reread (#88R11-1): suppression consumes the
             # file, so the file must still hold the folded snapshot.
             # A writer that advanced it after the first reread (an
@@ -5645,7 +5794,13 @@ def _adopt_probe_orphans(
                 if not _snapshot_covered_by(
                     counters, keys, adopted, marker_rows, marker_keys, marker_adopted
                 ):
-                    raise _DeferProducerError(worker_uuid, None, source=path.name, reason="rewrite")
+                    raise _DeferProducerError(
+                        worker_uuid,
+                        None,
+                        source=path.name,
+                        reason="rewrite",
+                        coverage_kind="marker",
+                    )
                 returns_uncovered, entries_uncovered = _suppressed_volumes_uncovered(
                     counters,
                     effective_returns,
@@ -5683,8 +5838,20 @@ def _adopt_probe_orphans(
                 # Durable (session/checkpoint) coverage carries no
                 # snapshot to compare: any adopted rewrite is
                 # unprovably newer, so it defers rather than dropping
-                # silently (#88R7-1).
-                raise _DeferProducerError(worker_uuid, None, source=path.name, reason="rewrite")
+                # silently (#88R7-1). The voice names the actual
+                # coverage kind (#88R44-[A]r3).
+                raise _DeferProducerError(
+                    worker_uuid,
+                    None,
+                    source=path.name,
+                    reason="rewrite",
+                    coverage_kind=_orphan_coverage_kind(
+                        (child_uuid, seq),
+                        marker_snapshot=marker_snapshot,
+                        durable_cover=durable_cover,
+                        session_claim_cover=session_claim_cover,
+                    ),
+                )
             elif (child_uuid, seq) in durable_cover:
                 # Checkpoint cover without a marker snapshot
                 # (#88R43-F4R2): the suppressed volumes must sit in THE
@@ -5790,22 +5957,17 @@ def _adopt_probe_orphans(
                 _hold_committed_remainder(path, child_uuid, seq, keys, adopted, scalar_unproved)
                 return
             if parent_claim is None and not unambiguous and marker_snapshot is None:
-                # Ownership gate (#88R44-F4r2 [A]): ambiguous legacy
-                # linkage whose checkpoint/claim coverage carried it
-                # past every volume check. Coverage is a receipt CLAIM,
-                # not parenthood proof: under a prefix collision the
-                # orphan could belong to any collider, so the would-be
-                # success still retains loudly instead of folding,
-                # attributing, or granting cleanup by a hint. Placed
-                # after every existing check (cross-run/unit returned
-                # at routing with their own voices; marker/volume
-                # failures held above with theirs), so no pinned voice
-                # shadows. Marker-covered copies fall through (marker
-                # absorption is parent-specific proof). Routing may
-                # have recorded an attribution; it withdraws, since a
-                # held probe publishes nowhere and no run adjudicates
-                # for it. The fold branch needs no twin: uncovered
-                # ambiguous linkage never reaches it (routing gate).
+                # Ownership gate, defense-in-depth twin (#88R44-F4r2 [A],
+                # hoisted #88R44-[A]r3): the same triple condition gates
+                # upstream before pid resolution, fencing, replay, and
+                # the fold, so this arm is unreachable while the hoist
+                # stands -- retained so a future second _fold caller
+                # (or a hoist regression) still holds instead of
+                # folding, attributing, or granting cleanup by a hint.
+                # Coverage is a receipt CLAIM, not parenthood proof:
+                # under a prefix collision the orphan could belong to
+                # any collider. Marker-covered copies fall through
+                # (marker absorption is parent-specific proof).
                 if probe_attribution_out is not None:
                     probe_attribution_out.pop(str(path), None)
                 if ambiguous_reporter:
@@ -6682,12 +6844,12 @@ def _adopt_probe_orphans(
             # suppresses the duplicate (or defers on a newer rewrite).
             # Coverage is a receipt claim, not parenthood proof -- but the
             # fall-through still routes (volume/marker checks voice
-            # their own failures first), and the ownership gate
-            # (#88R44-F4r2 [A]) holds any would-be success past them;
-            # marker-slotted and cross-run copies still hold downstream
-            # under their specific voices -- ambiguous linkage never
-            # consumes (#88R44-F4 adjudication, pinned by
-            # test_r44_f4_ambiguous_covered_probe_holds).
+            # their own failures first), and the hoisted ownership gate
+            # (#88R44-[A]r3) holds any would-be success before fencing,
+            # replay, and the fold; marker-slotted and cross-run copies
+            # still hold downstream under their specific voices --
+            # ambiguous linkage never consumes (#88R44-F4 adjudication,
+            # pinned by test_r44_f4_ambiguous_covered_probe_holds).
             if ambiguous_reporter:
                 warnings.warn(
                     f"ambiguous probe orphan {path.name} retained {ambiguity_detail}",
@@ -6796,6 +6958,47 @@ def _adopt_probe_orphans(
         if path.name in aliased_slots:
             froze_alias = True
             _skip_covered_orphan(path, child_uuid, seq, "sits on an aliased slot")
+            continue
+        hoist_snapshot = coverage_snapshots.get((child_uuid, seq))
+        if parent_claim is None and not unambiguous and hoist_snapshot is None:
+            # Ownership precedes fencing, mutation, and cleanup grants
+            # (#88R44-[A]r3): ambiguous legacy linkage whose
+            # checkpoint/claim coverage carried it past routing. The
+            # F4r2 gate held it at the fold -- but replay quarantines
+            # divergent rewrites (a mutation) and the divergent raise
+            # fires before the fold gate, so unowned evidence moved
+            # while the orphan retained. The gate hoists here instead:
+            # after every read-only check (cross-run/unit, foreign
+            # arm, incoherent/malformed markers, corrupt cover,
+            # aliased slots -- all above select their own voices as
+            # before), before pid resolution, fencing, replay, and
+            # the fold. Uncovered ambiguous linkage never reaches
+            # here (the routing gate retains it); marker-covered
+            # copies fall through (marker absorption is
+            # parent-specific proof). Routing may have recorded an
+            # attribution; it withdraws, since a held probe
+            # publishes nowhere and no run adjudicates for it.
+            if probe_attribution_out is not None:
+                probe_attribution_out.pop(str(path), None)
+            if ambiguous_reporter:
+                hoist_kind = _orphan_coverage_kind(
+                    (child_uuid, seq),
+                    marker_snapshot=hoist_snapshot,
+                    durable_cover=durable_cover,
+                    session_claim_cover=session_claim_cover,
+                )
+                warnings.warn(
+                    f"ambiguous probe orphan {path.name} retained {ambiguity_detail} "
+                    f"({hoist_kind} coverage claims the receipt but proves no parent); "
+                    "exit: establish the owner from independent evidence or archive the "
+                    "adjudicated conflict outside the counters directory",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if not known_complete:
+                raise _DeferProducerError(
+                    worker_uuid, None, source=path.name, reason="incomplete-discovery"
+                )
             continue
         gate_pid, gate_birth = orphan_pid, orphan_birth
         gate_spawn_resolved = False
@@ -6976,6 +7179,19 @@ def _adopt_probe_orphans(
             parent_claim=parent_claim,
             bound_tmps=replay_bound,
         )
+        if path not in consumed:
+            # A discharge without consumption strands the replay-bound
+            # delta in bound_local (#88R44-F7r3): the hold retains the
+            # orphan while its rewrite tmps stay staging-bound, so the
+            # split evidence converges nowhere (the LB-3 shape: holds
+            # fire, lose the tmp, keep the orphan). _fold raises -- not
+            # returns -- whenever the whole pass discards, so every
+            # non-consuming return (LB-3, both G8 remainders, the
+            # ambiguous hold, coverage skips, the scalar-hold
+            # fall-through) lands here: withdraw the per-orphan delta
+            # so the binding tracks consumed evidence only. A retry
+            # re-binds on replay.
+            bound_local.difference_update(replay_bound)
     # Finalize direct heals after orphan reads, replay, and fencing
     # (#88R21-2/#88R22-2): a heal publishes only on fresh group truth,
     # so a hold recorded anywhere in the pass (including a rewrite a
@@ -8702,6 +8918,28 @@ def _collect_unreadable_child(
     return appended
 
 
+def _quarantined_hold_suffix(moved: Collection[str]) -> str:
+    """Name quarantine-moved originals for a retain voice (#88R44-F3r3-voice).
+
+    Same-producer archival (divergent-tmp quarantine) moves original
+    names before the append; when a later hold-all retains
+    everything, the voice must say which originals already moved and
+    where their bytes live, so the operator never hunts a vanished
+    name. Empty when nothing moved. Never raises.
+    """
+    names = sorted(Path(entry).name for entry in moved)
+    if not names:
+        return ""
+    shown = ", ".join(names[:3])
+    if len(names) > 3:
+        shown += f", +{len(names) - 3} more"
+    plural = "s" if len(names) != 1 else ""
+    return (
+        f"; {len(names)} original name{plural} already moved to quarantine "
+        f"({shown}); bytes preserved under .quarantined- names"
+    )
+
+
 def collect_unit(
     counters_dir: Path | str,
     *,
@@ -8790,6 +9028,10 @@ def collect_unit(
     # for every probe accepted through its resolved parent this
     # pass. Revocation reads runs from here (no staging on collect).
     probe_attribution_now: dict[str, str] = {}
+    # Quarantine-moved original tmp paths this pass (#88R44-F3r3-voice):
+    # replay archival moves names before the append, so the hold-all
+    # voice names them instead of claiming bare retention.
+    quarantined_now: set[str] = set()
     # Deferred consumption (#88R43-F6a): producers accumulate their
     # consume lists here and one end-of-pass consume deletes, after
     # the run-wide reconciliation finalized this pass's recoveries --
@@ -8923,6 +9165,7 @@ def collect_unit(
                     void_runs=None,
                     fold_witnesses=None,
                     collected_uuids=None,
+                    quarantined_out=quarantined_now,
                 )
             except _DeferProducerError as exc:
                 # The session is authoritative but its probe evidence is
@@ -9004,6 +9247,7 @@ def collect_unit(
                         content["attempt"],
                         default_scope=(unit, 0),
                     ),
+                    quarantined_out=quarantined_now,
                 )
             )
         except _DeferProducerError as exc:
@@ -9104,7 +9348,8 @@ def collect_unit(
             warnings.warn(
                 "counter collection holds all consumption this pass: "
                 "an uncertain child-report publication may carry a "
-                "recovery other evidence depends on; everything retained",
+                "recovery other evidence depends on; everything retained"
+                f"{_quarantined_hold_suffix(quarantined_now)}",
                 UserWarning,
                 stacklevel=2,
             )
@@ -9287,6 +9532,7 @@ def collect_unit(
                 committed_route=unit_routed_committed,
                 probe_attribution_out=probe_attribution_now,
                 version_paths_out=unit_version_paths,
+                quarantined_out=quarantined_now,
             )
             version_held = False
             if unit_routed_committed and (unit_volumes or unit_suppressed_volumes):
@@ -9683,7 +9929,8 @@ def collect_unit(
         warnings.warn(
             "counter collection holds all consumption this pass: "
             "an uncertain child-report publication may carry a "
-            "recovery other evidence depends on; everything retained",
+            "recovery other evidence depends on; everything retained"
+            f"{_quarantined_hold_suffix(quarantined_now)}",
             UserWarning,
             stacklevel=2,
         )
@@ -10010,8 +10257,9 @@ def _quarantine_tmp(path: Path, *, root: Path | str | None, pid: int | None = No
     deletes):
     - collect (``collect_unit``): no barrier seal; the
       dead-or-committed gating is point-in-time liveness, and a
-      concurrent sweep or second collector is unserialized (no locks
-      anywhere in this module).
+      concurrent sweep or second collector is unserialized (the
+      per-root barrier lock serializes barriers only --
+      #88R44-[C]r3).
     - barrier/resume (``prepare_resume``): the seal blocks NEW
       admissions only (``is_sealed`` gates registration alone);
       pre-seal writers keep their descriptors and may still flush,
@@ -10129,10 +10377,12 @@ def _quarantine_finish_unlink(
     stays, loudly. The writer must additionally be proven dead
     (#88R44-F1): a live writer could replace the name between the
     identity check and the unlink, and POSIX offers no atomic
-    conditional unlink -- so a live (or unknown) writer retains both
-    names loudly for a retry after death instead. A failed unlink
-    retains BOTH names loudly (two names, one evidence) for the
-    retry, which re-verifies and finishes it. Never raises.
+    conditional unlink -- so a live writer retains both names loudly
+    for a retry after death instead, while an unknown writer (no pid
+    to wait on) names verified quiescence or manual archival
+    (#88R44-F1r3-voice). A failed unlink retains BOTH names loudly
+    (two names, one evidence) for the retry, which re-verifies and
+    finishes it. Never raises.
     """
     pinned = _quarantine_pin_identity(fd)
     if pinned is None:
@@ -10168,7 +10418,20 @@ def _quarantine_finish_unlink(
             stacklevel=2,
         )
         return None
-    if pid is None or not _pid_dead_proven(pid):
+    if pid is None:
+        # Unknown writer (#88R44-F1r3-voice): no pid to wait on, so
+        # "retry after death" is inapt -- the exit is verified
+        # quiescence or manual archival instead.
+        warnings.warn(
+            f"quarantine archival of {source.name} cannot identify its writer; "
+            "both retained; exit: verify writer quiescence (no live writer "
+            "holds the source) or archive the conflict manually outside the "
+            "counters directory",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    if not _pid_dead_proven(pid):
         warnings.warn(
             f"quarantine archival of {source.name} cannot prove its writer dead; "
             "both retained for a retry after death (a live writer could replace "
@@ -11722,37 +11985,17 @@ def _attestation_proves_version(
 ) -> bool:
     """Whether a winner-bound attestation proves one version (#88R44-F2r2).
 
-    True only when a staged attestation binds this receipt to the
-    effective winning publication's digest AND to this version's
-    exact bytes (a singleton digest set: rewrite tmps carry
-    unattested bytes, so multi-contributor versions hold). Mirrors
-    the recordless veto's exact-target spending. Gap routes never
-    prove here (no winning session exists to bind against -- an
-    attestation to an uncommitted emission attests unpublished
-    bytes). Never raises.
+    WITHHELD pending a verifiable occurrence association
+    (#88R44-F6r3): equal-content emissions share the attestation key,
+    so one line cannot establish which emission won -- a faulted
+    empty append beside a logged full one borrows across emissions,
+    spending the wrong emission's entry. Attestation alone never
+    releases; snapshot and witness arms are unaffected. The
+    parameters stay threaded (collectors and callers unchanged) so
+    the occurrence fix fills this body back in. Always False.
     """
-    try:
-        if not isinstance(attestations, Mapping) or not isinstance(session_winners, Mapping):
-            return False
-        winner = session_winners.get((run_id, uuid))
-        if not isinstance(winner, dict):
-            return False
-        winner_pub = _publication_digest(winner)
-        if not isinstance(winner_pub, str):
-            return False
-        proofs = attestations.get((run_id, uuid, winner_pub))
-        if not isinstance(proofs, Mapping):
-            return False
-        if key not in _receipt_keys(winner.get("receipts")):
-            return False
-        if not isinstance(version_proofs, Mapping):
-            return False
-        digests = version_proofs.get(key)
-        if not isinstance(digests, (set, frozenset)) or len(digests) != 1:
-            return False
-        return proofs.get(key) in digests
-    except Exception:  # noqa: BLE001 -- undecidable attestation proves nothing.
-        return False
+    _ = (attestations, session_winners, run_id, uuid, key, version_proofs)
+    return False
 
 
 def _delta_probe_volumes_verdict(
@@ -11842,14 +12085,13 @@ def _delta_probe_volumes_verdict(
     (see :func:`_staged_winner_witness_digests`): a skipped
     duplicate's witness and cross-fold assemblies prove nothing.
 
-    Attestation binding (#88R44-F2r2): a staged attestation binding
-    the receipt to the winning publication's digest AND to the
-    version's exact bytes (singleton digest set) proves too
-    (see :func:`_attestation_proves_version`) -- without it the
-    version gate would veto every G7 attested release. Either or
-    both params None reads unproved (collect routes carry no
-    attestations: attested versions hold there and release at the
-    barrier, one phase later).
+    Attestation binding (#88R44-F2r2, WITHHELD in #88R44-F6r3):
+    equal-content emissions share the attestation key, so one line
+    cannot establish which emission won (see
+    :func:`_attestation_proves_version`, always False): attestation
+    alone never releases until a verifiable occurrence association
+    exists. Either or both params None reads unproved (as do present
+    attestations -- this arm withholds unconditionally).
     """
     proved: set[tuple[str, int]] = set()
     unproved: set[tuple[str, int]] = set()
@@ -12436,9 +12678,17 @@ def _heal_ledger_adjudicate(
     ]
     if poisoned:
         for parent in named:
+            # Disjunctive on purpose (#88R44-F8r3): the poison flag
+            # covers corrupt AND unreadable staged records, and the
+            # unreadable shape is content-unknown (not corrupt), with
+            # its own restore-access exit voiced at load. The loader
+            # warning names the precise exit; this per-parent hold
+            # stays accurate for both shapes.
             withheld[parent] = (
-                "heal ledger poisoned: staged spend record is corrupt; heals hold for this pass; "
-                "exit: restore the verified spends from the preserved evidence or archive the "
+                "heal ledger poisoned: staged spend record is corrupt or unreadable; "
+                "ledger-gated heals hold for this pass; "
+                "exit: restore the verified spends from the preserved evidence "
+                "(restore access to the ledger first when it is unreadable) or archive the "
                 "resolved conflict outside the counters directory (never just clear the ledger "
                 "-- that resets spent capacity and double-spends)"
             )
@@ -13750,6 +14000,23 @@ def _revoke_path_if_recovery_cancelled(
         return False
     adjudicated = probe_runs.get(path_str) if isinstance(probe_runs, Mapping) else None
     run = adjudicated if isinstance(adjudicated, str) else _sidecar_run(payload)
+    if (not isinstance(adjudicated, str) or not adjudicated) and run == "":
+        # Unattributed keyed evidence (#88R44-F4r3): no run anywhere
+        # (unstamped carrier, no same-pass reunion, no staged run).
+        # Cancelling against run "" would miss and delete silently
+        # past a same-pass recovery, so it revokes with the
+        # verified-publication-or-archive exit instead.
+        read_digests.pop(path_str, None)
+        warnings.warn(
+            f"evidence file {Path(path_str).name} carries loss keys but no run "
+            "attribution (unstamped carrier, no same-pass reunion, no staged run); "
+            "spending it would cancel against the wrong run, so evidence retained; "
+            "exit: restore a verified publication accounting for the held evidence, "
+            "or archive the resolved conflict outside the counters directory",
+            UserWarning,
+            stacklevel=2,
+        )
+        return True
     if run not in inline_memo:
         inline_memo[run] = set(_honored_recoveries_for_run(prior, staged_records, "", run).labeled)
     inline_honored = inline_memo[run]
@@ -13832,8 +14099,11 @@ def _revoke_recovery_cancelled_binds(
     warning order. ``probe_runs`` carries each carrier's adjudicated
     run (same-pass reunion attribution over the persisted staged run,
     #88R44-F4); carriers without one revoke under their byte-stamped
-    run as before. One rogue path can never break the pass: it
-    revokes fail-closed with an honest warning instead. Never raises.
+    run as before -- except keyed carriers with no run anywhere
+    (unstamped bytes too), which revoke unconditionally with the
+    verified-publication-or-archive exit (#88R44-F4r3). One rogue path
+    can never break the pass: it revokes fail-closed with an honest
+    warning instead. Never raises.
     """
     revoked: set[str] = set()
     if not isinstance(read_digests, dict) or not isinstance(fresh, Mapping) or not fresh:
@@ -13873,10 +14143,16 @@ class _ShortcutCoverHit(NamedTuple):
     plus run) for the hold warning. Empty ``keys`` marks an
     unverifiable file (an internal read failed where verification
     just succeeded): the caller holds it without naming keys.
+    ``unattributed`` marks a keyed file with no run attribution
+    anywhere (unstamped carrier, no same-pass reunion, no staged
+    run): cancelling against run "" would miss, so the caller holds
+    it and names the verified-publication-or-archive exit
+    (#88R44-F4r3).
     """
 
     keys: frozenset[tuple[str, int]]
     labeled: dict[tuple[str, int], str]
+    unattributed: bool = False
 
 
 def _adjudicated_run_for(
@@ -13986,21 +14262,31 @@ def _recheck_shortcut_cover(
             carried = staged_digests.get(path_str)
             if not isinstance(carried, str):
                 continue
+            adjudicated = _adjudicated_run_for(
+                path_str,
+                carried,
+                probe_attribution,
+                staged_target_runs,
+                staged_digests,
+            )
             cover = _shortcut_evidence_cover(
                 Path(path_str),
                 carried,
-                adjudicated_run=_adjudicated_run_for(
-                    path_str,
-                    carried,
-                    probe_attribution,
-                    staged_target_runs,
-                    staged_digests,
-                ),
+                adjudicated_run=adjudicated,
             )
             if cover is None:
                 continue
             owner, run, keys = cover
             if not keys:
+                continue
+            if adjudicated is None and run == "":
+                # Unattributed keyed target (#88R44-F4r3): no run
+                # anywhere (unstamped carrier, no same-pass reunion,
+                # no staged run -- the pre-fix wire shape). Spending
+                # it would cancel against run "" and delete silently
+                # past a same-pass recovery, so it holds with the
+                # verified-publication-or-archive exit instead.
+                hits[path_str] = _ShortcutCoverHit(keys=frozenset(), labeled={}, unattributed=True)
                 continue
             memo_key = (owner, run)
             current = current_memo.get(memo_key)
@@ -14041,6 +14327,17 @@ def _warn_stale_shortcut_hold(path_str: str, hit: _ShortcutCoverHit) -> None:
     """
     name = Path(path_str).name
     if not hit.keys:
+        if hit.unattributed:
+            warnings.warn(
+                f"cleanup target {name} carries loss keys but no run attribution "
+                "(unstamped carrier, no same-pass reunion, no staged run); spending "
+                "it would cancel against the wrong run, so evidence retained; exit: "
+                "restore a verified publication accounting for the held evidence, or "
+                "archive the resolved conflict outside the counters directory",
+                UserWarning,
+                stacklevel=3,
+            )
+            return
         warnings.warn(
             f"cleanup target {name} could not re-verify its staged cleanup digest "
             "against current recoveries; evidence retained; to resolve, correct the "
@@ -16206,6 +16503,7 @@ def _collect_dead_producer(
     suppression_staged_cover: Mapping[str, Any] | None = None,
     suppression_session_cover: Mapping[str, Any] | None = None,
     probe_attribution_out: dict[str, str] | None = None,
+    quarantined_out: set[str] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[Path],
@@ -16441,6 +16739,7 @@ def _collect_dead_producer(
             staged_records, uuid, content["run_id"]
         ),
         probe_attribution_out=probe_attribution_out,
+        quarantined_out=quarantined_out,
     )
     conflict = conflict or froze_alias
     # The void check reads the MERGED fresh block (gap + adopted
@@ -16668,6 +16967,7 @@ def _collect_committed_producer(
     suppressed_digests_out: dict[tuple[str, int], set[str]] | None = None,
     attestations: Mapping[tuple[str, str, str], Mapping[tuple[str, int], str]] | None = None,
     session_winners: Mapping[tuple[str, str], dict[str, Any]] | None = None,
+    quarantined_out: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[Path], bool]:
     """Adopt one committed producer's probe orphans (claim-only partial, never lost).
 
@@ -16806,6 +17106,7 @@ def _collect_committed_producer(
         committed_route=True,
         probe_attribution_out=probe_attribution_out,
         version_paths_out=version_paths,
+        quarantined_out=quarantined_out,
     )
     version_held = False
     if volumes or suppressed_volumes:
@@ -16955,6 +17256,19 @@ def _child_report_framing(child_path: Path) -> tuple[set[str] | None, str]:
     return present, "unterminated"
 
 
+def _any_wanted_present(records: list[dict[str, Any]], present: set[str]) -> bool:
+    """Whether any record's content digest already reads back (#88R44-F3r3).
+
+    Identity-less records never match (their publication is
+    unprovable either way); the reconciler holds them loudly.
+    """
+    for record in records:
+        digest = _publication_digest(record)
+        if digest is not None and digest in present:
+            return True
+    return False
+
+
 def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool | None:
     """Append collected records to a child JSONL (reconcile-then-decide on failure).
 
@@ -16969,10 +17283,13 @@ def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool |
     scans the child's byte framing, and an uncertain tail (torn
     bytes, an unterminated line, or an unreadable report) decides
     from the readable bytes instead of appending blindly -- a
-    successful open never again glues onto a torn tail. Landed
-    records still consume (publication-certain); the surviving tail
-    then blocks later appends the same way, so no glue follows the
-    consume.
+    successful open never again glues onto a torn tail. Presence
+    reconciles too (#88R44-F3r3): a clean tail with landed records
+    consumes without writing when all are present, and holds when
+    partially present (a retry must neither duplicate nor complete).
+    Landed records still consume (publication-certain); the surviving
+    tail then blocks later appends the same way, so no glue follows
+    the consume.
 
     On failure the readable report adjudicates (#88R44-G6): a
     close-after-flush leaves the recovery complete in the file while
@@ -16994,9 +17311,14 @@ def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool |
     if not records:
         return True
     present, tail = _child_report_framing(child_path)
-    if tail != "clean":
-        # Never append onto uncertainty: decide from the readable
-        # bytes (landed records consume; anything else holds all).
+    if tail != "clean" or (present is not None and _any_wanted_present(records, present)):
+        # Never append onto uncertainty -- and never re-append onto
+        # presence (#88R44-F3r3): a clean tail with landed records
+        # decides from the readable bytes (all present consumes
+        # without writing; a partial landing holds, since completing
+        # it could scramble emission order when the landed set is not
+        # a prefix). The write below runs only for clean,
+        # nothing-landed tails.
         return _reconcile_child_report(child_path, records, present, tail, failed=None)
     try:
         with open(child_path, "a", encoding="utf-8") as fh:
@@ -19411,16 +19733,24 @@ def _load_barrier_heal_ledger(
             status, raw = _read_json_evidence(path)
     if status == "missing":
         return {}, False, None
-    if status in ("gone", "torn") or not isinstance(raw, dict):
-        return {}, False, None
     if status == "unreadable":
+        # Unreadability decides before shape (#88R44-F8r3): the
+        # non-dict branch below would launder ("unreadable", None)
+        # into an empty, unpoisoned budget (None is not a dict), so
+        # collect would spend against a ledger it never read --
+        # recoveries emitted, markers removed, no warning. The
+        # staging loader already orders this way; the ledger view
+        # matches it.
         warnings.warn(
             f"counter barrier staging {path} has unreadable heal ledger; "
-            "heals hold without a budget for this pass",
+            "heals hold without a budget for this pass; exit: restore "
+            "access to the verified spends before retrying",
             UserWarning,
             stacklevel=2,
         )
         return {}, True, None
+    if status in ("gone", "torn") or not isinstance(raw, dict):
+        return {}, False, None
     if "heal_ledger" not in raw:
         return {}, False, None
     claimed = raw["heal_ledger"]
@@ -19492,6 +19822,28 @@ def discard_barrier_staging(root: Path | str) -> bool:
     except OSError:
         return False
     return True
+
+
+def discard_barrier_staging_if(
+    root: Path | str, expected_gen: tuple[int, int, int, int] | None
+) -> bool:
+    """Remove barrier staging only when its generation still matches (#88R44-[C]r3).
+
+    Application retires the staging its own barrier wrote: a newer
+    generation (a rival barrier restaged between barrier and
+    application) stays for the next barrier instead of losing its
+    generation silently, and an already-missing file retires
+    trivially. A stat fault refuses (fail closed: unknown is not
+    unchanged), as does a mistyped expected generation (structural
+    inequality never matches). Silent (the caller voices a
+    refusal); never raises.
+    """
+    path = Path(root)
+    if _path_state(path / BARRIER_STAGING_FILENAME) == "missing":
+        return True
+    if _staging_generation_changed(path, expected_gen):
+        return False
+    return discard_barrier_staging(path)
 
 
 def _held_owner_uuid(path_str: str) -> str | None:
@@ -20125,12 +20477,15 @@ def prepare_resume(
     and never assume quiescence.
 
     Returns a plan ``{barrier_ok, fenced, unresolved, skipped_units,
-    cache_records, collected_runs, consumed, counters_dir}``;
+    cache_records, collected_runs, consumed, counters_dir,
+    staging_gen}``;
     a pass holding a persistent counter conflict
     (covered divergence, #88R42-Q2) additionally records
     ``conflict_units``, mapping each held unit to its disposition:
     the affected evidence plus the required operator resolution
     (recomputed every pass, never staged; absent when nothing holds).
+    ``staging_gen`` is the staging generation application may retire
+    (None when the pass leaves no staging behind).
     ``barrier_ok`` is False when the seal could not be established or the
     plan could not be staged (quiescence unproven or evidence unlanded:
     the caller must stop before any provider work). The caller applies
@@ -20141,7 +20496,12 @@ def prepare_resume(
     retained staging) BEFORE any source file is consumed, so a controller
     death between the barrier and its application loses nothing: the next
     barrier reloads the staging and the plan re-applies idempotently
-    (extractor dedup absorbs repeats). The barrier releases before
+    (extractor dedup absorbs repeats). The barrier holds the
+    per-root barrier lock from entry to seal release (#88R44-[C]r3):
+    a rival barrier refuses loudly with ``barrier_ok`` False instead
+    of interleaving read-decide-write (the seal cannot exclude it,
+    and generation checks cannot close the check-then-replace
+    window). The barrier releases before
     returning so rerun producers can register; a stuck seal warns loudly
     (reruns then fail visibly at registration). Evidence faults refuse
     with ``barrier_ok`` False and never raise; an unexpected internal
@@ -20161,14 +20521,50 @@ def prepare_resume(
         "consumed": 0,
         "counters_dir": str(root),
         "cleanup_held": [],
+        "staging_gen": None,
     }
+    # Per-root serialization (#88R44-[C]r3): the lock precedes the
+    # seal, so a refused rival never seals (and its exit never
+    # unseals the winner's seal). Two barriers must never overlap:
+    # the seal is idempotent admission control, not a mutex, and a
+    # generation check cannot close the check-then-replace window --
+    # a rival staging between the final check and os.replace would
+    # lose its generation silently.
+    try:
+        barrier_locked = try_acquire_barrier_lock(root)
+    except OSError as exc:
+        warnings.warn(
+            f"counter resume barrier unavailable (cannot lock {root}: {exc})",
+            UserWarning,
+            stacklevel=2,
+        )
+        plan["barrier_ok"] = False
+        return plan
+    if not barrier_locked:
+        warnings.warn(
+            f"another resume barrier is already running for {root}; "
+            "refusing without stable memory; exit: retry after it finishes",
+            UserWarning,
+            stacklevel=2,
+        )
+        plan["barrier_ok"] = False
+        return plan
+    sealed = False
     try:
         ensure_layout(root)
         seal(root, reason="resume-barrier")
+        sealed = True
     except CounterPersistenceError as exc:
         warnings.warn(f"counter resume barrier unavailable ({exc})", UserWarning, stacklevel=2)
         plan["barrier_ok"] = False
         return plan
+    finally:
+        # Pre-seal exits release here (the post-seal ones funnel
+        # through the barrier finally below): an unexpected failure
+        # between acquisition and the main try must not strand the
+        # gate for this root.
+        if not sealed:
+            release_barrier_lock(root)
     # One release for every post-seal path (#88R42-8): normal
     # returns, refusal returns, and unexpected failures all unwind
     # through the finally below, so a held seal can never strand
@@ -20737,6 +21133,7 @@ def prepare_resume(
                 census_complete=known_complete,
                 attestations=staged_attestations,
                 staged_targets_by_owner=staged_targets_by_owner,
+                validated=validated_collected,
             )
         )
         reg_dir = root / REGISTRY_DIRNAME
@@ -24035,12 +24432,15 @@ def prepare_resume(
             # resolved during consume (a reunion accounted the tmp)
             # retire in the same update instead of lingering stale
             # (#88R34-1).
+            refined_gen: list[tuple[int, int, int, int]] = []
             if _staging_generation_changed(root, snap_gen):
-                # Another pass restaged during our consume (#88R44-C):
-                # skip the refinement write (no lost update) but keep
-                # the pass -- destruction already happened under fresh
-                # decisions. The preserved holds re-derive from
-                # evidence next pass (loudly if they still bind).
+                # Another writer restaged during our consume (#88R44-C;
+                # under the per-root lock no second barrier can, so
+                # this is an out-of-band writer): skip the refinement
+                # write (no lost update) but keep the pass --
+                # destruction already happened under fresh decisions.
+                # The preserved holds re-derive from evidence next
+                # pass (loudly if they still bind).
                 warnings.warn(
                     f"counter resume barrier staging {staging_path} changed mid-pass; "
                     "skipping the preserved-tmp restage (no lost update); "
@@ -24064,6 +24464,7 @@ def prepare_resume(
                 heal_ledger_poisoned_raw=ledger_poisoned_raw,
                 cleanup_honored=honored_now,
                 target_runs=target_runs_now,
+                written_gen_out=refined_gen,
             ):
                 warnings.warn(
                     f"counter resume barrier cannot stage preserved tmp holds in {root}; "
@@ -24077,6 +24478,10 @@ def prepare_resume(
                 # A pure-retirement failure leaves a stale hold naming a
                 # missing tmp: harmless (it resolves on sight next pass),
                 # so the converged barrier stays green (#88R34-1).
+            elif refined_gen:
+                # The refinement replaced the first write: destruction
+                # and application below bind to this generation.
+                snap_gen = refined_gen[0]
         lingering = {
             tmp for tmp in carried_held_tmps if _path_state(Path(tmp)) != "missing"
         } - preserved_now
@@ -24118,6 +24523,14 @@ def prepare_resume(
             | lingering
             | preserved_present
         )
+        # The generation application may retire (#88R44-[C]r3): the
+        # last write's when this pass staged (first write, then the
+        # refinement when it landed), else the snapshot generation
+        # the pass decided on (None when staging never existed).
+        # Application discards only a still-matching generation, so
+        # a rival barrier's restage between barrier and application
+        # survives instead of losing its generation silently.
+        plan["staging_gen"] = snap_gen
         return plan
     finally:
         _release_barrier_seal(root)
@@ -24128,12 +24541,17 @@ def _release_barrier_seal(root: Path) -> None:
 
     Shared by the success path and the fail-closed refusal paths so a
     barrier that stops early never leaves reruns blocked behind it.
-    Never raises.
+    Also releases the per-root barrier lock (#88R44-[C]r3): every
+    post-seal exit funnels through the barrier finally, so the lock
+    always pairs with its acquisition (the pre-seal exits release,
+    or never acquire, directly). Never raises.
     """
     try:
         unseal(root)
     except CounterPersistenceError as exc:
         warnings.warn(f"counter resume barrier stuck sealed ({exc})", UserWarning, stacklevel=2)
+    finally:
+        release_barrier_lock(root)
 
 
 def supplements_path(state_file: Path | str, unit: str) -> Path:
@@ -24265,6 +24683,7 @@ def write_recovery_supplements(
 
 
 __all__ = [
+    "BARRIER_LOCK_FILENAME",
     "BARRIER_STAGING_FILENAME",
     "COUNTERS_ATTEMPT_ENV",
     "COUNTERS_DIR_ENV",
@@ -24298,6 +24717,7 @@ __all__ = [
     "counters_dir_for_state",
     "counters_run_dir_for_state",
     "discard_barrier_staging",
+    "discard_barrier_staging_if",
     "durability_dir",
     "end_state_for_attempt",
     "ensure_layout",
@@ -24309,9 +24729,11 @@ __all__ = [
     "read_registry_file",
     "register_worker",
     "reject_reserved_run_id",
+    "release_barrier_lock",
     "seal",
     "supplements_path",
     "sweep_orphans",
+    "try_acquire_barrier_lock",
     "unseal",
     "validate_probe_receipt",
     "verify_producer",

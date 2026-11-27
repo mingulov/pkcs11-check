@@ -254,6 +254,26 @@ def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool
     return True
 
 
+def _retire_dedup_baseline(sidecar: str | None, expected: tuple[str, int]) -> None:
+    """Delete a deduplicated baseline reverified against its admission (#88R44-F5ar3).
+
+    Baseline only, no tmp handling at all: rewrites beside it carry
+    rows no admission covers, so each needs its own proof (file
+    collection adjudicates them with replay plus gates) instead of
+    dying to forced cleanup -- or even to the shared prune, whose
+    content rules assume post-reunion accounting that live ingest
+    never ran. The receipt re-checks against a fresh read, so a swap
+    between verification and delete still retains.
+    """
+    if sidecar is None:
+        return
+    if _commit_sidecar_owned(sidecar, expected):
+        try:
+            os.unlink(sidecar)
+        except OSError:
+            pass
+
+
 def _legacy_subsumption_proof(
     body: dict[str, Any], seq: int, absorbed_rows: list[Any]
 ) -> tuple[tuple[str, int], list[dict[str, Any]]] | None:
@@ -633,19 +653,35 @@ def ingest_probe_payload(
                 source=source,
                 consumed_probe=proved_receipt,
             )
-            # Proof admits with its counts and losses (#88R44-F5ar2): a
-            # deduplicated re-ingest advances neither. The commit below
-            # stays unconditional: it re-proves subsumption against a
-            # fresh read, so only a reverified version retires anyway.
-            if proved_receipt is not None and admitted:
-                _admit_folded_probe_digest(data, proved_receipt)
-            absorbed_keys = frozenset((key["parent_uuid"], key["probe_seq"]) for key in extra_keys)
-            # Exit coverage subsumes every mid-run tmp (#88R3).
-            _commit_probe_sidecar(
-                sidecar,
-                force_tmps=True,
-                absorbed=(seq, absorbed_rows, absorbed_keys, proved_receipt),
-            )
+            # Proof admits with its counts and losses: a deduplicated
+            # re-ingest advances neither (#88R44-F5ar2), and its
+            # cleanup binds to the actually admitted version
+            # (#88R44-F5ar3) -- re-proving subsumption against the
+            # rejected coverage would spend evidence the parent never
+            # absorbed. A deduplicated baseline retires only when it
+            # reverifies against the admission, and never forces
+            # rewrites (each needs its own proof).
+            if admitted:
+                if proved_receipt is not None:
+                    _admit_folded_probe_digest(data, proved_receipt)
+                absorbed_keys = frozenset(
+                    (key["parent_uuid"], key["probe_seq"]) for key in extra_keys
+                )
+                # Exit coverage subsumes every mid-run tmp (#88R3).
+                _commit_probe_sidecar(
+                    sidecar,
+                    force_tmps=True,
+                    absorbed=(seq, absorbed_rows, absorbed_keys, proved_receipt),
+                )
+            elif proved_receipt is not None and _sidecar_matches_admission(sidecar, proved_receipt):
+                _retire_dedup_baseline(sidecar, proved_receipt)
+            else:
+                warnings.warn(
+                    f"probe ingest for {proved_receipt} deduplicated without a "
+                    "matching admission; evidence retained for file collection",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return "folded"
         if isinstance(counters, (list, tuple)) and receipt is not None:
             validated = validate_probe_receipt(receipt, seq)
@@ -669,10 +705,16 @@ def ingest_probe_payload(
                     # Exit coverage subsumes every mid-run tmp (#88R3).
                     _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
                 elif _sidecar_matches_admission(sidecar, validated):
-                    # Deduplicated replay of the admitted version: the
-                    # sidecar reverifies byte-identical against the
-                    # admission, so duplicate cleanup proceeds.
-                    _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
+                    # Deduplicated replay of the admitted version WITHOUT
+                    # any tmp handling (#88R44-F5ar3): the sidecar
+                    # reverifies byte-identical against the admission,
+                    # so the duplicate baseline retires -- but rewrites
+                    # beside it carry rows no admission covers, so each
+                    # needs its own proof (file collection adjudicates
+                    # them) instead of dying to forced cleanup (or even
+                    # to the shared prune, whose content rules assume
+                    # post-reunion accounting live ingest never ran).
+                    _retire_dedup_baseline(sidecar, validated)
                 else:
                     # Deduplicated replay with unproved duplication
                     # (#88R44-F5ar2): same receipt, but the sidecar

@@ -81,6 +81,47 @@ def _unlock(fh: BinaryIO) -> None:
             fcntl.flock(fileno, fcntl.LOCK_UN)
 
 
+def try_lock_file(
+    path: Path, *, marker: bytes = b"pkcs11-check run-artifact guard\n"
+) -> BinaryIO | None:
+    """Open ``path`` and take its inter-process lock once, non-blocking.
+
+    Returns the held handle (call :func:`unlock_file` to release and
+    close it), or None when another process holds the lock. Same
+    no-stale guarantee as the run guards: the OS drops the lock on
+    close/process death, and the file is never unlinked. Raises
+    OSError when the lock file cannot be created or opened (distinct
+    from contention, which returns None). The marker names the
+    file's purpose on first creation; the write happens under the
+    lock like :func:`_locked_guard`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = path.open("a+b")
+    try:
+        if not _try_lock(fh):
+            with contextlib.suppress(OSError):
+                fh.close()
+            return None
+        fh.seek(0, 2)
+        if fh.tell() == 0:
+            fh.write(marker)
+            fh.flush()
+    except BaseException:
+        with contextlib.suppress(OSError):
+            fh.close()
+        raise
+    return fh
+
+
+def unlock_file(fh: BinaryIO) -> None:
+    """Release a :func:`try_lock_file` handle and close it. Never raises."""
+    try:
+        _unlock(fh)
+    finally:
+        with contextlib.suppress(OSError):
+            fh.close()
+
+
 @contextlib.contextmanager
 def _locked_guard(guard_path: Path, target: Path, *, timeout: float) -> Iterator[None]:
     """Hold the OS lock for one guard file, failing fast or after `timeout`."""

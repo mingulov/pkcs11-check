@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -14,7 +15,7 @@ import threading
 import time
 import warnings
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
@@ -34,10 +35,13 @@ from pkcs11_check.core._counters_durability import (
     append_supplement_records,
     collect_unit,
     discard_barrier_staging,
+    discard_barrier_staging_if,
     durability_dir,
     prepare_resume,
+    release_barrier_lock,
     supplements_path,
     sweep_orphans,
+    try_acquire_barrier_lock,
     unseal,
     write_recovery_supplements,
 )
@@ -713,6 +717,65 @@ def _verify_counters_application(
     return wanted <= have
 
 
+@contextlib.contextmanager
+def _barrier_gate(root: Path | str) -> Iterator[bool]:
+    """Hold the per-root barrier lock for one discard, else yield False.
+
+    Application and fresh-run retirement serialize against barriers
+    through this gate (#88R44-[C]r3): a gen check alone cannot close
+    the check-then-unlink window, so the discard holds the same lock
+    barriers do. Yields False (fail closed: the caller keeps the
+    staging and warns) when another barrier holds the lock or the
+    lock file faults. Never raises.
+    """
+    try:
+        held = try_acquire_barrier_lock(root)
+    except OSError:
+        held = False
+    if not held:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        release_barrier_lock(root)
+
+
+def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, Any]) -> None:
+    """Discard a converged plan's staging, generation-bound (#88R44-[C]r3).
+
+    Retires only the generation this plan's barrier wrote: a rival
+    barrier's restage between barrier and application survives for
+    the next barrier instead of losing its generation. The check
+    holds the barrier gate (a gen check alone cannot close the
+    check-then-unlink window); contention keeps the staging. Plans
+    without ``staging_gen`` (hand-made, tests only) keep the legacy
+    unconditional discard under the same gate. Voices a keep
+    loudly; never raises.
+    """
+    with _barrier_gate(staged_root) as gated:
+        if not gated:
+            warnings.warn(
+                f"counter barrier staging in {staged_root} may belong to a live "
+                "rival barrier; kept for the next barrier (no lost update)",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        if "staging_gen" in plan:
+            retired = discard_barrier_staging_if(staged_root, plan["staging_gen"])
+        else:
+            retired = discard_barrier_staging(staged_root)
+        if not retired:
+            warnings.warn(
+                f"counter barrier staging in {staged_root} is newer than this plan's "
+                "barrier (or the remove failed); kept for the next barrier "
+                "(no lost update)",
+                UserWarning,
+                stacklevel=2,
+            )
+
+
 def _apply_counters_barrier_plan(
     state_file: Path,
     plan: dict[str, Any],
@@ -810,17 +873,15 @@ def _apply_counters_barrier_plan(
             UserWarning,
             stacklevel=2,
         )
-    elif not plan["cache_records"]:
-        # Nothing landed and nothing is held: best-effort discard of
-        # any stale staging (a leftover skip-hold clears with it).
-        discard_barrier_staging(staged_root)
-    elif not discard_barrier_staging(staged_root):
-        warnings.warn(
-            f"counter barrier staging in {staged_root} could not be removed; "
-            "the next barrier re-applies it idempotently",
-            UserWarning,
-            stacklevel=2,
-        )
+    else:
+        # Converged: nothing is held. Retire this plan's staging
+        # generation -- the applied records' (or a stale leftover's
+        # when nothing landed, clearing a leftover skip-hold with
+        # it). Generation-bound under the barrier gate: a rival
+        # barrier's newer generation survives for the next barrier
+        # instead of losing its generation (#88R44-[C]r3); the
+        # helper voices a keep loudly.
+        _retire_converged_barrier_staging(staged_root, plan)
     skipped = set(plan["skipped_units"])
     return [unit for unit in pending_units if unit not in skipped]
 
@@ -852,8 +913,11 @@ def _setup_counters_durability(
     ``barrier_plan`` is a CLI-provided resume plan (rc2 C2): the CLI runs
     the barrier before preflight and threads the plan down, so the in-runner
     barrier is skipped (guard flag) -- ``prepare_resume`` consumes producer
-    files and must never run twice. None runs the barrier here (the fallback
-    for programmatic callers).
+    files and must never run twice. The per-root barrier lock enforces
+    that across processes too (a rival refuses loudly), and application
+    retires only its own plan's staging generation (#88R44-[C]r3).
+    None runs the barrier here (the fallback for programmatic
+    callers).
     """
     global _ACTIVE_COUNTERS_DIR
     env_dir = env.get(COUNTERS_DIR_ENV, "").strip()
@@ -878,17 +942,34 @@ def _setup_counters_durability(
         state.counters_dir = resolved
         save_run_state(state_file, state)
     if not resume:
-        try:
-            unseal(counters_root)
-        except CounterPersistenceError:
-            pass
-        if not discard_barrier_staging(counters_root):
-            warnings.warn(
-                f"stale barrier staging in {counters_root} could not be removed; "
-                "a later resume may re-apply it",
-                UserWarning,
-                stacklevel=2,
-            )
+        # Fresh engage serializes against barriers (#88R44-[C]r3):
+        # lifting the seal or discarding staging under a live rival
+        # barrier would break its quiescence or drop its generation.
+        # Contention skips both loudly (evidence retained; the sweep
+        # below still runs) instead of failing the fresh run: a live
+        # barrier's seal will reject this run's producers visibly if
+        # it is still up when they register.
+        with _barrier_gate(counters_root) as gated:
+            if not gated:
+                warnings.warn(
+                    f"a resume barrier holds {counters_root}; fresh engage keeps "
+                    "its seal and staging (evidence retained; retry engage after "
+                    "the barrier finishes)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                try:
+                    unseal(counters_root)
+                except CounterPersistenceError:
+                    pass
+                if not discard_barrier_staging(counters_root):
+                    warnings.warn(
+                        f"stale barrier staging in {counters_root} could not be removed; "
+                        "a later resume may re-apply it",
+                        UserWarning,
+                        stacklevel=2,
+                    )
         swept = sweep_orphans(counters_root, current_run=run_id_value)
         if swept["retained"]:
             console.print(
