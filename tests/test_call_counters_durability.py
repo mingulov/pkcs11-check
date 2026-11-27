@@ -63463,6 +63463,9 @@ def test_r44_ar29_prune_arrival_during_forensics_hashing_holds(tmp_path: Path) -
     tick_before, tick_arrived = 100, 200
 
     def _mtime_then_stage(path: Any) -> Any:
+        # The script freezes every root-clock reader (memo and
+        # generation gates included), not just the bracket, until
+        # the plant -- harmless here since nothing is removed.
         if os.fspath(path) != root_key:
             return real_mtime(path)
         return tick_arrived if planted else tick_before
@@ -74184,7 +74187,8 @@ def test_r44_ar61_companion_reresolve_catches_retarget(tmp_path: Path) -> None:
     assert len(resolved) == 2, "validate then confirm only (premise)"
     assert swept["removed"] == 0, swept
     texts = [str(found.message) for found in seen]
-    assert any("rerun to re-list" in text for text in texts), texts
+    assert any("the member inventory changed during verification" in text for text in texts), texts
+    assert not any("could not be verified" in text for text in texts), texts
     assert not any("archive the listed members" in text for text in texts), texts
 
 
@@ -75463,6 +75467,8 @@ def test_r44_ar66_lexical_anchor_collapses_doubleslash() -> None:
     assert durability._lexical_anchor("/srv/counters") == "/srv/counters"
     assert durability._lexical_anchor("///srv/counters") == "/srv/counters"
     assert durability._lexical_anchor("counters") == os.path.abspath("counters")
+    with pytest.raises(ValueError, match="null byte"):
+        durability._lexical_anchor("/srv/coun\0ters")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
@@ -75604,7 +75610,142 @@ def test_r44_ar66_member_capture_indeterminate_faults_loudly(tmp_path: Path) -> 
     assert swept["removed"] == 0, swept
     texts = [str(found.message) for found in seen]
     assert any("the member inventory could not be verified" in text for text in texts), texts
-    assert any("registrations/" in text and ".json" in text for text in texts), texts
+    assert any(f"(unreadable: registrations/{registry.name})" in text for text in texts), texts
     assert not any("changed during verification" in text for text in texts), texts
     assert not any("archive the listed members" in text for text in texts), texts
     assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar67_fold_entry_width_change_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r67: entry-side width change fails loud, never misslices.
+
+    Claude Q3 L3: the R60-2 guard checks the pattern side only.
+    A stem carrying a combining dot above (U+0307, length-stable
+    under lower) lower-matches an entry spelled with U+0130
+    (which lowercases to two code points), so tail slicing
+    against the pattern length addresses the wrong tail --
+    silently dropping a real alias or proving a planted one.
+    The entry's own prefix is width-checked too now: a
+    mismatch faults loud like the pattern side. The witness
+    mock engages folding; the dotted entry then hits the
+    guard. (The combining mark is spelled as an escape: a
+    literal would be invisible in review.)
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    dotted = "İ"
+    stable = "i\u0307"  # i + COMBINING DOT ABOVE (length-stable under lower)
+    assert len(dotted) == 1, "length-changing entry char (premise)"
+    assert dotted.lower() == stable and len(stable) == 2, "folded pair (premise)"
+    assert stable.lower() == stable, "length-stable stem char (premise)"
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    real1 = root / "real1"
+    real1.mkdir()
+    # Case variants need distinct spellings; gate before
+    # creating any (Codex R58-3).
+    sensitivity_probe = real1 / "caseprobe-abcdef"
+    sensitivity_probe.write_text("x", encoding="utf-8")
+    if (real1 / "CASEPROBE-ABCDEF").exists():
+        pytest.skip("needs a case-sensitive filesystem")
+    sensitivity_probe.unlink()
+    # Non-ASCII names need a Unicode-capable filesystem
+    # encoding; probe the round-trip before creating any
+    # (the ascii-locale leg raises creating them). Both
+    # shapes the test needs ride one probe.
+    locale_probe = real1 / f"localeprobe-{dotted}-{stable}"
+    try:
+        locale_probe.write_text("x", encoding="utf-8")
+        spelled = locale_probe.name in os.listdir(real1)
+    except (UnicodeEncodeError, OSError):
+        spelled = False
+    if not spelled:
+        pytest.skip("needs a filesystem encoding for non-ASCII names")
+    locale_probe.unlink()
+    (real1 / "1-witness").write_text("unrelated\n", encoding="utf-8")
+    disk_name = f"{solo}-torn-{stable}.partial.json"
+    target = real1 / disk_name
+    target.write_text("{torn", encoding="utf-8")
+    (real1 / f"{disk_name}.tmp-1").write_text("{}\n", encoding="utf-8")
+    variant_name = f"{solo}-torn-{dotted}.partial.json.tmp-3"
+    (real1 / variant_name).write_text("{}\n", encoding="utf-8")
+    member = root / disk_name
+    os.symlink(target, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_samefile = os.path.samefile
+    witness = {os.fspath(real1 / "1-witness"), os.fspath(real1 / "1-WITNESS")}
+    witnessed: list[bool] = []
+
+    def _samefile_then_witness(first: Any, second: Any, *args: Any, **kwargs: Any) -> Any:
+        if {os.fspath(first), os.fspath(second)} == witness:
+            witnessed.append(True)
+            return True
+        return real_samefile(first, second, *args, **kwargs)
+
+    with mock.patch.object(os.path, "samefile", _samefile_then_witness):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert witnessed, "folding engaged (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX path semantics")
+def test_r44_ar67_guard_depth_retries_resolved_root() -> None:
+    """#88R44-[A]r67: the depth guard retries a symlinked root ancestor.
+
+    Claude Q3 L2-root: lexical anchors alone exempt a nested
+    base spelled through the resolved root (macOS /tmp vs
+    /private/tmp). The helper retries against the resolved
+    root before reading outside; genuinely outside spellings
+    still read None.
+    """
+    root = Path("/tmp/x/counters")
+    resolved = "/private/tmp/x/counters"
+    assert durability._guard_depth(Path("/tmp/x/counters/a/b/f"), root, resolved) == 3
+    assert durability._guard_depth(Path("/private/tmp/x/counters/a/b/f"), root, resolved) == 3
+    assert durability._guard_depth(Path("/tmp/x/counters/f"), root, resolved) == 1
+    assert durability._guard_depth(Path("/other/place/f"), root, resolved) is None
+
+
+def test_r44_ar67_quarantine_identity_missing_reads_none(tmp_path: Path) -> None:
+    """#88R44-[A]r67: a missing path has no quarantine identity.
+
+    Claude Q3 N3: the sweep-won-race rework mocks
+    _quarantine_name_identity, so the mocked seam itself
+    needs a pin: missing reads None, present reads its
+    (st_dev, st_ino) pair.
+    """
+    import os
+
+    missing = tmp_path / "gone.tmp-1"
+    assert durability._quarantine_name_identity(missing) is None
+    present = tmp_path / "here.tmp-1"
+    present.write_bytes(b"x")
+    assert durability._quarantine_name_identity(present) == (
+        os.stat(present).st_dev,
+        os.stat(present).st_ino,
+    )

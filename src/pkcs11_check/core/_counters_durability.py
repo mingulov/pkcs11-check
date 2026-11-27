@@ -19678,14 +19678,38 @@ def _lexical_anchor(path: Path | str) -> str:
     exactly-``//`` collapses to ``/`` on POSIX (same directory,
     distinct anchors -- Linux preserves the double slash while
     resolving it identically); Windows UNC anchors stay intact
-    (``//server/share`` names another host). Raises ValueError
-    on null bytes like the path it anchors (the guard routes
-    those to the outside exemption).
+    (``//server/share`` names another host). Null bytes raise
+    ValueError explicitly (abspath/relative_to accept them
+    lexically; the guard routes those to the outside
+    exemption).
     """
-    anchored = os.path.abspath(os.fspath(path))
+    spelled = os.fspath(path)
+    if "\0" in spelled:
+        raise ValueError(f"null byte in guard anchor path: {spelled!r}")
+    anchored = os.path.abspath(spelled)
     if os.name == "posix" and anchored.startswith("//") and not anchored.startswith("///"):
         anchored = anchored[1:]
     return anchored
+
+
+def _guard_depth(base: Path, root: Path | str, resolved_root: str) -> int | None:
+    """Depth of base under root, None when outside (Codex R65-2, Claude Q3 L2-root).
+
+    Compares lexical anchors first, then retries against the
+    resolved root: a symlinked root ancestor (macOS /tmp vs
+    /private/tmp) spells the same directory two ways, and the
+    lexical compare alone would exempt a nested base into the
+    outside path. Only a spelling outside BOTH anchors reads
+    outside. Never raises.
+    """
+    try:
+        return len(Path(_lexical_anchor(base)).relative_to(_lexical_anchor(root)).parts)
+    except ValueError:
+        pass
+    try:
+        return len(Path(_lexical_anchor(base)).relative_to(resolved_root).parts)
+    except ValueError:
+        return None
 
 
 def sweep_orphans(
@@ -20404,6 +20428,16 @@ def sweep_orphans(
                                 # so fail loud instead of misproving.
                                 fault_keys.add(_lexical_key(entry))
                                 return None
+                            if entry.name[: len(pattern)].lower() != pattern.lower():
+                                # Entry-side width change (Claude Q3
+                                # L3): the pattern side is stable but
+                                # the entry's own prefix lowercases to
+                                # a different width (U+0130 against a
+                                # combining-dot stem), so the slice
+                                # below would address the wrong tail.
+                                # Fail loud like the pattern side.
+                                fault_keys.add(_lexical_key(entry))
+                                return None
                             counterpart = os.path.join(
                                 os.path.dirname(entry), pattern + entry.name[len(pattern) :]
                             )
@@ -20838,19 +20872,14 @@ def sweep_orphans(
                     # new construction outran the bracket: hold it
                     # loudly rather than resolve through unsampled
                     # links. Outside-root spellings keep their
-                    # downstream voices. Both sides anchor
-                    # lexically first (Codex R64-2, R65-2): a
-                    # relative root with an absolute base -- or a
-                    # Linux // alias of the root -- would raise
-                    # out of the depth check into the outside
-                    # exemption.
-                    try:
-                        unmapped_depth = len(
-                            Path(_lexical_anchor(base)).relative_to(_lexical_anchor(root)).parts
-                        )
-                    except ValueError:
-                        unmapped_depth = 0
-                    if unmapped_depth > 2:
+                    # downstream voices. The depth helper anchors
+                    # lexically first, then retries against the
+                    # resolved root (Codex R64-2, R65-2, Claude Q3
+                    # L2-root): relative roots, Linux // aliases,
+                    # and symlinked root ancestors must not exempt
+                    # a nested base into the outside path.
+                    unmapped_depth = _guard_depth(base, root, resolved_root)
+                    if unmapped_depth is not None and unmapped_depth > 2:
                         warnings.warn(
                             f"archival preview found {_lexical_key(base)} nested "
                             "without a map entry; archival inventory keeps "
