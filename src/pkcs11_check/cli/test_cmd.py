@@ -1910,7 +1910,11 @@ def test_command(
                 # the file holds current-run completed units (reset at start,
                 # saved per unit), on resume it folds prior findings too --
                 # either way a provider finding upgrades 2 to 1, matching the
-                # non-isolated path's report-evidence precedence.
+                # non-isolated path's report-evidence precedence. Residual
+                # (R1-F5, B1-owned): the in-flight unit's own partial report
+                # dies with its temp JSONL, so only completed-unit findings
+                # upgrade; preserving in-flight evidence on abort paths is
+                # B1's failure-path preservation work, not this arm.
                 console.print("[yellow]Interrupted[/yellow] -- run incomplete.")
                 if resume or isolation in {"auto", "file", "test"}:
                     abort_code = _resume_exit_code(state_file, 2)

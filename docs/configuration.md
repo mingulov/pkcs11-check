@@ -111,9 +111,9 @@ A daemon that is reachable but degraded -- answering, only ever more slowly -- i
 
 ## Empty PIN semantics
 
-Two states: a PIN is either configured (non-empty) or absent. An empty
-string (`--pin ""`, `P11TEST_PIN=`, TOML `pin = ""`) normalizes to absent
-at the configuration boundary, so every layer agrees:
+Two states: a user PIN is either configured (non-empty) or absent. An
+empty string (`--pin ""`, `P11TEST_PIN=`, TOML `pin = ""`) normalizes to
+absent at the configuration boundary, so every layer agrees:
 
 - **Absent** (no PIN, or an empty one anywhere): nothing logs in; tests
   that need a PIN skip with an explicit reason.
@@ -121,8 +121,10 @@ at the configuration boundary, so every layer agrees:
 
 Explicit empty still wins over the environment (as absent): `--pin ""`
 with a set `P11TEST_PIN` does not inherit the env value. There is no way
-to log in with a literally empty PIN; genuine empty-PIN tokens are not
-supported (no test path ever logged in with one).
+to log in with a literally empty user PIN; genuine empty-PIN tokens are
+not supported (no test path ever logged in with one). The SO PIN is
+exempt: an explicit empty SO PIN stays the empty credential (an unset SO
+PIN guesses the user PIN instead, so the two must not merge).
 
 ## Environment variables that are not settings
 

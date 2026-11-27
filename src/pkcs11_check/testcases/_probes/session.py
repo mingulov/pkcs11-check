@@ -59,7 +59,6 @@ from pkcs11_check.raw.types_std import (
     CKR_CRYPTOKI_ALREADY_INITIALIZED,
     CKR_OK,
     CKR_PIN_INCORRECT,
-    CKR_SLOT_ID_INVALID,
     CKU_USER,
 )
 from pkcs11_check.testcases._probes._emit import (
@@ -232,10 +231,10 @@ def probe_main(
     I3 — PIN travels only via _P11CHECK_PIN env var; never serialised into params/argv.
          C_Login is skipped when the env var is absent.
     I4 — child never calls classify()/fail_as()/xfail_as(); a clean setup failure
-         prints SETUP_XFAIL:<reason> to stdout and exits 0. A setup failure
-         that is our own fault (B5a: wrong configured PIN, self-resolved
-         slot id rejected) prints HARNESS_ERROR: instead, so the parent
-         blames the harness/operator, never the module.
+         prints SETUP_XFAIL:<reason> to stdout and exits 0. A wrong
+         configured PIN (B5a: operator config, never not_operational)
+         prints HARNESS_ERROR: and exits 1, so the parent raises one
+         harness_error fail instead of xfail.
     I6 — atexit writes call, mechanism, OK, and mechanism-RV counts to
          _P11CHECK_SUBPROCESS_COVERAGE so the parent's get_preamble_subprocess_coverage()
          can aggregate it.
@@ -323,12 +322,10 @@ def probe_main(
         try:
             sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
         except CkrAssertionError as exc:
-            if exc.rv == int(CKR_SLOT_ID_INVALID):
-                # B5a: the id came from our own resolve_slot_id -- invalid
-                # means our resolution lied (harness bug), never provider
-                # capability. Blame us, not the module.
-                emit_harness_error(exc, phase="C_OpenSession with resolved slot id")
-                return
+            # R1-F4: SLOT_ID_INVALID against our own resolved id stays
+            # xfail: a yanked token or renumbering module explains it as
+            # well as a harness bug, and the RV alone cannot establish
+            # the cause -- explicit self-blame would be unsound.
             print(f"SETUP_XFAIL:C_OpenSession rejected with {ckr_name(exc.rv)}")
             return
         teardown.sh = sh
@@ -345,8 +342,12 @@ def probe_main(
                         # B5a: the configured PIN is wrong -- operator config,
                         # never not_operational (the CLI preflight already
                         # refuses it; this arm covers bare-pytest runs).
+                        # R1-F3: exit nonzero with the marker: the parent
+                        # raises a single harness_error fail for rc != 0,
+                        # while exit 0 would record-then-continue into a
+                        # misleading probe_incomplete follow-on.
                         emit_harness_error(exc, phase="C_Login with configured PIN")
-                        return
+                        raise SystemExit(1) from None
                     print(f"SETUP_XFAIL:C_Login rejected with {ckr_name(exc.rv)}")
                     return
 

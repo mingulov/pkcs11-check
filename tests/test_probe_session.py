@@ -329,21 +329,28 @@ def _drive_login_setup(
 def test_session_login_pin_incorrect_is_harness_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """B5a: a wrong configured PIN is operator config, never not_operational."""
-    _drive_login_setup(monkeypatch, login_rv=int(CKR_PIN_INCORRECT))
+    """B5a: a wrong configured PIN is operator config, never not_operational.
+
+    R1-F3: the nonzero exit is load-bearing -- the parent raises a
+    single harness_error fail for rc != 0, while exit 0 would
+    record-then-continue into a probe_incomplete follow-on.
+    """
+    with pytest.raises(SystemExit) as exit_info:
+        _drive_login_setup(monkeypatch, login_rv=int(CKR_PIN_INCORRECT))
+    assert exit_info.value.code == 1
     out = capsys.readouterr().out
     assert "HARNESS_ERROR:" in out
     assert "SETUP_XFAIL" not in out
 
 
-def test_session_open_invalid_slot_id_is_harness_error(
+def test_session_open_invalid_slot_id_stays_setup_xfail(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """B5a: our own resolved slot id coming back invalid means we lied."""
+    """R1-F4: a rejected self-resolved id may be a yanked token, not our bug."""
     _drive_login_setup(monkeypatch, open_rv=int(CKR_SLOT_ID_INVALID))
     out = capsys.readouterr().out
-    assert "HARNESS_ERROR:" in out
-    assert "SETUP_XFAIL" not in out
+    assert "SETUP_XFAIL:C_OpenSession rejected with CKR_SLOT_ID_INVALID" in out
+    assert "HARNESS_ERROR" not in out
 
 
 def test_session_open_device_error_stays_setup_xfail(
