@@ -72421,11 +72421,16 @@ def test_r44_ar60_fold_scan_cached_per_directory(tmp_path: Path) -> None:
     bases). The snapshot path memoizes one scan per directory
     (same cached listing object, so identical content). Two
     mapped bases share adir here with decoys padding the
-    listing; the mock counts only folding-shaped misses
-    (samefile raising FileNotFoundError on a swapped
-    spelling), which must equal exactly one scan -- presence
-    confirms exact hits without raising, and every other dir
-    filters out. No symlinks: runs on all platforms.
+    listing; the mock emulates a sensitive volume for
+    folding-shaped pairs (raising FileNotFoundError
+    deterministically), which must equal exactly one scan --
+    presence confirms exact hits without raising, and every
+    other dir delegates to truth. The fixture carries no
+    aliases, so every folding-shaped pair genuinely misses
+    on sensitive volumes (the mock is transparent there);
+    emulating fixes that outcome on all volumes (Codex R60-3:
+    a real insensitive volume would witness at the first swap
+    and record zero). No symlinks: runs on all platforms.
     """
     import json
     import os
@@ -72469,16 +72474,14 @@ def test_r44_ar60_fold_scan_cached_per_directory(tmp_path: Path) -> None:
     misses: list[bool] = []
 
     def _samefile_then_count(first: Any, second: Any, *args: Any, **kwargs: Any) -> Any:
-        try:
-            return real_samefile(first, second, *args, **kwargs)
-        except FileNotFoundError:
-            first_s, second_s = os.fspath(first), os.fspath(second)
-            if (
-                os.path.dirname(first_s) == adir_key
-                and os.path.basename(second_s) == os.path.basename(first_s).swapcase()
-            ):
-                misses.append(True)
-            raise
+        first_s, second_s = os.fspath(first), os.fspath(second)
+        if (
+            os.path.dirname(first_s) == adir_key
+            and os.path.basename(second_s) == os.path.basename(first_s).swapcase()
+        ):
+            misses.append(True)
+            raise FileNotFoundError(second_s)
+        return real_samefile(first, second, *args, **kwargs)
 
     with mock.patch.object(os.path, "samefile", _samefile_then_count):
         with warnings.catch_warnings(record=True) as seen:
@@ -73951,6 +73954,242 @@ def test_r44_ar60_fold_mixed_volume_proves_each_pair(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar61_fold_dangling_companion_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r61: a dangling folded companion fails loud.
+
+    Codex R60-1: samefile follows links, so a proof miss on a
+    dangling entry means the ENTRY is broken, not the
+    counterpart -- but lstat passes dangling links, so the
+    disambiguation dropped it silently where strict
+    resolution would have faulted. The entry check follows
+    links now: unresolvable entries fault, and only a
+    resolvable entry with a genuinely missing counterpart
+    drops. No case gate: no twin spellings coexist here.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    real1 = root / "real1"
+    real1.mkdir()
+    (real1 / "1-witness").write_text("unrelated\n", encoding="utf-8")
+    disk_name = f"{solo}-torn.partial.json"
+    target = real1 / disk_name
+    target.write_text("{torn", encoding="utf-8")
+    (real1 / f"{disk_name}.tmp-1").write_text("{}\n", encoding="utf-8")
+    upper_name = f"{disk_name}.tmp-2".upper()
+    os.symlink(real1 / "no-such-target", real1 / upper_name)
+    member = root / disk_name
+    os.symlink(target, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_samefile = os.path.samefile
+    witness = {os.fspath(real1 / "1-witness"), os.fspath(real1 / "1-WITNESS")}
+    witnessed: list[bool] = []
+
+    def _samefile_then_witness(first: Any, second: Any, *args: Any, **kwargs: Any) -> Any:
+        if {os.fspath(first), os.fspath(second)} == witness:
+            witnessed.append(True)
+            return True
+        return real_samefile(first, second, *args, **kwargs)
+
+    with mock.patch.object(os.path, "samefile", _samefile_then_witness):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert witnessed, "folding engaged (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar61_companion_reresolve_catches_retarget(tmp_path: Path) -> None:
+    """#88R44-[A]r61: a companion retarget between checks re-observes.
+
+    Codex R60 minor: a companion symlink reaching its target
+    through an intermediate link outside the sampled
+    directories can retarget after validation observed the
+    first target, and the preview would name a file no check
+    saw. Live-resolved companions re-resolve before
+    rendering now; a mismatch marks drift and re-observes
+    (map-pinned entries skip this -- the late re-verification
+    owns them). The middle link lives unsampled beside the
+    adopted directory, so no clock can catch the swap: only
+    the re-resolution proves it. The swap lands between the
+    two resolutions of the link (validate, then confirm);
+    both are the only strict resolutions of that spelling
+    (adoption never scans this directory for hits).
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    real1 = root / "real1"
+    real1.mkdir()
+    wrap = root / "wrap"
+    wrap.mkdir()
+    disk_name = f"{solo}-torn.partial.json"
+    target = real1 / disk_name
+    target.write_text("{torn", encoding="utf-8")
+    own_name = f"{disk_name}.tmp-1"
+    (real1 / own_name).write_text("{}\n", encoding="utf-8")
+    first_name = f"{disk_name}.tmp-9"
+    (real1 / first_name).write_text("{}\n", encoding="utf-8")
+    link_name = f"{disk_name}.tmp-2"
+    link = real1 / link_name
+    middle = wrap / "midtmp"
+    os.symlink(real1 / first_name, middle)
+    os.symlink(middle, link)
+    member = root / disk_name
+    os.symlink(target, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    link_key = os.fspath(link)
+    resolved: list[bool] = []
+    swapped: list[bool] = []
+
+    def _resolve_then_swap(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The link resolves exactly twice (validate, then
+        # confirm): retarget the unsampled middle between them.
+        # Adoption never scans this directory, so no earlier
+        # resolution shifts the count.
+        if os.fspath(path) == link_key and kwargs.get("strict", False):
+            resolved.append(True)
+            if len(resolved) == 2 and not swapped:
+                swapped.append(True)
+                middle.unlink()
+                os.symlink(real1 / own_name, middle)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the middle retargeted between resolve and re-resolve (premise)"
+    assert len(resolved) == 2, "validate then confirm only (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar61_fold_length_changing_case_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r61: length-changing case fails loud, never misproves.
+
+    Codex R60-2: lower() rewrites widths (U+0130 folds to two
+    chars), so tail slicing against a lower-matched pattern
+    would compare the wrong file -- silently omitting a valid
+    alias or proving a different rewrite. Real stems are
+    uuid-ASCII; only an adversarial shape lands here, so the
+    proof faults loud instead. The witness mock engages
+    folding; the dotted companion then hits the guard.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    dotted = "İ"
+    folded = dotted.lower()
+    assert len(dotted) == 1 and len(folded) == 2, "length-changing pair (premise)"
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    real1 = root / "real1"
+    real1.mkdir()
+    # Case variants need distinct spellings; gate before
+    # creating any (Codex R58-3).
+    sensitivity_probe = real1 / "caseprobe-abcdef"
+    sensitivity_probe.write_text("x", encoding="utf-8")
+    if (real1 / "CASEPROBE-ABCDEF").exists():
+        pytest.skip("needs a case-sensitive filesystem")
+    sensitivity_probe.unlink()
+    (real1 / "1-witness").write_text("unrelated\n", encoding="utf-8")
+    disk_name = f"{solo}-torn-{dotted}.partial.json"
+    target = real1 / disk_name
+    target.write_text("{torn", encoding="utf-8")
+    (real1 / f"{disk_name}.tmp-1").write_text("{}\n", encoding="utf-8")
+    variant_name = f"{solo}-torn-{folded}.partial.json.tmp-3"
+    (real1 / variant_name).write_text("{}\n", encoding="utf-8")
+    member = root / disk_name
+    os.symlink(target, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_samefile = os.path.samefile
+    witness = {os.fspath(real1 / "1-witness"), os.fspath(real1 / "1-WITNESS")}
+    witnessed: list[bool] = []
+
+    def _samefile_then_witness(first: Any, second: Any, *args: Any, **kwargs: Any) -> Any:
+        if {os.fspath(first), os.fspath(second)} == witness:
+            witnessed.append(True)
+            return True
+        return real_samefile(first, second, *args, **kwargs)
+
+    with mock.patch.object(os.path, "samefile", _samefile_then_witness):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert witnessed, "folding engaged (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
 @pytest.mark.parametrize(
     "post",
     [
@@ -74013,8 +74252,9 @@ def test_r44_ar59_absent_relist_fault_split(tmp_path: Path, post: str) -> None:
         # The missing leg reads missing only once the re-list
         # faulted: the empty-first post-check passes on truth
         # (present, so the re-list fires), and only the
-        # re-list's own post-check finds the parent gone.
-        if post == "missing" and faulted_relist and os.fspath(path) == adir_key:
+        # re-list's own post-check finds the parent gone --
+        # exactly once, so late phases see truth again.
+        if post == "missing" and faulted_relist and not lied and os.fspath(path) == adir_key:
             lied.append(True)
             return "missing"
         return real_state(path)
@@ -74129,14 +74369,15 @@ def test_r44_ar60_absent_vanish_marks_over_presence(
     adir_key = os.fspath(adir)
     full_lists: list[bool] = []
     pre_lied: list[bool] = []
+    post_lied: list[bool] = []
 
     def _state_then_branch(path: Any) -> Any:
         # Once the hit snapshot served (render phase, exactly
         # one full listing), the absent pre-check reads the
         # param (truth when present, a lie when unreadable).
-        # Before that (adoption) and after the absent listing
-        # (post-checks), truth and missing respectively: the
-        # post-check always finds the parent gone.
+        # The post-check then finds the parent gone exactly
+        # once; later queries see truth again so removal never
+        # observes the lie.
         if os.fspath(path) != adir_key:
             return real_state(path)
         if len(full_lists) == 1:
@@ -74144,7 +74385,8 @@ def test_r44_ar60_absent_vanish_marks_over_presence(
                 pre_lied.append(True)
                 return "unreadable"
             return real_state(path)
-        if len(full_lists) >= 2:
+        if len(full_lists) >= 2 and not post_lied:
+            post_lied.append(True)
             return "missing"
         return real_state(path)
 
@@ -74246,8 +74488,9 @@ def test_r44_ar60_absent_empty_unreadable_faults(tmp_path: Path) -> None:
 
     def _state_then_haze(path: Any) -> Any:
         # Truth until the absent listing empties; unreadable
-        # from its liveness post-check on.
-        if emptied and os.fspath(path) == adir_key:
+        # exactly once, for its liveness post-check -- then
+        # truth again so late phases never observe the haze.
+        if emptied and not hazed and os.fspath(path) == adir_key:
             hazed.append(True)
             return "unreadable"
         return real_state(path)
@@ -74279,6 +74522,195 @@ def test_r44_ar60_absent_empty_unreadable_faults(tmp_path: Path) -> None:
     assert any("could not be verified" in text for text in texts), texts
     assert not any("rerun to re-list" in text for text in texts), texts
     assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar61_absent_relist_agree_vanish_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r61: an agreed-empty re-list rechecks liveness.
+
+    Codex R60 minor: a disappearance during the re-list reads
+    [] like a stable-empty dir (the helper maps ENOENT to
+    empty), so equal sets prove nothing -- without a further
+    check the pass agrees and publishes past the vanish. The
+    agree path rechecks liveness now: gone marks drift and
+    re-observes, beating the linked-dependent co-fault (the
+    co-fault is load-bearing here: without the mark it would
+    win). Full-form halves: the member arm shares the short
+    substrings.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    adir = root / "Adir"
+    adir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(adir, mid)
+    base = wrap / "mid" / f"{solo}-x.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    # The co-fault: a linked dependent. Assembly adopts
+    # through the link (same bytes); the use-time shape
+    # check faults it and the render still runs.
+    link_target = root / "probe-target.json"
+    link_target.write_bytes(probe.read_bytes())
+    probe.unlink()
+    os.symlink(link_target, probe)
+    real_state = durability._path_state
+    real_list = durability._list_evidence_files
+    adir_key = os.fspath(adir)
+    full_lists: list[bool] = []
+    lied3: list[bool] = []
+
+    def _state_then_lie3(path: Any) -> Any:
+        # Truth through the re-list (pre, post, and the two
+        # genuinely empty listings); missing exactly once, for
+        # the agree-path post-check -- then truth again so late
+        # phases never observe the lie.
+        if os.fspath(path) != adir_key or len(full_lists) < 2 or lied3:
+            return real_state(path)
+        lied3.append(True)
+        return "missing"
+
+    def _list_then_count(directory: Any, prefix: str, suffix: str) -> Any:
+        # No hit here: the absent leg lists first (genuinely
+        # empty -- adir holds nothing), its re-list second.
+        if os.fspath(directory) == adir_key and prefix == "" and suffix == "":
+            full_lists.append(True)
+        return real_list(directory, prefix, suffix)
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_lie3),
+        mock.patch.object(durability, "_list_evidence_files", _list_then_count),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert len(full_lists) == 2, "listed, then re-listed (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("as a link" in text for text in texts), "the co-fault fired (premise)"
+    assert any("the archival inventory changed during verification" in text for text in texts), (
+        texts
+    )
+    assert not any("the archival inventory could not be verified" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+    # Mechanism pin (not a premise: the parent lacks the
+    # agree-path post-check): the rerun above came from the
+    # new check firing, not from some other rerun.
+    assert lied3, lied3
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar61_absent_relist_agree_haze_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r61: agreed-empty haze fails without a co-fault.
+
+    Codex R60 minor, haze leg: an agreed-empty re-list whose
+    liveness recheck reads unreadable fails unverifiable. No
+    co-fault here by design: a co-fault would force the fault
+    exit by itself (family_ok clears), so the fault voice
+    proves this arm fired and nothing else did.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    adir = root / "Adir"
+    adir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(adir, mid)
+    base = wrap / "mid" / f"{solo}-x.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_list = durability._list_evidence_files
+    adir_key = os.fspath(adir)
+    full_lists: list[bool] = []
+    lied3: list[bool] = []
+
+    def _state_then_lie3(path: Any) -> Any:
+        # Truth through the re-list; unreadable exactly once,
+        # for the agree-path post-check -- then truth again so
+        # late phases never observe the lie.
+        if os.fspath(path) != adir_key or len(full_lists) < 2 or lied3:
+            return real_state(path)
+        lied3.append(True)
+        return "unreadable"
+
+    def _list_then_count(directory: Any, prefix: str, suffix: str) -> Any:
+        # No hit here: the absent leg lists first (genuinely
+        # empty -- adir holds nothing), its re-list second.
+        if os.fspath(directory) == adir_key and prefix == "" and suffix == "":
+            full_lists.append(True)
+        return real_list(directory, prefix, suffix)
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_lie3),
+        mock.patch.object(durability, "_list_evidence_files", _list_then_count),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert len(full_lists) == 2, "listed, then re-listed (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("the archival inventory could not be verified" in text for text in texts), texts
+    assert not any(
+        "the archival inventory changed during verification" in text for text in texts
+    ), texts
+    assert not any("together with this family" in text for text in texts), texts
+    # Mechanism pin (not a premise: the parent lacks the
+    # agree-path post-check): the fault above came from the
+    # new check firing, not from some other fault.
+    assert lied3, lied3
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
