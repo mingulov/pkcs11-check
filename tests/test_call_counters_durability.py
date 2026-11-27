@@ -9076,7 +9076,14 @@ def test_sigkill_stale_window_yields_partial_and_incomplete(tmp_path: Path) -> N
     assert schema.is_sidecar_partial(partials[0]) is True
     lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
     assert len(lost) == 1
-    assert lost[0]["end_state"] == "killed"
+    if sys.platform == "win32":
+        # TerminateProcess(0xC0000005) presents exactly like a real
+        # access-violation crash (positive NTSTATUS code): the
+        # classifier cannot see an outer kill here, so 'crashed' is
+        # the truthful verdict (end_state_for_attempt contract).
+        assert lost[0]["end_state"] == "crashed"
+    else:
+        assert lost[0]["end_state"] == "killed"
 
 
 class TestEvidenceContainment:
