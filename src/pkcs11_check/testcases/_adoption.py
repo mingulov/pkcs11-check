@@ -25,7 +25,11 @@ from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import CKA_CLASS, CKA_KEY_TYPE, CKA_LABEL, CKA_TOKEN, CKR_OK
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._attribute_values import (
+    MISSING_ATTRIBUTE,
+    attr_or_record,
+    refusal_for,
+)
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,7 @@ def read_identity_attr(rs: Any, handle: int, attr: int, *, label: str, operation
         inherit_mechanism=False,
     )
     if value is MISSING_ATTRIBUTE:
-        refusal = read.refusals.get(int(attr))
+        refusal = refusal_for(read, attr)
         if refusal is not None and refusal.leaked_len is not None:
             fail_as(
                 "self_contradiction",

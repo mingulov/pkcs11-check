@@ -57,6 +57,10 @@ PATCH_SITES: tuple[tuple[str, str], ...] = (
     ("test_token_admin_contract", _SENTINEL_NAME),
     ("test_token_admin_contract", "_UNAVAILABLE"),
     ("test_copy_guess_confirm_contract", _SENTINEL_NAME),
+    ("test_attempt_adoption_contract", _SENTINEL_NAME),
+    ("test_byte_recovery_contract", _SENTINEL_NAME),
+    ("test_sealed_find_contract", _SENTINEL_NAME),
+    ("test_search_lifecycle_contract", _SENTINEL_NAME),
 )
 
 #: Production modules imported eagerly at patch time (before collection, so

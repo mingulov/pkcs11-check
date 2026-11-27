@@ -30,6 +30,7 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_UNIT_ENV,
     RECOVERY_SUPPLEMENTS_SUFFIX,
     CounterPersistenceError,
+    _record_identity_hex,
     append_supplement_records,
     collect_unit,
     discard_barrier_staging,
@@ -703,12 +704,19 @@ def _apply_counters_barrier_plan(
             landed = _write_counters_recovery_cache(state_file, unit, records)
         if not landed:
             failed.append(unit)
+    skipped_live = set(plan.get("skipped_live", plan["skipped_units"]))
     for unit in plan["skipped_units"]:
-        console.print(
-            f"[red]Skipping conflicting rerun[/red] {unit}: an unverified live "
-            f"counter producer is still running there (never assumed quiescent; "
-            f"resolve it and resume again)"
-        )
+        if unit in skipped_live:
+            console.print(
+                f"[red]Skipping conflicting rerun[/red] {unit}: an unverified live "
+                f"counter producer is still running there (never assumed quiescent; "
+                f"resolve it and resume again)"
+            )
+        else:
+            console.print(
+                f"[red]Skipping conflicting rerun[/red] {unit}: counter evidence there "
+                f"is undecided (never assumed quiescent; resolve it and resume again)"
+            )
     if plan["consumed"]:
         console.print(
             f"[dim]Counter resume barrier: collected {plan['consumed']} orphaned producer(s)[/dim]"
@@ -719,10 +727,27 @@ def _apply_counters_barrier_plan(
             "staging retained for the next resume"
         )
     staged_root = plan.get("counters_dir")
+    held = plan.get("cleanup_held", [])
     if staged_root is None:
         warnings.warn(
             "counter barrier plan names no counters dir; "
             "staging (if any) left for the next barrier",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif held:
+        # Held cleanup targets keep their staging: discarding it would
+        # expire the authority their retry needs, and the next barrier
+        # would re-emit the records a second time. The retry finishes
+        # the cleanup without re-emitting, and a later application
+        # with nothing held discards the staging (#88R10-4c).
+        names = ", ".join(sorted(Path(entry).name for entry in held[:3]))
+        if len(held) > 3:
+            names += f", +{len(held) - 3} more"
+        warnings.warn(
+            f"counter barrier staging in {staged_root} retained: "
+            f"{len(held)} cleanup target(s) still present ({names}); "
+            "the next barrier retries them without re-emitting",
             UserWarning,
             stacklevel=2,
         )
@@ -820,7 +845,10 @@ def _setup_counters_durability(
         )
     pending_units = _apply_counters_barrier_plan(state_file, plan, pending_units, console)
     sweep_orphans(
-        counters_root, current_run=run_id_value, collected_runs=frozenset(plan["collected_runs"])
+        counters_root,
+        current_run=run_id_value,
+        collected_runs=frozenset(plan["collected_runs"]),
+        retain_uuids=frozenset(plan.get("unresolved", []) + plan.get("retained_uuids", [])),
     )
     return pending_units
 
@@ -832,15 +860,30 @@ def _write_counters_recovery_cache(
 
     Pending units receive recovery evidence via supplements (their rerun
     overwrites the cache); skipped units never rerun, so the cache itself
-    carries the records into the merged stream. Returns False (with a
-    warning) on I/O failure. Never raises.
+    carries the records into the merged stream. Idempotent: records
+    already cached (a cleanup retry re-applying an applied batch) are
+    skipped by identity hash, so the cache never republishes
+    (#88R11-7). Returns False (with a warning) on I/O failure. Never
+    raises.
     """
     if not records:
         return True
     try:
         cache_path = _report_record_cache_path(state_file, unit)
         existing = _load_report_log_records(cache_path) if cache_path.exists() else []
-        _write_unit_report_record_cache(state_file, unit, [*existing, *records])
+        applied = {
+            identity
+            for record in existing
+            if (identity := _record_identity_hex(record)) is not None
+        }
+        fresh: list[dict[str, Any]] = []
+        for record in records:
+            identity = _record_identity_hex(record)
+            if identity is None or identity not in applied:
+                if identity is not None:
+                    applied.add(identity)
+                fresh.append(record)
+        _write_unit_report_record_cache(state_file, unit, [*existing, *fresh])
     except (OSError, ValueError) as exc:
         warnings.warn(
             f"counter recovery cache for {unit} failed ({exc}); recovery evidence dropped",
