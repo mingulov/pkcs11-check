@@ -116,7 +116,11 @@ results when the fingerprint changes. By default the fingerprint covers pkcs11-c
 environment (the `P11TEST_` and `PKCS11_` namespaces) plus the module path and test-data
 provenance; it does not include a provider's own configuration environment (for example a
 token-directory or config-file variable), because those names are provider-specific and
-pkcs11-check stays provider-neutral. If you change such a variable between runs and want the
+pkcs11-check stays provider-neutral. The state also stores a module snapshot (resolved path,
+size, mtime, sha256), so a run that dies before collection, where the full fingerprint cannot
+be rebuilt, still refuses to merge results saved under a different module; the current failure
+then reports separately and the prior artifacts stay untouched. States saved before this field
+existed cannot be verified and merge as before. If you change such a variable between runs and want the
 change to invalidate a `--resume` (rather than silently reuse results from the old
 configuration), name it via `PKCS11_CHECK_FINGERPRINT_ENV_KEYS` (comma-separated, exact keys)
 or `PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES`:

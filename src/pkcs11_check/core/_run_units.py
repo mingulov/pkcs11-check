@@ -86,6 +86,12 @@ class FileRunState:
     # engaged, so resume finds it even when the environment differs. None
     # when durability was never engaged (old states read as None).
     counters_dir: str | None = None
+    # Module identity (B1/R2-F2): the _path_snapshot() dict (resolved path +
+    # size + mtime + sha256) of the --p11-module this state belongs to, so an
+    # early-failure resume can refuse a cross-provider merge the full
+    # fingerprint gate would refuse downstream. None for legacy states, which
+    # stay unverifiable and merge as before.
+    module_snapshot: dict[str, Any] | None = None
 
 
 @dataclass

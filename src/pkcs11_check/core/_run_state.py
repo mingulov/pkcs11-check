@@ -387,6 +387,7 @@ def load_run_state(path: Path) -> FileRunState | None:
         else []
     )
     raw_counters_dir = raw.get("counters_dir")
+    raw_module_snapshot = raw.get("module_snapshot")
     state = FileRunState(
         units=list(raw.get("units", [])),
         fingerprint=str(raw.get("fingerprint", "")),
@@ -401,6 +402,9 @@ def load_run_state(path: Path) -> FileRunState | None:
         attempt_history=attempt_history,
         recovery_events=recovery_events,
         counters_dir=raw_counters_dir if isinstance(raw_counters_dir, str) else None,
+        module_snapshot=dict(raw_module_snapshot)
+        if isinstance(raw_module_snapshot, Mapping)
+        else None,
     )
     _reconcile_recovery_attempts(path, state, _load_recovery_attempt_sidecar(path))
     return state
@@ -434,6 +438,8 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     }
     if state.counters_dir is not None:
         payload["counters_dir"] = state.counters_dir
+    if state.module_snapshot is not None:
+        payload["module_snapshot"] = state.module_snapshot
     if os.environ.get("PKCS11_CHECK_STATE_INLINE_RECORDS") == "1":
         # Opt-in legacy/debug behavior: embed the per-unit report records inline.
         # This is the O(n^2) re-serialization the default path deliberately

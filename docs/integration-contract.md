@@ -241,6 +241,9 @@ return code and `completion_verified: false`; it is not encoded as a `CollectRep
 state-adjacent collection-attempt sidecar is an internal durable source used to replay this
 evidence while resuming; consumers should use `report.jsonl` as the documented raw artifact and
 must not reinterpret either harness record as provider findings.
+Collision rule: `--output-file` must not name the `report.jsonl` path itself (same file). Under
+such a collision the summary owns the file (still valid JSON), the counter evidence is
+not retained to it, and its counters fold from the current preflight evidence only.
 Daemon-recovery evidence uses `RecoveryAttempt` and `RecoveryEvent` records. Consumers that do not
 understand custom record types may ignore them, but must not reinterpret them as `TestReport`.
 Call-phase `TestReport` records may carry serialized `pkcs11_classification` entries. Their
