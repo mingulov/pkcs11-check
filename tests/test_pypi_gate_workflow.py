@@ -170,23 +170,24 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     assert order == sorted(order), [steps[i].get("name", steps[i].get("uses")) for i in order]
 
     commands = "\n".join(step["run"] for step in steps if "run" in step)
-    # Each leg installs its exact file by URL resolved from the pinned
-    # simple page (R2-3): pip consults every index without preferring
-    # --index-url, so index-based installs could mix bytes across indexes.
-    # The legs differ by file, never by pip flags; deps come from PyPI.
+    # Each leg installs its exact file by URL retained from the await loop
+    # (R2-3/R3-2): pip consults every index without preferring --index-url,
+    # so index-based installs could mix bytes across indexes; install reads
+    # no index itself, so there is no second failure point. The legs differ
+    # by file, never by pip flags; deps come from PyPI only.
     assert "--only-binary" not in commands
     assert "--no-binary" not in commands
     assert "test.pypi.org" not in commands
     install_run = _run_of(steps, "Install ${{ matrix.artifact }} from the pinned index")
-    assert 'f"pkcs11_check-{version}-py3-none-any.whl"' in install_run
-    assert 'f"pkcs11_check-{version}.tar.gz"' in install_run
-    assert "hrefs" in install_run and "len(hrefs) != 1" in install_run
-    assert '"--index-url"' in install_run
-    assert '"https://pypi.org/simple/"' in install_run
-    assert "needs.prepare.outputs.simple_url" not in install_run
+    assert '"$ARTIFACT_URL"' in install_run
+    assert "--index-url https://pypi.org/simple/" in install_run
+    assert "urlopen" not in install_run
+    assert "findall" not in install_run
     install_step = next(s for s in steps if "from the pinned index" in str(s.get("name", "")))
-    assert install_step["env"]["SIMPLE_URL"] == "${{ needs.prepare.outputs.simple_url }}"
-    assert install_step["env"]["ARTIFACT"] == "${{ matrix.artifact }}"
+    assert install_step["env"]["ARTIFACT_URL"] == "${{ steps.await.outputs.artifact_url }}"
+    # R3-3: pip merges an inherited PIP_EXTRA_INDEX_URL alongside the
+    # explicit index; the step empties it so deps resolve from prod only.
+    assert install_step["env"]["PIP_EXTRA_INDEX_URL"] == ""
     # Fresh 3.12 (the oldest supported interpreter) on every OS.
     setup = next(step for step in steps if step.get("uses") == _SETUP_PYTHON_ACTION)
     assert setup["with"] == {"python-version": "3.12"}
@@ -268,13 +269,11 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     assert "steps.candidate" not in validate_source
     assert "test.pypi.org/pypi/pkcs11-check/json" not in validate_source
     assert "pypi/pkcs11-check/json" not in validate_source
-    for needle in (
-        "Install ${{ matrix.artifact }} from the pinned index",
-        "Version check",
-        "Summarize",
-    ):
+    for needle in ("Version check", "Summarize"):
         step = next(s for s in _steps(validate) if needle in str(s.get("name", "")))
         assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}", needle
+    # Install consumes the retained artifact URL, not the version (R3-2);
+    # its env contract is pinned in the stage-order test above.
     # The legs read the index only through prepare's outputs, never a
     # hardcoded host: the per-leg await and the install share one source.
     assert "needs.prepare.outputs.simple_url" in validate_source
@@ -297,17 +296,25 @@ def test_gate_waits_for_version_on_each_runner_before_install() -> None:
 
     step = steps[await_idx]
     assert "if" not in step, "the wait must run on every leg, unconditionally"
+    assert step["id"] == "await"
     assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}"
     assert step["env"]["SIMPLE_URL"] == "${{ needs.prepare.outputs.simple_url }}"
+    assert step["env"]["ARTIFACT"] == "${{ matrix.artifact }}"
     run_body = _run_of(steps, "Await version on this runner's index")
-    # Same markers pip will need, on the same index pip will read; both
-    # files required (either/or would pass on a half-published release).
-    # The index arrives via prepare's output, never hardcoded per leg.
+    # One read, one parser (R3-2): the loop resolves both files' hrefs with
+    # a quote-tolerant expression and retains this leg's URL as a step
+    # output; both files required (either/or would pass a half-published
+    # release). The index arrives via prepare's output, never hardcoded.
     assert 'SIMPLE_URL = os.environ["SIMPLE_URL"]' in run_body
     assert "test.pypi.org" not in run_body
     assert "pypi.org" not in run_body
-    assert "-{version}-" in run_body and "-{version}.tar.gz" in run_body
-    assert "wheel_marker in page and sdist_marker" in run_body
+    assert 'f"pkcs11_check-{version}-py3-none-any.whl"' in run_body
+    assert 'f"pkcs11_check-{version}.tar.gz"' in run_body
+    assert "href=([\"'])([^\"']+)\\1" in run_body
+    assert "def page_hrefs(" in run_body
+    assert "wheel_name in hrefs and sdist_name in hrefs" in run_body
+    assert "artifact_url={hrefs[wanted]}" in run_body
+    assert "unknown gate artifact" in run_body
     # Bounded wait (~5 minutes), enforced (not just declared), loud
     # failure, polite polling, bounded network I/O.
     assert "WAIT_DEADLINE = 300" in run_body
@@ -546,11 +553,17 @@ def test_prepare_ignores_non_release_tags(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_prepare_explicit_index_wins_in_release_context(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """R2-5 (R2-2): index=test in a Release context settles on TestPyPI."""
+    """R2-5 (R2-2): index=test in a Release context settles on TestPyPI.
+
+    R3-5: a matching production tag is present, so deleting the index
+    gate would bind 9.9.9 and fail -- settling 8.8.8 proves the gate.
+    """
+    head = "ab" * 20
     result = _exec_prepare(
         monkeypatch,
         tmp_path,
-        env={**_RELEASE_BASE, "REQUESTED_INDEX": "test", "HEAD_SHA": "ab" * 20},
+        env={**_RELEASE_BASE, "REQUESTED_INDEX": "test", "HEAD_SHA": head},
+        ls_remote_stdout=f"{head}\trefs/tags/v9.9.9\n",
         latest="8.8.8",
         page_version="8.8.8",
     )

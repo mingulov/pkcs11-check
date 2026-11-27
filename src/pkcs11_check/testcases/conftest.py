@@ -175,6 +175,27 @@ CIPHER_OP_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+# R2-4: the Init-staging subset. An Init call carries mechanism + key but no
+# data, so it cannot judge data length: CKR_DATA_LEN_RANGE there is NOT a
+# clean setup refusal (it fails loud, forcing length adjudication to the
+# normative single-part point where the oracle lives). CKR_OPERATION_NOT_-
+# VALIDATED joins instead: the v3.2 sanctioned validation-policy refusal
+# (F-036) is clean at setup, like generation. Everything else mirrors the
+# cipher-op set (xfail with the RV recorded, never a silent skip).
+CIPHER_INIT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_NOT_VALIDATED,
+)
+
 # Clean codes a module may return at an HMAC *sign/verify* use site when the
 # HMAC mechanism is advertised but the operation is not operational (some
 # modules advertise CKM_SHA*_HMAC but C_Sign returns CKR_GENERAL_ERROR). A produce

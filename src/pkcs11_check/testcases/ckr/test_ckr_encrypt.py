@@ -36,7 +36,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr
 from pkcs11_check.testcases.conftest import (
-    CIPHER_OP_RUNTIME_REJECT_RVS,
+    CIPHER_INIT_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     xfail_if_known_ckr,
@@ -219,14 +219,16 @@ class TestEncryptDataErrors:
             mech = mech_ctr(CKM_AES_CTR, 128, cb=b"\xff" * 16)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             # R2-4: a broken advertised AES-CTR must not vanish as a skip.
-            # Known-clean setup refusals xfail with the RV recorded (the
-            # or_xfail shape); anything else propagates as a loud failure.
+            # The Init-staging set xfails known-clean setup refusals with
+            # the RV recorded (the or_xfail shape); anything else -- notably
+            # a length verdict with no data staged yet -- propagates as a
+            # loud failure, forcing length adjudication to the oracle below.
             try:
                 expect_rv(rv, CKR_OK)
             except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
-                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    CIPHER_INIT_RUNTIME_REJECT_RVS,
                     "AES_CTR advertised but max-counter C_EncryptInit refused",
                 )
             data = (ctypes.c_ubyte * 32)(*([0xAA] * 32))

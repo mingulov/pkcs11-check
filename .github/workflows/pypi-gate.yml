@@ -43,10 +43,11 @@ name: PyPI gate
 #
 # Install handling: pip consults every configured index without preferring
 # --index-url, so a version hosted on both indexes could install bytes from
-# the wrong one while the version check still passes. Each leg therefore
-# resolves its own exact file href from the pinned simple page and hands pip
-# the URL (wheel and sdist legs differ by file, not by pip flags);
-# dependencies resolve from production PyPI only.
+# the wrong one while the version check still passes. The await loop
+# therefore resolves both file hrefs with one tolerant expression and
+# retains this leg's URL as a step output; install hands pip that URL blind
+# (wheel and sdist legs differ by file, not by pip flags). Dependencies
+# resolve from production PyPI only, with ambient extra indexes emptied.
 #
 # This workflow never publishes, tags, or releases anything: it is read-only
 # (contents: read for the checkout) plus installs from the gate index.
@@ -304,51 +305,7 @@ jobs:
           python-version: "3.12"
 
       - name: Await version on this runner's index
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          SIMPLE_URL: ${{ needs.prepare.outputs.simple_url }}
-        run: |
-          python - <<'PY'
-          import os
-          import time
-          import urllib.request
-
-          SIMPLE_URL = os.environ["SIMPLE_URL"]
-          READ_TIMEOUT = 30
-          WAIT_INTERVAL = 15
-          WAIT_DEADLINE = 300
-
-          version = os.environ["VERSION"]
-
-
-          def simple_page() -> str:
-              with urllib.request.urlopen(SIMPLE_URL, timeout=READ_TIMEOUT) as response:
-                  return response.read().decode("utf-8", "replace")
-
-
-          # Prepare's wait ran on another runner's CDN edge: this leg must see
-          # the pinned release files on ITS OWN index view before pip does,
-          # or resolution fails with "No matching distribution" (run 44460105408
-          # attempt 1: prepare green, ubuntu wheel leg red on 0.3.0rc5).
-          wheel_marker = f"-{version}-"
-          sdist_marker = f"-{version}.tar.gz"
-          deadline = time.monotonic() + WAIT_DEADLINE
-          while True:
-              try:
-                  page = simple_page()
-              except Exception as exc:
-                  print(f"simple-index read failed ({exc}); retrying")
-                  page = ""
-              if wheel_marker in page and sdist_marker in page:
-                  print(f"wheel+sdist for {version} visible from this runner")
-                  break
-              if time.monotonic() >= deadline:
-                  raise SystemExit(f"pkcs11-check {version} files not visible after {WAIT_DEADLINE}s")
-              print(f"waiting for {version} files on this runner's index ...")
-              time.sleep(WAIT_INTERVAL)
-          PY
-
-      - name: Install ${{ matrix.artifact }} from the pinned index
+        id: await
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           SIMPLE_URL: ${{ needs.prepare.outputs.simple_url }}
@@ -357,49 +314,83 @@ jobs:
           python - <<'PY'
           import os
           import re
-          import subprocess
-          import sys
+          import time
           import urllib.parse
           import urllib.request
 
-          # R2-3: pip consults every configured index without preferring
-          # --index-url, so a version hosted on both indexes could install
-          # bytes from the wrong one while the version check still passes.
-          # Install the exact file instead: resolve its href from the pinned
-          # simple page (the same page the waits read) and hand pip the URL.
-          # Dependencies resolve from production PyPI only.
+          SIMPLE_URL = os.environ["SIMPLE_URL"]
+          READ_TIMEOUT = 30
+          WAIT_INTERVAL = 15
+          WAIT_DEADLINE = 300
+
           version = os.environ["VERSION"]
-          simple_url = os.environ["SIMPLE_URL"]
           artifact = os.environ["ARTIFACT"]
+          wheel_name = f"pkcs11_check-{version}-py3-none-any.whl"
+          sdist_name = f"pkcs11_check-{version}.tar.gz"
           if artifact == "wheel":
-              wanted = f"pkcs11_check-{version}-py3-none-any.whl"
+              wanted = wheel_name
           elif artifact == "sdist":
-              wanted = f"pkcs11_check-{version}.tar.gz"
+              wanted = sdist_name
           else:
               raise SystemExit(f"unknown gate artifact: {artifact!r}")
-          with urllib.request.urlopen(simple_url, timeout=30) as response:
-              page = response.read().decode("utf-8", "replace")
-          hrefs = [
-              urllib.parse.urljoin(simple_url, href)
-              for href, name in re.findall(r'href="([^"]+)"[^>]*>([^<>]+)<', page)
-              if name == wanted
-          ]
-          if len(hrefs) != 1:
-              raise SystemExit(f"expected exactly one {wanted} on {simple_url}")
-          print(f"installing {hrefs[0]}")
-          subprocess.run(
-              [
-                  sys.executable,
-                  "-m",
-                  "pip",
-                  "install",
-                  "--index-url",
-                  "https://pypi.org/simple/",
-                  hrefs[0],
-              ],
-              check=True,
-          )
+
+          # R3-2: one read, one parser. The wait and the install used to read
+          # the page separately with different matchers (substring markers vs
+          # a double-quote-only regex): a transient error on the second read,
+          # or valid single-quoted links, broke the leg after the wait passed.
+          # The loop resolves both hrefs with one tolerant expression and
+          # retains this leg's URL as a step output; install consumes it blind.
+          LINK_RE = re.compile(r"""href=(["'])([^"']+)\1[^>]*>([^<>]+)<""")
+
+
+          def page_hrefs(page: str) -> dict[str, str]:
+              return {
+                  name: urllib.parse.urljoin(SIMPLE_URL, href)
+                  for _quote, href, name in LINK_RE.findall(page)
+                  if name in (wheel_name, sdist_name)
+              }
+
+
+          # Prepare's wait ran on another runner's CDN edge: this leg must see
+          # the pinned release files on ITS OWN index view before pip does,
+          # or resolution fails with "No matching distribution" (run 44460105408
+          # attempt 1: prepare green, ubuntu wheel leg red on 0.3.0rc5).
+          deadline = time.monotonic() + WAIT_DEADLINE
+          while True:
+              try:
+                  with urllib.request.urlopen(SIMPLE_URL, timeout=READ_TIMEOUT) as response:
+                      page = response.read().decode("utf-8", "replace")
+                  hrefs = page_hrefs(page)
+              except Exception as exc:
+                  print(f"simple-index read failed ({exc}); retrying")
+                  hrefs = {}
+              if wheel_name in hrefs and sdist_name in hrefs:
+                  print(f"wheel+sdist for {version} visible from this runner")
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit(f"pkcs11-check {version} files not visible after {WAIT_DEADLINE}s")
+              print(f"waiting for {version} files on this runner's index ...")
+              time.sleep(WAIT_INTERVAL)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"artifact_url={hrefs[wanted]}\n")
           PY
+
+      - name: Install ${{ matrix.artifact }} from the pinned index
+        env:
+          ARTIFACT_URL: ${{ steps.await.outputs.artifact_url }}
+          # R3-3: pip merges an inherited PIP_EXTRA_INDEX_URL alongside the
+          # explicit index; empty it so dependencies resolve from prod PyPI
+          # only, never from ambient runner configuration.
+          PIP_EXTRA_INDEX_URL: ""
+        run: |
+          # The URL was resolved from the pinned simple page inside the await
+          # loop (single read, single parser): no second index read here
+          # means no second failure point. The artifact legs differ by file
+          # (wheel vs sdist URL), never by pip flags.
+          python -m pip install \
+            --index-url https://pypi.org/simple/ \
+            "$ARTIFACT_URL"
           python -m pip show pkcs11-check
 
       - name: Version check
