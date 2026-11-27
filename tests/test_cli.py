@@ -727,6 +727,70 @@ class TestTestCommand:
         assert "PIN incorrect" not in result.output
         assert called == ["run"]
 
+    def test_test_explicit_empty_pin_skips_login_probe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B7: --pin "" overrides as absent, never inheriting a set env PIN."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.setenv("P11TEST_PIN", "env-pin-must-not-win")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def recording_probe(*args: object, **kwargs: object) -> LoginProbe:
+            called.append("probe")
+            return LoginProbe("ok")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", recording_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "", "--isolation", "file"],
+        )
+        assert result.exit_code == 0, result.output
+        assert called == ["run"], called
+
+    def test_test_omitted_pin_falls_through_to_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B7 control: only an omitted --pin inherits a pre-existing env PIN."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.setenv("P11TEST_PIN", "env-pin")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def recording_probe(*args: object, **kwargs: object) -> LoginProbe:
+            called.append("probe")
+            return LoginProbe("ok")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", recording_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "file"],
+        )
+        assert result.exit_code == 0, result.output
+        assert called == ["probe", "run"], called
+
     def test_test_pin_probe_crashed_fails_fast(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

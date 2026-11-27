@@ -1265,10 +1265,12 @@ def test_command(
             )
             os.environ["PKCS11_CHECK_SELECTION_MANIFEST"] = str(canonical_selection_path)
 
-        # Pass PIN via env so pytest fixtures pick it up
-        if pin:
+        # Pass PIN via env so pytest fixtures pick it up. Explicit empty
+        # overrides as absent (B7, same as bare-pytest --p11-pin ""): only
+        # an omitted flag falls through to a pre-existing env value.
+        if pin is not None:
             os.environ["P11TEST_PIN"] = pin
-        if so_pin:
+        if so_pin is not None:
             os.environ["P11TEST_SO_PIN"] = so_pin
         # F-002: KEK likewise travels by env only, never on a command line.
         if wrap_key_value:
@@ -1492,7 +1494,7 @@ def test_command(
         # U1: fail fast on a wrong PIN (one login probe, one message) instead
         # of per-test login tracebacks. Only when a PIN was actually supplied
         # (CLI flag or env); other probe outcomes proceed to the run.
-        effective_pin = pin or os.environ.get("P11TEST_PIN")
+        effective_pin = pin if pin is not None else os.environ.get("P11TEST_PIN")
         if effective_pin:
             # Attempt 1 of the preflight unit: the same counters dir/run as
             # the manifest preflight (attempt 0), same evidence file, so the

@@ -111,18 +111,18 @@ A daemon that is reachable but degraded -- answering, only ever more slowly -- i
 
 ## Empty PIN semantics
 
-Three states, three behaviors (cleanup deferred; this section pins the
-current truth):
+Two states: a PIN is either configured (non-empty) or absent. An empty
+string (`--pin ""`, `P11TEST_PIN=`, TOML `pin = ""`) normalizes to absent
+at the configuration boundary, so every layer agrees:
 
-- **Absent** (no `--pin`, no `P11TEST_PIN`, no TOML `pin`): nothing logs
-  in; tests that need a PIN skip with an explicit reason.
+- **Absent** (no PIN, or an empty one anywhere): nothing logs in; tests
+  that need a PIN skip with an explicit reason.
 - **Non-empty**: sessions log in; PIN-needing tests run.
-- **Empty string** (`--pin ""` or `P11TEST_PIN=`): an empty `--pin` never
-  overrides the environment (a set `P11TEST_PIN` wins); session fixtures
-  treat empty as absent and do **not** log in. One known inconsistency:
-  `get_pin_bytes()` returns `b""` (not `None`) for an empty PIN, so its
-  security-test consumers proceed as if a PIN existed. To force a
-  no-login run, unset `P11TEST_PIN` rather than emptying it.
+
+Explicit empty still wins over the environment (as absent): `--pin ""`
+with a set `P11TEST_PIN` does not inherit the env value. There is no way
+to log in with a literally empty PIN; genuine empty-PIN tokens are not
+supported (no test path ever logged in with one).
 
 ## Environment variables that are not settings
 

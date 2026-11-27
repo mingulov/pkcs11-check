@@ -1041,11 +1041,17 @@ def gen_edwards_keypair_or_xfail(
 
 
 def get_pin_bytes(p11_config: Any) -> bytes | None:
-    """Extract PIN as bytes from config, or None if no PIN configured."""
+    """Extract PIN as bytes from config, or None if no PIN configured.
+
+    An empty PIN is absent (B7), matching the model validator and the
+    session fixtures: only a non-empty PIN logs in.
+    """
     if p11_config.pin is None:
         return None
     pin = p11_config.pin
     pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+    if not pin_str:
+        return None
     return pin_str.encode("utf-8")
 
 
