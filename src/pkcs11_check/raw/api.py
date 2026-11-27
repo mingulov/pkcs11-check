@@ -11,6 +11,7 @@ from ctypes import byref, c_void_p, cast
 from typing import Any
 
 from pkcs11_check.core.call_counters import current_bucket, record_call, record_return
+from pkcs11_check.core.counters_schema import MAX_MECH_ID
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 
 from . import metadata_std
@@ -748,17 +749,7 @@ class RawPKCS11:
                 m = obj.mechanism
                 self._used_mechanisms.add(m)
                 self._mechanism_counts[m] += 1
-                # Counter attribution needs a real CKM int; anything else
-                # (exotic test doubles, above-64-bit ids) stays
-                # unattributed, never loud: _call must not fail on shapes
-                # the provider would take.
-                mech_id = (
-                    m
-                    if isinstance(m, int)
-                    and not isinstance(m, bool)
-                    and 0 <= m <= 0xFFFFFFFFFFFFFFFF
-                    else None
-                )
+                mech_id = m
                 if tracing:
                     sub = getattr(obj, "_rv_trace_sub", None)
                     if sub:
@@ -780,10 +771,22 @@ class RawPKCS11:
         # bucket is captured once so a mid-call switch cannot split the pair,
         # and the mechanism halves always match (None when unreadable or not
         # a mechanism call: unattributed, a subset of the fn totals).
+        # Counter attribution needs a real CKM int; anything else (exotic
+        # test doubles, above-64-bit ids) stays unattributed, never loud:
+        # _call must not fail on shapes the provider would take. The
+        # narrowing is counter-scoped: journal and per-mechanism RV counts
+        # keep the raw value as before.
         bucket = current_bucket()
-        record_call(name, bucket=bucket, module=self._module_id, mech=mech_id)
+        counter_mech_id = (
+            mech_id
+            if isinstance(mech_id, int)
+            and not isinstance(mech_id, bool)
+            and 0 <= mech_id <= MAX_MECH_ID
+            else None
+        )
+        record_call(name, bucket=bucket, module=self._module_id, mech=counter_mech_id)
         result = int(func(*args))
-        record_return(name, result, bucket=bucket, module=self._module_id, mech=mech_id)
+        record_return(name, result, bucket=bucket, module=self._module_id, mech=counter_mech_id)
         if result == int(CKR_OK):
             self._call_log_ok[name] += 1
         if mech_id is not None:
