@@ -432,6 +432,7 @@ def _build_pytest_args(
     so_pin: str | None,
     slot: int,
     destructive: bool,
+    ckr_strict: bool,
     rv_trace: bool,
     rv_trace_compact: int | None,
     output: str,
@@ -465,6 +466,9 @@ def _build_pytest_args(
 
     if destructive:
         args.append("--p11-destructive")
+
+    if ckr_strict:
+        args.append("--ckr-strict")
 
     # CK_RV trace: a stable option, so it flows via pytest_args to both the
     # in-process pytest.main and each isolated subprocess unit (no env bridge
@@ -826,6 +830,12 @@ def test_command(
     slot: int = typer.Option(0, "--slot", help="Slot index"),
     destructive: bool = typer.Option(
         False, "--destructive", help="Enable destructive tests", rich_help_panel="Advanced"
+    ),
+    ckr_strict: bool = typer.Option(
+        False,
+        "--ckr-strict",
+        help="Strict CKR compliance: spec deviations are test failures, not notes",
+        rich_help_panel="Advanced",
     ),
     output: str = typer.Option(
         "rich", "--output", "-o", "--format", help="Output: rich, json, junit"
@@ -1574,6 +1584,7 @@ def test_command(
             so_pin=so_pin,
             slot=slot,
             destructive=destructive,
+            ckr_strict=ckr_strict,
             rv_trace=rv_trace,
             rv_trace_compact=rv_trace_compact,
             output=output,
