@@ -20819,9 +20819,16 @@ def sweep_orphans(
                     # new construction outran the bracket: hold it
                     # loudly rather than resolve through unsampled
                     # links. Outside-root spellings keep their
-                    # downstream voices.
+                    # downstream voices. Both sides anchor
+                    # lexically first (Codex R64-2): a relative
+                    # root with an absolute base would raise out
+                    # of the depth check into the outside
+                    # exemption -- abspath compares them under one
+                    # anchor without resolving links.
                     try:
-                        unmapped_depth = len(base.relative_to(root).parts)
+                        unmapped_depth = len(
+                            Path(os.path.abspath(base)).relative_to(os.path.abspath(root)).parts
+                        )
                     except ValueError:
                         unmapped_depth = 0
                     if unmapped_depth > 2:
@@ -21791,6 +21798,18 @@ def sweep_orphans(
                         misplaced_keys.append(key)
                         continue
                     if member_status == "torn":
+                        if member_targets[member_key] is None:
+                            # Unresolvable at capture but torn at
+                            # reread (Codex R64-1): two observations
+                            # differ (absent-then-present), so drift
+                            # is proven -- and rendering would
+                            # resolve live through unverified links
+                            # (a redirect under a system dir could
+                            # substitute the target mid-render while
+                            # every sampled clock agrees). Re-observe
+                            # instead of rendering unmapped.
+                            member_drifted = True
+                            continue
                         # Links verify at use (Codex R44-2): a member
                         # symlink to another file would archive under
                         # the wrong identity. The census key claims
