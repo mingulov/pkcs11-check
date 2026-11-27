@@ -523,6 +523,30 @@ def _blob_only_incomplete(
     return counters, False
 
 
+def _repeatable_earlier_scopes(earlier: bytes) -> bytes:
+    """Re-emit earlier evidence lines that are safe to repeat (R5-F1).
+
+    Earlier scopes are not guaranteed to be in the report JSONL already
+    (several exits never splice), so the append re-carries the ones whose
+    repetition cannot corrupt the fold: records with a worker_uuid fold
+    first-wins. Parsed records WITHOUT a uuid are skipped (re-appending
+    would double-sum the retained ones); unparseable lines are kept (a dup
+    cannot be proven, and the extractor tolerates malformed lines).
+    """
+    out: list[bytes] = []
+    for line in earlier.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            out.append(line)
+            continue
+        if isinstance(record, dict) and record.get("worker_uuid"):
+            out.append(line)
+    return b"".join(line + b"\n" for line in out)
+
+
 def _refused_results_path(output_file: str | Path | None) -> Path:
     """Separate summary path for a refused cross-provider run (R4-3).
 
@@ -787,12 +811,17 @@ def _retain_early_failure_evidence(
     unretained round instead of silently dropping the current counts; a torn
     partial tail is truncated back best-effort (a failed rollback warns, it
     is not silent) so the next resume appends to clean bytes.
-    Appends carry only this run's tail past ``pre_size`` (C10): the
-    evidence file accumulates every round, and re-appending the whole blob
-    would duplicate uuid-less legacy records in the published JSONL until
-    the next full run rebuilds it. The overwriting create keeps the whole
-    blob (there is no history file to duplicate into). Re-appends of the
-    same tail stay safe: the extractor folds uuid-bearing repeats
+    Appends carry this run's tail past ``pre_size`` plus any earlier
+    uuid-bearing records (C10/R5-F1): the evidence file accumulates every
+    round, and earlier scopes are NOT guaranteed to be in the JSONL already
+    (collection-failure, interrupt, runner-error, failed-splice, and
+    failed-retain exits never splice). Re-appending uuid-bearing earlier
+    records is first-wins-safe, so unspliced middle rounds still fold;
+    only uuid-less earlier records are skipped (re-appending those would
+    double-sum the retained ones; a never-retained legacy scope waits for
+    the next full splice, as before). The overwriting create keeps the
+    whole blob (there is no history file to duplicate into). Re-appends of
+    the same tail stay safe: the extractor folds uuid-bearing repeats
     first-wins, so a retried round never double-counts.
     """
     if output != "json" or preflight_evidence_path is None:
@@ -824,7 +853,7 @@ def _retain_early_failure_evidence(
             )
             return False, blob
         start = 0 if pre_size is None or pre_size == _PRE_SIZE_UNKNOWN else pre_size
-        kept = blob[start:]
+        kept = _repeatable_earlier_scopes(blob[:start]) + blob[start:]
         if not kept.strip():
             return True, b""
     else:
@@ -1219,6 +1248,9 @@ def _persist_collection_failure(
         state_file,
         units=list(reporting_state.units),
         inline_records_by_unit=inline_records_by_unit,
+        # Refused (R5-F5): the foreign cache shards are not ours to read
+        # (nor to delete); the separate report renders inline records only.
+        consult_cache=not prior_refused,
     )
     if report_config.output_format == "json":
         payload = write_isolated_json_report(

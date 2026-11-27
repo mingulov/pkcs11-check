@@ -759,6 +759,45 @@ def test_state_round_trip(tmp_path: Path) -> None:
     assert loaded.process_observations_complete is True
 
 
+def test_zero_units_resume_does_not_backfill_module_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B1/R5-F2: the unverified zero-units branch stamps no module identity."""
+    module = tmp_path / "module.so"
+    module.write_bytes(b"provider-bytes")
+    state_file = tmp_path / "state.json"
+    save_run_state(
+        state_file,
+        FileRunState(units=["a.py"], fingerprint="legacy", results=[]),
+    )
+    counters_root = tmp_path / "counters"
+    counters_root.mkdir()
+    monkeypatch.setenv(file_runner_mod.COUNTERS_DIR_ENV, str(counters_root))
+    saved_active = file_runner_mod._ACTIVE_COUNTERS_DIR
+    try:
+        code = run_isolated_pytest_units(
+            [],
+            ["--p11-module", str(module)],
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+    finally:
+        file_runner_mod._ACTIVE_COUNTERS_DIR = saved_active
+    assert code == file_runner_mod._NO_TESTS_COLLECTED_EXIT
+    loaded = load_run_state(state_file)
+    assert loaded is not None
+    # The durability setup saved (the counters dir landed), but no module
+    # identity was stamped: with zero units the mismatch check never runs,
+    # so there is nothing verified to stamp.
+    assert loaded.counters_dir == str(counters_root)
+    assert loaded.module_snapshot is None
+
+
 def test_legacy_state_result_defaults_to_verified_completion(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
     state_file.write_text(

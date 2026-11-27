@@ -2761,12 +2761,9 @@ def run_isolated_pytest_units(
         )
         if resume and previous_state is not None:
             state = previous_state
-            # B1/C11: backfill the module snapshot onto legacy states (saved
-            # before the field existed) on an accepted resume, so the next
-            # early failure can verify instead of merging blind. In-memory
-            # only; the normal per-unit saves persist it.
-            if state.module_snapshot is None and run_module_snapshot is not None:
-                state.module_snapshot = run_module_snapshot
+            # No C11 backfill here (R5-F2): with zero units the fingerprint
+            # is "" and the mismatch check never runs, so stamping this
+            # run's module onto the kept state would verify nothing.
         else:
             state = FileRunState(
                 units=[],
