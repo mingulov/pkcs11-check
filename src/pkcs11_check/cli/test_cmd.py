@@ -317,8 +317,10 @@ def _write_early_failure_results(
     observation: dict[str, Any] | None,
     case_selection: CaseSelection | None,
     preflight_evidence_path: Path | None,
-    resume: bool = False,
-    state_file: Path | None = None,
+    state_file: Path,
+    prior_state: FileRunState | None,
+    counters_jsonl: Path | None,
+    provenance: dict[str, Any] | None,
 ) -> None:
     """Write results.json for a JSON run dead on arrival (exit 1), else nothing.
 
@@ -327,12 +329,18 @@ def _write_early_failure_results(
     marked incomplete, with the retained counter evidence folded in. Text
     mode and usage errors (exit 2) write nothing, as before.
 
-    B1: on resume with a loadable prior state, the failure is APPENDED to
-    the prior results (units, results, observations merge; every other
-    state field rides along untouched) instead of overwriting them, and
-    counters fold from the appended JSONL -- which is why both call sites
-    retain evidence BEFORE writing. Fresh runs and resume-without-state
-    keep the exact old shape.
+    B1: with a prior state, the failure is APPENDED to the prior results
+    (units, results, observations merge; every other state field rides
+    along untouched) instead of overwriting them, per-unit details rebuild
+    from the prior record caches (so test counts survive), and counters
+    fold from the appended JSONL -- which is why both call sites retain
+    evidence BEFORE writing and pass the written path back. Without a
+    prior state the exact old shape is kept. Trust rule (matches the
+    collection-failure precedent): the state file is operator-attested
+    pre-run (the runner fingerprint that would refuse a foreign state
+    needs collected units, unavailable here); the crash row carries the
+    current module target, so a mixed report still self-attributes, and
+    unit execution stays fingerprint-gated downstream.
     """
     if output != "json":
         return
@@ -343,7 +351,6 @@ def _write_early_failure_results(
         returncode=legacy_returncode,
         duration_s=0.0,
     )
-    prior_state = load_run_state(state_file) if resume and state_file is not None else None
     if prior_state is None:
         state = FileRunState(
             units=[str(module)],
@@ -352,6 +359,8 @@ def _write_early_failure_results(
             process_observations=[observation] if isinstance(observation, dict) else [],
         )
         counters = _evidence_counters(preflight_evidence_path)
+        details: dict[str, dict[str, Any]] | None = None
+        report_provenance = None
     else:
         units = list(prior_state.units)
         if str(module) not in units:
@@ -365,15 +374,46 @@ def _write_early_failure_results(
             results=[*prior_state.results, result],
             process_observations=observations,
         )
-        jsonl_path = _early_jsonl_path(output_file)
-        counters = extract_call_counters_from_jsonl(jsonl_path) if jsonl_path.exists() else None
+        # Details rebuild from the prior record caches, seeded from the
+        # JSONL exactly like the collection-failure path: state.json never
+        # carries inline records (shards + JSONL are the durable homes), so
+        # without this step the merged units would lose their test counts.
+        inline_records_by_unit = dict(prior_state.report_records_by_unit)
+        seed_jsonl = counters_jsonl
+        if seed_jsonl is None:
+            candidate = _early_jsonl_path(output_file)
+            seed_jsonl = candidate if candidate.exists() else None
+        if seed_jsonl is not None:
+            candidate_targets = set(units) | {result.target for result in state.results}
+            try:
+                _seed_missing_report_record_caches_from_jsonl(
+                    state_file,
+                    seed_jsonl,
+                    candidate_targets=candidate_targets,
+                    skip_units=set(inline_records_by_unit),
+                )
+            except Exception:  # noqa: BLE001  # details are best-effort enrichment:
+                # a JSONL the seeder cannot attribute (counter-only rounds,
+                # foreign shapes) must not kill the failure report itself.
+                pass
+        details = _build_per_unit_details_from_record_sources(
+            state_file,
+            units=units,
+            inline_records_by_unit=inline_records_by_unit,
+        )
+        counters = (
+            extract_call_counters_from_jsonl(counters_jsonl) if counters_jsonl is not None else None
+        )
         if counters is None:
             counters = _evidence_counters(preflight_evidence_path)
+        report_provenance = provenance
     payload = write_isolated_json_report(
         results_path,
         state,
         selection=case_selection,
         call_counters=counters,
+        per_unit_details=details,
+        provenance=report_provenance,
     )
     payload["summary"]["incomplete"] = True
     results_path.write_text(
@@ -387,35 +427,45 @@ def _retain_early_failure_evidence(
     output_file: str | None,
     preflight_evidence_path: Path | None,
     console: Console,
-    resume: bool = False,
-) -> None:
+    prior_state: FileRunState | None,
+) -> Path | None:
     """Retain counter-only JSONL evidence next to the results, else nothing.
 
     A dead-on-arrival JSON run keeps its counts-or-loss evidence even when
     no results file is written (plain error manifests); text mode and usage
-    errors write nothing, as before. B1: on resume the blob is APPENDED so
-    prior rounds survive (each attempt's evidence is distinct); fresh runs
-    keep the overwriting write.
+    errors write nothing, as before. B1: with a prior state the blob is
+    APPENDED with record-boundary care (the splice pattern) so prior rounds
+    survive; without one the overwriting write is kept. Re-appends are safe:
+    the extractor folds uuid-bearing repeats first-wins, so a retried round
+    never double-counts. Returns the path written, else None.
     """
     if output != "json" or preflight_evidence_path is None:
-        return
+        return None
     try:
         blob = preflight_evidence_path.read_bytes()
     except OSError:
         blob = b""
-    if blob.strip():
-        jsonl_path = _early_jsonl_path(output_file)
-        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if resume:
-                with open(jsonl_path, "ab") as handle:
-                    handle.write(blob if blob.endswith(b"\n") else blob + b"\n")
-            else:
-                jsonl_path.write_bytes(blob)
-        except OSError as exc:
-            console.print(
-                f"[yellow]Warning:[/yellow] preflight counter evidence not retained: {exc}"
-            )
+    if not blob.strip():
+        return None
+    jsonl_path = _early_jsonl_path(output_file)
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if prior_state is not None and jsonl_path.exists():
+            with open(jsonl_path, "rb+") as handle:
+                handle.seek(0, 2)
+                if handle.tell() > 0:
+                    handle.seek(-1, 2)
+                    if handle.read(1) != b"\n":
+                        handle.seek(0, 2)
+                        handle.write(b"\n")
+                handle.seek(0, 2)
+                handle.write(blob if blob.endswith(b"\n") else blob + b"\n")
+        else:
+            jsonl_path.write_bytes(blob)
+    except OSError as exc:
+        console.print(f"[yellow]Warning:[/yellow] preflight counter evidence not retained: {exc}")
+        return None
+    return jsonl_path
 
 
 def _fold_preflight_evidence(
@@ -1501,6 +1551,9 @@ def test_command(
             console.print(
                 f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}"
             )
+            # B1: one prior-state load feeds both writers, so retain and
+            # report always agree on merge-vs-fresh.
+            prior_state = load_run_state(state_file) if resume else None
             if manifest.status in {"crashed", "timeout"}:
                 observation = manifest.process_observation
                 raw_code = (
@@ -1514,14 +1567,14 @@ def test_command(
                     if manifest.status == "timeout"
                     else (int(raw_code) if isinstance(raw_code, int) else 1)
                 )
-                # B1: retain before writing: on resume the merged report
-                # folds counters from the appended JSONL.
-                _retain_early_failure_evidence(
+                # B1: retain before writing: the merged report folds counters
+                # from the appended JSONL, so the written path flows forward.
+                counters_jsonl = _retain_early_failure_evidence(
                     output=output,
                     output_file=output_file,
                     preflight_evidence_path=preflight_evidence_path,
                     console=console,
-                    resume=resume,
+                    prior_state=prior_state,
                 )
                 _write_early_failure_results(
                     output=output,
@@ -1532,8 +1585,10 @@ def test_command(
                     observation=observation if isinstance(observation, dict) else None,
                     case_selection=case_selection,
                     preflight_evidence_path=preflight_evidence_path,
-                    resume=resume,
                     state_file=state_file,
+                    prior_state=prior_state,
+                    counters_jsonl=counters_jsonl,
+                    provenance=_build_run_provenance(manifest, resolve_data_dir()),
                 )
             else:
                 _retain_early_failure_evidence(
@@ -1541,7 +1596,7 @@ def test_command(
                     output_file=output_file,
                     preflight_evidence_path=preflight_evidence_path,
                     console=console,
-                    resume=resume,
+                    prior_state=prior_state,
                 )
             if manifest.status in {"crashed", "timeout"}:
                 preflight_exit_code = 1
@@ -1602,13 +1657,15 @@ def test_command(
                     if login_probe.status == "timeout"
                     else (login_probe.returncode if isinstance(login_probe.returncode, int) else 1)
                 )
-                # B1: retain before writing (same merged-report reason as above).
-                _retain_early_failure_evidence(
+                # B1: one prior-state load feeds both writers (same agreed
+                # merge-vs-fresh rule as the manifest path above).
+                prior_state = load_run_state(state_file) if resume else None
+                counters_jsonl = _retain_early_failure_evidence(
                     output=output,
                     output_file=output_file,
                     preflight_evidence_path=preflight_evidence_path,
                     console=console,
-                    resume=resume,
+                    prior_state=prior_state,
                 )
                 _write_early_failure_results(
                     output=output,
@@ -1619,8 +1676,10 @@ def test_command(
                     observation=None,
                     case_selection=case_selection,
                     preflight_evidence_path=preflight_evidence_path,
-                    resume=resume,
                     state_file=state_file,
+                    prior_state=prior_state,
+                    counters_jsonl=counters_jsonl,
+                    provenance=_build_run_provenance(manifest, resolve_data_dir()),
                 )
                 raise typer.Exit(code=_resume_exit_code(state_file, 1) if resume else 1)
             if login_probe.status == "error":
