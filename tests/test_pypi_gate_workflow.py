@@ -183,6 +183,10 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     assert "--index-url https://pypi.org/simple/" in install_run
     assert "urlopen" not in install_run
     assert "findall" not in install_run
+    # R4-2: pip gets an empty config file (per-OS null device), so no
+    # pip.conf extra index can join the explicit prod index.
+    assert "PIP_CONFIG_FILE=" in install_run
+    assert "os.devnull" in install_run
     install_step = next(s for s in steps if "from the pinned index" in str(s.get("name", "")))
     assert install_step["env"]["ARTIFACT_URL"] == "${{ steps.await.outputs.artifact_url }}"
     # R3-3: pip merges an inherited PIP_EXTRA_INDEX_URL alongside the
@@ -310,11 +314,15 @@ def test_gate_waits_for_version_on_each_runner_before_install() -> None:
     assert "pypi.org" not in run_body
     assert 'f"pkcs11_check-{version}-py3-none-any.whl"' in run_body
     assert 'f"pkcs11_check-{version}.tar.gz"' in run_body
-    assert "href=([\"'])([^\"']+)\\1" in run_body
+    assert "href\\s*=\\s*([\"'])([^\"']+)\\1" in run_body
     assert "def page_hrefs(" in run_body
     assert "wheel_name in hrefs and sdist_name in hrefs" in run_body
     assert "artifact_url={hrefs[wanted]}" in run_body
     assert "unknown gate artifact" in run_body
+    # R4-3: a resolved URL counts only with an https scheme and an exact
+    # filename -- a whitespace-href decoy must not pass the wait.
+    assert 'parts.scheme != "https"' in run_body
+    assert 'parts.path.rsplit("/", 1)[-1] != name' in run_body
     # Bounded wait (~5 minutes), enforced (not just declared), loud
     # failure, polite polling, bounded network I/O.
     assert "WAIT_DEADLINE = 300" in run_body
@@ -391,15 +399,24 @@ def test_gate_release_runs_bind_version_to_triggering_tag() -> None:
     )
 
 
-def _prepare_script() -> str:
-    """The prepare step's embedded Python, without the heredoc wrapper."""
-    prepare = _workflow()["jobs"]["prepare"]
-    run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
+def _embedded_script(job: str, needle: str) -> str:
+    """A workflow step's embedded Python, without the heredoc wrapper."""
+    run_body = _run_of(_steps(_workflow()["jobs"][job]), needle)
     prefix = "python - <<'PY'\n"
     assert run_body.startswith(prefix)
     script = run_body.removeprefix(prefix).rstrip()
     assert script.endswith("\nPY")
     return script[: -len("\nPY")]
+
+
+def _prepare_script() -> str:
+    """The prepare step's embedded Python, without the heredoc wrapper."""
+    return _embedded_script("prepare", "Resolve and await candidate version")
+
+
+def _await_script() -> str:
+    """The per-leg await step's embedded Python, without the heredoc wrapper."""
+    return _embedded_script("validate", "Await version on this runner's index")
 
 
 class _PrepareResult(SimpleNamespace):
@@ -607,6 +624,140 @@ def test_prepare_missing_head_sha_stops_release_run(
     """R2-5 (R2-1): no head SHA means no binding, no guessing."""
     result = _exec_prepare(monkeypatch, tmp_path, env=_RELEASE_BASE)
     assert result.raised is not None and "cannot bind release version" in result.raised
+    assert result.outputs == {}
+
+
+def _exec_await(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    page: str,
+    artifact: str = "wheel",
+    version: str = "9.9.9",
+) -> _PrepareResult:
+    """Execute the SHIPPED await script against one canned index page."""
+    output_path = tmp_path / "github_output.txt"
+    output_path.write_text("", encoding="utf-8")
+
+    class _FakeResponse:
+        def read(self) -> bytes:
+            return page.encode()
+
+        def __enter__(self) -> _FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def _fake_urlopen(url: str, timeout: object = None) -> _FakeResponse:
+        del url, timeout
+        return _FakeResponse()
+
+    ticks = iter([1000.0, 1400.0])
+    last = 1400.0
+
+    def _fake_monotonic() -> float:
+        nonlocal last
+        try:
+            last = next(ticks)
+        except StopIteration:
+            pass
+        return last
+
+    import urllib.parse as _real_parse
+
+    fake_urllib_request = SimpleNamespace(urlopen=_fake_urlopen)
+    monkeypatch.setitem(
+        sys.modules, "urllib", SimpleNamespace(request=fake_urllib_request, parse=_real_parse)
+    )
+    monkeypatch.setitem(sys.modules, "urllib.request", fake_urllib_request)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(time, "monotonic", _fake_monotonic)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setenv("VERSION", version)
+    monkeypatch.setenv("SIMPLE_URL", "https://idx.example/simple/pkcs11-check/")
+    monkeypatch.setenv("ARTIFACT", artifact)
+    buffer = io.StringIO()
+    raised: str | None = None
+    try:
+        with contextlib.redirect_stdout(buffer):
+            exec(compile(_await_script(), "<gate-await>", "exec"), {})  # noqa: S102
+    except SystemExit as exc:
+        raised = str(exc.code)
+    outputs = dict(
+        line.split("=", 1)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    return _PrepareResult(raised=raised, output=buffer.getvalue(), outputs=outputs)
+
+
+def _await_page(*links: tuple[str, str, str]) -> str:
+    """A minimal simple page from (quote, href, text) triples."""
+    return "".join(f"<a href={q}{h}{q}>{t}</a>\n" for q, h, t in links)
+
+
+_WHEEL_999 = "pkcs11_check-9.9.9-py3-none-any.whl"
+_SDIST_999 = "pkcs11_check-9.9.9.tar.gz"
+
+
+def test_await_resolves_single_quoted_links(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R4-3: single-quoted hrefs are valid links, not a timeout."""
+    page = _await_page(
+        ("'", f"https://f.example/{_WHEEL_999}", _WHEEL_999),
+        ("'", f"https://f.example/{_SDIST_999}", _SDIST_999),
+    )
+    result = _exec_await(monkeypatch, tmp_path, page=page)
+    assert result.raised is None, result.output
+    assert result.outputs["artifact_url"] == f"https://f.example/{_WHEEL_999}"
+
+
+def test_await_tolerates_whitespace_around_equals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R4-3: `href = \"...\"` is valid HTML and must resolve."""
+    wheel_href = f"https://f.example/{_WHEEL_999}"
+    sdist_href = f"https://f.example/{_SDIST_999}"
+    page = f'<a href = "{wheel_href}">{_WHEEL_999}</a>\n<a href= "{sdist_href}" >{_SDIST_999}</a>\n'
+    result = _exec_await(monkeypatch, tmp_path, page=page, artifact="sdist")
+    assert result.raised is None, result.output
+    assert result.outputs["artifact_url"] == sdist_href
+
+
+def test_await_rejects_whitespace_href_decoy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R4-3: right link text with an empty href must not pass the wait."""
+    page = _await_page(
+        ('"', "   ", _WHEEL_999),
+        ('"', f"https://f.example/{_SDIST_999}", _SDIST_999),
+    )
+    result = _exec_await(monkeypatch, tmp_path, page=page)
+    assert result.raised is not None and "not visible" in result.raised
+    assert result.outputs == {}
+
+
+def test_await_rejects_filename_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R4-3: a URL whose filename differs from the link text never counts."""
+    page = _await_page(
+        ('"', "https://f.example/trojan.whl", _WHEEL_999),
+        ('"', f"https://f.example/{_SDIST_999}", _SDIST_999),
+    )
+    result = _exec_await(monkeypatch, tmp_path, page=page)
+    assert result.raised is not None and "not visible" in result.raised
+    assert result.outputs == {}
+
+
+def test_await_rejects_non_https_links(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R4-3: only https artifact URLs are retained."""
+    page = _await_page(
+        ('"', f"http://f.example/{_WHEEL_999}", _WHEEL_999),
+        ('"', f"https://f.example/{_SDIST_999}", _SDIST_999),
+    )
+    result = _exec_await(monkeypatch, tmp_path, page=page)
+    assert result.raised is not None and "not visible" in result.raised
     assert result.outputs == {}
 
 
