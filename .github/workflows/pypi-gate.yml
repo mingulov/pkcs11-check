@@ -1,52 +1,68 @@
-name: TestPyPI gate
+name: PyPI gate
 
-# Permanent post-TestPyPI validation gate: after every TestPyPI publish, install
-# the published wheel AND sdist from TestPyPI into fresh interpreters on
-# ubuntu/windows/macos and drive the installed package (never the source tree)
-# through install -> version check -> entry points -> doctor -> fetch data ->
-# smoke subset -> vector slice -> report. This automates the manual TestPyPI
-# validation pass; the published-artifact assertions live in
-# tests/test_published_artifact.py and the workflow contract in
-# tests/test_testpypi_gate_workflow.py.
+# Permanent post-publish validation gate: after every TestPyPI or production
+# PyPI publish, install the published wheel AND sdist from the published index
+# into fresh interpreters on ubuntu/windows/macos and drive the installed
+# package (never the source tree) through install -> version check ->
+# entry points -> doctor -> fetch data -> smoke subset -> vector slice ->
+# report. This automates the manual index-validation pass; the
+# published-artifact assertions live in tests/test_published_artifact.py and
+# the workflow contract in tests/test_pypi_gate_workflow.py.
 #
 # Triggers:
-#   - workflow_run after the TestPyPI workflow completes successfully (the
-#     automatic "after every publish" leg; a dry_run success re-validates
-#     whatever is latest on TestPyPI, which is harmless);
-#   - workflow_dispatch / workflow_call with an optional pinned version for
-#     manual re-runs. With no version the gate validates TestPyPI latest.
+#   - workflow_run after the TestPyPI or Release workflow completes
+#     successfully (the automatic "after every publish" legs; a dry_run
+#     success re-validates whatever is latest on that index, harmless);
+#   - workflow_dispatch / workflow_call with an optional pinned version and
+#     index for manual re-runs. With no version the gate validates the
+#     index's latest.
+#
+# Index handling: the triggering publisher attests the index (a Release run
+# validates production PyPI, a TestPyPI run validates TestPyPI); manual runs
+# pick it explicitly via the `index` input (default: test). Anything else
+# fails loudly in prepare -- the gate never guesses an index.
 #
 # Version handling: a `prepare` job resolves ONE version for the whole run
 # and every matrix leg validates exactly that release. Resolving "latest"
-# per leg diverged within a single run (the TestPyPI JSON index is
-# CDN-cached per runner, so one leg saw rc1 while others saw rc2), and
-# installing immediately after upload raced index propagation (metadata
-# visible before files are fetchable). So prepare settles "latest" across
-# consecutive identical reads, awaits the release files on the simple
-# index, and only then releases the pinned version to the matrix. An
-# explicitly requested version skips the settle but keeps the file wait
-# (instant for already-published releases). Prepare's wait ran on one
-# runner's CDN edge, so each validate leg additionally awaits the pinned
-# files on ITS OWN index view before installing (up to 5 minutes):
-# otherwise a stale edge fails pip resolution after a green prepare.
+# per leg diverged within a single run (the JSON index is CDN-cached per
+# runner, so one leg saw rc1 while others saw rc2), and installing
+# immediately after upload raced index propagation (metadata visible before
+# files are fetchable). So prepare settles "latest" across consecutive
+# identical reads, awaits the release files on the simple index, and only
+# then releases the pinned version to the matrix. An explicitly requested
+# version skips the settle but keeps the file wait (instant for
+# already-published releases). Prepare's wait ran on one runner's CDN edge,
+# so each validate leg additionally awaits the pinned files on ITS OWN index
+# view before installing (up to 5 minutes): otherwise a stale edge fails pip
+# resolution after a green prepare.
 #
 # This workflow never publishes, tags, or releases anything: it is read-only
-# (contents: read for the checkout) plus installs from TestPyPI.
+# (contents: read for the checkout) plus installs from the gate index.
 
 on:
   workflow_run:
-    workflows: ["TestPyPI"]
+    workflows: ["TestPyPI", "Release"]
     types: [completed]
   workflow_dispatch:
     inputs:
       version:
-        description: "TestPyPI version to validate (default: latest on TestPyPI)"
+        description: "Version to validate on the gate index (default: latest on that index)"
         required: false
         type: string
+      index:
+        description: "Package index to validate"
+        required: false
+        type: choice
+        options: [test, prod]
+        default: test
   workflow_call:
     inputs:
       version:
-        description: "TestPyPI version to validate (default: latest on TestPyPI)"
+        description: "Version to validate on the gate index (default: latest on that index)"
+        required: false
+        type: string
+      index:
+        description: "Package index to validate: test (TestPyPI) or prod (PyPI)"
         required: false
         type: string
 
@@ -62,11 +78,16 @@ jobs:
     timeout-minutes: 20
     outputs:
       version: ${{ steps.candidate.outputs.version }}
+      index: ${{ steps.candidate.outputs.index }}
+      simple_url: ${{ steps.candidate.outputs.simple_url }}
     steps:
       - name: Resolve and await candidate version
         id: candidate
         env:
           REQUESTED: ${{ inputs.version }}
+          REQUESTED_INDEX: ${{ inputs.index }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGERING_WORKFLOW: ${{ github.event.workflow_run.name }}
         run: |
           python - <<'PY'
           import json
@@ -74,14 +95,36 @@ jobs:
           import time
           import urllib.request
 
-          JSON_URL = "https://test.pypi.org/pypi/pkcs11-check/json"
-          SIMPLE_URL = "https://test.pypi.org/simple/pkcs11-check/"
           READ_TIMEOUT = 30
           SETTLE_READS = 3
           SETTLE_INTERVAL = 15
           SETTLE_DEADLINE = 300
           WAIT_INTERVAL = 15
           WAIT_DEADLINE = 600
+
+          # The index is attested, never guessed: automatic runs inherit it
+          # from the publisher that fired them, manual runs pass it
+          # explicitly. Anything else fails here, before any network I/O.
+          event = os.environ.get("EVENT_NAME", "")
+          triggering = os.environ.get("TRIGGERING_WORKFLOW", "")
+          requested_index = os.environ.get("REQUESTED_INDEX", "").strip()
+          if event == "workflow_run":
+              if triggering == "Release":
+                  index = "prod"
+              elif triggering == "TestPyPI":
+                  index = "test"
+              else:
+                  raise SystemExit(f"unexpected triggering workflow: {triggering!r}")
+          elif requested_index in ("", "test"):
+              index = "test"
+          elif requested_index == "prod":
+              index = "prod"
+          else:
+              raise SystemExit(f"index must be 'test' or 'prod', got {requested_index!r}")
+          host = "pypi.org" if index == "prod" else "test.pypi.org"
+          JSON_URL = f"https://{host}/pypi/pkcs11-check/json"
+          SIMPLE_URL = f"https://{host}/simple/pkcs11-check/"
+          print(f"gate index: {index} ({host})")
 
 
           def read_latest() -> str:
@@ -119,7 +162,7 @@ jobs:
                       version = latest
                       break
                   if time.monotonic() >= deadline:
-                      raise SystemExit("TestPyPI latest did not settle in time")
+                      raise SystemExit(f"latest on {host} did not settle in time")
                   time.sleep(SETTLE_INTERVAL)
               print(f"settled on latest: {version}")
 
@@ -144,7 +187,9 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"version={version}\n")
-          print(f"Validating pkcs11-check {version} on every leg")
+              handle.write(f"index={index}\n")
+              handle.write(f"simple_url={SIMPLE_URL}\n")
+          print(f"Validating pkcs11-check {version} from {host} on every leg")
           PY
 
   validate:
@@ -179,13 +224,14 @@ jobs:
       - name: Await version on this runner's index
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          SIMPLE_URL: ${{ needs.prepare.outputs.simple_url }}
         run: |
           python - <<'PY'
           import os
           import time
           import urllib.request
 
-          SIMPLE_URL = "https://test.pypi.org/simple/pkcs11-check/"
+          SIMPLE_URL = os.environ["SIMPLE_URL"]
           READ_TIMEOUT = 30
           WAIT_INTERVAL = 15
           WAIT_DEADLINE = 300
@@ -220,7 +266,7 @@ jobs:
               time.sleep(WAIT_INTERVAL)
           PY
 
-      - name: Install ${{ matrix.artifact }} from TestPyPI
+      - name: Install ${{ matrix.artifact }} from the pinned index
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
@@ -230,7 +276,7 @@ jobs:
             BINARY_FLAG="--no-binary=pkcs11-check"
           fi
           python -m pip install \
-            --index-url https://test.pypi.org/simple/ \
+            --index-url ${{ needs.prepare.outputs.simple_url }} \
             --extra-index-url https://pypi.org/simple/ \
             "$BINARY_FLAG" "pkcs11-check==$VERSION"
           python -m pip show pkcs11-check
@@ -398,13 +444,14 @@ jobs:
         if: always()
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          INDEX: ${{ needs.prepare.outputs.index }}
         run: |
           python - "gate-out/smoke/results.json" "gate-out/vectors/results.json" <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
           import sys
           # ${{ matrix.artifact }} is substituted by GitHub before bash runs.
-          leg = f"{os.environ.get('RUNNER_OS', '?')} ${{ matrix.artifact }}"
+          leg = f"{os.environ.get('INDEX', '?')} {os.environ.get('RUNNER_OS', '?')} ${{ matrix.artifact }}"
           try:
               smoke = json.load(open(sys.argv[1], encoding="utf-8")).get("summary", {})
               vec = json.load(open(sys.argv[2], encoding="utf-8")).get("summary", {})
@@ -421,6 +468,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: testpypi-gate-${{ matrix.os }}-${{ matrix.artifact }}
+          name: pypi-gate-${{ needs.prepare.outputs.index }}-${{ matrix.os }}-${{ matrix.artifact }}
           path: gate-out/
           if-no-files-found: warn

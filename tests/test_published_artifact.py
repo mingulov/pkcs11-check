@@ -1,9 +1,9 @@
 """Published-artifact tests: install integrity, entry points, fetch-then-test order.
 
 These are the assertions the manual TestPyPI validation pass showed were missing:
-they run in the ordinary meta-test suite AND in the post-TestPyPI gate
-(`.github/workflows/testpypi-gate.yml`), which executes this file from outside
-its checkout against the TestPyPI-installed package. So every path here resolves
+they run in the ordinary meta-test suite AND in the post-publish gate
+(`.github/workflows/pypi-gate.yml`), which executes this file from outside
+its checkout against the index-installed package. So every path here resolves
 through the *imported* `pkcs11_check` package (package origin, shipped manifest),
 never through the source checkout, and the file needs nothing beyond the runtime
 dependencies (no yaml, no git).

@@ -1,4 +1,4 @@
-"""Contract tests for the post-TestPyPI validation gate workflow."""
+"""Contract tests for the post-publish (TestPyPI + PyPI) validation gate workflow."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = REPO_ROOT / ".github/workflows/testpypi-gate.yml"
+WORKFLOW_PATH = REPO_ROOT / ".github/workflows/pypi-gate.yml"
 
 # Pinned action majors: checkout/upload-artifact track the sibling workflows;
 # setup-python is gate-only (siblings provision Python via astral-sh/setup-uv).
@@ -59,26 +59,39 @@ def _run_of(steps: list[dict[str, Any]], needle: str) -> str:
     raise AssertionError(f"gate stage {needle!r} is missing")
 
 
-def test_gate_triggers_after_each_testpypi_publish_and_manually() -> None:
-    """Losing the automatic leg or a manual leg must break this guard."""
+def test_gate_triggers_after_each_publish_and_manually() -> None:
+    """Losing an automatic leg or a manual leg must break this guard."""
     workflow = _workflow()
 
     assert set(workflow["on"]) == {"workflow_run", "workflow_dispatch", "workflow_call"}
     run = workflow["on"]["workflow_run"]
-    assert run["workflows"] == ["TestPyPI"]
+    assert run["workflows"] == ["TestPyPI", "Release"]
     assert run["types"] == ["completed"]
-    # The trigger name must match the actual publish workflow: an upstream
-    # rename would silently stop the gate from ever firing while staying green.
-    publish = yaml.load(
-        (REPO_ROOT / ".github/workflows/publish-testpypi.yml").read_text(encoding="utf-8"),
-        Loader=yaml.BaseLoader,
-    )
-    assert publish["name"] == run["workflows"][0]
+    # Each trigger name must match its actual publish workflow: an upstream
+    # rename would silently stop that gate leg from ever firing while staying
+    # green.
+    for filename, trigger in (
+        ("publish-testpypi.yml", "TestPyPI"),
+        ("publish.yml", "Release"),
+    ):
+        publish = yaml.load(
+            (REPO_ROOT / ".github/workflows" / filename).read_text(encoding="utf-8"),
+            Loader=yaml.BaseLoader,
+        )
+        assert publish["name"] == trigger
     for trigger in ("workflow_dispatch", "workflow_call"):
         version_input = workflow["on"][trigger]["inputs"]["version"]
         assert version_input["required"] == "false"
         assert version_input["type"] == "string"
-        assert "latest on TestPyPI" in version_input["description"]
+        assert "latest on that index" in version_input["description"]
+    dispatch_index = workflow["on"]["workflow_dispatch"]["inputs"]["index"]
+    assert dispatch_index["required"] == "false"
+    assert dispatch_index["type"] == "choice"
+    assert dispatch_index["options"] == ["test", "prod"]
+    assert dispatch_index["default"] == "test"
+    call_index = workflow["on"]["workflow_call"]["inputs"]["index"]
+    assert call_index["required"] == "false"
+    assert call_index["type"] == "string"
 
 
 def test_gate_matrix_covers_every_os_and_artifact() -> None:
@@ -134,7 +147,7 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     order = [
         _step_index(steps, needle)
         for needle in (
-            "Install ${{ matrix.artifact }} from TestPyPI",
+            "Install ${{ matrix.artifact }} from the pinned index",
             "Version check",
             "Entry-point check",
             "Published-artifact meta-tests",
@@ -152,11 +165,13 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     assert order == sorted(order), [steps[i].get("name", steps[i].get("uses")) for i in order]
 
     commands = "\n".join(step["run"] for step in steps if "run" in step)
-    # Wheel and sdist legs force their artifact kind off TestPyPI (deps from PyPI).
+    # Wheel and sdist legs force their artifact kind off the pinned index
+    # (deps from PyPI); the index itself comes from prepare, never hardcoded.
     assert "--only-binary=pkcs11-check" in commands
     assert "--no-binary=pkcs11-check" in commands
-    assert "--index-url https://test.pypi.org/simple/" in commands
+    assert "--index-url ${{ needs.prepare.outputs.simple_url }}" in commands
     assert "--extra-index-url https://pypi.org/simple/" in commands
+    assert "test.pypi.org" not in commands
     # Fresh 3.12 (the oldest supported interpreter) on every OS.
     setup = next(step for step in steps if step.get("uses") == _SETUP_PYTHON_ACTION)
     assert setup["with"] == {"python-version": "3.12"}
@@ -189,7 +204,11 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     prepare = workflow["jobs"]["prepare"]
 
     assert prepare["runs-on"] == "ubuntu-latest"
-    assert prepare["outputs"] == {"version": "${{ steps.candidate.outputs.version }}"}
+    assert prepare["outputs"] == {
+        "version": "${{ steps.candidate.outputs.version }}",
+        "index": "${{ steps.candidate.outputs.index }}",
+        "simple_url": "${{ steps.candidate.outputs.simple_url }}",
+    }
     # Same leg gate as validate: a failed publish must skip prepare too.
     validate = workflow["jobs"]["validate"]
     assert prepare["if"] == validate["if"]
@@ -198,7 +217,12 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     resolve = next(step for step in steps if "await candidate version" in str(step.get("name", "")))
     assert resolve["name"] == "Resolve and await candidate version"
     assert resolve["id"] == "candidate"
-    assert resolve["env"] == {"REQUESTED": "${{ inputs.version }}"}
+    assert resolve["env"] == {
+        "REQUESTED": "${{ inputs.version }}",
+        "REQUESTED_INDEX": "${{ inputs.index }}",
+        "EVENT_NAME": "${{ github.event_name }}",
+        "TRIGGERING_WORKFLOW": "${{ github.event.workflow_run.name }}",
+    }
     run_body = str(resolve["run"])
     # An explicitly requested version skips the settle; "latest" must prove
     # stability across consecutive identical reads, not one possibly stale read.
@@ -207,7 +231,10 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     assert "len(set(" in run_body
     # The wait polls the same simple index pip will read, for BOTH release
     # files; pinning on metadata alone reintroduces the propagation race.
-    assert "https://test.pypi.org/simple/pkcs11-check/" in run_body
+    # Both index hosts derive from the attested index in this one step.
+    assert '"pypi.org" if index == "prod" else "test.pypi.org"' in run_body
+    assert 'f"https://{host}/pypi/pkcs11-check/json"' in run_body
+    assert 'f"https://{host}/simple/pkcs11-check/"' in run_body
     assert ".tar.gz" in run_body and "-{version}-" in run_body
     assert "WAIT_DEADLINE" in run_body
     # Bounded network I/O throughout: a hung index must fail loudly instead
@@ -223,9 +250,18 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     )
     assert "steps.candidate" not in validate_source
     assert "test.pypi.org/pypi/pkcs11-check/json" not in validate_source
-    for needle in ("Install ${{ matrix.artifact }} from TestPyPI", "Version check", "Summarize"):
+    assert "pypi/pkcs11-check/json" not in validate_source
+    for needle in (
+        "Install ${{ matrix.artifact }} from the pinned index",
+        "Version check",
+        "Summarize",
+    ):
         step = next(s for s in _steps(validate) if needle in str(s.get("name", "")))
         assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}", needle
+    # The legs read the index only through prepare's outputs, never a
+    # hardcoded host: the per-leg await and the install share one source.
+    assert "needs.prepare.outputs.simple_url" in validate_source
+    assert "test.pypi.org/simple" not in validate_source
 
 
 def test_gate_waits_for_version_on_each_runner_before_install() -> None:
@@ -238,17 +274,21 @@ def test_gate_waits_for_version_on_each_runner_before_install() -> None:
     steps = _steps(job)
 
     await_idx = _step_index(steps, "Await version on this runner's index")
-    install_idx = _step_index(steps, "Install ${{ matrix.artifact }} from TestPyPI")
+    install_idx = _step_index(steps, "Install ${{ matrix.artifact }} from the pinned index")
     setup_idx = _step_index(steps, _SETUP_PYTHON_ACTION)
     assert setup_idx < await_idx < install_idx
 
     step = steps[await_idx]
     assert "if" not in step, "the wait must run on every leg, unconditionally"
     assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}"
+    assert step["env"]["SIMPLE_URL"] == "${{ needs.prepare.outputs.simple_url }}"
     run_body = _run_of(steps, "Await version on this runner's index")
     # Same markers pip will need, on the same index pip will read; both
     # files required (either/or would pass on a half-published release).
-    assert "https://test.pypi.org/simple/pkcs11-check/" in run_body
+    # The index arrives via prepare's output, never hardcoded per leg.
+    assert 'SIMPLE_URL = os.environ["SIMPLE_URL"]' in run_body
+    assert "test.pypi.org" not in run_body
+    assert "pypi.org" not in run_body
     assert "-{version}-" in run_body and "-{version}.tar.gz" in run_body
     assert "wheel_marker in page and sdist_marker" in run_body
     # Bounded wait (~5 minutes), enforced (not just declared), loud
@@ -262,6 +302,36 @@ def test_gate_waits_for_version_on_each_runner_before_install() -> None:
     # Still the one pinned version: no per-leg resolution or JSON latest.
     assert "steps.candidate" not in run_body
     assert "test.pypi.org/pypi/pkcs11-check/json" not in run_body
+
+
+def test_gate_index_is_attested_never_guessed() -> None:
+    """Prepare must derive the index from the publisher or an explicit input.
+
+    Automatic runs inherit the index from the workflow that fired them
+    (Release -> prod, TestPyPI -> test); manual runs pass it explicitly.
+    An unknown trigger or a garbage input must fail loudly in prepare,
+    before any network I/O -- the gate never guesses an index.
+    """
+    prepare = _workflow()["jobs"]["prepare"]
+    run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
+    assert 'os.environ.get("EVENT_NAME"' in run_body
+    assert 'os.environ.get("TRIGGERING_WORKFLOW"' in run_body
+    assert 'os.environ.get("REQUESTED_INDEX"' in run_body
+    assert 'if event == "workflow_run"' in run_body
+    assert 'if triggering == "Release"' in run_body
+    assert 'elif triggering == "TestPyPI"' in run_body
+    assert 'raise SystemExit(f"unexpected triggering workflow' in run_body
+    assert 'elif requested_index in ("", "test")' in run_body
+    assert 'elif requested_index == "prod"' in run_body
+    assert 'raise SystemExit(f"index must be' in run_body
+    # The resolved index reaches the legs as an output, and the evidence
+    # artifact name carries it so prod/test runs never mix silently.
+    validate_source = "\n".join(
+        f"{step.get('name', '')}\n{step.get('env', '')}\n{step.get('run', '')}\n"
+        f"{step.get('with', '')}"
+        for step in _steps(_workflow()["jobs"]["validate"])
+    )
+    assert "needs.prepare.outputs.index" in validate_source
 
 
 def _find_gnu_bash() -> str | None:
