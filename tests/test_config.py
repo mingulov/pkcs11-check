@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
 from pkcs11_check.config import P11TestConfig
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 
 class TestP11TestConfigDefaults:
@@ -132,3 +135,41 @@ class TestWrapKeySourceValidation:
         not escape as a raw ValueError out of build_wrap_context later."""
         with pytest.raises(Exception):
             P11TestConfig(module=tmp_path / "m.so", wrap_key_source="bogus")
+
+
+class TestEmptyPinIsAbsent:
+    """B7: empty PIN normalizes to absent at the model boundary + helper."""
+
+    def test_explicit_empty_pin_is_none(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", pin="")
+        assert config.pin is None
+
+    def test_explicit_empty_so_pin_is_none(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", so_pin="")
+        assert config.so_pin is None
+
+    def test_empty_env_pin_is_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("P11TEST_MODULE", str(tmp_path / "m.so"))
+        monkeypatch.setenv("P11TEST_PIN", "")
+        config = P11TestConfig()  # type: ignore[call-arg]
+        assert config.pin is None
+
+    def test_explicit_empty_pin_overrides_env_as_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit empty still wins over env (as absent, never inheriting)."""
+        monkeypatch.setenv("P11TEST_PIN", "env-pin")
+        config = P11TestConfig(module=tmp_path / "m.so", pin="")
+        assert config.pin is None
+
+    def test_nonempty_pin_survives(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", pin="1234")
+        assert config.pin is not None
+        assert config.pin.get_secret_value() == "1234"
+
+    def test_get_pin_bytes_empty_is_none(self, tmp_path: Path) -> None:
+        """The helper agrees even for configs built outside the model."""
+        assert get_pin_bytes(SimpleNamespace(pin=None)) is None
+        assert get_pin_bytes(SimpleNamespace(pin=SecretStr(""))) is None
+        assert get_pin_bytes(SimpleNamespace(pin="")) is None
+        assert get_pin_bytes(P11TestConfig(module=tmp_path / "m.so", pin="12")) == b"12"
