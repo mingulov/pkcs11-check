@@ -1367,9 +1367,17 @@ def test_command(
         if isolation != "none":
             if resume:
                 prior_merged = report_config.jsonl_path if report_config is not None else None
-                counters_barrier_plan = prepare_resume(
-                    counters_root, prior_merged_jsonl=prior_merged
-                )
+                try:
+                    counters_barrier_plan = prepare_resume(
+                        counters_root, prior_merged_jsonl=prior_merged
+                    )
+                except KeyboardInterrupt:
+                    # R5-4: the barrier seals/collects/fences old producers
+                    # (blocking on quiescence); an interrupt here is an
+                    # incomplete run like anywhere else -- 2, or 1 when
+                    # durable findings already exist.
+                    console.print("[yellow]Interrupted[/yellow] -- run incomplete.")
+                    raise typer.Exit(code=_resume_exit_code(state_file, 2)) from None
                 if not counters_barrier_plan.get("barrier_ok", False):
                     console.print(
                         "[red]Error:[/red] counter resume barrier failed; "

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -121,7 +122,9 @@ def test_gate_is_read_only_and_can_never_publish() -> None:
     """Any publish/tag/release capability in the gate must break this guard."""
     workflow = _workflow()
 
-    assert workflow["permissions"] == {"contents": "read"}
+    # actions:read exists only to download the gate-binding record from the
+    # triggering publish run (R5-1); the gate still writes nothing anywhere.
+    assert workflow["permissions"] == {"contents": "read", "actions": "read"}
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "contents: write" not in source
     assert "id-token" not in source
@@ -242,7 +245,9 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
         "REQUESTED_INDEX": "${{ inputs.index }}",
         "EVENT_NAME": "${{ github.event_name }}",
         "TRIGGERING_WORKFLOW": "${{ github.event.workflow_run.name }}",
-        "HEAD_SHA": "${{ github.event.workflow_run.head_sha }}",
+        "TRIGGERING_RUN_ID": "${{ github.event.workflow_run.id }}",
+        "GITHUB_TOKEN": "${{ github.token }}",
+        "GITHUB_API_URL": "${{ github.api_url }}",
     }
     run_body = str(resolve["run"])
     # An explicitly requested version skips the settle; "latest" must prove
@@ -370,33 +375,31 @@ def test_gate_index_is_attested_never_guessed() -> None:
     assert "needs.prepare.outputs.index" in validate_source
 
 
-def test_gate_release_runs_bind_version_to_triggering_tag() -> None:
-    """R1-F2: a Release trigger binds the version to its tag, not settle.
+def test_gate_runs_bind_version_to_triggering_record() -> None:
+    """R5-1: automatic runs bind to the publisher's gate-binding record.
 
-    Settle-agreement could freeze on a stale edge and green-light the
-    previous release. The release tag at the triggering commit is exact.
-    Only a clean lookup with no tag there (a dry-run success) falls back
-    to settling latest; a failed lookup or missing trigger data stops the
-    run (R2-1: a production publish whose version cannot be resolved must
-    not validate a guess), ambiguity fails loudly, and non-release-shaped
-    tags are ignored. Binding applies only when the selected index is the
-    trigger's own (R2-2: a test-index call in a Release context settles on
-    TestPyPI, never inherits the production tag).
+    Both publishers upload {version, dry_run}: a publish validates its own
+    exact version, a rehearsal validates latest -- no tag inference, no
+    settle-agreement on the wrong release. Anything missing or malformed
+    stops the run with re-dispatch guidance instead of guessing. Binding
+    applies only when the selected index is the trigger's own (a test-index
+    call in a Release context settles on TestPyPI, loudly, instead of
+    inheriting the production version).
     """
     prepare = _workflow()["jobs"]["prepare"]
     run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
-    assert "def release_tag_version()" in run_body
-    assert 'git", "ls-remote", "--tags"' in run_body
-    assert "HEAD_SHA" in run_body
-    assert 'name.startswith("v") and len(name) > 1 and name[1].isdigit()' in run_body
-    assert "ambiguous release tags" in run_body
-    assert "cannot bind release version" in run_body
-    assert "falling back to settle" not in run_body
-    assert "bound to triggering release" in run_body
-    assert "no release tag at the triggering commit" in run_body
-    assert (
-        'elif event == "workflow_run" and triggering == "Release" and index == "prod"' in run_body
-    )
+    assert "def triggering_binding()" in run_body
+    assert "/actions/runs/" in run_body and "/artifacts?per_page=100" in run_body
+    assert '"gate-binding"' in run_body
+    assert "archive_download_url" in run_body
+    assert "cannot bind gate version" in run_body
+    assert "re-dispatch with an explicit version" in run_body
+    assert "bound to triggering publish" in run_body
+    assert "triggering run was a rehearsal" in run_body
+    assert "ls-remote" not in run_body
+    assert "HEAD_SHA" not in run_body
+    assert "use_binding" in run_body
+    assert "index != trigger_index" in run_body
 
 
 def _embedded_script(job: str, needle: str) -> str:
@@ -423,29 +426,36 @@ class _PrepareResult(SimpleNamespace):
     """Outcome of one prepare execution: `raised`, `output`, `outputs`."""
 
 
+def _binding_zip(binding: dict[str, object] | bytes) -> bytes:
+    """A gate-binding artifact blob (real zip): JSON dict or raw bytes."""
+    payload = binding if isinstance(binding, bytes) else json.dumps(binding).encode()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("gate-binding.json", payload)
+    return buffer.getvalue()
+
+
 def _exec_prepare(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
     env: dict[str, str],
-    ls_remote_stdout: str = "",
-    ls_remote_rc: int = 0,
+    artifacts: list[dict[str, object]] | Exception | None = None,
+    download: bytes | Exception | None = None,
     latest: str = "9.9.9",
     page_version: str | None = "9.9.9",
 ) -> _PrepareResult:
-    """Execute the SHIPPED prepare script with mocked git and index I/O.
+    """Execute the SHIPPED prepare script with mocked API and index I/O.
 
-    subprocess and urllib resolve to in-memory fakes (via sys.modules, so
-    the script's own imports pick them up); sleeps are instant; the index
-    serves one canned latest version plus a simple page carrying (or
-    missing) one version's files. Hermetic: no network, no git.
+    urllib resolves to an in-memory fake (via sys.modules, so the script's
+    own import picks it up) routing the artifacts listing, the archive
+    download, the JSON latest read, and the simple page; sleeps are instant.
+    `artifacts=None` serves an empty listing; `download=None` serves a zip
+    of {"version": "9.9.9", "dry_run": False}. Hermetic: no network.
     """
     output_path = tmp_path / "github_output.txt"
     output_path.write_text("", encoding="utf-8")
-
-    def _fake_run(*args: object, **kwargs: object) -> SimpleNamespace:
-        assert args[0][:3] == ["git", "ls-remote", "--tags"], args
-        return SimpleNamespace(returncode=ls_remote_rc, stdout=ls_remote_stdout, stderr="")
+    api_calls: list[str] = []
 
     class _FakeResponse:
         def __init__(self, payload: bytes) -> None:
@@ -460,9 +470,24 @@ def _exec_prepare(
         def __exit__(self, *args: object) -> None:
             return None
 
-    def _fake_urlopen(url: str, timeout: object = None) -> _FakeResponse:
+    def _fake_urlopen(url: object, timeout: object = None) -> _FakeResponse:
         del timeout
-        if url.endswith("/json"):
+        target = getattr(url, "full_url", url)
+        assert isinstance(target, str)
+        if "/actions/runs/" in target:
+            api_calls.append(target)
+            if isinstance(artifacts, Exception):
+                raise artifacts
+            items = artifacts if artifacts is not None else []
+            return _FakeResponse(json.dumps({"artifacts": items}).encode())
+        if target.startswith("https://dl.example/"):
+            api_calls.append(target)
+            if isinstance(download, Exception):
+                raise download
+            if download is not None:
+                return _FakeResponse(download)
+            return _FakeResponse(_binding_zip({"version": "9.9.9", "dry_run": False}))
+        if target.endswith("/json"):
             return _FakeResponse(json.dumps({"info": {"version": latest}}).encode())
         page = ""
         if page_version is not None:
@@ -474,9 +499,13 @@ def _exec_prepare(
             )
         return _FakeResponse(page.encode())
 
-    fake_urllib_request = SimpleNamespace(urlopen=_fake_urlopen)
+    class _FakeRequest:
+        def __init__(self, url: str, headers: dict[str, str] | None = None) -> None:
+            self.full_url = url
+            self.headers = headers or {}
+
+    fake_urllib_request = SimpleNamespace(urlopen=_fake_urlopen, Request=_FakeRequest)
     fake_urllib = SimpleNamespace(request=fake_urllib_request)
-    monkeypatch.setitem(sys.modules, "subprocess", SimpleNamespace(run=_fake_run))
     monkeypatch.setitem(sys.modules, "urllib", fake_urllib)
     monkeypatch.setitem(sys.modules, "urllib.request", fake_urllib_request)
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
@@ -486,13 +515,12 @@ def _exec_prepare(
         "REQUESTED_INDEX",
         "EVENT_NAME",
         "TRIGGERING_WORKFLOW",
-        "HEAD_SHA",
-        "GITHUB_SERVER_URL",
+        "TRIGGERING_RUN_ID",
+        "GITHUB_TOKEN",
+        "GITHUB_API_URL",
         "GITHUB_REPOSITORY",
     ):
         monkeypatch.setenv(key, env.get(key, ""))
-    # The script references subprocess.TimeoutExpired in an except clause.
-    sys.modules["subprocess"].TimeoutExpired = subprocess.TimeoutExpired
     buffer = io.StringIO()
     raised: str | None = None
     try:
@@ -511,120 +539,168 @@ def _exec_prepare(
 _RELEASE_BASE = {
     "EVENT_NAME": "workflow_run",
     "TRIGGERING_WORKFLOW": "Release",
-    "GITHUB_SERVER_URL": "https://github.example",
+    "TRIGGERING_RUN_ID": "123",
+    "GITHUB_TOKEN": "t",
+    "GITHUB_API_URL": "https://api.example",
+    "GITHUB_REPOSITORY": "o/r",
+}
+
+_TEST_BASE = {
+    "EVENT_NAME": "workflow_run",
+    "TRIGGERING_WORKFLOW": "TestPyPI",
+    "TRIGGERING_RUN_ID": "456",
+    "GITHUB_TOKEN": "t",
+    "GITHUB_API_URL": "https://api.example",
     "GITHUB_REPOSITORY": "o/r",
 }
 
 
-def test_prepare_binds_peeled_release_tag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """R2-5: an annotated tag binds through its peeled commit line."""
-    head = "ab" * 20
-    ls_remote = f"cd{'ef' * 19}\trefs/tags/v9.9.9\n{head}\trefs/tags/v9.9.9^{{}}\n"
+def _live_binding_artifact(download_url: str = "https://dl.example/b.zip") -> dict[str, object]:
+    return {"name": "gate-binding", "expired": False, "archive_download_url": download_url}
+
+
+def test_prepare_binds_production_publish(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R5-1: a Release trigger validates the recorded version, never latest."""
     result = _exec_prepare(
         monkeypatch,
         tmp_path,
-        env={**_RELEASE_BASE, "HEAD_SHA": head},
-        ls_remote_stdout=ls_remote,
-        latest="0.0.0",
+        env=_RELEASE_BASE,
+        artifacts=[_live_binding_artifact()],
+        download=_binding_zip({"version": "9.9.9", "dry_run": False}),
     )
     assert result.raised is None, result.output
     assert result.outputs["version"] == "9.9.9"
     assert result.outputs["index"] == "prod"
-    assert "bound to triggering release: 9.9.9" in result.output
+    assert "bound to triggering publish: 9.9.9" in result.output
 
 
-def test_prepare_rejects_ambiguous_release_tags(
+def test_prepare_binds_test_publish(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R5-1: a TestPyPI trigger binds its own record on the test index."""
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env=_TEST_BASE,
+        artifacts=[_live_binding_artifact()],
+        download=_binding_zip({"version": "8.8.8rc1", "dry_run": False}),
+        page_version="8.8.8rc1",
+    )
+    assert result.raised is None, result.output
+    assert result.outputs["version"] == "8.8.8rc1"
+    assert result.outputs["index"] == "test"
+    assert result.outputs["simple_url"] == "https://test.pypi.org/simple/pkcs11-check/"
+
+
+def test_prepare_rehearsal_binding_validates_latest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """R2-5: two v-tags at the head stop the run; non-release tags ignored."""
-    head = "ab" * 20
-    ls_remote = (
-        f"{head}\trefs/tags/v9.9.9\n"
-        f"{head}\trefs/tags/v8.8.8\n"
-        f"{head}\trefs/tags/vetted\n"
-        f"{head}\trefs/tags/v\n"
-    )
+    """R5-1: a dry_run binding settles latest with an explicit notice."""
     result = _exec_prepare(
-        monkeypatch, tmp_path, env={**_RELEASE_BASE, "HEAD_SHA": head}, ls_remote_stdout=ls_remote
+        monkeypatch,
+        tmp_path,
+        env=_RELEASE_BASE,
+        artifacts=[_live_binding_artifact()],
+        download=_binding_zip({"version": "9.9.9", "dry_run": True}),
+        latest="8.8.8",
+        page_version="8.8.8",
     )
-    assert result.raised is not None and "ambiguous release tags" in result.raised
+    assert result.raised is None, result.output
+    assert "triggering run was a rehearsal" in result.output
+    assert result.outputs["version"] == "8.8.8"
+
+
+def test_prepare_missing_binding_stops_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R5-1: no record (pre-binding run, expired) stops with guidance."""
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env=_RELEASE_BASE,
+        artifacts=[{"name": "distributions", "expired": False, "archive_download_url": "x"}],
+    )
+    assert result.raised is not None and "no live gate-binding artifact" in result.raised
+    assert "re-dispatch with an explicit version" in result.raised
     assert result.outputs == {}
 
 
-def test_prepare_ignores_non_release_tags(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """R2-5: `vetted` and bare `v` never bind (R2-1 tag-shape rule)."""
-    head = "ab" * 20
-    ls_remote = f"{head}\trefs/tags/vetted\n{head}\trefs/tags/v\n"
-    result = _exec_prepare(
-        monkeypatch,
-        tmp_path,
-        env={**_RELEASE_BASE, "HEAD_SHA": head},
-        ls_remote_stdout=ls_remote,
-        latest="9.9.9",
-    )
-    assert result.raised is None, result.output
-    assert "no release tag at the triggering commit" in result.output
-    assert result.outputs["version"] == "9.9.9"
+def test_prepare_expired_binding_stops_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R5-1: an expired record is not a record."""
+    expired = _live_binding_artifact()
+    expired["expired"] = True
+    result = _exec_prepare(monkeypatch, tmp_path, env=_RELEASE_BASE, artifacts=[expired])
+    assert result.raised is not None and "no live gate-binding artifact" in result.raised
+    assert result.outputs == {}
 
 
-def test_prepare_explicit_index_wins_in_release_context(
+def test_prepare_malformed_binding_stops_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """R2-5 (R2-2): index=test in a Release context settles on TestPyPI.
+    """R5-1: garbage bytes and version-less records stop loudly."""
+    for download in (b"not a zip", _binding_zip({"dry_run": False})):
+        result = _exec_prepare(
+            monkeypatch,
+            tmp_path,
+            env=_RELEASE_BASE,
+            artifacts=[_live_binding_artifact()],
+            download=download,
+        )
+        assert result.raised is not None and "cannot bind gate version" in result.raised, download
+        assert result.outputs == {}
 
-    R3-5: a matching production tag is present, so deleting the index
-    gate would bind 9.9.9 and fail -- settling 8.8.8 proves the gate.
+
+def test_prepare_api_failure_stops_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R5-1: an unreachable artifacts API stops, never settles a guess."""
+    result = _exec_prepare(monkeypatch, tmp_path, env=_RELEASE_BASE, artifacts=OSError("down"))
+    assert result.raised is not None and "artifact API failed" in result.raised
+    assert result.outputs == {}
+
+
+def test_prepare_missing_token_stops_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R5-1: no token means no binding, no guessing."""
+    env = {key: value for key, value in _RELEASE_BASE.items() if key != "GITHUB_TOKEN"}
+    result = _exec_prepare(monkeypatch, tmp_path, env=env)
+    assert result.raised is not None and "missing repository, run id, or token" in result.raised
+    assert result.outputs == {}
+
+
+def test_prepare_index_mismatch_settles_selected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R5-1 (R2-2): index=test in a Release context settles on TestPyPI.
+
+    The binding carries 9.9.9 and live artifacts exist for it; settling
+    8.8.8 proves the production version is not inherited.
     """
-    head = "ab" * 20
     result = _exec_prepare(
         monkeypatch,
         tmp_path,
-        env={**_RELEASE_BASE, "REQUESTED_INDEX": "test", "HEAD_SHA": head},
-        ls_remote_stdout=f"{head}\trefs/tags/v9.9.9\n",
+        env={**_RELEASE_BASE, "REQUESTED_INDEX": "test"},
+        artifacts=[_live_binding_artifact()],
+        download=_binding_zip({"version": "9.9.9", "dry_run": False}),
         latest="8.8.8",
         page_version="8.8.8",
     )
     assert result.raised is None, result.output
     assert result.outputs["index"] == "test"
     assert result.outputs["version"] == "8.8.8"
-    assert "bound to triggering release" not in result.output
-    assert result.outputs["simple_url"] == "https://test.pypi.org/simple/pkcs11-check/"
+    assert "settling on the selected index instead of binding" in result.output
+    assert "bound to triggering publish" not in result.output
 
 
-def test_prepare_dry_run_shape_settles_loudly(
+def test_prepare_explicit_version_skips_binding(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """R2-5: no tag at the head (dry run) settles latest with a notice."""
+    """R5-1: a requested version wins outright; no binding is consulted."""
     result = _exec_prepare(
         monkeypatch,
         tmp_path,
-        env={**_RELEASE_BASE, "HEAD_SHA": "ab" * 20},
-        ls_remote_stdout=f"cd{'ef' * 19}\trefs/tags/v7.7.7\n",
+        env={**_RELEASE_BASE, "REQUESTED": "1.2.3"},
+        artifacts=OSError("must not be consulted"),
         latest="9.9.9",
+        page_version="1.2.3",
     )
     assert result.raised is None, result.output
-    assert "no release tag at the triggering commit" in result.output
-    assert result.outputs["version"] == "9.9.9"
-
-
-def test_prepare_lookup_failure_stops_release_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """R2-5 (R2-1): an unresolvable production version stops, never settles."""
-    result = _exec_prepare(
-        monkeypatch, tmp_path, env={**_RELEASE_BASE, "HEAD_SHA": "ab" * 20}, ls_remote_rc=128
-    )
-    assert result.raised is not None and "cannot bind release version" in result.raised
-    assert result.outputs == {}
-
-
-def test_prepare_missing_head_sha_stops_release_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """R2-5 (R2-1): no head SHA means no binding, no guessing."""
-    result = _exec_prepare(monkeypatch, tmp_path, env=_RELEASE_BASE)
-    assert result.raised is not None and "cannot bind release version" in result.raised
-    assert result.outputs == {}
+    assert result.outputs["version"] == "1.2.3"
+    assert "requested version: 1.2.3" in result.output
+    assert "bound to triggering publish" not in result.output
 
 
 def _exec_await(

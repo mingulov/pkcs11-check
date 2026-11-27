@@ -104,6 +104,33 @@ jobs:
             echo "This workflow does not create a tag or GitHub Release."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Record the gate binding for this run
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # R5-1: the post-publish gate binds its version to THIS record
+          # (downloaded from the triggering run) instead of settling latest.
+          python3 - <<'PY'
+          import json
+          import os
+          binding = {
+              "version": os.environ["VERSION"],
+              "dry_run": os.environ.get("DRY_RUN", "true") == "true",
+              "sha": os.environ["GITHUB_SHA"],
+          }
+          with open("gate-binding.json", "w", encoding="utf-8") as handle:
+              json.dump(binding, handle)
+              handle.write("\n")
+          print(f"gate binding: {binding['version']} dry_run={binding['dry_run']}")
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gate-binding
+          path: gate-binding.json
+          if-no-files-found: error
+
   build:
     name: Build sdist + wheel
     needs: verify

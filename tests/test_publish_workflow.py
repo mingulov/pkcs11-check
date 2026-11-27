@@ -278,3 +278,28 @@ def test_expected_sha_gate_arms(
     )
     assert proc.returncode == want_rc, proc.stdout + proc.stderr
     assert want_out in proc.stdout + proc.stderr
+
+
+def test_verify_uploads_gate_binding_for_the_post_publish_gate() -> None:
+    """R5-1: the gate binds its version to this record, never settles."""
+    verify = _workflow()["jobs"]["verify"]
+    record = next(
+        step
+        for step in verify["steps"]
+        if step.get("name") == "Record the gate binding for this run"
+    )
+    assert record["env"] == {
+        "VERSION": "${{ steps.normalize.outputs.version }}",
+        "DRY_RUN": "${{ inputs.dry_run }}",
+    }
+    run_body = str(record["run"])
+    assert '"version"' in run_body and '"dry_run"' in run_body and '"sha"' in run_body
+    assert "gate-binding.json" in run_body
+    upload = next(
+        step
+        for step in verify["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+        and step.get("with", {}).get("name") == "gate-binding"
+    )
+    assert upload["with"]["path"] == "gate-binding.json"
+    assert upload["with"]["if-no-files-found"] == "error"
