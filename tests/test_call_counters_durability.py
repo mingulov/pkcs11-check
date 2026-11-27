@@ -75709,6 +75709,7 @@ def test_r44_ar67_fold_entry_width_change_faults(tmp_path: Path) -> None:
     assert swept["removed"] == 0, swept
     texts = [str(found.message) for found in seen]
     assert any("could not be verified" in text for text in texts), texts
+    assert any(f"(unreadable: real1/{variant_name})" in text for text in texts), texts
     assert not any("archive the listed members" in text for text in texts), texts
     assert not any("rerun to re-list" in text for text in texts), texts
 
@@ -75729,15 +75730,20 @@ def test_r44_ar67_guard_depth_retries_resolved_root() -> None:
     assert durability._guard_depth(Path("/private/tmp/x/counters/a/b/f"), root, resolved) == 3
     assert durability._guard_depth(Path("/tmp/x/counters/f"), root, resolved) == 1
     assert durability._guard_depth(Path("/other/place/f"), root, resolved) is None
+    assert durability._guard_depth(Path("/tmp/x/counters/a/b/\0f"), root, resolved) is None
+    assert durability._guard_depth(Path("//tmp/x/counters/a/b/f"), root, resolved) == 3
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
 def test_r44_ar67_quarantine_identity_missing_reads_none(tmp_path: Path) -> None:
-    """#88R44-[A]r67: a missing path has no quarantine identity.
+    """#88R44-[A]r67: only a regular file has a quarantine identity.
 
-    Claude Q3 N3: the sweep-won-race rework mocks
+    Claude Q3 N3/L2: the sweep-won-race rework mocks
     _quarantine_name_identity, so the mocked seam itself
     needs a pin: missing reads None, present reads its
-    (st_dev, st_ino) pair.
+    (st_dev, st_ino) pair -- and symlinks and directories
+    read None too (lstat-based, regular-files-only, so a
+    symlinked archive name can never verify).
     """
     import os
 
@@ -75749,3 +75755,9 @@ def test_r44_ar67_quarantine_identity_missing_reads_none(tmp_path: Path) -> None
         os.stat(present).st_dev,
         os.stat(present).st_ino,
     )
+    link = tmp_path / "link.tmp-1"
+    os.symlink(present, link)
+    assert durability._quarantine_name_identity(link) is None
+    subdir = tmp_path / "adir"
+    subdir.mkdir()
+    assert durability._quarantine_name_identity(subdir) is None
