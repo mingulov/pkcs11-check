@@ -772,8 +772,22 @@ def _validated_recorded_counters_dir(state_file: Path, recorded: str) -> Path:
     (canonical or nonce-suffixed, same rule as fresh-run cleanup).
     """
     candidate = Path(recorded)
-    resolved = candidate.resolve()
-    if resolved.parent != state_file.resolve().parent or not _is_owned_counters_dir(
+    try:
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError) as exc:
+        # Resolution faults refuse like hostile forms (#88R44-[C]r11):
+        # a loop raises RuntimeError even non-strict on Python 3.12,
+        # and exotic filesystem faults raise OSError -- both
+        # normalize into the ValueError refusal, preserving the path
+        # and the underlying error. (Non-strict resolution never
+        # raises FileNotFoundError, so a missing-but-well-named dir
+        # still accepts; see the residual note in the tests.)
+        raise ValueError(f"recorded counters dir {recorded} cannot be resolved: {exc}") from exc
+    try:
+        state_parent = state_file.resolve().parent
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"state file {state_file} cannot be resolved: {exc}") from exc
+    if resolved.parent != state_parent or not _is_owned_counters_dir(
         state_file.name, resolved.name
     ):
         raise ValueError(

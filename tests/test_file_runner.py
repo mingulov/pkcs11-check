@@ -887,6 +887,94 @@ def test_r44_c6r6_runner_fault_refusal_verdict_is_cause_neutral(
     assert "live barrier" not in stream.getvalue(), "no phantom barrier blamed"
 
 
+def test_r44_c11r11_barrier_gate_carries_lock_fault(tmp_path: Path) -> None:
+    """#88R44-[C]r11: the gate distinguishes fault from contention.
+
+    Codex R11: the gate swallowed the lock OSError into a bare
+    False, so both callers blamed a live rival for filesystem
+    faults. The gate now yields (admitted, fault): contention
+    yields (False, None), a lock fault yields (False, exc).
+    Fault shape mirrors the repro (a directory at the lock path).
+    """
+    root = tmp_path / "counters"
+    root.mkdir()
+    (tmp_path / "counters.lock").mkdir()
+    with file_runner_mod._barrier_gate(root) as (admitted, fault):
+        assert admitted is False, "the fault does not admit"
+        assert isinstance(fault, OSError), "the fault is carried"
+    assert "counters.lock" in str(fault), "the path is named"
+
+
+def test_r44_c11r11_retire_voice_names_lock_fault(tmp_path: Path) -> None:
+    """#88R44-[C]r11: retirement blames the fault, not a phantom rival."""
+    import warnings
+
+    from pkcs11_check.core._counters_durability import BARRIER_STAGING_FILENAME
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (tmp_path / "counters.lock").mkdir()
+    staging = root / BARRIER_STAGING_FILENAME
+    staging.write_text('{"staged": true}', encoding="utf-8")
+    stat = staging.stat()
+    # Matching generation (R13 Minor): with an empty plan the retire
+    # path blocks deletion independently, so only a matching gen
+    # proves the LOCK FAULT is what protects the staged bytes.
+    plan = {"staging_gen": (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)}
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        file_runner_mod._retire_converged_barrier_staging(root, plan)
+    texts = [str(found.message) for found in seen]
+    assert any("lock fault" in text for text in texts), texts
+    assert not any("live rival" in text for text in texts), texts
+    assert staging.read_text(encoding="utf-8") == '{"staged": true}', "staging survives"
+
+
+def test_r44_c11r11_engage_voice_names_lock_fault(tmp_path: Path) -> None:
+    """#88R44-[C]r11: fresh engage blames the fault, not a phantom barrier."""
+    import warnings
+
+    from pkcs11_check.core._counters_durability import (
+        BARRIER_STAGING_FILENAME,
+        SEAL_FILENAME,
+    )
+    from pkcs11_check.core._run_units import FileRunState
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    state_file = tmp_path / "state.json"
+    state = FileRunState(units=["a.py"], fingerprint="fp", results=[], counters_dir=str(root))
+    env = {file_runner_mod.COUNTERS_DIR_ENV: str(root)}
+    (tmp_path / "counters.lock").mkdir()
+    seal = root / SEAL_FILENAME
+    seal.write_text('{"sealed": true}', encoding="utf-8")
+    staging = root / BARRIER_STAGING_FILENAME
+    staging.write_text('{"staged": true}', encoding="utf-8")
+    saved_active = file_runner_mod._ACTIVE_COUNTERS_DIR
+    try:
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            pending = file_runner_mod._setup_counters_durability(
+                state_file,
+                state,
+                ["a.py"],
+                False,
+                None,
+                "R-fresh",
+                env,
+                None,
+                Console(file=StringIO(), force_terminal=False),
+            )
+    finally:
+        file_runner_mod._ACTIVE_COUNTERS_DIR = saved_active
+    assert pending == ["a.py"], "engage skips loudly, setup proceeds"
+    texts = [str(found.message) for found in seen]
+    assert any("lock fault" in text for text in texts), texts
+    assert not any("a resume barrier holds" in text for text in texts), texts
+    assert seal.read_text(encoding="utf-8") == '{"sealed": true}', "seal survives"
+    assert staging.read_text(encoding="utf-8") == '{"staged": true}', "staging survives"
+
+
 def test_process_observations_survive_replacement_and_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
