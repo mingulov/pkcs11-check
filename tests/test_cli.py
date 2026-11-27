@@ -5256,6 +5256,248 @@ class TestTestCommand:
         assert result.exit_code == 1
         assert not output_path.exists()
 
+    def test_test_resume_manifest_crash_preserves_prior_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: a manifest crash on resume appends; prior results survive."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="crashed",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
+                    error="preflight crashed",
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["crashed"] == 1
+        assert payload["summary"]["incomplete"] is True
+        by_target = {unit["target"]: unit["status"] for unit in payload["units"]}
+        assert by_target == {"a.py": "passed", str(module): "crashed"}
+
+    def test_test_resume_login_crash_preserves_prior_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: a login-probe crash on resume appends; prior results survive."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+
+        def crashed_login(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_login)
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["crashed"] == 1
+        assert payload["summary"]["incomplete"] is True
+        by_target = {unit["target"]: unit["status"] for unit in payload["units"]}
+        assert by_target == {"a.py": "passed", str(module): "crashed"}
+
+    def test_test_resume_early_failure_appends_jsonl_and_folds_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: the JSONL keeps prior rounds; counters fold old + new."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        def _counter_line(pid: int, total: int) -> str:
+            return json.dumps(
+                {
+                    "$report_type": "CallCountersReport",
+                    "pid": pid,
+                    "isolation": "file",
+                    "probes_lost": 0,
+                    "total_calls": total,
+                    "buckets": {
+                        "test": {
+                            "calls": total,
+                            "by_fn": {
+                                "C_Sign": {
+                                    "calls": total,
+                                    "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                                }
+                            },
+                        }
+                    },
+                }
+            )
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_jsonl.write_text(_counter_line(111, 10) + "\n", encoding="utf-8")
+        preflight_evidence_path_for_state(state_file).write_text(
+            _counter_line(222, 5) + "\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="crashed",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
+                    error="preflight crashed",
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        lines = prior_jsonl.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2, lines
+        assert '"pid": 111' in lines[0] and '"pid": 222' in lines[1]
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 15
+
+    def test_test_resume_without_state_falls_back_to_fresh_shape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: resume with no state file writes the fresh single-result shape."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="crashed",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
+                    error="preflight crashed",
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(tmp_path / "missing-state.json"),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"].get("passed", 0) == 0
+        assert payload["summary"]["crashed"] == 1
+        assert payload["summary"]["incomplete"] is True
+
     def test_test_preflight_timeout_default_json_artifact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
