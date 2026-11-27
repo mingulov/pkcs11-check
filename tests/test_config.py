@@ -144,9 +144,12 @@ class TestEmptyPinIsAbsent:
         config = P11TestConfig(module=tmp_path / "m.so", pin="")
         assert config.pin is None
 
-    def test_explicit_empty_so_pin_is_none(self, tmp_path: Path) -> None:
+    def test_explicit_empty_so_pin_keeps_empty_credential(self, tmp_path: Path) -> None:
+        """R1-F6: so_pin is excluded: None means 'guess the user PIN', so an
+        explicit "" must survive as the empty credential, never redirect."""
         config = P11TestConfig(module=tmp_path / "m.so", so_pin="")
-        assert config.so_pin is None
+        assert config.so_pin is not None
+        assert config.so_pin.get_secret_value() == ""
 
     def test_empty_env_pin_is_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("P11TEST_MODULE", str(tmp_path / "m.so"))

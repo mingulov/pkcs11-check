@@ -95,9 +95,12 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   and timeouts remain findings with public exit `1`.
 - A user interrupt (`SIGINT`/`KeyboardInterrupt`) at any run phase -- preflight, login probe,
   collection, or a unit wait -- exits `2` when the run is incomplete, or `1` when provider
-  failed/crashed/timeout evidence is already present (current-run or durable resume state).
-  The killed child's OS kill status never determines the command's exit code and never creates
-  a provider finding.
+  failed/crashed/timeout evidence is already present in completed units (current-run or
+  durable resume state). The killed child's OS kill status never determines the command's
+  exit code and never creates a provider finding. Residual (R1-F5, B1-owned): the
+  in-flight unit's partial report is discarded with its temp JSONL, so a failure in the
+  interrupted unit itself does not upgrade the exit; B1's failure-path preservation
+  owns that evidence.
 - Non-isolated output applies the same completion rule to its one captured report-log stream:
   only raw exits `0`, `1`, and `5` with exactly one balanced session and a matching finish are
   verified. A missing or mismatched finish adds one typed `HarnessError` with the raw return code

@@ -17,24 +17,33 @@ name: PyPI gate
 #     index for manual re-runs. With no version the gate validates the
 #     index's latest.
 #
-# Index handling: the triggering publisher attests the index (a Release run
-# validates production PyPI, a TestPyPI run validates TestPyPI); manual runs
-# pick it explicitly via the `index` input (default: test). Anything else
-# fails loudly in prepare -- the gate never guesses an index.
+# Index handling: garbage fails first on every event; an explicit `index`
+# input then wins everywhere (a reviewed caller passing one is attested by
+# review); only an omitted input falls through to trigger attestation (a
+# Release run validates production PyPI, a TestPyPI run validates TestPyPI)
+# or the test default (bare manual calls). Anything else fails loudly in
+# prepare -- the gate never guesses an index.
 #
 # Version handling: a `prepare` job resolves ONE version for the whole run
-# and every matrix leg validates exactly that release. Resolving "latest"
-# per leg diverged within a single run (the JSON index is CDN-cached per
-# runner, so one leg saw rc1 while others saw rc2), and installing
-# immediately after upload raced index propagation (metadata visible before
-# files are fetchable). So prepare settles "latest" across consecutive
-# identical reads, awaits the release files on the simple index, and only
-# then releases the pinned version to the matrix. An explicitly requested
-# version skips the settle but keeps the file wait (instant for
-# already-published releases). Prepare's wait ran on one runner's CDN edge,
-# so each validate leg additionally awaits the pinned files on ITS OWN index
-# view before installing (up to 5 minutes): otherwise a stale edge fails pip
-# resolution after a green prepare.
+# and every matrix leg validates exactly that release. An explicitly
+# requested version wins outright. A Release-triggered run binds to the
+# release tag at the triggering commit (settle-agreement could freeze on a
+# stale edge and green-light the previous release instead); with no tag
+# there (a dry-run success) it falls back to settling latest, loudly.
+# Every other unpinned run settles "latest" across consecutive identical
+# reads: resolving per leg diverged within a single run (the JSON index is
+# CDN-cached per runner, so one leg saw rc1 while others saw rc2), and
+# installing immediately after upload raced index propagation (metadata
+# visible before files are fetchable). The pinned version then awaits its
+# release files on the simple index before the matrix is released (instant
+# for already-published releases). Prepare's wait ran on one runner's CDN
+# edge, so each validate leg additionally awaits the pinned files on ITS
+# OWN index view before installing (up to 5 minutes): otherwise a stale
+# edge fails pip resolution after a green prepare.
+#
+# URL handling: prepare outputs both the project simple page (for the file
+# waits) and the bare index root (for pip). pip appends the project name to
+# --index-url itself, so it must receive the root, never the project page.
 #
 # This workflow never publishes, tags, or releases anything: it is read-only
 # (contents: read for the checkout) plus installs from the gate index.
@@ -79,6 +88,7 @@ jobs:
     outputs:
       version: ${{ steps.candidate.outputs.version }}
       index: ${{ steps.candidate.outputs.index }}
+      index_url: ${{ steps.candidate.outputs.index_url }}
       simple_url: ${{ steps.candidate.outputs.simple_url }}
     steps:
       - name: Resolve and await candidate version
@@ -88,10 +98,12 @@ jobs:
           REQUESTED_INDEX: ${{ inputs.index }}
           EVENT_NAME: ${{ github.event_name }}
           TRIGGERING_WORKFLOW: ${{ github.event.workflow_run.name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           python - <<'PY'
           import json
           import os
+          import subprocess
           import time
           import urllib.request
 
@@ -102,28 +114,33 @@ jobs:
           WAIT_INTERVAL = 15
           WAIT_DEADLINE = 600
 
-          # The index is attested, never guessed: automatic runs inherit it
-          # from the publisher that fired them, manual runs pass it
-          # explicitly. Anything else fails here, before any network I/O.
+          # The index is attested, never guessed. Garbage fails first, on
+          # every event; an explicit input then wins everywhere (a reviewed
+          # caller passing one is attested by review, so a reusable call
+          # from a workflow_run-triggered caller keeps its explicit index
+          # instead of being overridden). Only an omitted input falls
+          # through to trigger attestation (automatic runs) or the test
+          # default (bare manual calls; the dispatch UI always sends one).
           event = os.environ.get("EVENT_NAME", "")
           triggering = os.environ.get("TRIGGERING_WORKFLOW", "")
           requested_index = os.environ.get("REQUESTED_INDEX", "").strip()
-          if event == "workflow_run":
+          if requested_index not in ("", "test", "prod"):
+              raise SystemExit(f"index must be 'test' or 'prod', got {requested_index!r}")
+          if requested_index in ("test", "prod"):
+              index = requested_index
+          elif event == "workflow_run":
               if triggering == "Release":
                   index = "prod"
               elif triggering == "TestPyPI":
                   index = "test"
               else:
                   raise SystemExit(f"unexpected triggering workflow: {triggering!r}")
-          elif requested_index in ("", "test"):
-              index = "test"
-          elif requested_index == "prod":
-              index = "prod"
           else:
-              raise SystemExit(f"index must be 'test' or 'prod', got {requested_index!r}")
+              index = "test"
           host = "pypi.org" if index == "prod" else "test.pypi.org"
           JSON_URL = f"https://{host}/pypi/pkcs11-check/json"
           SIMPLE_URL = f"https://{host}/simple/pkcs11-check/"
+          INDEX_URL = f"https://{host}/simple/"
           print(f"gate index: {index} ({host})")
 
 
@@ -137,11 +154,64 @@ jobs:
                   return response.read().decode("utf-8", "replace")
 
 
+          def release_tag_version() -> str | None:
+              """Version bound to the triggering Release commit, if exactly one.
+
+              Settle-agreement can freeze on a stale edge (three agreeing
+              stale reads of the previous release), which would green-light
+              the wrong version. The release tag at the triggering commit is
+              exact instead. Returns None when there is no v-tag there (a
+              dry-run success, which validates latest) or the lookup itself
+              fails; more than one v-tag is ambiguous and fails loudly.
+              """
+              server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+              repo = os.environ.get("GITHUB_REPOSITORY", "")
+              head = os.environ.get("HEAD_SHA", "")
+              if not repo or not head:
+                  return None
+              try:
+                  proc = subprocess.run(
+                      ["git", "ls-remote", "--tags", f"{server}/{repo}"],
+                      capture_output=True,
+                      text=True,
+                      encoding="utf-8",
+                      timeout=60,
+                      check=False,
+                  )
+              except (OSError, subprocess.TimeoutExpired) as exc:
+                  print(f"tag lookup failed ({exc}); falling back to settle")
+                  return None
+              if proc.returncode != 0:
+                  print(f"tag lookup failed ({proc.stderr.strip()}); falling back to settle")
+                  return None
+              found: set[str] = set()
+              for line in proc.stdout.splitlines():
+                  sha, _, ref = line.partition("\t")
+                  name = ref.removeprefix("refs/tags/").removesuffix("^{}")
+                  if sha.strip().lower() == head.strip().lower() and name.startswith("v"):
+                      found.add(name)
+              if len(found) > 1:
+                  raise SystemExit(f"ambiguous release tags at {head}: {sorted(found)}")
+              if not found:
+                  return None
+              return next(iter(found))[1:]
+
+
           requested = os.environ.get("REQUESTED", "").strip()
           if requested:
               version = requested
               print(f"requested version: {version}")
+          elif event == "workflow_run" and triggering == "Release":
+              bound = release_tag_version()
+              if bound is not None:
+                  version = bound
+                  print(f"bound to triggering release: {version}")
+              else:
+                  version = ""
+                  print("no release tag at the triggering commit (dry-run shape?)")
           else:
+              version = ""
+          if not version:
               # "Latest" is CDN-cached per runner: consecutive identical reads
               # prove the value settled instead of trusting one stale read.
               seen: list[str] = []
@@ -188,6 +258,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"version={version}\n")
               handle.write(f"index={index}\n")
+              handle.write(f"index_url={INDEX_URL}\n")
               handle.write(f"simple_url={SIMPLE_URL}\n")
           print(f"Validating pkcs11-check {version} from {host} on every leg")
           PY
@@ -276,7 +347,7 @@ jobs:
             BINARY_FLAG="--no-binary=pkcs11-check"
           fi
           python -m pip install \
-            --index-url ${{ needs.prepare.outputs.simple_url }} \
+            --index-url ${{ needs.prepare.outputs.index_url }} \
             --extra-index-url https://pypi.org/simple/ \
             "$BINARY_FLAG" "pkcs11-check==$VERSION"
           python -m pip show pkcs11-check

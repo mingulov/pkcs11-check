@@ -169,9 +169,13 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     # (deps from PyPI); the index itself comes from prepare, never hardcoded.
     assert "--only-binary=pkcs11-check" in commands
     assert "--no-binary=pkcs11-check" in commands
-    assert "--index-url ${{ needs.prepare.outputs.simple_url }}" in commands
+    assert "--index-url ${{ needs.prepare.outputs.index_url }}" in commands
     assert "--extra-index-url https://pypi.org/simple/" in commands
     assert "test.pypi.org" not in commands
+    # pip appends the project name to --index-url itself: the project
+    # simple page must never be passed as the install root (R1-F1).
+    install_run = _run_of(steps, "Install ${{ matrix.artifact }} from the pinned index")
+    assert "needs.prepare.outputs.simple_url" not in install_run
     # Fresh 3.12 (the oldest supported interpreter) on every OS.
     setup = next(step for step in steps if step.get("uses") == _SETUP_PYTHON_ACTION)
     assert setup["with"] == {"python-version": "3.12"}
@@ -207,6 +211,7 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     assert prepare["outputs"] == {
         "version": "${{ steps.candidate.outputs.version }}",
         "index": "${{ steps.candidate.outputs.index }}",
+        "index_url": "${{ steps.candidate.outputs.index_url }}",
         "simple_url": "${{ steps.candidate.outputs.simple_url }}",
     }
     # Same leg gate as validate: a failed publish must skip prepare too.
@@ -222,6 +227,7 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
         "REQUESTED_INDEX": "${{ inputs.index }}",
         "EVENT_NAME": "${{ github.event_name }}",
         "TRIGGERING_WORKFLOW": "${{ github.event.workflow_run.name }}",
+        "HEAD_SHA": "${{ github.event.workflow_run.head_sha }}",
     }
     run_body = str(resolve["run"])
     # An explicitly requested version skips the settle; "latest" must prove
@@ -235,6 +241,7 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     assert '"pypi.org" if index == "prod" else "test.pypi.org"' in run_body
     assert 'f"https://{host}/pypi/pkcs11-check/json"' in run_body
     assert 'f"https://{host}/simple/pkcs11-check/"' in run_body
+    assert 'f"https://{host}/simple/"' in run_body
     assert ".tar.gz" in run_body and "-{version}-" in run_body
     assert "WAIT_DEADLINE" in run_body
     # Bounded network I/O throughout: a hung index must fail loudly instead
@@ -305,25 +312,29 @@ def test_gate_waits_for_version_on_each_runner_before_install() -> None:
 
 
 def test_gate_index_is_attested_never_guessed() -> None:
-    """Prepare must derive the index from the publisher or an explicit input.
+    """Prepare must derive the index from an explicit input or the publisher.
 
-    Automatic runs inherit the index from the workflow that fired them
-    (Release -> prod, TestPyPI -> test); manual runs pass it explicitly.
-    An unknown trigger or a garbage input must fail loudly in prepare,
-    before any network I/O -- the gate never guesses an index.
+    Garbage fails first on every event; an explicit input then wins
+    everywhere (a reviewed caller passing one is attested by review, so a
+    reusable call from a workflow_run-triggered caller keeps its explicit
+    index instead of being overridden); only an omitted input falls through
+    to trigger attestation (Release -> prod, TestPyPI -> test) or the test
+    default. An unknown trigger fails loudly -- the gate never guesses.
     """
     prepare = _workflow()["jobs"]["prepare"]
     run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
     assert 'os.environ.get("EVENT_NAME"' in run_body
     assert 'os.environ.get("TRIGGERING_WORKFLOW"' in run_body
     assert 'os.environ.get("REQUESTED_INDEX"' in run_body
-    assert 'if event == "workflow_run"' in run_body
+    garbage_at = run_body.index('raise SystemExit(f"index must be')
+    explicit_at = run_body.index('if requested_index in ("test", "prod")')
+    attest_at = run_body.index('elif event == "workflow_run"')
+    # Order is the contract: garbage rejects before anything is honored,
+    # and an explicit input wins before attestation is consulted (R1-F8).
+    assert garbage_at < explicit_at < attest_at
     assert 'if triggering == "Release"' in run_body
     assert 'elif triggering == "TestPyPI"' in run_body
     assert 'raise SystemExit(f"unexpected triggering workflow' in run_body
-    assert 'elif requested_index in ("", "test")' in run_body
-    assert 'elif requested_index == "prod"' in run_body
-    assert 'raise SystemExit(f"index must be' in run_body
     # The resolved index reaches the legs as an output, and the evidence
     # artifact name carries it so prod/test runs never mix silently.
     validate_source = "\n".join(
@@ -332,6 +343,27 @@ def test_gate_index_is_attested_never_guessed() -> None:
         for step in _steps(_workflow()["jobs"]["validate"])
     )
     assert "needs.prepare.outputs.index" in validate_source
+
+
+def test_gate_release_runs_bind_version_to_triggering_tag() -> None:
+    """R1-F2: a Release trigger binds the version to its tag, not settle.
+
+    Settle-agreement could freeze on a stale edge and green-light the
+    previous release. The release tag at the triggering commit is exact;
+    with no tag there (a dry-run success) the run falls back to settling
+    latest, loudly; ambiguity fails loudly.
+    """
+    prepare = _workflow()["jobs"]["prepare"]
+    run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
+    assert "def release_tag_version()" in run_body
+    assert 'git", "ls-remote", "--tags"' in run_body
+    assert "HEAD_SHA" in run_body
+    assert 'name.startswith("v")' in run_body
+    assert "ambiguous release tags" in run_body
+    assert "falling back to settle" in run_body
+    assert "bound to triggering release" in run_body
+    assert "no release tag at the triggering commit" in run_body
+    assert 'elif event == "workflow_run" and triggering == "Release"' in run_body
 
 
 def _find_gnu_bash() -> str | None:

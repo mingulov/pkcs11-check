@@ -107,13 +107,19 @@ class P11TestConfig(BaseSettings):
     allow_external_provision: bool = False
     external_provision_cmd: str | None = None
 
-    @field_validator("pin", "so_pin", mode="before")
+    @field_validator("pin", mode="before")
     @classmethod
     def _empty_pin_is_absent(cls, v: object) -> object:
-        """An explicitly empty PIN is absent (B7): fixtures, CLI drops, and
-        readers all agree that only a non-empty PIN logs in. Normalizing at
-        the model boundary keeps every layer (CLI/env/TOML) consistent, and
-        explicit empty still wins over env (as absent, never inheriting)."""
+        """An explicitly empty user PIN is absent (B7): fixtures, CLI drops,
+        and readers all agree that only a non-empty PIN logs in. Normalizing
+        at the model boundary keeps every layer (CLI/env/TOML) consistent,
+        and explicit empty still wins over env (as absent, never inheriting).
+
+        R1-F6: so_pin is deliberately excluded: its documented fallback
+        (unset SO PIN guesses the user PIN) keys off None, so folding ""
+        would redirect an explicit empty SO credential at the user PIN
+        and spend an SO retry on the wrong credential.
+        """
         if v is None:
             return None
         if isinstance(v, SecretStr):
