@@ -36,8 +36,8 @@ Every successful TestPyPI run triggers the **PyPI gate** (`.github/workflows/pyp
    before this run: the version-stamp test compares the source version against
    installed dist-info and fails on a stale venv by design.
 3. Push to `main` and wait for CI to go green. The release refuses to run otherwise.
-4. Dispatch **Release** with the version and `dry_run` left ticked. Read the job summary: it prints the commit, the tag it would create, and the exact release notes.
-5. Dispatch again with `dry_run` unticked.
+4. Dispatch **Release** with the version and `dry_run` left ticked. Read the job summary: it prints the commit, the tag it would create, and the exact release notes. Record that commit SHA: it is the rehearsed head.
+5. Dispatch again with `dry_run` unticked and `expected_sha` set to the rehearsed head. The workflow refuses to tag unless the dispatched commit still matches -- if `main` moved since rehearsal, re-rehearse from step 4 instead of releasing. Hold `main` still between the two dispatches (no merges).
 
 `uvx hatch version X.Y.Z` will write the version for you. `uv version` does NOT work on this project: the version is dynamic, and uv refuses to read or write dynamic versions.
 
