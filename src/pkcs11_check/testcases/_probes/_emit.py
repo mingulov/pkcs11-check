@@ -184,7 +184,7 @@ def parse_provider_finding(
             raw_payload,
             object_pairs_hook=_object_pairs_without_duplicates,
         )
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError, RecursionError):
         return None, "provider-finding marker is not valid JSON"
     return _validate_provider_finding(payload)
 
@@ -230,7 +230,7 @@ def mark_python_finalized() -> None:
         with open(path, encoding="utf-8") as fh:
             if isinstance(json.load(fh), dict):
                 return
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         pass
     try:
         with open(path, "w", encoding="utf-8") as fh:
@@ -338,6 +338,7 @@ def flush_probe_sidecar(
     """
     from pkcs11_check.core._counters_durability import (
         PROBE_SIDECAR_ENV,
+        birth_token_for_pid,
         probe_sidecar_identity_from_env,
         write_probe_sidecar,
     )
@@ -357,6 +358,8 @@ def flush_probe_sidecar(
             lost_keys=lost_keys,
             identity=probe_sidecar_identity_from_env(os.environ),
             probes_lost=probes_lost,
+            pid=os.getpid(),
+            birth=birth_token_for_pid(os.getpid()),
         )
     except (OSError, TypeError, ValueError):
         pass

@@ -61,6 +61,7 @@ from pkcs11_check.core._counters_durability import (
     CounterPersistenceError,
     Registration,
     append_journal,
+    birth_token_for_pid,
     durability_dir,
     probe_sidecar_identity_from_env,
     register_worker,
@@ -425,6 +426,8 @@ def _flush_probe_slot_locked() -> None:
             identity=probe_sidecar_identity_from_env(os.environ),
             finalized=False,
             probes_lost=probes_lost(),
+            pid=os.getpid(),
+            birth=birth_token_for_pid(os.getpid()),
         )
     except (OSError, TypeError, ValueError) as exc:
         if not _probe_flush_warned:
