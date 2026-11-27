@@ -53895,20 +53895,29 @@ def test_r44_g5_sweep_won_race_holds_loudly(
     source = root / "slot.tmp-1"
     archive = root / "slot.quarantined-1"
     source.write_bytes(b"sweep-race-evidence")
-    real_link = os.link
+    real_identity = durability._quarantine_name_identity
+    source_key = os.fspath(source)
 
-    def _link_then_sweep(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
-        real_link(src, dst, *args, **kwargs)
-        os.unlink(src)
+    def _identity_then_vanish(path: Any) -> Any:
+        # The concurrent sweep unlinks the source after the
+        # link lands: simulate the disappearance at the
+        # post-link identity lookup. A real unlink here needs
+        # POSIX delete-while-open (the pinned fd stays open
+        # through the unlink), so on Windows the hook would
+        # raise and the test would pass through the generic
+        # link-failure voice instead of this branch.
+        if os.fspath(path) == source_key:
+            return None
+        return real_identity(path)
 
-    monkeypatch.setattr(os, "link", _link_then_sweep)
+    monkeypatch.setattr(durability, "_quarantine_name_identity", _identity_then_vanish)
     with warnings.catch_warnings(record=True) as seen:
         warnings.simplefilter("always")
         result = durability._quarantine_tmp(source, root=root, pid=pid)
     texts = [str(item.message) for item in seen]
     assert result is None, "a vanished source never mints archival success"
     assert archive.read_bytes() == b"sweep-race-evidence", "the landed archive stands"
-    assert any("quarantine" in text for text in texts), texts
+    assert any("vanished after its archive landed" in text for text in texts), texts
 
 
 # --------------------------------------------------------------------------
@@ -60151,7 +60160,9 @@ def test_r44_ar22_gate_holds_before_tmp_loop(tmp_path: Path) -> None:
     assert second["removed"] >= 3, second
 
 
-def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
+def test_r44_ar22_refresh_brackets_relistings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """#88R44-[A]r22: a relist race rebuilds, never subtracts mixed truth.
 
     Codex R21-1 (refresh half): a probe swapped for a newly named
@@ -60161,7 +60172,7 @@ def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
     listings now; a bracket mismatch rebuilds from a bracketed
     scan instead of trusting the mixed view.
     """
-    import time
+    import os
     from unittest import mock
 
     root = tmp_path / "counters"
@@ -60184,18 +60195,33 @@ def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
         birth=birth,
     )
     body = first_probe.read_bytes()
+    second_name = f"probe-{second[:8]}-1-beefcafe.json"
+    real_mtime = durability._dir_mtime_ns
+    root_key = os.fspath(root)
+    tick_before, tick_bumped, tick_swapped = 100, 200, 300
+
+    def _mtime_then_stage(path: Any) -> Any:
+        # Deterministic bracket script (Codex R62-2): the
+        # clock reads follow filesystem state, not wall time,
+        # so the planted mismatch always registers -- no
+        # dependence on timestamp-tick granularity (Windows
+        # system-clock ticks are ~15ms; FAT is coarser still).
+        if os.fspath(path) != root_key:
+            return real_mtime(path)
+        if (root / second_name).exists():
+            return tick_swapped
+        if (root / "scratch.tmp").exists():
+            return tick_bumped
+        return tick_before
+
+    monkeypatch.setattr(durability, "_dir_mtime_ns", _mtime_then_stage)
     holder: list[Any] = [None]
     memo = durability._refresh_memo(root, holder, lambda: durability._ambiguity_snapshot(root))
     assert memo.probe_names is not None and first_probe.name in memo.probe_names
-    # Straddle the timestamp tick before the bump (Windows
-    # system-clock ticks are ~15ms: a fast fixture lands every
-    # op in one tick, the memo reuses itself, and the arrival
-    # never surfaces).
-    time.sleep(0.05)
     # Bump the clock so the refresh relists (the scratch file
-    # matches no evidence pattern).
+    # matches no evidence pattern; its existence stages the
+    # scripted clock above).
     (root / "scratch.tmp").write_text("x", encoding="utf-8")
-    second_name = f"probe-{second[:8]}-1-beefcafe.json"
     real_list = durability._list_evidence_files
     fired: list[bool] = []
 
@@ -60204,9 +60230,6 @@ def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
             fired.append(True)
             first_probe.unlink()
             (root / second_name).write_bytes(body)
-            # The bracket mismatch needs a new tick too (same
-            # coarse-clock reason as the bump above).
-            time.sleep(0.05)
         return real_list(directory, prefix, suffix)
 
     with mock.patch.object(durability, "_list_evidence_files", _list_between):
@@ -75257,9 +75280,9 @@ def test_r44_ar62_fold_proof_oserror_faults(tmp_path: Path) -> None:
     texts = [str(found.message) for found in seen]
     assert any("the member inventory could not be verified" in text for text in texts), texts
     assert any(f"(unreadable: real1/{upper_name})" in text for text in texts), texts
-    assert not any(
-        "the archival inventory changed during verification" in text for text in texts
-    ), texts
+    assert not any("the member inventory changed during verification" in text for text in texts), (
+        texts
+    )
     assert not any("archive the listed members" in text for text in texts), texts
 
 
@@ -75333,7 +75356,7 @@ def test_r44_ar62_companion_lstat_fault_fails_loud(tmp_path: Path) -> None:
     texts = [str(found.message) for found in seen]
     assert any("the member inventory could not be verified" in text for text in texts), texts
     assert any(f"(unreadable: real1/{own_name})" in text for text in texts), texts
-    assert not any(
-        "the archival inventory changed during verification" in text for text in texts
-    ), texts
+    assert not any("the member inventory changed during verification" in text for text in texts), (
+        texts
+    )
     assert not any("archive the listed members" in text for text in texts), texts

@@ -20808,6 +20808,32 @@ def sweep_orphans(
                 base_key = os.fspath(base)
                 absent_parent = absent.get(base_key) if absent is not None else None
                 mapped = verified.get(base_key) if verified is not None else None
+                if mapped is None and absent_parent is None:
+                    # Nested unmapped bases fail closed (Codex
+                    # R62-1): the companion-only and live paths
+                    # below resolve lexical parents live, and only
+                    # root- or registrations-parented bases (depth
+                    # <= 2, no unsampled intermediate) ever arrive
+                    # unmapped -- nested lexical legs always map or
+                    # ride recorded-absent. A deeper base means a
+                    # new construction outran the bracket: hold it
+                    # loudly rather than resolve through unsampled
+                    # links. Outside-root spellings keep their
+                    # downstream voices.
+                    try:
+                        unmapped_depth = len(base.relative_to(root).parts)
+                    except ValueError:
+                        unmapped_depth = 0
+                    if unmapped_depth > 2:
+                        warnings.warn(
+                            f"archival preview found {_lexical_key(base)} nested "
+                            "without a map entry; archival inventory keeps "
+                            "the family in place; exit: investigate the "
+                            "directory layout before archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        return _fail(_lexical_key(base))
                 # Mapped bases always take the adopted path below
                 # (Codex R52-1): the live absence check ran before
                 # the map lookup, so a redirect bracketing only
@@ -20943,15 +20969,17 @@ def sweep_orphans(
                     # nothing itself. The live parent resolution
                     # below never traverses a link-bearing
                     # intermediate (Claude Q3 L3, declined with
-                    # proof): nested lexical legs always map when
-                    # present or ride recorded-absent -- which
-                    # never resolves live -- when missing, while
-                    # dependents, census bases, journals, and
-                    # members are root-parented -- so no
+                    # proof; Codex R62-1): nested lexical legs
+                    # always map when present or ride
+                    # recorded-absent -- which never resolves
+                    # live -- when missing, while dependents,
+                    # census bases, journals, and members are
+                    # root- or registrations-parented (depth <= 2,
+                    # no unsampled intermediate) -- so no
                     # construction delivers a nested parent to
                     # this branch or the live path below. A
-                    # future nested unmapped base would need its
-                    # lexical intermediates bracketed.
+                    # deeper unmapped base fails closed at the
+                    # loop head instead of resolving.
                     if _path_state(base.parent) == "missing":
                         continue
                     resolved_parent = _resolve(base.parent)
