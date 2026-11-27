@@ -781,7 +781,13 @@ def run_probe(
         # the spawn (fail fast, no phantom traffic).
         registration = ensure_registered()
         assert registration is not None  # engaged above; sealed raises
-        probe_sidecar = str(
+        # Absolute spelling (#88R34-6): the slot path rides into the
+        # parent-side spawn record, PROBE_SIDECAR_ENV, and the child's
+        # own spawn file, and every reader resolves it against the
+        # root -- a cwd-relative spelling would misresolve at
+        # collection time. abspath normalizes without resolving
+        # symlinks, so the final directory entry stays the identity.
+        probe_sidecar = os.path.abspath(
             counters_root
             / f"probe-{get_worker_uuid()[:8]}-{probe_seq}-{mint_filename_nonce()}.json"
         )

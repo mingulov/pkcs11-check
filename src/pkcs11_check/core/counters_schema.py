@@ -86,6 +86,8 @@ PARTIAL_OPTIONAL_KEYS = frozenset(
         "recovered_keys",
         "orphan_keys",
         "in_flight",
+        "probe_snapshots",
+        "publication_occurrence",
     }
 )
 PARTIAL_ALLOWED_KEYS = PARTIAL_REQUIRED_KEYS | PARTIAL_OPTIONAL_KEYS

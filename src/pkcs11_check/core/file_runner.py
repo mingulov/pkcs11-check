@@ -658,7 +658,7 @@ def _collect_counters_for_attempt(
     No-op when durability is disengaged. Collection appends gap-only
     partials + identity-bearing losses BEFORE the cache write, so the unit
     cache carries them; it never touches verdicts, detail, or retention.
-    Never raises (collection warns and retains files for a later pass).
+    Never raises (collection warns and retains files for a retry).
     """
     counters_dir = _counters_dir_active()
     if counters_dir is None:
