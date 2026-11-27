@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -165,17 +170,23 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     assert order == sorted(order), [steps[i].get("name", steps[i].get("uses")) for i in order]
 
     commands = "\n".join(step["run"] for step in steps if "run" in step)
-    # Wheel and sdist legs force their artifact kind off the pinned index
-    # (deps from PyPI); the index itself comes from prepare, never hardcoded.
-    assert "--only-binary=pkcs11-check" in commands
-    assert "--no-binary=pkcs11-check" in commands
-    assert "--index-url ${{ needs.prepare.outputs.index_url }}" in commands
-    assert "--extra-index-url https://pypi.org/simple/" in commands
+    # Each leg installs its exact file by URL resolved from the pinned
+    # simple page (R2-3): pip consults every index without preferring
+    # --index-url, so index-based installs could mix bytes across indexes.
+    # The legs differ by file, never by pip flags; deps come from PyPI.
+    assert "--only-binary" not in commands
+    assert "--no-binary" not in commands
     assert "test.pypi.org" not in commands
-    # pip appends the project name to --index-url itself: the project
-    # simple page must never be passed as the install root (R1-F1).
     install_run = _run_of(steps, "Install ${{ matrix.artifact }} from the pinned index")
+    assert 'f"pkcs11_check-{version}-py3-none-any.whl"' in install_run
+    assert 'f"pkcs11_check-{version}.tar.gz"' in install_run
+    assert "hrefs" in install_run and "len(hrefs) != 1" in install_run
+    assert '"--index-url"' in install_run
+    assert '"https://pypi.org/simple/"' in install_run
     assert "needs.prepare.outputs.simple_url" not in install_run
+    install_step = next(s for s in steps if "from the pinned index" in str(s.get("name", "")))
+    assert install_step["env"]["SIMPLE_URL"] == "${{ needs.prepare.outputs.simple_url }}"
+    assert install_step["env"]["ARTIFACT"] == "${{ matrix.artifact }}"
     # Fresh 3.12 (the oldest supported interpreter) on every OS.
     setup = next(step for step in steps if step.get("uses") == _SETUP_PYTHON_ACTION)
     assert setup["with"] == {"python-version": "3.12"}
@@ -211,7 +222,6 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     assert prepare["outputs"] == {
         "version": "${{ steps.candidate.outputs.version }}",
         "index": "${{ steps.candidate.outputs.index }}",
-        "index_url": "${{ steps.candidate.outputs.index_url }}",
         "simple_url": "${{ steps.candidate.outputs.simple_url }}",
     }
     # Same leg gate as validate: a failed publish must skip prepare too.
@@ -241,7 +251,7 @@ def test_gate_pins_one_settled_version_for_every_leg() -> None:
     assert '"pypi.org" if index == "prod" else "test.pypi.org"' in run_body
     assert 'f"https://{host}/pypi/pkcs11-check/json"' in run_body
     assert 'f"https://{host}/simple/pkcs11-check/"' in run_body
-    assert 'f"https://{host}/simple/"' in run_body
+    assert "INDEX_URL" not in run_body
     assert ".tar.gz" in run_body and "-{version}-" in run_body
     assert "WAIT_DEADLINE" in run_body
     # Bounded network I/O throughout: a hung index must fail loudly instead
@@ -349,21 +359,242 @@ def test_gate_release_runs_bind_version_to_triggering_tag() -> None:
     """R1-F2: a Release trigger binds the version to its tag, not settle.
 
     Settle-agreement could freeze on a stale edge and green-light the
-    previous release. The release tag at the triggering commit is exact;
-    with no tag there (a dry-run success) the run falls back to settling
-    latest, loudly; ambiguity fails loudly.
+    previous release. The release tag at the triggering commit is exact.
+    Only a clean lookup with no tag there (a dry-run success) falls back
+    to settling latest; a failed lookup or missing trigger data stops the
+    run (R2-1: a production publish whose version cannot be resolved must
+    not validate a guess), ambiguity fails loudly, and non-release-shaped
+    tags are ignored. Binding applies only when the selected index is the
+    trigger's own (R2-2: a test-index call in a Release context settles on
+    TestPyPI, never inherits the production tag).
     """
     prepare = _workflow()["jobs"]["prepare"]
     run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
     assert "def release_tag_version()" in run_body
     assert 'git", "ls-remote", "--tags"' in run_body
     assert "HEAD_SHA" in run_body
-    assert 'name.startswith("v")' in run_body
+    assert 'name.startswith("v") and len(name) > 1 and name[1].isdigit()' in run_body
     assert "ambiguous release tags" in run_body
-    assert "falling back to settle" in run_body
+    assert "cannot bind release version" in run_body
+    assert "falling back to settle" not in run_body
     assert "bound to triggering release" in run_body
     assert "no release tag at the triggering commit" in run_body
-    assert 'elif event == "workflow_run" and triggering == "Release"' in run_body
+    assert (
+        'elif event == "workflow_run" and triggering == "Release" and index == "prod"' in run_body
+    )
+
+
+def _prepare_script() -> str:
+    """The prepare step's embedded Python, without the heredoc wrapper."""
+    prepare = _workflow()["jobs"]["prepare"]
+    run_body = _run_of(_steps(prepare), "Resolve and await candidate version")
+    prefix = "python - <<'PY'\n"
+    assert run_body.startswith(prefix)
+    script = run_body.removeprefix(prefix).rstrip()
+    assert script.endswith("\nPY")
+    return script[: -len("\nPY")]
+
+
+class _PrepareResult(SimpleNamespace):
+    """Outcome of one prepare execution: `raised`, `output`, `outputs`."""
+
+
+def _exec_prepare(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    env: dict[str, str],
+    ls_remote_stdout: str = "",
+    ls_remote_rc: int = 0,
+    latest: str = "9.9.9",
+    page_version: str | None = "9.9.9",
+) -> _PrepareResult:
+    """Execute the SHIPPED prepare script with mocked git and index I/O.
+
+    subprocess and urllib resolve to in-memory fakes (via sys.modules, so
+    the script's own imports pick them up); sleeps are instant; the index
+    serves one canned latest version plus a simple page carrying (or
+    missing) one version's files. Hermetic: no network, no git.
+    """
+    output_path = tmp_path / "github_output.txt"
+    output_path.write_text("", encoding="utf-8")
+
+    def _fake_run(*args: object, **kwargs: object) -> SimpleNamespace:
+        assert args[0][:3] == ["git", "ls-remote", "--tags"], args
+        return SimpleNamespace(returncode=ls_remote_rc, stdout=ls_remote_stdout, stderr="")
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return self._payload
+
+        def __enter__(self) -> _FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def _fake_urlopen(url: str, timeout: object = None) -> _FakeResponse:
+        del timeout
+        if url.endswith("/json"):
+            return _FakeResponse(json.dumps({"info": {"version": latest}}).encode())
+        page = ""
+        if page_version is not None:
+            page = (
+                f'<a href="../../packages/x/pkcs11_check-{page_version}-py3-none-any.whl">'
+                f"pkcs11_check-{page_version}-py3-none-any.whl</a>\n"
+                f'<a href="../../packages/x/pkcs11_check-{page_version}.tar.gz">'
+                f"pkcs11_check-{page_version}.tar.gz</a>\n"
+            )
+        return _FakeResponse(page.encode())
+
+    fake_urllib_request = SimpleNamespace(urlopen=_fake_urlopen)
+    fake_urllib = SimpleNamespace(request=fake_urllib_request)
+    monkeypatch.setitem(sys.modules, "subprocess", SimpleNamespace(run=_fake_run))
+    monkeypatch.setitem(sys.modules, "urllib", fake_urllib)
+    monkeypatch.setitem(sys.modules, "urllib.request", fake_urllib_request)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    for key in (
+        "REQUESTED",
+        "REQUESTED_INDEX",
+        "EVENT_NAME",
+        "TRIGGERING_WORKFLOW",
+        "HEAD_SHA",
+        "GITHUB_SERVER_URL",
+        "GITHUB_REPOSITORY",
+    ):
+        monkeypatch.setenv(key, env.get(key, ""))
+    # The script references subprocess.TimeoutExpired in an except clause.
+    sys.modules["subprocess"].TimeoutExpired = subprocess.TimeoutExpired
+    buffer = io.StringIO()
+    raised: str | None = None
+    try:
+        with contextlib.redirect_stdout(buffer):
+            exec(compile(_prepare_script(), "<gate-prepare>", "exec"), {})  # noqa: S102
+    except SystemExit as exc:
+        raised = str(exc.code)
+    outputs = dict(
+        line.split("=", 1)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    return _PrepareResult(raised=raised, output=buffer.getvalue(), outputs=outputs)
+
+
+_RELEASE_BASE = {
+    "EVENT_NAME": "workflow_run",
+    "TRIGGERING_WORKFLOW": "Release",
+    "GITHUB_SERVER_URL": "https://github.example",
+    "GITHUB_REPOSITORY": "o/r",
+}
+
+
+def test_prepare_binds_peeled_release_tag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R2-5: an annotated tag binds through its peeled commit line."""
+    head = "ab" * 20
+    ls_remote = f"cd{'ef' * 19}\trefs/tags/v9.9.9\n{head}\trefs/tags/v9.9.9^{{}}\n"
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env={**_RELEASE_BASE, "HEAD_SHA": head},
+        ls_remote_stdout=ls_remote,
+        latest="0.0.0",
+    )
+    assert result.raised is None, result.output
+    assert result.outputs["version"] == "9.9.9"
+    assert result.outputs["index"] == "prod"
+    assert "bound to triggering release: 9.9.9" in result.output
+
+
+def test_prepare_rejects_ambiguous_release_tags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R2-5: two v-tags at the head stop the run; non-release tags ignored."""
+    head = "ab" * 20
+    ls_remote = (
+        f"{head}\trefs/tags/v9.9.9\n"
+        f"{head}\trefs/tags/v8.8.8\n"
+        f"{head}\trefs/tags/vetted\n"
+        f"{head}\trefs/tags/v\n"
+    )
+    result = _exec_prepare(
+        monkeypatch, tmp_path, env={**_RELEASE_BASE, "HEAD_SHA": head}, ls_remote_stdout=ls_remote
+    )
+    assert result.raised is not None and "ambiguous release tags" in result.raised
+    assert result.outputs == {}
+
+
+def test_prepare_ignores_non_release_tags(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R2-5: `vetted` and bare `v` never bind (R2-1 tag-shape rule)."""
+    head = "ab" * 20
+    ls_remote = f"{head}\trefs/tags/vetted\n{head}\trefs/tags/v\n"
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env={**_RELEASE_BASE, "HEAD_SHA": head},
+        ls_remote_stdout=ls_remote,
+        latest="9.9.9",
+    )
+    assert result.raised is None, result.output
+    assert "no release tag at the triggering commit" in result.output
+    assert result.outputs["version"] == "9.9.9"
+
+
+def test_prepare_explicit_index_wins_in_release_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R2-5 (R2-2): index=test in a Release context settles on TestPyPI."""
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env={**_RELEASE_BASE, "REQUESTED_INDEX": "test", "HEAD_SHA": "ab" * 20},
+        latest="8.8.8",
+        page_version="8.8.8",
+    )
+    assert result.raised is None, result.output
+    assert result.outputs["index"] == "test"
+    assert result.outputs["version"] == "8.8.8"
+    assert "bound to triggering release" not in result.output
+    assert result.outputs["simple_url"] == "https://test.pypi.org/simple/pkcs11-check/"
+
+
+def test_prepare_dry_run_shape_settles_loudly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R2-5: no tag at the head (dry run) settles latest with a notice."""
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env={**_RELEASE_BASE, "HEAD_SHA": "ab" * 20},
+        ls_remote_stdout=f"cd{'ef' * 19}\trefs/tags/v7.7.7\n",
+        latest="9.9.9",
+    )
+    assert result.raised is None, result.output
+    assert "no release tag at the triggering commit" in result.output
+    assert result.outputs["version"] == "9.9.9"
+
+
+def test_prepare_lookup_failure_stops_release_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R2-5 (R2-1): an unresolvable production version stops, never settles."""
+    result = _exec_prepare(
+        monkeypatch, tmp_path, env={**_RELEASE_BASE, "HEAD_SHA": "ab" * 20}, ls_remote_rc=128
+    )
+    assert result.raised is not None and "cannot bind release version" in result.raised
+    assert result.outputs == {}
+
+
+def test_prepare_missing_head_sha_stops_release_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R2-5 (R2-1): no head SHA means no binding, no guessing."""
+    result = _exec_prepare(monkeypatch, tmp_path, env=_RELEASE_BASE)
+    assert result.raised is not None and "cannot bind release version" in result.raised
+    assert result.outputs == {}
 
 
 def _find_gnu_bash() -> str | None:
