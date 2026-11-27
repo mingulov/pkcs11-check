@@ -718,25 +718,27 @@ def _verify_counters_application(
 
 
 @contextlib.contextmanager
-def _barrier_gate(root: Path | str) -> Iterator[bool]:
-    """Hold the per-root barrier lock for one discard, else yield False.
+def _barrier_gate(root: Path | str) -> Iterator[tuple[bool, OSError | None]]:
+    """Hold the per-root barrier lock for one discard, else yield why not.
 
     Application and fresh-run retirement serialize against barriers
     through this gate (#88R44-[C]r3): a gen check alone cannot close
     the check-then-unlink window, so the discard holds the same lock
-    barriers do. Yields False (fail closed: the caller keeps the
-    staging and warns) when another barrier holds the lock or the
-    lock file faults. Never raises.
+    barriers do. Yields ``(admitted, fault)``: False with a None
+    fault on contention, False carrying the OSError on a lock fault
+    (#88R44-[C]r11 -- callers voice the true cause instead of
+    blaming a rival), True with None once held. Never raises.
     """
     try:
         token = try_acquire_barrier_lock(root)
-    except OSError:
-        token = None
+    except OSError as exc:
+        yield False, exc
+        return
     if token is None:
-        yield False
+        yield False, None
         return
     try:
-        yield True
+        yield True, None
     finally:
         release_barrier_lock(token)
 
@@ -754,14 +756,23 @@ def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, A
     plans (#88R44-[C]r4-directive). Voices a keep loudly; never
     raises.
     """
-    with _barrier_gate(staged_root) as gated:
+    with _barrier_gate(staged_root) as (gated, fault):
         if not gated:
-            warnings.warn(
-                f"counter barrier staging in {staged_root} may belong to a live "
-                "rival barrier; kept for the next barrier (no lost update)",
-                UserWarning,
-                stacklevel=2,
-            )
+            if fault is not None:
+                warnings.warn(
+                    f"counter barrier staging in {staged_root} cannot establish "
+                    f"the barrier lock ({fault}); kept for the next barrier; exit: "
+                    "fix the lock fault and rerun",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                warnings.warn(
+                    f"counter barrier staging in {staged_root} may belong to a live "
+                    "rival barrier; kept for the next barrier (no lost update)",
+                    UserWarning,
+                    stacklevel=2,
+                )
             return
         if "staging_gen" not in plan:
             warnings.warn(
@@ -955,15 +966,24 @@ def _setup_counters_durability(
         # below still runs) instead of failing the fresh run: a live
         # barrier's seal will reject this run's producers visibly if
         # it is still up when they register.
-        with _barrier_gate(counters_root) as gated:
+        with _barrier_gate(counters_root) as (gated, fault):
             if not gated:
-                warnings.warn(
-                    f"a resume barrier holds {counters_root}; fresh engage keeps "
-                    "its seal and staging (evidence retained; retry engage after "
-                    "the barrier finishes)",
-                    UserWarning,
-                    stacklevel=2,
-                )
+                if fault is not None:
+                    warnings.warn(
+                        f"cannot establish the barrier lock for {counters_root} "
+                        f"({fault}); fresh engage keeps its seal and staging "
+                        "(evidence retained); exit: fix the lock fault and rerun",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    warnings.warn(
+                        f"a resume barrier holds {counters_root}; fresh engage keeps "
+                        "its seal and staging (evidence retained; retry engage after "
+                        "the barrier finishes)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
             else:
                 try:
                     unseal(counters_root)
@@ -1921,13 +1941,26 @@ def _reset_fresh_run_artifacts(
     # try_acquire_barrier_lock exactly (resolve, non-strict), and the
     # resolution itself sits inside the handler (#88R44-[C]r7): a
     # resolution fault refuses exactly like an acquisition fault
-    # instead of escaping the verdict.
+    # instead of escaping the verdict. Loop-induced RuntimeErrors
+    # normalize to OSError at each resolve (#88R44-[C]r9): our own
+    # above, the lock helper's internally -- so the OSError handler
+    # covers both resolves narrowly.
     seen_roots: set[str] = set()
     tokens: list[str] = []
     try:
         for candidate in candidates:
             try:
-                canonical = str(candidate.resolve(strict=False))
+                try:
+                    canonical = str(candidate.resolve(strict=False))
+                except RuntimeError as resolve_exc:
+                    # Symlink loops raise RuntimeError even non-strict
+                    # on Python 3.12 (#88R44-[C]r9): normalize at the
+                    # source so the OSError handler below covers both
+                    # resolves (the lock helper normalizes its own
+                    # internal resolve the same way).
+                    raise OSError(
+                        f"cannot resolve retired counters dir {candidate}: {resolve_exc}"
+                    ) from resolve_exc
                 if canonical in seen_roots:
                     continue
                 seen_roots.add(canonical)

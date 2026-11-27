@@ -5297,3 +5297,133 @@ def test_recorded_counters_dir_refuses_symlink_escape(tmp_path: Path) -> None:
         pytest.skip("symlinks unavailable")
     with pytest.raises(ValueError, match="not an allocated counters dir"):
         test_cmd._validated_recorded_counters_dir(state, str(link))
+
+
+def test_r44_c11r11_recorded_dir_loop_refuses_as_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r11: a looping recorded dir refuses (no raw escape).
+
+    Codex R11: a self-referential recorded counters dir made resume
+    exit with a raw RuntimeError (3.12) instead of the controlled
+    refusal. Resolution faults at both resolve sites normalize into
+    the existing ValueError refusal, preserving the path and the
+    underlying error. Mocked: this interpreter tolerates loops
+    lexically, so only fault injection reproduces 3.12 here.
+    """
+    state = tmp_path / "run.json"
+    state.touch()
+    recorded = tmp_path / "run.json.counters.aaaaaaaa"
+    recorded.mkdir()
+    real_resolve = Path.resolve
+
+    def _looping_resolve(self: Path, strict: bool = False) -> Path:
+        if self == recorded:
+            raise RuntimeError("Symlink loop from 'run.json.counters.aaaaaaaa'")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", _looping_resolve)
+    with pytest.raises(ValueError, match="cannot be resolved") as exc_info:
+        test_cmd._validated_recorded_counters_dir(state, str(recorded))
+    assert str(recorded) in str(exc_info.value), "the path is named"
+    assert "Symlink loop" in str(exc_info.value), "the cause is preserved"
+
+
+# NOTE (#88R44-[C]r11 residual): a missing-but-well-named recorded dir is
+# ACCEPTED (non-strict resolve never raises FileNotFoundError), so resume
+# reuses a cleared dir silently. Whether that needs a refusal is an open
+# product question -- deliberately unpinned until adjudicated.
+
+
+def test_r44_c12r12_recorded_dir_state_resolve_fault_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r12: the state-file resolve is covered too (R12 Minor).
+
+    The validator resolves two paths; the loop test pins the
+    recorded dir, this one pins the state file itself.
+    """
+    state = tmp_path / "run.json"
+    state.touch()
+    recorded = tmp_path / "run.json.counters.aaaaaaaa"
+    recorded.mkdir()
+    real_resolve = Path.resolve
+
+    def _looping_resolve(self: Path, strict: bool = False) -> Path:
+        if self == state:
+            raise RuntimeError("Symlink loop from 'run.json'")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", _looping_resolve)
+    with pytest.raises(ValueError, match="cannot be resolved") as exc_info:
+        test_cmd._validated_recorded_counters_dir(state, str(recorded))
+    assert str(state) in str(exc_info.value), "the path is named"
+    assert "Symlink loop" in str(exc_info.value), "the cause is preserved"
+
+
+def test_r44_c12r12_cli_resume_looped_recorded_dir_exits_2_before_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r12: CLI resume with a looping recorded dir exits 2 early.
+
+    End-to-end pin for the R11 repro: a saved state naming a
+    looping counters dir refuses with exit 2 before the barrier,
+    preflight, or runner ever start (R12 Minor: the direct
+    validator tests never drove the CLI exit path).
+    """
+    module = tmp_path / "dummy.so"
+    module.write_text("", encoding="utf-8")
+    state_file = tmp_path / "state.json"
+    recorded = tmp_path / "state.json.counters.aaaaaaaa"
+    recorded.mkdir()
+    save_run_state(
+        state_file,
+        FileRunState(units=["a.py"], fingerprint="fp", results=[], counters_dir=str(recorded)),
+    )
+    real_resolve = Path.resolve
+
+    def _looping_resolve(self: Path, strict: bool = False) -> Path:
+        if self == recorded:
+            raise RuntimeError("Symlink loop from 'state.json.counters.aaaaaaaa'")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", _looping_resolve)
+    called: list[str] = []
+
+    def _record(name: str):
+        def _fake(*args: object, **kwargs: object) -> None:
+            called.append(name)
+            raise AssertionError(f"{name} must not run on refusal")
+
+        return _fake
+
+    monkeypatch.setattr(test_cmd, "prepare_resume", _record("barrier"))
+    monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _record("preflight"))
+    monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", _record("runner"))  # type: ignore[arg-type]
+    result = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            str(module),
+            "--isolation",
+            "file",
+            "--state-file",
+            str(state_file),
+            "--resume",
+        ],
+    )
+    import textwrap
+
+    assert result.exit_code == 2, result.output
+    # Normalized: Rich may wrap the diagnostic across lines at narrow
+    # widths (R13 Minor), so match on whitespace-folded output. The
+    # width-10 adversarial fold proves the technique survives an
+    # actual split (the 18-char phrase cannot fit on a 10-char line).
+    adversarial = textwrap.fill(result.output, width=10)
+    assert "cannot be resolved" not in adversarial, "premise: really split"
+    output = " ".join(result.output.split())
+    assert "refusing to resume" in output, result.output
+    assert "cannot be resolved" in output, result.output
+    assert "cannot be resolved" in " ".join(adversarial.split())
+    assert called == [], "barrier, preflight, and runner never start"

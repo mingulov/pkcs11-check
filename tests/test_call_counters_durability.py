@@ -2934,9 +2934,10 @@ class TestCollection:
 
 class TestSweepAndFence:
     def test_sweep_is_idempotent_and_keeps_unattributed_evidence(self, engaged: Path) -> None:
-        # Defer-then-converge since #88R44-[A]r7: the torn registry
-        # degrades the identity census, so the committed removal
-        # defers while debris reaps -- then converges once clean.
+        # Per-prefix deferral since #88R44-[A]r16: the torn registry
+        # degrades only its own probe prefix, so the committed
+        # family under a distant prefix removes on the first pass
+        # while debris reaps -- then the sweep idles.
         import warnings
 
         pid, birth = _dead_pid_with_birth()
@@ -2958,12 +2959,50 @@ class TestSweepAndFence:
             first = durability.sweep_orphans(
                 engaged, current_run=_RUN, committed_uuids=frozenset({_UUID_A})
             )
+        assert first == {"removed": 3, "retained": 2}, "debris + committed family go"
+        assert not committed["registry"].exists(), "distant debris never defers"
+        assert not committed["sidecar"].exists()
+        assert not torn.exists()
+        assert other_run["registry"].exists()
+        assert other_run["sidecar"].exists()
+        texts = [str(found.message) for found in seen]
+        assert not any("cannot prove non-collision" in text for text in texts), texts
+        second = durability.sweep_orphans(
+            engaged, current_run=_RUN, committed_uuids=frozenset({_UUID_A})
+        )
+        assert second == {"removed": 0, "retained": 2}, "then idles"
+
+    def test_sweep_defers_same_prefix_family_under_debris(self, engaged: Path) -> None:
+        # Same-prefix debris still defers (#88R44-[A]r16): the torn
+        # registry shares the committed producer's probe prefix, so
+        # the removal waits for a clean pass -- then converges.
+        import warnings
+
+        pid, birth = _dead_pid_with_birth()
+        committed = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
+        )
+        other_run = _plant_producer(
+            engaged,
+            uuid=_UUID_B,
+            pid=pid,
+            birth=birth,
+            run_id="OLD",
+            in_progress=_counts_block(5),
+        )
+        torn = engaged / "registrations" / f"{'a' * 8 + 'd' * 24}.json"
+        torn.write_text('{"worker_uuid": "torn', encoding="utf-8")
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            first = durability.sweep_orphans(
+                engaged, current_run=_RUN, committed_uuids=frozenset({_UUID_A})
+            )
         assert first["removed"] == 1, "torn debris reaps while committed defers"
         # Per-loop tally (pre-existing convention): the deferred family
         # counts in the registry loop (2) and again in the sidecar loop
         # (1), plus the other-run family (2).
         assert first["retained"] == 5, "committed family + other-run evidence kept"
-        assert committed["registry"].exists(), "degraded census defers the removal"
+        assert committed["registry"].exists(), "same-prefix debris defers the removal"
         assert committed["sidecar"].exists()
         assert not torn.exists()
         assert other_run["registry"].exists()
@@ -20281,8 +20320,7 @@ class TestProbeConsumedMarker:
                 sidecar=parent_sidecar,
                 journal_lines=[],
                 claims={},
-                known_uuids={parent_uuid},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({parent_uuid}), {}, False),
                 fence_live=True,
             )
         )
@@ -20328,8 +20366,7 @@ class TestProbeConsumedMarker:
                 sidecar=None,
                 journal_lines=[],
                 claims={},
-                known_uuids={_UUID_A},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({_UUID_A}), {}, False),
                 fence_live=True,
             )
         )
@@ -22761,8 +22798,7 @@ class TestProbeOrphanAdoption:
                 sidecar=sidecar,
                 journal_lines=[],
                 claims={},
-                known_uuids={_UUID_A},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({_UUID_A}), {}, False),
                 producer_run=_RUN,
                 producer_unit="a.py",
                 fence_live=True,
@@ -23187,6 +23223,9 @@ class TestProbeOrphanAdoption:
         # reaper's own read succeeds on valid content, the registry must
         # be retained (it is provably healthy, not torn) -- reaping it
         # would strand the retained orphan from every later pass.
+        # (R20: the fault targets the loop read directly; the census
+        # retries internally, so byte-level fault counting no longer
+        # routes here.)
         pid, birth = _dead_pid_with_birth()
         planted = _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth)
         orphan = _plant_probe_orphan(engaged, parent_uuid=_UUID_A, seq=0)
@@ -23194,30 +23233,20 @@ class TestProbeOrphanAdoption:
             tmp_path / "child.jsonl",
             [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
         )
-        real_read_text = Path.read_text
-        real_read_bytes = Path.read_bytes
-        attempts: list[str] = []
+        real_digested = durability._read_registry_file_digested
+        calls = {"n": 0}
 
-        def _flaky_twice(self: Path, *args: Any, **kwargs: Any) -> str:
-            # Fail the pre-loop scan and the loop read; the reaper's
-            # own read then succeeds on valid content.
-            if len(attempts) < 2 and self == Path(planted["registry"]):
-                attempts.append("read")
-                raise OSError("transient read failure")
-            return real_read_text(self, *args, **kwargs)
+        def _flaky_once(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None, None
+            return real_digested(path)
 
-        def _flaky_twice_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
-            if len(attempts) < 2 and self == Path(planted["registry"]):
-                attempts.append("read")
-                raise OSError("transient read failure")
-            return real_read_bytes(self, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "read_text", _flaky_twice)
-        monkeypatch.setattr(Path, "read_bytes", _flaky_twice_bytes)
+        monkeypatch.setattr(durability, "_read_registry_file_digested", _flaky_once)
         records = durability.collect_unit(
             engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
         )
-        assert attempts == ["read", "read"], "fault was exercised twice"
+        assert calls["n"] >= 1, "fault was exercised"
         assert Path(planted["registry"]).exists()
         assert orphan.exists()
         assert records == []
@@ -45511,9 +45540,9 @@ def test_r44_f3r6_exact_presence_withholds_when_report_vanishes(
     assert batch, "premise: production records landed"
     real_conflicts = durability._child_scope_conflicts
 
-    def _vanishing_conflicts(path: Any, records: Any, **kwargs: Any) -> Any:
-        Path(path).unlink(missing_ok=True)
-        return real_conflicts(path, records, **kwargs)
+    def _vanishing_conflicts(records: Any, **kwargs: Any) -> Any:
+        child.unlink(missing_ok=True)
+        return real_conflicts(records, **kwargs)
 
     monkeypatch.setattr(durability, "_child_scope_conflicts", _vanishing_conflicts)
     with warnings.catch_warnings(record=True) as seen:
@@ -45562,9 +45591,9 @@ def test_r44_f3r6_exact_presence_withholds_when_report_changes(
     assert batch, "premise: production records landed"
     real_conflicts = durability._child_scope_conflicts
 
-    def _mutating_conflicts(path: Any, records: Any, **kwargs: Any) -> Any:
-        Path(path).write_text('{"n": 9}\n', encoding="utf-8")
-        return real_conflicts(path, records, **kwargs)
+    def _mutating_conflicts(records: Any, **kwargs: Any) -> Any:
+        child.write_text('{"n": 9}\n', encoding="utf-8")
+        return real_conflicts(records, **kwargs)
 
     monkeypatch.setattr(durability, "_child_scope_conflicts", _mutating_conflicts)
     with warnings.catch_warnings(record=True) as seen:
@@ -56798,8 +56827,7 @@ def test_r44_ar6_pinned_unpublished_producer_preserves_without_claim(tmp_path: P
                 first,
                 "ok",
                 root=root,
-                known_uuids={first, second},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({first, second}), {}, False),
                 claims={},
                 ambiguity_pinned_out={first},
             )
@@ -56843,8 +56871,7 @@ def test_r44_ar6_pinned_published_claim_suppresses_honestly(tmp_path: Path) -> N
                 first,
                 "ok",
                 root=root,
-                known_uuids={first, second},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({first, second}), {}, False),
                 claims={},
                 ambiguity_pinned_out={first},
                 published_keys={(_RUN, first)},
@@ -56904,8 +56931,7 @@ def test_r44_ar7_foreign_run_records_prove_nothing(tmp_path: Path) -> None:
                 first,
                 "ok",
                 root=root,
-                known_uuids={first, second},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({first, second}), {}, False),
                 claims={},
                 ambiguity_pinned_out={first},
                 published_keys={("R2", first)},
@@ -56940,8 +56966,7 @@ def test_r44_ar7_receipt_claims_alone_prove_nothing(tmp_path: Path) -> None:
                 first,
                 "ok",
                 root=root,
-                known_uuids={first, second},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({first, second}), {}, False),
                 claims={first: {(second, 0)}},
                 ambiguity_pinned_out={first},
             )
@@ -56973,8 +56998,7 @@ def test_r44_ar7_bare_collection_membership_proves_nothing(tmp_path: Path) -> No
                 first,
                 "ok",
                 root=root,
-                known_uuids={first, second},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({first, second}), {}, False),
                 claims={},
                 ambiguity_pinned_out={first},
                 collected_uuids={first},
@@ -57028,8 +57052,7 @@ def test_r44_ar7_staged_records_prove_collection(tmp_path: Path) -> None:
                 first,
                 "ok",
                 root=root,
-                known_uuids={first, second},
-                known_complete=True,
+                census=durability._OwnerCensus(frozenset({first, second}), {}, False),
                 claims={},
                 ambiguity_pinned_out={first},
                 staged_records={"a.py": [_partial(_RUN)]},
@@ -57046,8 +57069,7 @@ def test_r44_ar7_staged_records_prove_collection(tmp_path: Path) -> None:
             first,
             "ok",
             root=root,
-            known_uuids={first, second},
-            known_complete=True,
+            census=durability._OwnerCensus(frozenset({first, second}), {}, False),
             claims={},
             ambiguity_pinned_out={first},
             staged_records={"a.py": [_partial("R2")]},
@@ -57418,6 +57440,2314 @@ def test_r44_ar7_sweep_unreadable_probe_preserves(
         warnings.simplefilter("always")
         durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({first}))
     assert Path(planted_a["registry"]).exists(), "unknown probes preserve"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar15_torn_sidecar_only_hold_under_collision(tmp_path: Path) -> None:
+    """#88R44-[A]r15: reaping a torn sole-identity file must not dissolve.
+
+    Claude Q3: registry X plus torn sidecar-only U under one prefix
+    plus a legacy probe -- the sweep reaped U's sidecar as debris,
+    and the next pass attributed the orphan to X with a now-clean
+    census. If the orphan was U's, its counts misattribute
+    silently. A torn file that is its owner's last census evidence
+    holds under a live collision (attribute-or-archive exit).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_b["registry"]).unlink()
+    Path(planted_b["sidecar"]).write_text("{torn", encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({second}))
+    assert Path(planted_b["sidecar"]).exists(), "sole-identity debris holds"
+    assert probe.exists(), "the orphan survives with its evidence"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar15_torn_sidecar_without_collision_reaps(tmp_path: Path) -> None:
+    """#88R44-[A]r15 control: lonely torn sidecar debris still reaps.
+
+    Precision pin: a torn sidecar-only file with no prefix-sharing
+    rival removes normally (plain sweep, exercising the torn arm
+    rather than the committed bypass) -- probes alone do not hold.
+    (A counterpart-backed torn sidecar never reaches evaluation: a
+    readable registry shields it from the sidecar loop, so the
+    known-owner clause has nothing to do there.)
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 31 + "9"
+    planted = _plant_producer(root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(7))
+    Path(planted["registry"]).unlink()
+    Path(planted["sidecar"]).write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert not Path(planted["sidecar"]).exists(), "lonely debris reaps"
+
+
+def test_r44_ar15_torn_registry_only_hold_under_collision(tmp_path: Path) -> None:
+    """#88R44-[A]r15: a torn sole-identity registry holds under collision.
+
+    The registry-side twin: a torn registry with no sidecar file is
+    its owner's last evidence -- reaping it would dissolve a live
+    collision the same way.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_b["registry"]).write_text("{torn", encoding="utf-8")
+    Path(planted_b["sidecar"]).unlink()
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert Path(planted_b["registry"]).exists(), "sole-identity debris holds"
+    assert probe.exists(), "the orphan survives with its evidence"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar15_torn_without_collision_reaps(tmp_path: Path) -> None:
+    """#88R44-[A]r15 control: torn debris without a collision reaps.
+
+    No other owner shares the prefix, so no ambiguity can dissolve
+    -- debris converges as before (plus a probe under the lonely
+    prefix, proving probes alone do not hold).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 31 + "9"
+    planted = _plant_producer(root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(7))
+    Path(planted["registry"]).write_text("{torn", encoding="utf-8")
+    Path(planted["sidecar"]).unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert not Path(planted["registry"]).exists(), "uncollided debris reaps"
+
+
+def _r44_ar16_collision_pair(root: Path) -> tuple[str, str, dict[str, Any]]:
+    """Healthy X plus torn-registry-only Uf under one prefix (R15-F1 shape)."""
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_b["registry"]).write_text("{torn", encoding="utf-8")
+    Path(planted_b["sidecar"]).unlink()
+    return first, second, planted_b
+
+
+def test_r44_ar16_torn_hold_survives_probe_fault(tmp_path: Path) -> None:
+    """#88R44-[A]r16: unknown probe inventory preserves torn identities.
+
+    Codex R15: with a failed probe listing, the sweep deleted the
+    torn sole-identity file (empty probe set reads clean!) and the
+    next collect misattributed. An unreadable inventory must
+    preserve the identity needed for retry -- the hold cannot
+    depend on listing what the fault hides.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    first, _second, planted_b = _r44_ar16_collision_pair(root)
+    pid, birth = _dead_pid_with_birth()
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_evidence_files
+
+    def _faulting_list(directory: Any, prefix: Any, suffix: Any) -> Any:
+        if prefix == durability.PROBE_FILE_PREFIX:
+            return None
+        return real_list(directory, prefix, suffix)
+
+    with mock.patch.object(durability, "_list_evidence_files", _faulting_list):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            durability.sweep_orphans(root, current_run=_RUN)
+    assert Path(planted_b["registry"]).exists(), "unknown inventory preserves"
+    assert probe.exists(), "the orphan survives with its evidence"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar16_torn_hold_survives_hidden_rival(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r16: a hidden rival blocks torn reaping.
+
+    Codex R15: hiding X's registry body for one census read let the
+    sweep delete Uf's torn identity, misattributing next pass. Faults
+    beyond the target file itself must hold the reap; only the
+    target's own unreadability is excludable.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_a = _plant_producer(root, uuid=first, pid=pid, birth=birth)
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_b["registry"]).write_text("{torn", encoding="utf-8")
+    Path(planted_b["sidecar"]).unlink()
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    registry_a = Path(planted_a["registry"])
+    real_read_text = Path.read_text
+
+    def _eperm_body(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == registry_a:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _eperm_body)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert Path(planted_b["registry"]).exists(), "hidden rivals preserve"
+    assert probe.exists(), "the orphan survives with its evidence"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+    # Since R20 opaque registries flag global (R19-4 withdraws the
+    # filename bound), the unbound gate voices this hold; the
+    # hidden-collider voice now fires only for inventory failure
+    # (listing faults name no file, so no flag rises for them).
+    assert any("unbound evidence" in text for text in texts), texts
+
+
+def test_r44_ar16_legacy_marker_counts_for_torn_hold(tmp_path: Path) -> None:
+    """#88R44-[A]r16: prefix-routed legacy markers join the torn guard.
+
+    Codex R15: with Uf's legacy probe replaced by its legacy
+    consumed marker, the sweep deleted Uf's sole identity (markers
+    invisible to the probe census!) and collect healed X's loss
+    from the misattributed marker. Legacy markers count like
+    legacy probes; full-uuid and body-attributed markers still
+    resolve directly.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    first, second, planted_b = _r44_ar16_collision_pair(root)
+    pid, birth = _dead_pid_with_birth()
+    orphan = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    marker = durability.mark_probe_consumed(orphan)
+    parsed = durability._parse_consumed_probe_filename(marker.name)
+    assert parsed is not None and len(parsed[0]) == 8, "legacy marker (premise)"
+    body = json.loads(marker.read_text(encoding="utf-8"))
+    assert "parent_uuid" not in body, "unattributed body (premise)"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert Path(planted_b["registry"]).exists(), "marker ambiguity preserves"
+    assert marker.exists(), "the marker survives with its evidence"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+    assert any("probe or marker evidence" in text for text in texts), texts
+
+
+def test_r44_ar16_healthy_prefix_collects_despite_torn_elsewhere(tmp_path: Path) -> None:
+    """#88R44-[A]r16: per-prefix deferral keeps unrelated producers live.
+
+    Codex R15: a held torn file degraded the whole census, so an
+    unrelated healthy producer deferred on every retry (starvation
+    by global deferral). Degradation now scopes to prefixes: W at
+    a clean prefix collects while the torn prefix holds.
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_b["registry"]).write_text("{torn", encoding="utf-8")
+    Path(planted_b["sidecar"]).unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    live = "b" * 32
+    _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(5, fn="C_Sign")
+    )
+    live_probe = _plant_probe_orphan(
+        root,
+        parent_uuid=live,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Sign", 0, 3]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    live_partials = [
+        record
+        for record in records
+        if record.get("worker_uuid") == live and record.get("$report_type") == "CallCountersPartial"
+    ]
+    assert [rec["total_calls"] for rec in live_partials] == [8], (
+        "the clean prefix collects exactly its own 5 plus the adopted 3 "
+        f"({[(rec.get('worker_uuid'), rec.get('total_calls')) for rec in records]})"
+    )
+    assert not live_probe.exists(), "the adopted probe is consumed"
+    assert not any(record.get("worker_uuid") == first for record in records), (
+        "the degraded prefix still defers"
+    )
+
+
+def test_r44_ar16_healthy_prefix_sweep_proceeds(tmp_path: Path) -> None:
+    """#88R44-[A]r16: per-prefix deferral keeps unrelated sweeps converging.
+
+    The sweep-side twin: a committed healthy producer at a clean
+    prefix removes while torn debris degrades another prefix (no
+    global stall), and the torn collision itself still holds.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    first, _second, planted_b = _r44_ar16_collision_pair(root)
+    pid, birth = _dead_pid_with_birth()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    live = "b" * 32
+    planted_w = _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(5, fn="C_Sign")
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({live}))
+    assert not Path(planted_w["registry"]).exists(), "clean prefix converges"
+    assert not Path(planted_w["sidecar"]).exists(), "clean family converges"
+    assert Path(planted_b["registry"]).exists(), "the torn collision still holds"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar16_sweep_builds_one_ambiguity_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r16: torn reaps share one pass-level snapshot (no O(N^2)).
+
+    Codex R15: sweeping 256 torn registries rebuilt the full census
+    per reap (32k body reads). The sweep memoizes one snapshot for
+    the whole pass (gates and reaps alike); per-reap callers
+    outside a sweep build their own (rare path). Same-prefix mass
+    (#88R44-[A]r17, Codex R16-F3): debris under one prefix must
+    still converge when no probe or marker depends on it.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    (root / "registrations").mkdir(parents=True)
+    for n in range(10):
+        uuid = f"aaaaaaaa{n:024x}"
+        (root / "registrations" / f"{uuid}.json").write_text("{torn", encoding="utf-8")
+    real_snapshot = durability._ambiguity_snapshot
+    builds = {"n": 0}
+
+    def _counting_snapshot(path: Any) -> Any:
+        builds["n"] += 1
+        return real_snapshot(path)
+
+    monkeypatch.setattr(durability, "_ambiguity_snapshot", _counting_snapshot)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(root, current_run=_RUN)
+    assert builds["n"] == 1, "one snapshot serves the whole sweep"
+    assert swept["removed"] == 10, "uncollided debris converges"
+
+
+def _r44_ar17_renamed_sidecar_pair(root: Path) -> tuple[str, str, Path]:
+    """X healthy plus U sidecar-only renamed to a distant name (R16-F1 shape)."""
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["registry"]).unlink()
+    renamed = Path(planted_u["sidecar"]).with_name(f"{'d' * 32}-nonce1.partial.json")
+    Path(planted_u["sidecar"]).rename(renamed)
+    return first, second, renamed
+
+
+def test_r44_ar17_renamed_unreadable_sidecar_withholds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r17: an unreadable renamed sidecar blocks attribution globally.
+
+    Codex R16-F1: U's sole sidecar renamed to a distant valid name
+    still counts as U while readable (body authoritative). When the
+    read failed, R16 degraded only the filename's prefix, and
+    collect folded U's nine legacy probe calls into X. R15
+    withheld. Sidecar names are not identity-bound, so an
+    unreadable sidecar degrades attribution everywhere.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    first, second, renamed = _r44_ar17_renamed_sidecar_pair(root)
+    pid, birth = _dead_pid_with_birth()
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_sidecar(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == renamed:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _eperm_sidecar)
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert probe.exists(), "the probe waits for a readable pass"
+    totals = [
+        record["total_calls"]
+        for record in records
+        if record.get("worker_uuid") == first
+        and record.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while U hides anywhere: {totals}"
+
+
+def test_r44_ar17_readable_contradicted_sidecar_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r17: a readable filename/body contradiction is global too.
+
+    Codex R16-F1 (same rule): a sidecar whose name claims one
+    producer and whose body names another binds neither by name,
+    so attribution waits for the contradiction to resolve -- the
+    readable case reconciles with the unreadable one.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    first, second, _renamed = _r44_ar17_renamed_sidecar_pair(root)
+    pid, birth = _dead_pid_with_birth()
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert probe.exists(), "the probe waits for the contradiction to resolve"
+    totals = [
+        record["total_calls"]
+        for record in records
+        if record.get("worker_uuid") == first
+        and record.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while the contradiction stands: {totals}"
+
+
+def test_r44_ar17_post_consume_twin_holds_under_leftover_probe(tmp_path: Path) -> None:
+    """#88R44-[A]r17: twin reaps distrust same-pass-consumed evidence.
+
+    Codex R16-F2: collect published U's seven calls, consumed its
+    readable sidecar, and left the probe after a cross-unit hold
+    (receipt-covered legacy probe stamped for another unit: no
+    deferral, no fold). R16 reused the pre-consume census, treated
+    U as known, and deleted its torn twin -- the next collect
+    folded the leftover probe into X. R15 preserved the twin
+    (unknown owner + floating probe + surviving claimant) and
+    withheld. Twins re-scan post-consume instead of trusting the
+    pass census.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    child_uuid = "e" * 32
+    _plant_producer(
+        root,
+        uuid=first,
+        unit="b.py",
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+    )
+    planted_u = _plant_producer(
+        root,
+        uuid=second,
+        unit="a.py",
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(7),
+        receipts=[{"worker_uuid": child_uuid, "probe_seq": 0}],
+    )
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid=child_uuid,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity={"unit": "b.py", "run_id": _RUN},
+        pid=pid,
+        birth=birth,
+    )
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        first_pass = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    partials = [rec for rec in first_pass if rec["$report_type"] == "CallCountersPartial"]
+    by_owner = {rec["worker_uuid"]: rec["total_calls"] for rec in partials}
+    assert by_owner.get(first) is None, "X waits for its own unit"
+    assert by_owner.get(second) == 7, "U publishes its seven calls"
+    assert not Path(planted_u["sidecar"]).exists(), "U's sidecar was consumed (premise)"
+    assert probe.exists(), "the cross-unit probe is left over"
+    assert twin.exists(), "the twin survives its sidecar's consumption"
+    child2 = tmp_path / "child2.jsonl"
+    child2.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        second_pass = durability.collect_unit(
+            root, unit="b.py", child_jsonl=child2, status="passed", returncode=0
+        )
+    assert probe.exists(), "no retry folds the leftover probe into X"
+    assert twin.exists(), "the twin keeps the prefix degraded"
+    totals = [
+        rec["total_calls"]
+        for rec in second_pass
+        if rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while the probe floats: {totals}"
+
+
+def test_r44_ar18_basename_collision_preserves_sidecar_fault(tmp_path: Path) -> None:
+    """#88R44-[A]r18: reaps subtract by path, not basename.
+
+    Codex R17-1: torn junk in registrations/ sharing a root
+    sidecar's basename, plus one faulted census read of that
+    sidecar. Reaping the junk erased the still-present sidecar's
+    fault from the snapshot (basename match); the later reap
+    deleted U's torn registry, and the next clean collect folded
+    U's nine probe calls into X. Same-pass reaps now subtract by
+    root-relative path (reproduced through collect here; the
+    unreadable-child and barrier paths share the helper).
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_x = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    Path(planted_x["registry"]).unlink()
+    sidecar_x = Path(planted_x["sidecar"])
+    junk = root / "registrations" / sidecar_x.name
+    junk.write_text("{torn", encoding="utf-8")
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+    reads = {"n": 0}
+
+    def _fault_once(self: Path, *args: Any, **kwargs: Any) -> Any:
+        # Fault exactly the census read (3 AV-retry attempts), then
+        # heal: the sidecar is present-but-faulted at scan time and
+        # readable for every later decision.
+        if self == sidecar_x:
+            reads["n"] += 1
+            if reads["n"] <= 3:
+                raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(Path, "read_text", _fault_once):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert not junk.exists(), "the junk itself still reaps"
+    assert probe.exists(), "the probe is left over"
+    assert twin.exists(), "U's fault still guards the twin after the junk reap"
+    child2 = tmp_path / "child2.jsonl"
+    child2.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        second_pass = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child2, status="passed", returncode=0
+        )
+    assert probe.exists(), "no retry folds the leftover probe into X"
+    assert twin.exists(), "the twin keeps the prefix degraded"
+    totals = [
+        rec["total_calls"]
+        for rec in second_pass
+        if rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while the probe floats: {totals}"
+
+
+def test_r44_ar18_unbound_sidecar_holds_last_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r18: an unbound sidecar holds torn-identity deletion.
+
+    Codex R17-2: X's sole sidecar unreadable behind a distant
+    name, U's torn identity plus a legacy probe already present.
+    The global flag protected attribution but deletion proceeded:
+    sweep erased U's identity, and once X's sidecar healed the
+    next collect folded the probe into X. When a probe or marker
+    floats, the last identity holds while an unbound sidecar
+    could still supply a rival (the readable-empty-prefix exit
+    still clears debris).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_x = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    Path(planted_x["registry"]).unlink()
+    sidecar_x = Path(planted_x["sidecar"])
+    renamed = sidecar_x.with_name(f"{'d' * 32}-nonce1.partial.json")
+    sidecar_x.rename(renamed)
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_sidecar(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == renamed:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _eperm_sidecar)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert twin.exists(), "the last identity holds while a rival may hide"
+    assert probe.exists(), "the floating probe is preserved with it"
+    texts = [str(found.message) for found in seen]
+    assert any("unbound evidence" in text for text in texts), texts
+    assert any(renamed.name in text for text in texts), texts
+    monkeypatch.undo()
+    child2 = tmp_path / "child2.jsonl"
+    child2.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        second_pass = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child2, status="passed", returncode=0
+        )
+    assert probe.exists(), "no retry folds the leftover probe into X"
+    totals = [
+        rec["total_calls"]
+        for rec in second_pass
+        if rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while the probe floats: {totals}"
+
+
+def test_r44_ar18_torn_sidecar_scopes_distant_producer(tmp_path: Path) -> None:
+    """#88R44-[A]r18: torn sidecar bytes blame only their own prefix.
+
+    Codex R17-4: with a retained torn sidecar in the collision
+    fixture, R17 deferred the unrelated producer on every retry
+    (global unbound flag). Torn bytes are provably not evidence --
+    garbage validates for nobody -- so the fault scopes to its
+    filename prefix for disposition and raises no attribution
+    uncertainty.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    first, _second, _planted = _r44_ar16_collision_pair(root)
+    pid, birth = _dead_pid_with_birth()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    torn_sidecar = root / f"{'c' * 32}-nonce1.partial.json"
+    torn_sidecar.write_text("{torn", encoding="utf-8")
+    live = "b" * 32
+    _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(9, fn="C_Sign")
+    )
+    live_probe = _plant_probe_orphan(
+        root,
+        parent_uuid=live,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Sign", 0, 3]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    live_partials = [
+        record
+        for record in records
+        if record.get("worker_uuid") == live and record.get("$report_type") == "CallCountersPartial"
+    ]
+    assert [rec["total_calls"] for rec in live_partials] == [12], (
+        "distant debris never stalls a healthy prefix "
+        f"({[(rec.get('worker_uuid'), rec.get('total_calls')) for rec in records]})"
+    )
+    assert not live_probe.exists(), "the distant probe is consumed"
+    assert torn_sidecar.exists(), "torn debris itself still retains"
+
+
+def test_r44_ar19_journal_proves_nothing_for_opaque_sidecar(tmp_path: Path) -> None:
+    """#88R44-[A]r19: a same-stem journal does not scope opaque bytes.
+
+    Codex R18-1 reverts the R18 corroboration rule: a rename onto
+    a stem with an existing journal defeats presence checks with a
+    single fault, so nothing short of bytes binds opaque bytes. An
+    opaque sidecar stays global (voiced) even with its journal
+    present -- only torn bytes (provably non-evidence) scope.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    opaque = "c" * 32
+    planted = _plant_producer(
+        root,
+        uuid=opaque,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(4),
+        journal=[{"window": 0}],
+    )
+    Path(planted["registry"]).unlink()
+    sidecar = Path(planted["sidecar"])
+    assert Path(planted["journal"]).exists(), "same-stem journal present (premise)"
+    live = "b" * 32
+    _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(9, fn="C_Sign")
+    )
+    live_probe = _plant_probe_orphan(
+        root,
+        parent_uuid=live,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Sign", 0, 3]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_sidecar(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == sidecar:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(Path, "read_text", _eperm_sidecar):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            records = durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert live_probe.exists(), "the distant probe waits out the global hold"
+    assert not any(record.get("worker_uuid") == live for record in records), (
+        "a present journal scopes nothing"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("blocked by unbound evidence" in text for text in texts), texts
+    assert any(sidecar.name in text for text in texts), texts
+
+
+def test_r44_ar18_renamed_sidecar_stays_global_despite_journal(tmp_path: Path) -> None:
+    """#88R44-[A]r18: a renamed opaque sidecar stays global with a stale journal.
+
+    The rename direction: the journal stays at the old stem while
+    the sidecar claims a new one, so no session evidence agrees
+    with the claim -- attribution waits globally and names the
+    blocking file with its resolution exit. (R19: corroboration
+    itself is gone; this pins the global-and-voiced outcome.)
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    owner = "c" * 32
+    planted = _plant_producer(
+        root,
+        uuid=owner,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(4),
+        journal=[{"window": 0}],
+    )
+    Path(planted["registry"]).unlink()
+    sidecar = Path(planted["sidecar"])
+    renamed = sidecar.with_name(f"{'d' * 32}-nonce1.partial.json")
+    sidecar.rename(renamed)
+    live = "b" * 32
+    _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(9, fn="C_Sign")
+    )
+    live_probe = _plant_probe_orphan(
+        root,
+        parent_uuid=live,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Sign", 0, 3]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_sidecar(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == renamed:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(Path, "read_text", _eperm_sidecar):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            records = durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert live_probe.exists(), "the distant probe waits out the global hold"
+    assert not any(record.get("worker_uuid") == live for record in records), (
+        "a broken stem match scopes nothing"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("blocked by unbound evidence" in text for text in texts), texts
+    assert any(renamed.name in text for text in texts), texts
+    assert any("together with" in text for text in texts), texts
+
+
+def test_r44_ar18_midpass_probe_arrival_invalidates_memo(tmp_path: Path) -> None:
+    """#88R44-[A]r18: a probe landing mid-pass refreshes every memo.
+
+    Codex R17-3: a legacy probe landed after an earlier unrelated
+    reap populated the memo. Adoption saw the probe and deferred
+    X, but a later reap used the memo's empty prefix set and
+    deleted U's torn registry; the next collect folded the probe
+    into X. Memos re-verify probe-inventory names before use and
+    rescan on any change (bodies still read once per phase).
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "registrations").mkdir(parents=True)
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    unrelated = "0" * 32
+    (root / "registrations" / f"{unrelated}.json").write_text("{torn", encoding="utf-8")
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    real_reap = durability._reap_torn_registry
+    calls: list[str] = []
+    planted: list[bool] = []
+
+    def _reap_then_land(root: Path, registry_path: Path, **kwargs: Any) -> bool:
+        calls.append(registry_path.name)
+        done = real_reap(root, registry_path, **kwargs)
+        if registry_path.name == f"{unrelated}.json" and not planted:
+            planted.append(True)
+            _plant_probe_orphan(
+                root,
+                parent_uuid=second,
+                child_uuid="e" * 32,
+                seq=0,
+                counters=[["m", "C_Digest", 9, 2]],
+                identity=None,
+                pid=pid,
+                birth=birth,
+            )
+        return done
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(durability, "_reap_torn_registry", _reap_then_land):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert calls.index(f"{unrelated}.json") < calls.index(f"{second}.json"), (
+        f"the unrelated reap populates the memo first (premise): {calls}"
+    )
+    assert planted, "the probe landed mid-pass (premise)"
+    probe = root / f"probe-{second[:8]}-0-feedface.json"
+    assert probe.exists(), "the landed probe is preserved"
+    assert twin.exists(), "the later reap sees the landed probe, not the stale memo"
+    texts = [str(found.message) for found in seen]
+    assert any("deferred" in text for text in texts), texts
+    child2 = tmp_path / "child2.jsonl"
+    child2.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        second_pass = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child2, status="passed", returncode=0
+        )
+    assert probe.exists(), "no retry folds the landed probe into X"
+    totals = [
+        rec["total_calls"]
+        for rec in second_pass
+        if rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while the probe floats: {totals}"
+
+
+def test_r44_ar19_rename_onto_journal_stem_stays_global(tmp_path: Path) -> None:
+    """#88R44-[A]r19: a colliding journal stem scopes nothing.
+
+    Codex R18-1: U's sidecar renamed once onto a stem with an
+    existing journal, then faulted. R18 scoped the fault to the
+    journal's distant prefix and folded U's nine probe calls into
+    X. Stem presence proves nothing (the journal is D's own
+    session, coincidentally addressed), so opaque bytes stay
+    global with a named voice.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    distant = "d" * 32
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["registry"]).unlink()
+    # D's own journal at the target stem (an independent session,
+    # coincidentally addressed -- not U's session evidence).
+    (root / f"{distant}-nonce1.windows.jsonl").write_text('{"window": 0}\n', encoding="utf-8")
+    renamed = Path(planted_u["sidecar"]).with_name(f"{distant}-nonce1.partial.json")
+    Path(planted_u["sidecar"]).rename(renamed)
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_sidecar(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == renamed:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(Path, "read_text", _eperm_sidecar):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            records = durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert probe.exists(), "the probe waits out the global hold"
+    assert not any(record.get("worker_uuid") == first for record in records), (
+        "a coincidental journal scopes nothing"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("blocked by unbound evidence" in text for text in texts), texts
+    assert any(renamed.name in text for text in texts), texts
+
+
+def test_r44_ar19_same_name_replacement_invalidates_memo(tmp_path: Path) -> None:
+    """#88R44-[A]r19: same-name content flips refresh the memo.
+
+    Codex R18-2(i): a torn probe atomically replaced by a valid
+    legacy probe at the same name slipped past name-only
+    freshness; the later reap used the stale empty prefix set and
+    deleted the collider's last identity. Memos re-verify the
+    directory mtime (every atomic write bumps it) and rescan on
+    change. The replacement goes through os.replace like every
+    runtime probe write (in-place overwrite is not a runtime
+    shape, so the test does not use it).
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "registrations").mkdir(parents=True)
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    unrelated = "0" * 32
+    (root / "registrations" / f"{unrelated}.json").write_text("{torn", encoding="utf-8")
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe_path = root / f"probe-{second[:8]}-0-feedface.json"
+    probe_path.write_text("{torn", encoding="utf-8")
+    staged = root / "staged-probe.json"
+    staged.write_text(
+        json.dumps(
+            {
+                "worker_uuid": "e" * 32,
+                "probe_seq": 0,
+                "counters": [["m", "C_Digest", 9, 2]],
+                "pid": pid,
+            }
+        ),
+        encoding="utf-8",
+    )
+    real_reap = durability._reap_torn_registry
+    calls: list[str] = []
+    replaced: list[bool] = []
+
+    def _reap_then_replace(root: Path, registry_path: Path, **kwargs: Any) -> bool:
+        calls.append(registry_path.name)
+        done = real_reap(root, registry_path, **kwargs)
+        if registry_path.name == f"{unrelated}.json" and not replaced:
+            replaced.append(True)
+            os.replace(staged, probe_path)
+        return done
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(durability, "_reap_torn_registry", _reap_then_replace):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert calls.index(f"{unrelated}.json") < calls.index(f"{second}.json"), (
+        f"the unrelated reap populates the memo first (premise): {calls}"
+    )
+    assert replaced, "the probe flipped mid-pass (premise)"
+    assert probe_path.exists(), "the flipped probe is preserved"
+    assert twin.exists(), "the later reap sees the flipped probe, not the stale memo"
+    texts = [str(found.message) for found in seen]
+    assert any("deferred" in text or "ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar19_delete_recreate_race_invalidates_memo(tmp_path: Path) -> None:
+    """#88R44-[A]r19: delete+recreate with identical names still refreshes.
+
+    Codex R18-2(ii): a probe that vanished during its first read
+    and reappeared before the next reap kept identical name sets,
+    so name-only freshness missed it and the later reap deleted
+    the last identity. Directory mtime observes the unlink+relink
+    pair even though the names net out. Real FS operations (not
+    mocked absence: a mock that lies below the filesystem is
+    unobservable by any mechanism).
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "registrations").mkdir(parents=True)
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    unrelated = "0" * 32
+    (root / "registrations" / f"{unrelated}.json").write_text("{torn", encoding="utf-8")
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe_path = root / f"probe-{second[:8]}-0-feedface.json"
+    probe_path.write_text("{torn", encoding="utf-8")
+    real_reap = durability._reap_torn_registry
+    calls: list[str] = []
+    churned: list[bool] = []
+
+    def _reap_then_churn(root: Path, registry_path: Path, **kwargs: Any) -> bool:
+        calls.append(registry_path.name)
+        done = real_reap(root, registry_path, **kwargs)
+        if registry_path.name == f"{unrelated}.json" and not churned:
+            churned.append(True)
+            probe_path.unlink()
+            _plant_probe_orphan(
+                root,
+                parent_uuid=second,
+                child_uuid="e" * 32,
+                seq=0,
+                counters=[["m", "C_Digest", 9, 2]],
+                identity=None,
+                pid=pid,
+                birth=birth,
+            )
+        return done
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(durability, "_reap_torn_registry", _reap_then_churn):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert calls.index(f"{unrelated}.json") < calls.index(f"{second}.json"), (
+        f"the unrelated reap populates the memo first (premise): {calls}"
+    )
+    assert churned, "the probe churned mid-pass (premise)"
+    assert probe_path.exists(), "the churned probe is preserved"
+    assert twin.exists(), "the later reap sees the churned probe, not the stale memo"
+    texts = [str(found.message) for found in seen]
+    assert any("deferred" in text or "ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar19_contradicted_body_never_authorizes_deletion(tmp_path: Path) -> None:
+    """#88R44-[A]r19: contradictory bodies count but never delete.
+
+    Codex R18-3: a renamed sidecar whose body claimed U put U in
+    the census, so sweep reaped U's torn registry through the
+    known-owner bypass; archiving that sidecar (as the diagnostic
+    prescribes) then let collect fold U's probe into X. Bodies
+    count for completeness, but deletion needs a trustworthy
+    surviving file.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    renamed = Path(planted_u["sidecar"]).with_name(f"{'d' * 32}-nonce1.partial.json")
+    Path(planted_u["sidecar"]).rename(renamed)
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    census = durability._owner_census(root)
+    assert second in census.uuids, "the contradictory body counts (premise)"
+    assert second not in census.trusted, "but nothing trusts it (premise)"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert twin.exists(), "no deletion on contradictory authority"
+    assert probe.exists(), "the probe survives with the identity"
+    assert renamed.exists(), "the contradiction itself retains for forensics"
+    texts = [str(found.message) for found in seen]
+    assert any("ambiguity evidence" in text for text in texts), texts
+
+
+def test_r44_ar19_renamed_registry_holds_and_names_itself(tmp_path: Path) -> None:
+    """#88R44-[A]r19: a readable renamed registry is contradiction evidence.
+
+    Claude-3: a registry file whose readable body names a
+    different owner than its filename used to read as torn debris:
+    the census hid U, the reaper deleted the file, and the next
+    pass folded U's probe into X -- a single fault. Now the body
+    counts (flagged, untrusted), collection defers, and the reaper
+    holds the file itself with a rename-or-archive exit.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    twin = Path(planted_u["registry"])
+    stray_name = root / "registrations" / f"{'d' * 32}.json"
+    twin.rename(stray_name)
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert probe.exists(), "the probe waits out the contradiction hold"
+    assert not any(record.get("worker_uuid") == first for record in records), (
+        "X never folds U's probe"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("blocked by unbound evidence" in text for text in texts), texts
+    assert any(stray_name.name in text for text in texts), texts
+    with warnings.catch_warnings(record=True) as swept:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert stray_name.exists(), "the reaper holds contradiction evidence"
+    sweep_texts = [str(found.message) for found in swept]
+    assert any("contradiction evidence" in text for text in sweep_texts), sweep_texts
+
+
+def test_r44_ar19_torn_junk_sidecar_never_stalls(tmp_path: Path) -> None:
+    """#88R44-[A]r19: unplaceable torn sidecars skip like registries.
+
+    Codex R18-4: a root-level junk.partial.json with torn bytes set
+    inventory_failed and blocked an unrelated legacy probe on
+    every retry, while the sweep skipped the file forever -- a
+    pre-existing permanent stall. Torn bytes plus no name is
+    doubly non-evidence (same R28-5 rule as registries).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "junk.partial.json").write_text("{torn", encoding="utf-8")
+    pid, birth = _dead_pid_with_birth()
+    live = "b" * 32
+    _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(9, fn="C_Sign")
+    )
+    live_probe = _plant_probe_orphan(
+        root,
+        parent_uuid=live,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Sign", 0, 3]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    live_partials = [
+        record
+        for record in records
+        if record.get("worker_uuid") == live and record.get("$report_type") == "CallCountersPartial"
+    ]
+    assert [rec["total_calls"] for rec in live_partials] == [12], (
+        "litter never stalls a healthy prefix "
+        f"({[(rec.get('worker_uuid'), rec.get('total_calls')) for rec in records]})"
+    )
+    assert not live_probe.exists(), "the distant probe is consumed"
+
+
+def test_r44_ar19_mutual_torn_debris_converges_under_probe(tmp_path: Path) -> None:
+    """#88R44-[A]r19: torn faults never hold each other's deletion.
+
+    Claude-5: torn registries of two owners under one probe-bearing
+    prefix held each other forever (each saw the other in
+    blind_except). Garbage validates for nobody, so torn causes
+    cannot surface a rival -- and cannot satisfy the witness
+    either, making the hold vacuous. Both reap; the ownerless
+    probe retains loudly for archival.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "registrations").mkdir(parents=True)
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    torn_a = root / "registrations" / f"{first}.json"
+    torn_b = root / "registrations" / f"{second}.json"
+    torn_a.write_text("{torn", encoding="utf-8")
+    torn_b.write_text("{torn", encoding="utf-8")
+    pid, birth = _dead_pid_with_birth()
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        first_sweep = durability.sweep_orphans(root, current_run=_RUN)
+    assert not torn_a.exists(), "torn debris converges despite the probe"
+    assert not torn_b.exists(), "the second torn file converges too"
+    assert probe.exists(), "the ownerless probe retains for archival"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        second_sweep = durability.sweep_orphans(root, current_run=_RUN)
+    assert second_sweep["removed"] == 0, "then the sweep idles"
+    assert first_sweep["removed"] == 2, "both torn files reaped in one pass"
+
+
+def test_r44_ar19_failed_memo_never_rescans_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r19: a persistent listing fault reuses the failed memo.
+
+    Codex R18-5(c): with the probe listing failed, every reap
+    rebuilt the snapshot because the early return left the marker
+    names unset. Failed memos now carry complete name sets, so
+    heal-checks compare names only and bodies stay unread until a
+    heal forces a rescan. All reaps still hold (readability).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    (root / "registrations").mkdir(parents=True)
+    for n in range(3):
+        uuid = f"aaaaaaaa{n:024x}"
+        (root / "registrations" / f"{uuid}.json").write_text("{torn", encoding="utf-8")
+    real_snapshot = durability._ambiguity_snapshot
+    builds = {"n": 0}
+
+    def _counting_snapshot(*args: Any, **kwargs: Any) -> Any:
+        builds["n"] += 1
+        return real_snapshot(*args, **kwargs)
+
+    real_list = durability._list_evidence_files
+
+    def _faulting_list(directory: Any, prefix: Any, suffix: Any) -> Any:
+        if prefix == durability.PROBE_FILE_PREFIX:
+            return None
+        return real_list(directory, prefix, suffix)
+
+    monkeypatch.setattr(durability, "_ambiguity_snapshot", _counting_snapshot)
+    monkeypatch.setattr(durability, "_list_evidence_files", _faulting_list)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(root, current_run=_RUN)
+    assert builds["n"] == 1, "one failed snapshot serves the whole sweep"
+    assert swept["removed"] == 0, "unreadable inventory holds every reap"
+    assert swept["retained"] == 3, "all debris retained loudly"
+
+
+def test_r44_ar19_torn_collision_with_junk_converges(tmp_path: Path) -> None:
+    """#88R44-[A]r19: torn-only collisions converge without any hold.
+
+    Companion to the basename-collision pin with all faults torn:
+    garbage validates for nobody, so no flag rises and no opaque
+    cause holds -- debris reaps while the ownerless probe retains
+    loudly for archival. Nothing known means nothing to fold into.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_x = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    Path(planted_x["registry"]).unlink()
+    sidecar_x = Path(planted_x["sidecar"])
+    sidecar_x.write_text("{torn", encoding="utf-8")
+    junk = root / "registrations" / sidecar_x.name
+    junk.write_text("{torn", encoding="utf-8")
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    census = durability._owner_census(root)
+    assert not census.identity_unbound, "torn faults raise no flag (premise)"
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert not junk.exists(), "the junk itself still reaps"
+    assert not twin.exists(), "torn-only debris converges"
+    assert probe.exists(), "the ownerless probe retains for archival"
+    assert not any(record.get("$report_type") == "CallCountersPartial" for record in records), (
+        "nothing known means nothing to fold into"
+    )
+
+
+def test_r44_ar19_blind_except_tracks_presence_not_names(tmp_path: Path) -> None:
+    """#88R44-[A]r19: disposition holds follow file presence.
+
+    The basename fix at unit level: with X's opaque sidecar
+    faulted and same-basename junk beside it, the hold sees X's
+    cause; unlinking the junk changes nothing (it never entered),
+    and only the sidecar's own removal clears the hold.
+    """
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_x = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    Path(planted_x["registry"]).unlink()
+    sidecar_x = Path(planted_x["sidecar"])
+    junk = root / "registrations" / sidecar_x.name
+    junk.write_text("{torn", encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def _eperm_sidecar(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == sidecar_x:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    import warnings
+    from unittest import mock
+
+    with mock.patch.object(Path, "read_text", _eperm_sidecar):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            census = durability._owner_census(root)
+        assert census.blind_except(root, first[:8], second) is True, "X's cause holds U"
+        junk.unlink()
+        assert census.blind_except(root, first[:8], second) is True, (
+            "the junk never entered, so its removal changes nothing"
+        )
+    sidecar_x.unlink()
+    assert census.blind_except(root, first[:8], second) is False, (
+        "only the faulting file's own removal clears the hold"
+    )
+    # Path keys, not basenames: an opaque registry fault under
+    # registrations/ is probed at its own path even when a
+    # same-basename decoy sits at the root (a basename probe
+    # would keep holding on the decoy).
+    planted_r = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    reg_path = Path(planted_r["registry"])
+    decoy = root / reg_path.name
+    decoy.write_text("{torn", encoding="utf-8")
+
+    def _eperm_registry(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == reg_path:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    with mock.patch.object(Path, "read_text", _eperm_registry):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            census2 = durability._owner_census(root)
+        assert census2.blind_except(root, first[:8], second) is True, (
+            "the registry cause holds while present"
+        )
+        reg_path.unlink()
+        assert census2.blind_except(root, first[:8], second) is False, (
+            "the root decoy must not stand in for the registry path"
+        )
+
+
+def test_r44_ar20_raced_scan_retries_once_then_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r20: a scan racing mid-pass retries once, then holds.
+
+    Codex R19-1(a): a replacement landing between the last body
+    read and the mtime sample was accepted as current. The mtime
+    now brackets the scan: one retry on mismatch (churn usually
+    settles), then the inventory reads unreadable for the pass
+    (fail closed, self-clearing on rerun).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    live = "b" * 32
+    planted = _plant_producer(
+        root, uuid=live, pid=pid, birth=birth, in_progress=_counts_block(5, fn="C_Sign")
+    )
+    mtimes = iter([100, 200, 200, 300, 300, 300, 300, 300])
+    monkeypatch.setattr(durability, "_dir_mtime_ns", lambda _path: next(mtimes))
+    real_scan = durability._probe_ambiguity_prefixes
+    scans = {"n": 0}
+
+    def _counting_scan(*args: Any, **kwargs: Any) -> Any:
+        scans["n"] += 1
+        return real_scan(*args, **kwargs)
+
+    monkeypatch.setattr(durability, "_probe_ambiguity_prefixes", _counting_scan)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({live}))
+    assert scans["n"] == 2, "one retry, then hold (no thrash)"
+    assert swept["removed"] == 0, "a raced scan authorizes nothing"
+    assert Path(planted["registry"]).exists(), "the family retains"
+    texts = [str(found.message) for found in seen]
+    assert any("changed during the scan" in text for text in texts), texts
+
+
+def test_r44_ar20_in_place_flip_holds_last_identity(tmp_path: Path) -> None:
+    """#88R44-[A]r20: silent content flips hold deletion anyway.
+
+    Codex R19-1(b): the supported probe-write fallback overwrites
+    in place (no dirent change), so directory mtime misses the
+    flip from torn to legacy. The reap-path generation gate
+    re-verifies its own prefix's file versions before deleting.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "registrations").mkdir(parents=True)
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    unrelated = "0" * 32
+    (root / "registrations" / f"{unrelated}.json").write_text("{torn", encoding="utf-8")
+    pid, birth = _dead_pid_with_birth()
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe_path = root / f"probe-{second[:8]}-0-feedface.json"
+    probe_path.write_text("{torn", encoding="utf-8")
+    flipped = json.dumps(
+        {
+            "worker_uuid": "e" * 32,
+            "probe_seq": 0,
+            "counters": [["m", "C_Digest", 9, 2]],
+            "pid": pid,
+        }
+    )
+    real_reap = durability._reap_torn_registry
+    calls: list[str] = []
+    done: list[bool] = []
+
+    def _reap_then_flip(root: Path, registry_path: Path, **kwargs: Any) -> bool:
+        calls.append(registry_path.name)
+        outcome = real_reap(root, registry_path, **kwargs)
+        if registry_path.name == f"{unrelated}.json" and not done:
+            done.append(True)
+            # In-place overwrite like the supported fallback: the
+            # directory mtime never moves.
+            probe_path.write_text(flipped, encoding="utf-8")
+        return outcome
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(durability, "_reap_torn_registry", _reap_then_flip):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert calls.index(f"{unrelated}.json") < calls.index(f"{second}.json"), (
+        f"the unrelated reap populates the memo first (premise): {calls}"
+    )
+    assert done, "the probe flipped mid-pass (premise)"
+    assert probe_path.exists(), "the flipped probe is preserved"
+    assert twin.exists(), "the generation gate sees the silent flip"
+    texts = [str(found.message) for found in seen]
+    assert any("changed during the pass" in text for text in texts), texts
+
+
+def test_r44_ar20_healed_registry_counts_and_trusts(tmp_path: Path) -> None:
+    """#88R44-[A]r20: a heal between reads counts, never misfiles.
+
+    Codex R19-2: one EACCES on the first registry read, then a
+    healthy filename-matching body -- but the census filed it as
+    torn, hiding a live rival behind a known survivor's prefix.
+    The status read's own bytes classify coherently now, so a
+    matching schema-valid body enters the counted and trusted
+    sets together.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_x = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    registry_x = Path(planted_x["registry"])
+    real_read = durability.read_registry_file
+    calls = {"n": 0}
+
+    def _fail_once(path: Path | str) -> dict[str, Any] | None:
+        calls["n"] += 1
+        if calls["n"] == 1 and Path(path) == registry_x:
+            return None
+        return real_read(path)
+
+    with mock.patch.object(durability, "read_registry_file", _fail_once):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            census = durability._owner_census(root)
+        assert first in census.uuids, "the healed body counts"
+        assert first in census.trusted, "and clean evidence trusts"
+        assert first[:8] not in census.degraded or all(
+            cause[1] != first for cause in census.degraded[first[:8]]
+        ), "no phantom fault entry for X"
+        child = tmp_path / "child.jsonl"
+        child.write_text('{"n": 1}\n', encoding="utf-8")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert twin.exists(), "the witness holds on the trusted survivor"
+    assert probe.exists(), "the probe waits for attribution"
+
+
+def test_r44_ar20_renamed_registry_plus_fault_stays_global(tmp_path: Path) -> None:
+    """#88R44-[A]r20: opaque registries are global like sidecars.
+
+    Codex R19-4: U's sole registry renamed to a valid distant
+    filename plus a read fault used to scope to the distant name
+    and fold U's probe into X -- the same composing pair as the
+    sidecar case. Only positive torn bytes stay prefix-scoped.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    Path(planted_u["sidecar"]).unlink()
+    renamed = Path(planted_u["registry"]).with_name(f"{'d' * 32}.json")
+    Path(planted_u["registry"]).rename(renamed)
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read_text = Path.read_text
+
+    def _eperm_registry(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == renamed:
+            raise OSError("EACCES: permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with mock.patch.object(Path, "read_text", _eperm_registry):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            records = durability.collect_unit(
+                root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+    assert probe.exists(), "the probe waits out the global hold"
+    assert not any(record.get("worker_uuid") == first for record in records), (
+        "a renamed opaque registry scopes nothing"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("blocked by unbound evidence" in text for text in texts), texts
+    assert any(renamed.name in text for text in texts), texts
+
+
+def test_r44_ar20_stray_name_mismatch_holds(tmp_path: Path) -> None:
+    """#88R44-[A]r20: contradictions hold under any filename.
+
+    Codex R19-3(a): U's only registry renamed to
+    registrations/stray.json was silently deleted because the
+    mismatch guard required a parseable filename -- while the
+    census counted U as unbound. Readable bodies contradicting
+    unparseable names hold like any other contradiction.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    second = "a" * 31 + "1"
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    stray = Path(planted_u["registry"]).with_name("stray.json")
+    Path(planted_u["registry"]).rename(stray)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert stray.exists(), "contradiction evidence never deletes silently"
+    texts = [str(found.message) for found in seen]
+    assert any("contradiction evidence" in text for text in texts), texts
+    assert any("stray.json" in text for text in texts), texts
+
+
+def test_r44_ar20_recheck_mismatch_holds(tmp_path: Path) -> None:
+    """#88R44-[A]r20: the recheck classifies like the triage.
+
+    Codex R19-3(b): a torn registry replaced by a readable
+    mismatched body before the final recheck was unlinked,
+    because the recheck only retained valid registries.
+    Contradictions landing mid-reap hold with the same voice.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    (root / "registrations").mkdir(parents=True)
+    second = "a" * 31 + "1"
+    twin = root / "registrations" / f"{second}.json"
+    twin.write_text("{torn", encoding="utf-8")
+    mismatched = json.dumps(
+        {
+            "worker_uuid": "c" * 32,
+            "run_id": _RUN,
+            "unit": "a.py",
+            "attempt": 0,
+            "pid": 1234,
+        }
+    )
+    real_read_text = Path.read_text
+    reads = {"n": 0}
+
+    def _flip_at_recheck(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == twin:
+            reads["n"] += 1
+            if reads["n"] >= 2:
+                return mismatched
+        return real_read_text(self, *args, **kwargs)
+
+    from unittest import mock
+
+    with mock.patch.object(Path, "read_text", _flip_at_recheck):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            reaped = durability._reap_torn_registry(root, twin)
+    assert reaped is False, "the recheck holds the contradiction"
+    assert twin.exists(), "nothing unlinks contradiction evidence"
+    texts = [str(found.message) for found in seen]
+    assert any("changed into contradiction" in text for text in texts), texts
+
+
+def test_r44_ar20_sole_identity_archive_keeps_twin_hold(tmp_path: Path) -> None:
+    """#88R44-[A]r20: archiving one file never dissolves the hold.
+
+    Codex R19-5: with a readable renamed registry as U's only
+    surviving identity, following the old archive-this-file exit
+    deleted the last trace of U and the next collect folded U's
+    probe into X. The exit now names the safe forms (verified
+    rebinding, or joint archival with affected probes/markers),
+    and a surviving torn twin keeps deferring after a lone
+    archival either way.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_u = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    twin = Path(planted_u["registry"])
+    twin.write_text("{torn", encoding="utf-8")
+    renamed = Path(planted_u["sidecar"]).with_name(f"{'d' * 32}-nonce1.partial.json")
+    Path(planted_u["sidecar"]).rename(renamed)
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=second,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run=_RUN)
+    assert twin.exists(), "the contradiction holds the twin"
+    texts = [str(found.message) for found in seen]
+    assert any("together with" in text for text in texts), texts
+    # The operator archives the flagged file alone (the old exit's
+    # letter); the surviving twin must still defer the retry.
+    renamed.unlink()
+    child2 = tmp_path / "child2.jsonl"
+    child2.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        second_pass = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child2, status="passed", returncode=0
+        )
+    assert probe.exists(), "no retry folds the probe after lone archival"
+    assert twin.exists(), "the twin keeps the prefix degraded"
+    totals = [
+        rec["total_calls"]
+        for rec in second_pass
+        if rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [], f"X defers while the probe floats: {totals}"
+
+
+def test_r44_ar20_sweep_departures_never_rescan_bodies(tmp_path: Path) -> None:
+    """#88R44-[A]r20: sweep deletions subtract pins without rereading.
+
+    Codex R19-6: 48 committed removals re-scanned 48 unchanged
+    attributed probes every time (48 snapshots, 2304 bodies),
+    because each unlink invalidated the mtime. Pure departures
+    now subtract precisely from the pin map: one snapshot, one
+    body read per probe, removals unaffected.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    uuids = [f"{n:032x}" for n in range(48)]
+    for uuid in uuids:
+        _plant_producer(
+            root,
+            uuid=uuid,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(1),
+        )
+    for n in range(48):
+        parent = f"{n:08x}" + "a" * 24
+        _plant_probe_orphan(
+            root,
+            parent_uuid=parent,
+            child_uuid=f"{n:08x}" + "b" * 24,
+            seq=0,
+            counters=[["m", "C_Sign", 1, 0]],
+            identity={"parent_uuid": parent, "run_id": _RUN, "unit": "a.py"},
+            pid=pid,
+            birth=birth,
+        )
+    real_read = durability._read_json_evidence
+    bodies = {"n": 0}
+
+    def _counting_read(path: Path) -> Any:
+        if path.name.startswith(durability.PROBE_FILE_PREFIX):
+            bodies["n"] += 1
+        return real_read(path)
+
+    with mock.patch.object(durability, "_read_json_evidence", _counting_read):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset(uuids)
+            )
+    assert swept["removed"] == 96, "every committed family removes (registry+sidecar)"
+    assert bodies["n"] == 48, f"each probe body reads once, never per delete ({bodies['n']})"
+
+
+def test_r44_c8r8_reset_symlink_loop_refuses_with_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r8: a symlink-loop resolution fault refuses (no escape).
+
+    Codex R8: on Python 3.12, resolving an allocated name that links
+    to itself raises RuntimeError even with strict=False -- and the
+    lock helper re-resolves internally too -- so catching OSError
+    alone still escapes. Resolution faults of either kind refuse
+    with the filesystem exit. Mocked: this interpreter (3.13)
+    tolerates loops lexically, so a real loop cannot reproduce here.
+    """
+    import warnings
+
+    from pkcs11_check.core.file_runner import _reset_fresh_run_artifacts
+
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"old": true}', encoding="utf-8")
+    candidate = tmp_path / "state.json.counters.aaaaaaaa"
+    (candidate / "registrations").mkdir(parents=True)
+    real_resolve = Path.resolve
+
+    def _looping_resolve(self: Path, strict: bool = False) -> Path:
+        if self == candidate:
+            raise RuntimeError("Symlink loop from 'state.json.counters.aaaaaaaa'")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", _looping_resolve)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        admitted = _reset_fresh_run_artifacts(state_file, None)
+    assert admitted is False, "the loop refuses"
+    assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state intact"
+    assert candidate.exists(), "the retired root stays for the retry"
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "cannot establish the barrier lock" in text and str(candidate) in text and "exit:" in text
+        for text in texts
+    ), texts
+
+
+def test_r44_c9r9_reset_internal_resolve_fault_releases_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r9: an internal resolve fault must not strand the gate.
+
+    Codex R9: the lock helper acquires its in-process gate before
+    resolving the guard path, and its cleanup caught only OSError
+    -- so a loop-induced RuntimeError escaped with the gate held,
+    and every later reset in the process falsely refused as "held
+    by a live barrier". Acquisition releases the gate on every
+    exit without a token, and resolution faults normalize to
+    OSError at their source: the fault refuses once, then the
+    retry proceeds.
+    """
+    import warnings
+
+    from pkcs11_check.core.file_runner import _reset_fresh_run_artifacts
+
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"old": true}', encoding="utf-8")
+    candidate = tmp_path / "state.json.counters.aaaaaaaa"
+    (candidate / "registrations").mkdir(parents=True)
+
+    def _looping_guard(target: Any) -> Any:
+        raise RuntimeError("Symlink loop from guard path")
+
+    monkeypatch.setattr(durability, "_barrier_lock_path", _looping_guard)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        refused = _reset_fresh_run_artifacts(state_file, None)
+    assert refused is False, "the fault refuses"
+    assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state intact"
+    texts = [str(found.message) for found in seen]
+    assert any("cannot establish the barrier lock" in text for text in texts), texts
+    monkeypatch.undo()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        admitted = _reset_fresh_run_artifacts(state_file, None)
+    assert admitted is True, "the retry proceeds (no stranded gate)"
+    assert not state_file.exists(), "the retry completed"
+
+
+def test_r44_c10r10_reset_helper_initial_resolve_fault_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r10: the helper's initial resolve normalizes too.
+
+    Codex R10: reset resolves the candidate for dedup, then the
+    lock helper resolves it AGAIN before its normalization block --
+    and a loop at that second resolve escaped as RuntimeError (the
+    round-8 broad catch had covered it; narrowing re-exposed it).
+    Every resolve normalizes at its source, so the OSError
+    handlers cover all three resolution sites; the fault refuses
+    once, then the retry proceeds.
+    """
+    import warnings
+
+    from pkcs11_check.core.file_runner import _reset_fresh_run_artifacts
+
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"old": true}', encoding="utf-8")
+    candidate = tmp_path / "state.json.counters.aaaaaaaa"
+    (candidate / "registrations").mkdir(parents=True)
+    real_resolve = Path.resolve
+    seen = {"n": 0}
+
+    def _faulting_resolve(self: Path, strict: bool = False) -> Path:
+        if self == candidate:
+            seen["n"] += 1
+            if seen["n"] == 2:
+                raise RuntimeError("Symlink loop from 'state.json.counters.aaaaaaaa'")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", _faulting_resolve)
+    with warnings.catch_warnings(record=True) as seen_warnings:
+        warnings.simplefilter("always")
+        refused = _reset_fresh_run_artifacts(state_file, None)
+    assert seen["n"] >= 2, "the helper's resolve was reached (premise)"
+    assert refused is False, "the fault refuses"
+    assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state intact"
+    texts = [str(found.message) for found in seen_warnings]
+    assert any("cannot establish the barrier lock" in text for text in texts), texts
+    monkeypatch.undo()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        admitted = _reset_fresh_run_artifacts(state_file, None)
+    assert admitted is True, "the retry proceeds"
+    assert not state_file.exists(), "the retry completed"
+
+
+def test_r44_f3r8_preappend_gate_names_terminate_exit_for_valid_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F3r8: the gate distinguishes torn from valid-unterminated tails.
+
+    Codex R8: when a complete record lands without its trailing LF,
+    the gate held correctly but advised removing the "torn tail
+    line(s)" -- destroying a valid publication. A valid
+    unterminated tail must name the terminate-it exit (add the
+    missing LF), mirroring the reconciler's split voices.
+    """
+    import warnings
+
+    child, batch = _r44_f3r7_landed_batch(tmp_path)
+    real_framing = durability._child_report_framing
+    calls = {"n": 0}
+
+    def _unterminating_framing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        out = real_framing(path, *args, **kwargs)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"n": 2}))
+        return out
+
+    monkeypatch.setattr(durability, "_child_report_framing", _unterminating_framing)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        verdict = durability._append_collected(child, batch)
+    assert verdict is None, "the unterminated tail holds"
+    assert child.read_bytes().endswith(b'{"n": 2}'), "nothing glued after it"
+    texts = [str(found.message) for found in seen]
+    assert any("unterminated" in text and "terminate" in text for text in texts), texts
+    assert not any("torn tail" in text for text in texts), texts
+
+
+def test_r44_ar8_sweep_run_credit_guards_sidecar_only_collider(tmp_path: Path) -> None:
+    """#88R44-[A]r8: run credit guards sidecar-only removal too.
+
+    Codex R8: the sidecar loop's run-credit arm bypassed the
+    ambiguity guard -- crediting a sidecar-only collider's run
+    deleted its sidecar, and the next collect folded the orphan
+    into the registry survivor (5 became 7). The guard applies
+    after liveness validation, before removal, on every
+    authority-based arm.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    planted_a = _plant_producer(
+        root, uuid=first, pid=pid, birth=birth, in_progress=_counts_block(5, fn="C_Digest")
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(5, fn="C_Digest")
+    )
+    Path(planted_a["registry"]).unlink()
+    assert Path(planted_a["sidecar"]).exists(), "A is sidecar-only (premise)"
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.sweep_orphans(root, current_run="R2", collected_runs=frozenset({_RUN}))
+    assert Path(planted_a["sidecar"]).exists(), "run credit spares the collider sidecar"
+    assert Path(planted_b["registry"]).exists(), "run credit spares the collider registry"
+    assert probe.exists(), "the orphan survives with its evidence"
     texts = [str(found.message) for found in seen]
     assert any("ambiguity evidence" in text for text in texts), texts
 
@@ -57917,6 +60247,7 @@ def _f6r2_omitted_reason(
     return durability._recordless_hold_reason(
         _UUID_A,
         entry,
+        root=Path("."),
         sessions=set(),
         session_scopes={},
         session_winners={},
@@ -57925,7 +60256,7 @@ def _f6r2_omitted_reason(
         report_state="omitted",
         skip_held=set(),
         targeted=set(),
-        census_complete=True,
+        census=durability._OwnerCensus(frozenset(), {}, False),
         attestations=None,
         staged_targets=staged_targets,
         validated=validated,
