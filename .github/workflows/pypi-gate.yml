@@ -41,9 +41,12 @@ name: PyPI gate
 # OWN index view before installing (up to 5 minutes): otherwise a stale
 # edge fails pip resolution after a green prepare.
 #
-# URL handling: prepare outputs both the project simple page (for the file
-# waits) and the bare index root (for pip). pip appends the project name to
-# --index-url itself, so it must receive the root, never the project page.
+# Install handling: pip consults every configured index without preferring
+# --index-url, so a version hosted on both indexes could install bytes from
+# the wrong one while the version check still passes. Each leg therefore
+# resolves its own exact file href from the pinned simple page and hands pip
+# the URL (wheel and sdist legs differ by file, not by pip flags);
+# dependencies resolve from production PyPI only.
 #
 # This workflow never publishes, tags, or releases anything: it is read-only
 # (contents: read for the checkout) plus installs from the gate index.
@@ -88,7 +91,6 @@ jobs:
     outputs:
       version: ${{ steps.candidate.outputs.version }}
       index: ${{ steps.candidate.outputs.index }}
-      index_url: ${{ steps.candidate.outputs.index_url }}
       simple_url: ${{ steps.candidate.outputs.simple_url }}
     steps:
       - name: Resolve and await candidate version
@@ -140,7 +142,6 @@ jobs:
           host = "pypi.org" if index == "prod" else "test.pypi.org"
           JSON_URL = f"https://{host}/pypi/pkcs11-check/json"
           SIMPLE_URL = f"https://{host}/simple/pkcs11-check/"
-          INDEX_URL = f"https://{host}/simple/"
           print(f"gate index: {index} ({host})")
 
 
@@ -160,15 +161,19 @@ jobs:
               Settle-agreement can freeze on a stale edge (three agreeing
               stale reads of the previous release), which would green-light
               the wrong version. The release tag at the triggering commit is
-              exact instead. Returns None when there is no v-tag there (a
-              dry-run success, which validates latest) or the lookup itself
-              fails; more than one v-tag is ambiguous and fails loudly.
+              exact instead. Returns None only when a clean lookup finds no
+              v-tag there (a dry-run success, which validates latest). A
+              failed lookup or missing trigger data stops the run instead of
+              settling: a production publish whose version cannot be resolved
+              must not validate a guess. More than one v-tag is ambiguous
+              and fails loudly. Tags must look like release tags (v + digit,
+              the shape publish.yml creates); anything else is ignored.
               """
               server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
               repo = os.environ.get("GITHUB_REPOSITORY", "")
               head = os.environ.get("HEAD_SHA", "")
               if not repo or not head:
-                  return None
+                  raise SystemExit("cannot bind release version: missing repository or head SHA")
               try:
                   proc = subprocess.run(
                       ["git", "ls-remote", "--tags", f"{server}/{repo}"],
@@ -179,16 +184,20 @@ jobs:
                       check=False,
                   )
               except (OSError, subprocess.TimeoutExpired) as exc:
-                  print(f"tag lookup failed ({exc}); falling back to settle")
-                  return None
+                  raise SystemExit(f"cannot bind release version: tag lookup failed ({exc})")
               if proc.returncode != 0:
-                  print(f"tag lookup failed ({proc.stderr.strip()}); falling back to settle")
-                  return None
+                  raise SystemExit(
+                      "cannot bind release version: "
+                      f"tag lookup failed ({proc.stderr.strip()})"
+                  )
               found: set[str] = set()
               for line in proc.stdout.splitlines():
                   sha, _, ref = line.partition("\t")
                   name = ref.removeprefix("refs/tags/").removesuffix("^{}")
-                  if sha.strip().lower() == head.strip().lower() and name.startswith("v"):
+                  is_release_tag = (
+                      name.startswith("v") and len(name) > 1 and name[1].isdigit()
+                  )
+                  if sha.strip().lower() == head.strip().lower() and is_release_tag:
                       found.add(name)
               if len(found) > 1:
                   raise SystemExit(f"ambiguous release tags at {head}: {sorted(found)}")
@@ -201,7 +210,10 @@ jobs:
           if requested:
               version = requested
               print(f"requested version: {version}")
-          elif event == "workflow_run" and triggering == "Release":
+          elif event == "workflow_run" and triggering == "Release" and index == "prod":
+              # Index-gated (R2-2): a reusable call in a Release context
+              # with index=test must settle on TestPyPI, never inherit the
+              # production tag's version.
               bound = release_tag_version()
               if bound is not None:
                   version = bound
@@ -258,7 +270,6 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"version={version}\n")
               handle.write(f"index={index}\n")
-              handle.write(f"index_url={INDEX_URL}\n")
               handle.write(f"simple_url={SIMPLE_URL}\n")
           print(f"Validating pkcs11-check {version} from {host} on every leg")
           PY
@@ -340,16 +351,55 @@ jobs:
       - name: Install ${{ matrix.artifact }} from the pinned index
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          SIMPLE_URL: ${{ needs.prepare.outputs.simple_url }}
+          ARTIFACT: ${{ matrix.artifact }}
         run: |
-          if [ "${{ matrix.artifact }}" = "wheel" ]; then
-            BINARY_FLAG="--only-binary=pkcs11-check"
-          else
-            BINARY_FLAG="--no-binary=pkcs11-check"
-          fi
-          python -m pip install \
-            --index-url ${{ needs.prepare.outputs.index_url }} \
-            --extra-index-url https://pypi.org/simple/ \
-            "$BINARY_FLAG" "pkcs11-check==$VERSION"
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          # R2-3: pip consults every configured index without preferring
+          # --index-url, so a version hosted on both indexes could install
+          # bytes from the wrong one while the version check still passes.
+          # Install the exact file instead: resolve its href from the pinned
+          # simple page (the same page the waits read) and hand pip the URL.
+          # Dependencies resolve from production PyPI only.
+          version = os.environ["VERSION"]
+          simple_url = os.environ["SIMPLE_URL"]
+          artifact = os.environ["ARTIFACT"]
+          if artifact == "wheel":
+              wanted = f"pkcs11_check-{version}-py3-none-any.whl"
+          elif artifact == "sdist":
+              wanted = f"pkcs11_check-{version}.tar.gz"
+          else:
+              raise SystemExit(f"unknown gate artifact: {artifact!r}")
+          with urllib.request.urlopen(simple_url, timeout=30) as response:
+              page = response.read().decode("utf-8", "replace")
+          hrefs = [
+              urllib.parse.urljoin(simple_url, href)
+              for href, name in re.findall(r'href="([^"]+)"[^>]*>([^<>]+)<', page)
+              if name == wanted
+          ]
+          if len(hrefs) != 1:
+              raise SystemExit(f"expected exactly one {wanted} on {simple_url}")
+          print(f"installing {hrefs[0]}")
+          subprocess.run(
+              [
+                  sys.executable,
+                  "-m",
+                  "pip",
+                  "install",
+                  "--index-url",
+                  "https://pypi.org/simple/",
+                  hrefs[0],
+              ],
+              check=True,
+          )
+          PY
           python -m pip show pkcs11-check
 
       - name: Version check
