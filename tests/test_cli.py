@@ -516,6 +516,33 @@ class TestTestCommand:
         assert "--p11-so-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
 
+    def test_test_forwards_ckr_strict_to_pytest_args(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Q2-M2: dropping the --ckr-strict forwarding must fail loudly here."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        seen: list[list[str]] = []
+
+        def fake_run(units: object, pytest_args: list[str], *args: object, **kwargs: object) -> int:
+            seen.append(list(pytest_args))
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        base = ["test", "--module", str(module), "--isolation", "file"]
+        assert runner.invoke(app, [*base, "--ckr-strict"]).exit_code == 0
+        assert runner.invoke(app, base).exit_code == 0
+        assert seen[0].count("--ckr-strict") == 1
+        assert "--ckr-strict" not in seen[1]
+
     def test_test_bad_pin_fails_fast_without_running_units(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

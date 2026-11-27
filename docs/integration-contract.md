@@ -102,7 +102,10 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   partial report is discarded with its temp JSONL, so a failure in the interrupted unit
   itself does not upgrade the exit; B1's failure-path preservation owns that evidence.
   The non-isolated path consults its captured (possibly partial) report instead, so an
-  interrupted report that already contains a provider failure still exits `1`.
+  interrupted report that already contains a provider failure still exits `1`. Translation
+  covers every blocking wait (preflight, probes, unit runs, `pytest.main`); a signal
+  landing in a non-blocking setup/assembly micro-window outside those waits surfaces
+  the runtime default instead (Q2-M4).
 - Non-isolated output applies the same completion rule to its one captured report-log stream:
   only raw exits `0`, `1`, and `5` with exactly one balanced session and a matching finish are
   verified. A missing or mismatched finish adds one typed `HarnessError` with the raw return code

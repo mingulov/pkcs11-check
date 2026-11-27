@@ -329,7 +329,7 @@ def _drive_login_setup(
 def test_session_login_pin_incorrect_is_harness_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """B5a: a wrong configured PIN is operator config, never not_operational.
+    """B5a: a rejected configured PIN is never not_operational.
 
     R1-F3: the nonzero exit is load-bearing -- the parent raises a
     single harness_error fail for rc != 0, while exit 0 would

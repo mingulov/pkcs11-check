@@ -1913,22 +1913,19 @@ def test_command(
                     _print_run_totals(state_file)
             except KeyboardInterrupt:
                 # B6: the runner already killed and reaped the in-flight child;
-                # its OS kill status must not surface. The state consult is
-                # deliberately unguarded on the isolated path: on a fresh run
-                # the file holds current-run completed units (reset at start,
-                # saved per unit), on resume it folds prior findings too --
-                # either way a provider finding upgrades 2 to 1, matching the
-                # non-isolated path's report-evidence precedence. Residual
-                # (R1-F5, B1-owned): the in-flight unit's own partial report
-                # dies with its temp JSONL, so only completed-unit findings
-                # upgrade; preserving in-flight evidence on abort paths is
-                # B1's failure-path preservation work, not this arm.
+                # its OS kill status must not surface. This arm sits inside
+                # the isolated-modes branch (Q2-M4), so the state consult is
+                # unconditional: on a fresh run the file holds current-run
+                # completed units (reset at start, saved per unit), on resume
+                # it folds prior findings too -- either way a provider finding
+                # upgrades 2 to 1, matching the non-isolated path's
+                # report-evidence precedence. Residual (R1-F5, B1-owned): the
+                # in-flight unit's own partial report dies with its temp
+                # JSONL, so only completed-unit findings upgrade; preserving
+                # in-flight evidence on abort paths is B1's failure-path
+                # preservation work, not this arm.
                 console.print("[yellow]Interrupted[/yellow] -- run incomplete.")
-                if resume or isolation in {"auto", "file", "test"}:
-                    abort_code = _resume_exit_code(state_file, 2)
-                else:
-                    abort_code = 2
-                raise typer.Exit(code=abort_code) from None
+                raise typer.Exit(code=_resume_exit_code(state_file, 2)) from None
             except (FileNotFoundError, ValueError, CounterPersistenceError) as exc:
                 if collection_phase:
                     _persist_collection_failure(

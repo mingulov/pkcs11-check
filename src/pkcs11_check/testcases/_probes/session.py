@@ -339,9 +339,13 @@ def probe_main(
                     login_user(raw, sh, CKU_USER, pin.encode())
                 except CkrAssertionError as exc:
                     if exc.rv == int(CKR_PIN_INCORRECT):
-                        # B5a: the configured PIN is wrong -- operator config,
-                        # never not_operational (the CLI preflight already
-                        # refuses it; this arm covers bare-pytest runs).
+                        # B5a: the configured PIN was rejected -- never
+                        # not_operational. On bare-pytest runs this is operator
+                        # config (the CLI preflight already refuses it there);
+                        # under the CLI the same PIN passed preflight, so a
+                        # later rejection means token state changed mid-run
+                        # (e.g. a destructive test re-set the PIN) or the
+                        # module contradicts itself (Q2-M3).
                         # R1-F3: exit nonzero with the marker: the parent
                         # raises a single harness_error fail for rc != 0,
                         # while exit 0 would record-then-continue into a
