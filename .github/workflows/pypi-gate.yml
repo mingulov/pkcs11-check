@@ -26,12 +26,13 @@ name: PyPI gate
 #
 # Version handling: a `prepare` job resolves ONE version for the whole run
 # and every matrix leg validates exactly that release. An explicitly
-# requested version wins outright. A Release-triggered run binds to the
-# release tag at the triggering commit (settle-agreement could freeze on a
-# stale edge and green-light the previous release instead); with no tag
-# there (a dry-run success) it falls back to settling latest, loudly.
-# Every other unpinned run settles "latest" across consecutive identical
-# reads: resolving per leg diverged within a single run (the JSON index is
+# requested version wins outright. An unpinned automatic run binds to the
+# gate-binding record its publisher uploaded (exact version plus an
+# explicit rehearsal bit -- a rehearsal validates latest, a publish
+# validates its own version); anything missing or malformed stops the run
+# with re-dispatch guidance instead of guessing. Settle-agreement ("latest"
+# across consecutive identical reads) covers only unpinned manual runs:
+# resolving per leg diverged within a single run (the JSON index is
 # CDN-cached per runner, so one leg saw rc1 while others saw rc2), and
 # installing immediately after upload raced index propagation (metadata
 # visible before files are fetchable). The pinned version then awaits its
@@ -81,6 +82,9 @@ on:
 
 permissions:
   contents: read
+  # R5-1: download the gate-binding record from the triggering publish run.
+  # Still read-only: no writes, no tags, no releases, no OIDC publishing.
+  actions: read
 
 jobs:
   prepare:
@@ -101,14 +105,17 @@ jobs:
           REQUESTED_INDEX: ${{ inputs.index }}
           EVENT_NAME: ${{ github.event_name }}
           TRIGGERING_WORKFLOW: ${{ github.event.workflow_run.name }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGERING_RUN_ID: ${{ github.event.workflow_run.id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_API_URL: ${{ github.api_url }}
         run: |
           python - <<'PY'
+          import io
           import json
           import os
-          import subprocess
           import time
           import urllib.request
+          import zipfile
 
           READ_TIMEOUT = 30
           SETTLE_READS = 3
@@ -156,73 +163,107 @@ jobs:
                   return response.read().decode("utf-8", "replace")
 
 
-          def release_tag_version() -> str | None:
-              """Version bound to the triggering Release commit, if exactly one.
+          def triggering_binding() -> dict[str, object]:
+              """Version + rehearsal bit recorded by the triggering publish run.
 
-              Settle-agreement can freeze on a stale edge (three agreeing
-              stale reads of the previous release), which would green-light
-              the wrong version. The release tag at the triggering commit is
-              exact instead. Returns None only when a clean lookup finds no
-              v-tag there (a dry-run success, which validates latest). A
-              failed lookup or missing trigger data stops the run instead of
-              settling: a production publish whose version cannot be resolved
-              must not validate a guess. More than one v-tag is ambiguous
-              and fails loudly. Tags must look like release tags (v + digit,
-              the shape publish.yml creates); anything else is ignored.
+              R5-1: both publishers upload a gate-binding record, so the gate
+              binds to attested data instead of inferring from tags or
+              settling latest (settle-agreement could freeze on a stale edge
+              and green-light the previous release). Anything missing or
+              malformed stops the run with re-dispatch guidance: runs from
+              before the binding existed (or with expired artifacts) are
+              re-validated explicitly, never guessed.
               """
-              server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+              api_root = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
               repo = os.environ.get("GITHUB_REPOSITORY", "")
-              head = os.environ.get("HEAD_SHA", "")
-              if not repo or not head:
-                  raise SystemExit("cannot bind release version: missing repository or head SHA")
-              try:
-                  proc = subprocess.run(
-                      ["git", "ls-remote", "--tags", f"{server}/{repo}"],
-                      capture_output=True,
-                      text=True,
-                      encoding="utf-8",
-                      timeout=60,
-                      check=False,
-                  )
-              except (OSError, subprocess.TimeoutExpired) as exc:
-                  raise SystemExit(f"cannot bind release version: tag lookup failed ({exc})")
-              if proc.returncode != 0:
+              run_id = os.environ.get("TRIGGERING_RUN_ID", "")
+              token = os.environ.get("GITHUB_TOKEN", "")
+              if not repo or not run_id or not token:
                   raise SystemExit(
-                      "cannot bind release version: "
-                      f"tag lookup failed ({proc.stderr.strip()})"
+                      "cannot bind gate version: missing repository, run id, or token; "
+                      "re-dispatch with an explicit version"
                   )
-              found: set[str] = set()
-              for line in proc.stdout.splitlines():
-                  sha, _, ref = line.partition("\t")
-                  name = ref.removeprefix("refs/tags/").removesuffix("^{}")
-                  is_release_tag = (
-                      name.startswith("v") and len(name) > 1 and name[1].isdigit()
+              listing_url = f"{api_root}/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+
+              def api_read(url: str) -> bytes:
+                  request = urllib.request.Request(
+                      url,
+                      headers={
+                          "Authorization": f"Bearer {token}",
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                      },
                   )
-                  if sha.strip().lower() == head.strip().lower() and is_release_tag:
-                      found.add(name)
-              if len(found) > 1:
-                  raise SystemExit(f"ambiguous release tags at {head}: {sorted(found)}")
-              if not found:
-                  return None
-              return next(iter(found))[1:]
+                  try:
+                      with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response:
+                          return response.read()
+                  except Exception as exc:
+                      raise SystemExit(
+                          f"cannot bind gate version: artifact API failed ({exc}); "
+                          "re-dispatch with an explicit version"
+                      )
+
+              try:
+                  listing = json.loads(api_read(listing_url))
+                  matches = [
+                      item
+                      for item in listing.get("artifacts", [])
+                      if item.get("name") == "gate-binding" and not item.get("expired", False)
+                  ]
+                  if len(matches) != 1:
+                      raise SystemExit(
+                          "cannot bind gate version: no live gate-binding artifact on "
+                          f"run {run_id} (pre-binding run or expired?); "
+                          "re-dispatch with an explicit version"
+                      )
+                  blob = api_read(matches[0]["archive_download_url"])
+                  binding = json.loads(zipfile.ZipFile(io.BytesIO(blob)).read("gate-binding.json"))
+                  version_text = binding.get("version", "")
+                  if not isinstance(version_text, str) or not version_text.strip():
+                      raise SystemExit(
+                          "cannot bind gate version: binding has no version; "
+                          "re-dispatch with an explicit version"
+                      )
+                  return {"version": version_text.strip(), "dry_run": bool(binding.get("dry_run", False))}
+              except SystemExit:
+                  raise
+              except Exception as exc:
+                  raise SystemExit(
+                      f"cannot bind gate version: malformed binding ({exc}); "
+                      "re-dispatch with an explicit version"
+                  )
 
 
           requested = os.environ.get("REQUESTED", "").strip()
+          trigger_index = {"Release": "prod", "TestPyPI": "test"}.get(triggering)
+          use_binding = (
+              not requested
+              and event == "workflow_run"
+              and trigger_index is not None
+              and index == trigger_index
+          )
           if requested:
               version = requested
               print(f"requested version: {version}")
-          elif event == "workflow_run" and triggering == "Release" and index == "prod":
-              # Index-gated (R2-2): a reusable call in a Release context
-              # with index=test must settle on TestPyPI, never inherit the
-              # production tag's version.
-              bound = release_tag_version()
-              if bound is not None:
-                  version = bound
-                  print(f"bound to triggering release: {version}")
-              else:
+          elif use_binding:
+              binding = triggering_binding()
+              if binding["dry_run"]:
                   version = ""
-                  print("no release tag at the triggering commit (dry-run shape?)")
+                  print("triggering run was a rehearsal: validating latest")
+              else:
+                  version = str(binding["version"])
+                  print(f"bound to triggering publish: {version}")
           else:
+              if (
+                  not requested
+                  and event == "workflow_run"
+                  and trigger_index is not None
+                  and index != trigger_index
+              ):
+                  print(
+                      f"index {index} differs from triggering {triggering}; "
+                      "settling on the selected index instead of binding"
+                  )
               version = ""
           if not version:
               # "Latest" is CDN-cached per runner: consecutive identical reads

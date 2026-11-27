@@ -1282,6 +1282,72 @@ class TestTestCommand:
         assert result.exit_code == 2, result.output
         assert "Traceback" not in result.output
 
+    def test_test_resume_barrier_interrupt_exits_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R5-4: an interrupt during resume-barrier prep exits 2, not 130."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def interrupted_barrier(*args: object, **kwargs: object) -> dict[str, object]:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "prepare_resume", interrupted_barrier)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(tmp_path / "state.json"),
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "Traceback" not in result.output
+
+    def test_test_resume_barrier_interrupt_keeps_prior_provider_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R5-4: the barrier arm consults the right state file (1 on findings)."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "crashed", -11, 0.1)],
+            ),
+        )
+
+        def interrupted_barrier(*args: object, **kwargs: object) -> dict[str, object]:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "prepare_resume", interrupted_barrier)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 1, result.output
+
     def test_test_empty_match_fails_fast_without_running_units(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
