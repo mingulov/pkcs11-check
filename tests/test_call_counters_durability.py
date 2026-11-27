@@ -63423,11 +63423,13 @@ def test_r44_ar29_prune_arrival_during_forensics_hashing_holds(tmp_path: Path) -
     counts: the next collect published nothing). The digest
     checks run inside the bracket now: mid-hash churn retries,
     and the fresh listing holds the arrival.
-    Relies on nanosecond directory timestamps (all CI filesystems);
-    would fail deterministically -- not flake -- on jiffy-granularity
-    clocks. Not scripted: in sweep flow the end-check samples sit at
-    unstable stream positions (unlike direct-prune tests).
+    The arrival clock is scripted by planted-state, not wall
+    time: the digest hook still plants mid-hash for real, but
+    bracket reads follow the planted flag, so the mismatch
+    registers deterministically on coarse-tick filesystems
+    (Windows system-clock ticks are ~15ms) too.
     """
+    import os
     import warnings
     from unittest import mock
 
@@ -63456,7 +63458,19 @@ def test_r44_ar29_prune_arrival_during_forensics_hashing_holds(tmp_path: Path) -
             )
         return result
 
-    with mock.patch.object(durability, "_sha256_regular_file_hex", _digest_then_plant):
+    real_mtime = durability._dir_mtime_ns
+    root_key = os.fspath(root)
+    tick_before, tick_arrived = 100, 200
+
+    def _mtime_then_stage(path: Any) -> Any:
+        if os.fspath(path) != root_key:
+            return real_mtime(path)
+        return tick_arrived if planted else tick_before
+
+    with (
+        mock.patch.object(durability, "_sha256_regular_file_hex", _digest_then_plant),
+        mock.patch.object(durability, "_dir_mtime_ns", _mtime_then_stage),
+    ):
         with warnings.catch_warnings(record=True) as seen:
             warnings.simplefilter("always")
             swept = durability.sweep_orphans(root, current_run=_RUN)
@@ -75360,3 +75374,71 @@ def test_r44_ar62_companion_lstat_fault_fails_loud(tmp_path: Path) -> None:
         texts
     )
     assert not any("archive the listed members" in text for text in texts), texts
+
+
+def test_r44_ar65_member_capture_failure_reread_torn_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r65: capture-unresolvable but reread-torn re-observes.
+
+    Codex R64-1: the member's strict capture failed (a
+    redirect hid it) but the reread found torn bytes
+    through the restored path -- two observations differ,
+    so drift is proven. Rendering would resolve live
+    through unverified links (a redirect under a system
+    directory could substitute the target mid-render while
+    every sampled clock agrees), so the member re-observes
+    instead of rendering unmapped. The capture fault
+    injects once, for the member path from the capture
+    caller only (reread, render, and bracket resolutions
+    stay truthful).
+    """
+    import errno
+    import inspect
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_realpath = os.path.realpath
+    member_key = os.fspath(root / "registrations" / registry.name)
+    fired: list[bool] = []
+
+    def _realpath_then_hide(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == member_key and not fired:
+            caller = inspect.currentframe()
+            caller = caller.f_back if caller is not None else None
+            if caller is not None and caller.f_code.co_name == "_authority_verdict_on":
+                fired.append(True)
+                raise OSError(errno.ENOENT, "injected capture hide")
+        return real_realpath(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _realpath_then_hide):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert fired, "the capture hid the member (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("the member inventory changed during verification" in text for text in texts), texts
+    assert not any("could not be verified" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
