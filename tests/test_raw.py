@@ -71,6 +71,17 @@ def test_expect_rv_attaches_rv_to_exception() -> None:
     with pytest.raises(CkrAssertionError) as exc_info:
         expect_rv(0x00000007, 0x00000000)
     assert exc_info.value.rv == 0x00000007
+    assert exc_info.value.operation is None
+
+
+def test_expect_rv_attaches_operation_to_exception() -> None:
+    """R4-F7: the raising stage rides the exception for exact attribution."""
+    from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
+
+    with pytest.raises(CkrAssertionError) as exc_info:
+        expect_rv(0x00000007, 0x00000000, operation="C_EncryptInit")
+    assert exc_info.value.rv == 0x00000007
+    assert exc_info.value.operation == "C_EncryptInit"
 
 
 def test_is_known_error_uses_exact_rv_match_when_available() -> None:

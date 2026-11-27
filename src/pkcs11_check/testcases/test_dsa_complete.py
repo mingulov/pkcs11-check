@@ -18,7 +18,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, record_as, xfail_as
+from pkcs11_check.classification import classify, fail_as, raise_for_record, record_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import (
     PackedMechanism,
@@ -82,6 +82,7 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -97,6 +98,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._copy_mutability import (
     COPY_FORBIDDEN_REFUSE_RVS,
+    _record_rv_validity,
     classify_forbidden_change_refusal,
     classify_ignored_or_mutated,
     classify_rv_validity_or_none,
@@ -232,11 +234,12 @@ _FIXED_DSA_SAMPLE_S = bytes.fromhex(
     "7081e175455f9247b812b74583e9e94f9ea79bd640dc962533b0680793a38d53"
 )
 
-# Clean C_CreateObject refusals while staging the fixed DSA vector: the
-# module advertises CKM_DSA but cannot stage the vector, so the padded-half
-# oracle never ran -- xfail (recorded), never a crypto finding. Notably
-# CKR_DOMAIN_PARAMS_INVALID is NOT here: the RFC 6979 parameters are valid,
-# so rejecting them is a provider bug and must fail loudly.
+# Expected C_CreateObject refusals while staging the fixed DSA vector:
+# the module cannot stage the vector, so the padded-half oracle never
+# ran -- xfail (recorded), never a crypto finding. CKR_DOMAIN_PARAMS_INVALID
+# IS here (R4-A3): the RV definition covers unsupported as well as invalid
+# parameters, and support for the exact fixed domain stays provider-specific,
+# so a clean refusal xfails with the original RV.
 _DSA_IMPORT_RUNTIME_REJECT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -247,21 +250,47 @@ _DSA_IMPORT_RUNTIME_REJECT_RVS = (
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_DOMAIN_PARAMS_INVALID,
 )
 
 
-def _import_fixed_dsa_keypair(
-    rs: Any, *, label: str | None = None, copyable: bool | None = None
-) -> tuple[int, int]:
-    """Import the fixed RFC 6979 DSA-2048 keypair (bounded, no generation).
+def _grade_dsa_import_refusal(exc: AssertionError, msg: str) -> NoReturn:
+    """Grade a fixed-DSA-vector import refusal at source (R3-A3, R4-A3).
 
-    Returns (pub_handle, priv_handle). A clean refusal raises
-    CkrAssertionError for the caller to route (xfail); the public half is
-    destroyed if the private import fails.
+    Listed clean RVs xfail operational with the original RV (this
+    includes CKR_DOMAIN_PARAMS_INVALID: unsupported is inside the RV
+    per its definition); other standard RVs xfail as
+    unexpected-but-clean; vendor RVs xfail as alternates; undefined
+    RVs fail the metadata contract. No import RV escapes through a
+    raw raise. Non-CKR assertion errors (fixture bugs) reraise
+    untouched.
+    """
+    if isinstance(exc, CkrAssertionError) and exc.rv in _DSA_IMPORT_RUNTIME_REJECT_RVS:
+        xfail_if_known_ckr(exc, _DSA_IMPORT_RUNTIME_REJECT_RVS, msg)
+    if isinstance(exc, CkrAssertionError):
+        rec = _record_rv_validity(exc.rv, label=msg, operation="C_CreateObject", kind="metadata")
+        if rec is not None:
+            raise_for_record(rec)
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=msg,
+            operation="C_CreateObject",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=f"{msg}: unexpected clean refusal {ckr_name(exc.rv)}",
+        )
+    raise exc
 
-    ``label`` and ``copyable`` are default-omitted and land on the public
-    half only when requested (QC6a search scoping / QC6b copy premise), so
-    the QC5b stimulus stays byte-identical.
+
+def _fixed_dsa_public_attrs(
+    *, label: str | None = None, copyable: bool | None = None
+) -> dict[Any, Any]:
+    """Fixed DSA public-half template (shared by pair and public-only imports).
+
+    ``label`` and ``copyable`` land on the public half only when
+    requested (QC6a search scoping / QC6b copy premise), so the QC5b
+    stimulus stays byte-identical.
     """
     public_attrs: dict[Any, Any] = {
         CKA_CLASS: CKO_PUBLIC_KEY,
@@ -277,9 +306,21 @@ def _import_fixed_dsa_keypair(
         public_attrs[CKA_LABEL] = label
     if copyable is not None:
         public_attrs[CKA_COPYABLE] = copyable
+    return public_attrs
+
+
+def _import_fixed_dsa_keypair(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> tuple[int, int]:
+    """Import the fixed RFC 6979 DSA-2048 keypair (bounded, no generation).
+
+    Returns (pub_handle, priv_handle). A clean refusal raises
+    CkrAssertionError for the caller to route (xfail); the public half is
+    destroyed if the private import fails.
+    """
     pub = create_object_negotiated(
         rs,
-        public_attrs,
+        _fixed_dsa_public_attrs(label=label, copyable=copyable),
         purpose="QC5b fixed DSA-2048 public import",
     )
     try:
@@ -301,6 +342,22 @@ def _import_fixed_dsa_keypair(
         destroy_quietly(rs.raw, rs.sh, pub)
         raise
     return pub, priv
+
+
+def _import_fixed_dsa_public(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> int:
+    """Import the fixed DSA public half only (R2-A3).
+
+    Public-only nodes (the QC6b compare) never touch private material,
+    so a provider that refuses the private import must not void them.
+    A clean refusal raises CkrAssertionError for the caller to route.
+    """
+    return create_object_negotiated(
+        rs,
+        _fixed_dsa_public_attrs(label=label, copyable=copyable),
+        purpose="QC6b fixed DSA-2048 public-only import",
+    )
 
 
 def _dsa_parameter_gen_param_mech(
@@ -1532,12 +1589,9 @@ class TestDSABoundedWidth:
         try:
             pub, priv = _import_fixed_dsa_keypair(rs)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DSA_IMPORT_RUNTIME_REJECT_RVS,
-                "CKM_DSA advertised but fixed-vector DSA import is not operational",
+            _grade_dsa_import_refusal(
+                exc, "CKM_DSA advertised but fixed-vector DSA import is not operational"
             )
-            raise
         try:
             self._assert_import_coherence(rs, pub)
             digest = hashlib.sha1(  # noqa: S324
@@ -1696,12 +1750,9 @@ def _stage_fixed_dsa_pair(
     try:
         pub, priv = _import_fixed_dsa_keypair(rs, label=label, copyable=copyable)
     except AssertionError as exc:
-        xfail_if_known_ckr(
-            exc,
-            _DSA_IMPORT_RUNTIME_REJECT_RVS,
-            "CKM_DSA advertised but fixed-vector DSA import is not operational",
+        _grade_dsa_import_refusal(
+            exc, "CKM_DSA advertised but fixed-vector DSA import is not operational"
         )
-        raise
     try:
         TestDSABoundedWidth._assert_import_coherence(rs, pub)
     except BaseException:
@@ -1709,6 +1760,26 @@ def _stage_fixed_dsa_pair(
         destroy_quietly(rs.raw, rs.sh, priv)
         raise
     return pub, priv
+
+
+def _stage_fixed_dsa_public(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> int:
+    """Stage the fixed DSA public half for public-only nodes (R2-A3).
+
+    The QC6b compare judges the provider against its own readback
+    bytes, so byte-identical fixture coherence is NOT required (an
+    encoding-divergent module still runs), and no private half is
+    imported (a private-refusing provider still runs). A clean refusal
+    of the valid public vector xfails with the original RV. No CKM_DSA
+    gate (R3-A3): the row uses copy/read-only operations, so a DSA-less
+    provider surfaces as a graded import refusal, never a skip.
+    """
+    skip_unless_create_object_supported(rs)
+    try:
+        return _import_fixed_dsa_public(rs, label=label, copyable=copyable)
+    except AssertionError as exc:
+        _grade_dsa_import_refusal(exc, "fixed-vector DSA public import is not operational")
 
 
 class TestDSAPublicValueSearch:
@@ -2121,7 +2192,7 @@ class TestDSAPublicCopyCompare:
         """
         rs = p11_module_session
         label = "C_CopyObject DSA public empty-vs-restated (QC6b compare)"
-        pub, priv = _stage_fixed_dsa_pair(rs, copyable=True)
+        pub = _stage_fixed_dsa_public(rs, copyable=True)
         try:
             source_value = _read_dsa_public_value_or_void(rs, pub, label=label)
             empty = run_copy_compare_leg(rs, pub, {}, label=label, leg="empty")
@@ -2135,7 +2206,7 @@ class TestDSAPublicCopyCompare:
                 label=label,
                 operation="C_CopyObject",
                 spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+                expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)

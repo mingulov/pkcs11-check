@@ -39,7 +39,6 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 
 from pkcs11_check import classification
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_BASE,
     CKA_CLASS,
@@ -1155,12 +1154,15 @@ def test_w2_import_size_policy_is_xfail() -> None:
     assert _run_w2(raw, 1) == "xfail"
 
 
-def test_w2_import_domain_params_invalid_is_fail() -> None:
+def test_w2_import_domain_params_invalid_is_xfail() -> None:
+    # R4-A3: unsupported is inside CKR_DOMAIN_PARAMS_INVALID per the RV
+    # definition, and support for the exact fixed domain stays
+    # provider-specific -- a clean refusal xfails with the original RV.
     raw = _W2Raw(create_rv=_ckr(CKR_DOMAIN_PARAMS_INVALID))
-    with pytest.raises(CkrAssertionError):
-        dsa_mod.TestDSABoundedWidth().test_fixed_dsa_even_padded_halves_rejected(
-            _w2_session(raw), 1
-        )
+    assert _run_w2(raw, 1) == "xfail"
+    record = _last_record()
+    assert record.reason == "not_operational", record.summary
+    assert record.actual_ckr == "CKR_DOMAIN_PARAMS_INVALID", record.summary
 
 
 def test_w2_no_dsa_mechanism_is_skip() -> None:
