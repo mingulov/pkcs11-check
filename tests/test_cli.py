@@ -6121,7 +6121,10 @@ class TestTestCommand:
 
         evidence.write_bytes(b"AAAABBBB")
         assert quarantine(evidence, None, None, console) == (b"AAAABBBB")
-        assert not evidence.exists()
+        # No scopes survive: unlinked on POSIX; on Windows the unlink of an
+        # open file is refused and the fallback truncates to empty instead.
+        if evidence.exists():
+            assert evidence.read_bytes() == b""
 
         evidence.write_bytes(b"AAAA")
         assert quarantine(evidence, 99, identity_of(evidence), console) == b""
@@ -7033,7 +7036,9 @@ class TestTestCommand:
         stale_jsonl.write_text("stale-unattributable-bytes\n", encoding="utf-8")
         evidence = tmp_path / "evidence.jsonl"
         blob = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
-        evidence.write_text(blob, encoding="utf-8")
+        # Byte-exact (text-mode write_text would CRLF-translate on Windows
+        # and break the byte comparison below).
+        evidence.write_bytes(blob.encode("utf-8"))
         result = test_cmd._retain_early_failure_evidence(
             output="json",
             output_file=str(results_path),
