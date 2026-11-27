@@ -5256,6 +5256,44 @@ class TestTestCommand:
         assert result.exit_code == 1
         assert not output_path.exists()
 
+    @staticmethod
+    def _b1_counter_line(pid: int, total: int, *, run_id: str, worker_uuid: str) -> str:
+        return json.dumps(
+            {
+                "$report_type": "CallCountersReport",
+                "pid": pid,
+                "run_id": run_id,
+                "worker_uuid": worker_uuid,
+                "isolation": "file",
+                "probes_lost": 0,
+                "total_calls": total,
+                "buckets": {
+                    "test": {
+                        "calls": total,
+                        "by_fn": {
+                            "C_Sign": {
+                                "calls": total,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                            }
+                        },
+                    }
+                },
+            }
+        )
+
+    def _b1_crashed_manifest(self, module: object) -> CapabilityManifest:
+        return CapabilityManifest(
+            status="crashed",
+            module_path=str(module),
+            requested_interface="auto",
+            interface_version=None,
+            slot_index=0,
+            slot_count=None,
+            mechanisms=[],
+            process_observation=build_process_observation(str(module), "preflight", 0, -11),
+            error="preflight crashed",
+        )
+
     def test_test_resume_manifest_crash_preserves_prior_results(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -5266,28 +5304,39 @@ class TestTestCommand:
         save_run_state(
             state_file,
             FileRunState(
-                units=["a.py"],
+                units=["a.py", "b.py"],
                 fingerprint="prior",
-                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                results=[
+                    FileRunResult("a.py", "passed", 0, 0.1),
+                    FileRunResult("b.py", "failed", 1, 0.2),
+                ],
+                process_observations=[{"marker": "prior-obs", "target": "a.py"}],
             ),
+        )
+        # Per-test records live in the JSONL (never inline in state.json);
+        # the merged report must rebuild details from them.
+        (tmp_path / "report.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps({"nodeid": "a.py::test_x", "when": "call", "outcome": "passed"}),
+                    json.dumps(
+                        {
+                            "nodeid": "b.py::test_y",
+                            "when": "call",
+                            "outcome": "failed",
+                            "longrepr": "boom",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
         )
         results_path = tmp_path / "results.json"
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path, counters=None: (
-                CapabilityManifest(
-                    status="crashed",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version=None,
-                    slot_index=slot,
-                    slot_count=None,
-                    mechanisms=[],
-                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
-                    error="preflight crashed",
-                )
-            ),
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -5309,10 +5358,18 @@ class TestTestCommand:
         )
         assert result.exit_code == 1, result.output
         payload = json.loads(results_path.read_text(encoding="utf-8"))
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted([("a.py", "passed"), ("b.py", "failed"), (str(module), "crashed")])
+        assert payload["summary"]["passed"] == 1
+        assert payload["summary"]["failed"] == 1
         assert payload["summary"]["crashed"] == 1
         assert payload["summary"]["incomplete"] is True
-        by_target = {unit["target"]: unit["status"] for unit in payload["units"]}
-        assert by_target == {"a.py": "passed", str(module): "crashed"}
+        by_target = {unit["target"]: unit for unit in payload["units"]}
+        assert by_target["a.py"]["counts"]["passed"] == 1
+        assert by_target["b.py"]["counts"]["failed"] == 1
+        assert len(by_target["b.py"]["tests"]) == 1
+        text = json.dumps(payload)
+        assert "prior-obs" in text
 
     def test_test_resume_login_crash_preserves_prior_results(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5360,36 +5417,14 @@ class TestTestCommand:
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["summary"]["crashed"] == 1
         assert payload["summary"]["incomplete"] is True
-        by_target = {unit["target"]: unit["status"] for unit in payload["units"]}
-        assert by_target == {"a.py": "passed", str(module): "crashed"}
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted([("a.py", "passed"), (str(module), "crashed")])
 
     def test_test_resume_early_failure_appends_jsonl_and_folds_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """B1: the JSONL keeps prior rounds; counters fold old + new."""
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
-
-        def _counter_line(pid: int, total: int) -> str:
-            return json.dumps(
-                {
-                    "$report_type": "CallCountersReport",
-                    "pid": pid,
-                    "isolation": "file",
-                    "probes_lost": 0,
-                    "total_calls": total,
-                    "buckets": {
-                        "test": {
-                            "calls": total,
-                            "by_fn": {
-                                "C_Sign": {
-                                    "calls": total,
-                                    "by_rv": {"0": {"name": "CKR_OK", "count": total}},
-                                }
-                            },
-                        }
-                    },
-                }
-            )
 
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
@@ -5404,26 +5439,18 @@ class TestTestCommand:
         )
         results_path = tmp_path / "results.json"
         prior_jsonl = tmp_path / "report.jsonl"
-        prior_jsonl.write_text(_counter_line(111, 10) + "\n", encoding="utf-8")
+        prior_jsonl.write_text(
+            self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n",
+            encoding="utf-8",
+        )
         preflight_evidence_path_for_state(state_file).write_text(
-            _counter_line(222, 5) + "\n", encoding="utf-8"
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
         )
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path, counters=None: (
-                CapabilityManifest(
-                    status="crashed",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version=None,
-                    slot_index=slot,
-                    slot_count=None,
-                    mechanisms=[],
-                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
-                    error="preflight crashed",
-                )
-            ),
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -5450,29 +5477,140 @@ class TestTestCommand:
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["call_counters"]["total_calls"] == 15
 
-    def test_test_resume_without_state_falls_back_to_fresh_shape(
+    def test_test_resume_login_failure_appends_jsonl_and_folds_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1: resume with no state file writes the fresh single-result shape."""
+        """B1: the login site threads resume like the manifest site."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
         results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_jsonl.write_text(
+            self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n",
+            encoding="utf-8",
+        )
+        preflight_evidence_path_for_state(state_file).write_text(
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
+        )
+
+        def crashed_login(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_login)
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        lines = prior_jsonl.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2, lines
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 15
+
+    def test_test_resume_retry_never_double_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: re-appending an accumulated sidecar folds first-wins (no double count).
+
+        The bytes duplicate (the extractor's torn-append shape, also what the
+        normal splice path produces); the counts must not.
+        """
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
+        round_two = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16)
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_jsonl.write_text(round_one + "\n", encoding="utf-8")
+        preflight_evidence_path_for_state(state_file).write_text(
+            round_one + "\n" + round_two + "\n", encoding="utf-8"
+        )
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path, counters=None: (
-                CapabilityManifest(
-                    status="crashed",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version=None,
-                    slot_index=slot,
-                    slot_count=None,
-                    mechanisms=[],
-                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
-                    error="preflight crashed",
-                )
-            ),
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 3
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 15
+
+    def test_test_resume_without_state_falls_back_to_fresh_shape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: resume with no state file writes the fresh single-result shape.
+
+        The evidence file is unlinked pre-run (anti-contamination), so no
+        blob exists to retain and a stale JSONL is left untouched -- the
+        parent behavior, byte for byte.
+        """
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "results.json"
+        stale_jsonl = tmp_path / "report.jsonl"
+        stale_jsonl.write_text("stale-unattributable-bytes\n", encoding="utf-8")
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -5497,6 +5635,32 @@ class TestTestCommand:
         assert payload["summary"].get("passed", 0) == 0
         assert payload["summary"]["crashed"] == 1
         assert payload["summary"]["incomplete"] is True
+        assert len(payload["units"]) == 1
+        assert stale_jsonl.read_text(encoding="utf-8") == "stale-unattributable-bytes\n"
+
+    def test_retain_without_prior_state_overwrites(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: without a prior state the retain keeps the overwriting write."""
+        import io
+
+        from rich.console import Console
+
+        results_path = tmp_path / "results.json"
+        stale_jsonl = tmp_path / "report.jsonl"
+        stale_jsonl.write_text("stale-unattributable-bytes\n", encoding="utf-8")
+        evidence = tmp_path / "evidence.jsonl"
+        blob = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+        evidence.write_text(blob, encoding="utf-8")
+        written = test_cmd._retain_early_failure_evidence(
+            output="json",
+            output_file=str(results_path),
+            preflight_evidence_path=evidence,
+            console=Console(file=io.StringIO(), width=100),
+            prior_state=None,
+        )
+        assert written == stale_jsonl
+        assert stale_jsonl.read_text(encoding="utf-8") == blob
 
     def test_test_preflight_timeout_default_json_artifact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
