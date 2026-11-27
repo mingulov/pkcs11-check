@@ -6857,18 +6857,43 @@ class TestTestCommand:
         prior_jsonl = tmp_path / "report.jsonl"
         round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
         prior_jsonl.write_text(round_one, encoding="utf-8")
-        # Round 2's scope sits in the accumulated evidence but never reached
-        # the JSONL (its exit never spliced); round 3's scope is appended by
-        # the mock during this run.
+        # Round 2's bookended scope sits in the accumulated evidence but
+        # never reached the JSONL (its exit never spliced); round 3's scope
+        # is appended by the mock during this run. Scopes ride real
+        # preflight bookends; the middle scope also carries a pid-only loss.
+        start = json.dumps({"$report_type": "SessionStart"}) + "\n"
+        finish = json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}) + "\n"
         evidence_path = preflight_evidence_path_for_state(state_file)
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         round_two = self._b1_counter_line(333, 7, run_id="run-2", worker_uuid="cc" * 16) + "\n"
-        evidence_path.write_text(round_one + round_two, encoding="utf-8")
-        current_line = self._b1_counter_line(222, 5, run_id="run-3", worker_uuid="bb" * 16) + "\n"
+        middle_loss = (
+            json.dumps(
+                {
+                    "$report_type": "CallCountersLost",
+                    "end_state": "crashed",
+                    "scope_index": 0,
+                    "run_id": "run-2",
+                    "unit": "a.py",
+                    "attempt": 0,
+                    "pid": 444,
+                }
+            )
+            + "\n"
+        )
+        evidence_path.write_text(
+            start + round_one + finish + start + round_two + middle_loss + finish,
+            encoding="utf-8",
+        )
+        current_scope = (
+            start
+            + self._b1_counter_line(222, 5, run_id="run-3", worker_uuid="bb" * 16)
+            + "\n"
+            + finish
+        )
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            self._b1_appending_preflight(evidence_path, current_line),
+            self._b1_appending_preflight(evidence_path, current_scope),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -6889,13 +6914,17 @@ class TestTestCommand:
             ],
         )
         assert result.exit_code == 1, result.output
-        # The append re-carries [r1, r2] plus the tail [r3]; the fold counts
-        # all three rounds exactly once (a tail-only append would miss r2
-        # at 15 while still claiming complete).
-        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 4
+        # The append re-carries the 7 earlier lines (bookends + scopes +
+        # loss) plus the 3-line tail; the fold counts all three rounds
+        # exactly once (a tail-only append would miss r2 at 15 while still
+        # claiming complete) and the pid-only loss lands in lost_processes
+        # (a uuid-only filter would drop it).
+        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 11
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["call_counters"]["total_calls"] == 22
-        assert payload["call_counters"]["complete"] is True
+        assert payload["call_counters"]["complete"] is False
+        assert "lost_processes" in payload["call_counters"]
+        assert '"pid": 444' in json.dumps(payload["call_counters"]["lost_processes"])
 
     def test_test_resume_collection_failure_cross_module_reports_separately(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
