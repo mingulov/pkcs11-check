@@ -10213,7 +10213,10 @@ class TestSweepAndFence:
         assert orphan.exists(), "no attribution on incomplete discovery"
         assert Path(planted_a["registry"]).exists()
         # Healed retry: the true prefix collision still withholds B's
-        # orphan from A, but A itself collects and converges.
+        # orphan from A, but A itself collects and converges. Both
+        # collider registries pin as ambiguity evidence (#88R44-[A]r4):
+        # consuming either would let a later retry resolve the held
+        # orphan as a false unique match.
         plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert plan2["barrier_ok"] is True
         partials = [
@@ -10222,7 +10225,8 @@ class TestSweepAndFence:
             if rec["$report_type"] == "CallCountersPartial"
         ]
         assert sum(rec["total_calls"] for rec in partials) == 2
-        assert not Path(planted_a["registry"]).exists()
+        assert Path(planted_a["registry"]).exists(), "A's registry pins while held"
+        assert Path(planted_b["registry"]).exists(), "B's registry pins while held"
         assert orphan.exists()
 
     def test_quarantined_probe_never_adopted(self, engaged: Path) -> None:
@@ -10644,6 +10648,12 @@ class TestSweepAndFence:
         def _evolving_read_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
             if self.name == tmp.name:
                 reads["count"] += 1
+                # Evolution lands after the first read: rewrite tmps
+                # group by filename hint without a body read
+                # (#88R44-F6r5; only probe baselines resolve owners
+                # from bodies), so verification binds on the first
+                # read and the evolution under test sits between
+                # verification and consume.
                 if reads["count"] > 1:
                     tmp.write_text(
                         json.dumps(_probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 9]])),
@@ -20336,6 +20346,28 @@ class TestRunSpecificCountersDir:
             _reset_fresh_run_artifacts(state_file, None)
         assert (hostile / "sentinel").exists()
 
+    def test_reset_silently_keeps_guard_locks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r5-minor: sibling barrier-lock files are not lookalikes."""
+        import warnings
+
+        from pkcs11_check.core.file_runner import _reset_fresh_run_artifacts
+
+        state_file = tmp_path / "state.json"
+        state_file.write_text("{}", encoding="utf-8")
+        guard = tmp_path / "state.json.counters.lock"
+        guard.write_text("pkcs11-check barrier guard\n", encoding="utf-8")
+        current = tmp_path / "state.json.counters.live1234"
+        current.mkdir()
+        monkeypatch.setenv(durability.COUNTERS_DIR_ENV, str(current))
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            _reset_fresh_run_artifacts(state_file, None)
+        assert guard.exists(), "the guard inode stays in place"
+        texts = [str(found.message) for found in seen]
+        assert not any("no allocated form" in text for text in texts), texts
+
 
 class TestBarrierStaging:
     """N-C1: the barrier plan stages durably before sources are consumed."""
@@ -20504,20 +20536,24 @@ class TestBarrierStaging:
         """#88R44-[C]r3: the per-root lock is non-reentrant and idempotent to release."""
         root = tmp_path / "counters"
         root.mkdir()
-        assert durability.try_acquire_barrier_lock(root) is True
+        token = durability.try_acquire_barrier_lock(root)
+        assert token is not None
         try:
-            assert durability.try_acquire_barrier_lock(root) is False
+            assert durability.try_acquire_barrier_lock(root) is None
             other = tmp_path / "other"
             other.mkdir()
-            assert durability.try_acquire_barrier_lock(other) is True
-            durability.release_barrier_lock(other)
-            assert durability.try_acquire_barrier_lock(other) is True
-            durability.release_barrier_lock(other)
+            other_token = durability.try_acquire_barrier_lock(other)
+            assert other_token is not None
+            durability.release_barrier_lock(other_token)
+            other_token = durability.try_acquire_barrier_lock(other)
+            assert other_token is not None
+            durability.release_barrier_lock(other_token)
         finally:
-            durability.release_barrier_lock(root)
-        assert durability.try_acquire_barrier_lock(root) is True
-        durability.release_barrier_lock(root)
-        durability.release_barrier_lock(root)
+            durability.release_barrier_lock(token)
+        token = durability.try_acquire_barrier_lock(root)
+        assert token is not None
+        durability.release_barrier_lock(token)
+        durability.release_barrier_lock(token)
 
     def test_r44_cr3_discard_if_binds_generation(self, tmp_path: Path) -> None:
         """#88R44-[C]r3: retirement removes only a still-matching generation."""
@@ -20607,7 +20643,8 @@ class TestBarrierStaging:
         staging = root / durability.BARRIER_STAGING_FILENAME
         staging.write_text(json.dumps({"cache_records": {}, "consumed": 0}), encoding="utf-8")
         durability.seal(root, reason="stale-test-seal")
-        assert durability.try_acquire_barrier_lock(root) is True
+        token = durability.try_acquire_barrier_lock(root)
+        assert token is not None
         saved_active = file_runner_mod._ACTIVE_COUNTERS_DIR
         try:
             state = FileRunState(units=["a.py"], fingerprint="fp", results=[])
@@ -20626,7 +20663,7 @@ class TestBarrierStaging:
                     Console(file=StringIO(), force_terminal=False),
                 )
         finally:
-            durability.release_barrier_lock(root)
+            durability.release_barrier_lock(token)
             file_runner_mod._ACTIVE_COUNTERS_DIR = saved_active
         assert pending == ["a.py"]
         assert staging.exists(), "engage under a live barrier keeps staging"
@@ -20674,6 +20711,231 @@ class TestBarrierStaging:
         assert not durability.is_sealed(root), "uncontended engage still lifts the seal"
         texts = [str(found.message) for found in seen]
         assert not any("holds" in text for text in texts), texts
+
+    def test_r44_cr4_plan_without_staging_gen_keeps_staging(self, tmp_path: Path) -> None:
+        """#88R44-[C]r4-directive: a plan without generation proof never retires staging."""
+        import warnings
+        from io import StringIO
+
+        from rich.console import Console
+
+        from pkcs11_check.core.file_runner import _apply_counters_barrier_plan
+
+        root = tmp_path / "counters"
+        root.mkdir()
+        staging = root / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(json.dumps({"cache_records": {}, "consumed": 0}), encoding="utf-8")
+        plan: dict[str, Any] = {
+            "barrier_ok": True,
+            "counters_dir": str(root),
+            "cache_records": {},
+            "skipped_units": [],
+            "consumed": 0,
+            "unresolved": [],
+        }
+        state_file = tmp_path / "state.json"
+        console = Console(file=StringIO(), force_terminal=False)
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            pending = _apply_counters_barrier_plan(state_file, plan, ["a.py"], console)
+        assert pending == ["a.py"]
+        assert staging.exists(), "a generation-less plan keeps staging"
+        texts = [str(found.message) for found in seen]
+        assert any("no generation proof" in text for text in texts), texts
+
+    def test_r44_cr4_interrupt_at_snapshot_releases_seal_and_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r4: an interrupt during snapshot load still releases seal and lock."""
+        root = tmp_path / "counters"
+        root.mkdir()
+        (root / durability.BARRIER_STAGING_FILENAME).write_text(
+            json.dumps({"cache_records": {}, "consumed": 0}), encoding="utf-8"
+        )
+
+        def _boom(_root: Path) -> None:
+            raise KeyboardInterrupt("injected at snapshot read")
+
+        monkeypatch.setattr(durability, "_read_barrier_snapshot", _boom)
+        with pytest.raises(KeyboardInterrupt, match="injected at snapshot read"):
+            durability.prepare_resume(root, prior_merged_jsonl=None)
+        assert not durability.is_sealed(root), "the interrupt releases the seal"
+        token = durability.try_acquire_barrier_lock(root)
+        assert token is not None, "the interrupt releases the lock"
+        durability.release_barrier_lock(token)
+
+    def test_r44_cr4_lock_survives_root_deletion(self, tmp_path: Path) -> None:
+        """#88R44-[C]r4: the barrier lock inode survives its root's deletion.
+
+        The lock lives beside the root (never inside it), so deleting
+        and recreating the root neither orphans nor splits the mutex:
+        the same file serializes before and after.
+        """
+        root = tmp_path / "counters"
+        root.mkdir()
+        token = durability.try_acquire_barrier_lock(root)
+        assert token is not None
+        try:
+            lock = durability._barrier_lock_path(root)
+            assert lock.parent == root.parent, "the lock lives beside the root"
+            assert lock.exists()
+            assert not (root / (durability.BARRIER_STAGING_FILENAME + ".lock")).exists()
+            import shutil
+
+            shutil.rmtree(root)
+            assert lock.exists(), "deleting the root keeps the lock inode"
+            root.mkdir()
+        finally:
+            durability.release_barrier_lock(token)
+        token = durability.try_acquire_barrier_lock(root)
+        assert token is not None
+        durability.release_barrier_lock(token)
+
+    def test_r44_cr5_lock_release_survives_symlink_removal(self, tmp_path: Path) -> None:
+        """#88R44-[C]r5: release uses the captured token, never a re-resolution.
+
+        Acquire through a relocated symlink, unlink the symlink
+        mid-hold, release by token: the hold must free (no leaked
+        gate, no stranded handle) and a fresh acquire on the intact
+        target must succeed. Re-resolving the now-missing name at
+        release would miss the registry entry and strand the gate.
+        """
+        real = tmp_path / "counters"
+        real.mkdir()
+        link = tmp_path / "counters-link"
+        link.symlink_to(real, target_is_directory=True)
+        token = durability.try_acquire_barrier_lock(link)
+        assert token is not None
+        link.unlink()
+        durability.release_barrier_lock(token)
+        token2 = durability.try_acquire_barrier_lock(real)
+        assert token2 is not None, "the hold freed despite the unlinked name"
+        durability.release_barrier_lock(token2)
+
+    def test_r44_cr4_reset_refuses_contested_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r4: fresh reset refuses a root a live barrier holds.
+
+        A barrier paused past its staging write holds the per-root
+        lock; a fresh reset racing it must leave the root in place
+        loudly instead of deleting a staging install the barrier has
+        not consumed (or the root under it).
+        """
+        import threading
+        import warnings
+
+        from pkcs11_check.core.file_runner import _reset_fresh_run_artifacts
+
+        state_file = tmp_path / "state.json"
+        root = tmp_path / "state.json.counters"
+        self._dead_unit(root, uuid=_UUID_A, unit="a.py")
+        monkeypatch.setenv(durability.COUNTERS_DIR_ENV, str(tmp_path / "elsewhere"))
+        entered = threading.Event()
+        release = threading.Event()
+        real_write = durability._write_barrier_staging
+        calls = []
+
+        def _gated_write(*args: Any, **kwargs: Any) -> bool:
+            calls.append(1)
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(timeout=60), "rendezvous broke: A never released"
+            return real_write(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_write_barrier_staging", _gated_write)
+        results: dict[str, Any] = {}
+
+        def _run_a() -> None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                results["a"] = durability.prepare_resume(root, prior_merged_jsonl=None)
+
+        worker = threading.Thread(target=_run_a, daemon=True)
+        worker.start()
+        try:
+            assert entered.wait(timeout=60), "barrier A never reached its staging write"
+            with warnings.catch_warnings(record=True) as seen:
+                warnings.simplefilter("always")
+                _reset_fresh_run_artifacts(state_file, None)
+            texts = [str(found.message) for found in seen]
+        finally:
+            release.set()
+        worker.join(timeout=60)
+        assert not worker.is_alive(), "barrier A hung"
+        assert root.exists(), "the reset refuses a contested root"
+        assert any(
+            "held by a live barrier" in text and "left in place" in text for text in texts
+        ), texts
+        assert results["a"]["barrier_ok"] is True, "the barrier lands alone"
+        staging = json.loads(
+            (root / durability.BARRIER_STAGING_FILENAME).read_text(encoding="utf-8")
+        )
+        assert staging["cache_records"] == results["a"]["cache_records"]
+
+    def test_r44_cr5_reset_refuses_wholesale_on_contention(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r5: a contested reset refuses before touching anything.
+
+        A barrier paused past its staging write holds the root's lock
+        while a fresh reset races it. The reset must refuse the WHOLE
+        operation loudly -- state file, supplements, and root all
+        intact -- instead of deleting the operator's retry inputs
+        and then refusing only the root.
+        """
+        import threading
+        import warnings
+
+        from pkcs11_check.core.file_runner import _reset_fresh_run_artifacts
+
+        state_file = tmp_path / "state.json"
+        state_file.write_text("{}", encoding="utf-8")
+        supplements = tmp_path / f"state.json.unit{durability.RECOVERY_SUPPLEMENTS_SUFFIX}"
+        supplements.write_text("{}\n", encoding="utf-8")
+        root = tmp_path / "state.json.counters"
+        self._dead_unit(root, uuid=_UUID_A, unit="a.py")
+        monkeypatch.setenv(durability.COUNTERS_DIR_ENV, str(tmp_path / "elsewhere"))
+        entered = threading.Event()
+        release = threading.Event()
+        real_write = durability._write_barrier_staging
+        calls = []
+
+        def _gated_write(*args: Any, **kwargs: Any) -> bool:
+            calls.append(1)
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(timeout=60), "rendezvous broke: A never released"
+            return real_write(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_write_barrier_staging", _gated_write)
+        results: dict[str, Any] = {}
+
+        def _run_a() -> None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                results["a"] = durability.prepare_resume(root, prior_merged_jsonl=None)
+
+        worker = threading.Thread(target=_run_a, daemon=True)
+        worker.start()
+        try:
+            assert entered.wait(timeout=60), "barrier A never reached its staging write"
+            with warnings.catch_warnings(record=True) as seen:
+                warnings.simplefilter("always")
+                _reset_fresh_run_artifacts(state_file, None)
+            texts = [str(found.message) for found in seen]
+        finally:
+            release.set()
+        worker.join(timeout=60)
+        assert not worker.is_alive(), "barrier A hung"
+        assert root.exists(), "the contested root survives"
+        assert state_file.exists(), "the state file survives the refused reset"
+        assert supplements.exists(), "stale supplements survive the refused reset"
+        assert any(
+            "fresh reset refused" in text and "all reset inputs left in place" in text
+            for text in texts
+        ), texts
+        assert results["a"]["barrier_ok"] is True, "the barrier lands alone"
 
     def test_double_apply_is_idempotent(self, tmp_path: Path) -> None:
         """#88R11-7: re-applying an applied batch appends nothing."""
@@ -20936,15 +21198,25 @@ class TestBarrierStaging:
         # the retained sources wait untouched.
         assert durability.is_sealed(root) is False
 
-    def test_torn_staging_warns_and_proceeds(self, tmp_path: Path) -> None:
+    def test_torn_staging_warns_and_refuses(self, tmp_path: Path) -> None:
+        """#88R44-F8r5: torn staging refuses with its bytes preserved.
+
+        Reversal of the pre-R5 debris rule (Codex R5 Critical): the
+        torn file may hold the only recoverable copy of staged
+        evidence, so the barrier refuses without its memory and the
+        damaged bytes stay on disk for adjudication -- no automatic
+        forgiveness on any pass.
+        """
         root = tmp_path / "counters"
         root.mkdir(parents=True)
         staging_path = root / durability.BARRIER_STAGING_FILENAME
         staging_path.write_text("{torn", encoding="utf-8")
         with pytest.warns(UserWarning, match="staging"):
             plan = durability.prepare_resume(root, prior_merged_jsonl=None)
-        assert plan["barrier_ok"] is True
-        assert not staging_path.exists(), "torn staging is debris once warned about"
+        assert plan["barrier_ok"] is False
+        assert staging_path.read_text(encoding="utf-8") == "{torn", (
+            "torn staging is preserved for adjudication"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -41770,6 +42042,47 @@ def test_r43_f1c_legacy_unit_move_holds(
     assert staging.exists(), "staging survives"
 
 
+def test_r44_f6r5_legacy_parent_targets_hold(
+    engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F6r5: legacy grouping keeps exact-owner parent targets judged.
+
+    A legacy recordless stage (collected + exact registry and
+    checkpoint targets, no persisted entry) retried against its
+    committed report must hold for missing unlink authority -- the
+    parents group by exact owner and the legacy arm withholds.
+    Resolving every target through the probe linker instead drops
+    ordinary parent names from grouping, declares the family
+    untargeted, and lets direct cleanup delete the checkpoint
+    silently.
+    """
+    import json
+    import warnings
+
+    planted, _probe, prior1, _ = _r42_1_recordless_pass1(
+        engaged, tmp_path, monkeypatch, parentless=False
+    )
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    stripped = json.loads(staging.read_text(encoding="utf-8"))
+    del stripped["recordless_cleanup"]
+    stripped["cleanup_targets"] = [
+        entry
+        for entry in stripped["cleanup_targets"]
+        if not Path(entry["path"]).name.startswith("probe-")
+    ]
+    assert stripped["cleanup_targets"], "parents-only staging (premise)"
+    staging.write_text(json.dumps(stripped), encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=prior1)
+    assert plan["barrier_ok"] is True
+    assert Path(planted["registry"]).exists(), "the registry target holds"
+    assert Path(planted["sidecar"]).exists(), "the checkpoint target holds"
+    assert _UUID_A in plan["retained_uuids"]
+    texts = [str(found.message) for found in seen]
+    assert any("recordless cleanup" in text and "ownership alone" in text for text in texts), texts
+
+
 def test_r43_f1_unchanged_publication_with_parents_converges(
     engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -41886,6 +42199,109 @@ def test_r43_f1_omitted_report_disposition_warns_and_converges(
     assert not probe.exists(), "staged authority releases the probe without a report"
     assert not any("re-collect as fresh" in text for text in texts), texts
     assert plan["cache_records"] == {}, "the retry suppresses, never re-emits"
+
+
+def test_r44_f6r4_omitted_cover_links_hint_owner(
+    engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F6r4: omitted cover uses the adoption census (no unbound delete).
+
+    Parentless recordless retry with no report: a full-UUID filename
+    marker without a body parent is staged-but-unbound. The cover
+    check must link it exactly where staged adoption would (the
+    cleanup census, which carries the hint owner) and hold for the
+    report -- not read it vacuous on the empty collected census
+    while adoption releases it.
+    """
+    import hashlib
+    import warnings
+
+    _r42_1_recordless_pass1(engaged, tmp_path, monkeypatch, parentless=True)
+    pid, birth = _dead_pid_with_birth()
+    marker_src = _plant_probe_orphan(
+        engaged,
+        parent_uuid=_UUID_A,
+        child_uuid=_UUID_B,
+        nonce="c0ffee42",
+        seq=2,
+        identity=None,
+        counters=[["m", "C_Digest", 0, 1]],
+        pid=pid,
+        birth=birth,
+    )
+    marker = marker_src.with_name(f"probe-consumed-{_UUID_A}-2-c0ffee42.json")
+    marker_src.rename(marker)
+    digest = hashlib.sha256(marker.read_bytes()).hexdigest()
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    saved = json.loads(staging.read_text(encoding="utf-8"))
+    saved["cleanup_targets"].append({"path": str(marker), "sha256": digest})
+    staging.write_text(json.dumps(saved), encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+    assert plan["barrier_ok"] is True
+    assert marker.exists(), "the unbound-but-linked marker holds for the report"
+    assert _UUID_A in plan["retained_uuids"]
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "cannot tie staged marker" in text and "pass the committed report" in text for text in texts
+    ), texts
+
+
+def test_r44_f6r4_omitted_cover_routes_body_owner(
+    engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F6r4: targets group by resolved owner, not filename hint.
+
+    Same retry, but the marker's exact body owner disagrees with its
+    filename hint: the target must reach its body owner's cover
+    check (which holds it unbound), not vanish under the hint
+    owner's vacuous verdict while adoption releases it elsewhere.
+    B's staged membership is surgical (collected + entry shape
+    copied from A's proven entry: the omitted arm reads only
+    run/targets, and a ghost B-hint target keeps B hint-reachable
+    without judging anything itself).
+    """
+    import copy
+    import hashlib
+    import warnings
+
+    _r42_1_recordless_pass1(engaged, tmp_path, monkeypatch, parentless=True)
+    pid, birth = _dead_pid_with_birth()
+    marker_src = _plant_probe_orphan(
+        engaged,
+        parent_uuid=_UUID_A,
+        child_uuid=_UUID_B,
+        nonce="c0ffee42",
+        seq=2,
+        identity=_f2_identity(_UUID_B, run_id=_RUN, unit="a.py"),
+        counters=[["m", "C_Digest", 0, 1]],
+        pid=pid,
+        birth=birth,
+    )
+    marker = marker_src.with_name(f"probe-consumed-{_UUID_A}-2-c0ffee42.json")
+    marker_src.rename(marker)
+    raw = json.loads(marker.read_bytes())
+    assert raw.get("parent_uuid") == _UUID_B, "the body names B against an A hint"
+    digest = hashlib.sha256(marker.read_bytes()).hexdigest()
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    saved = json.loads(staging.read_text(encoding="utf-8"))
+    saved["cleanup_targets"].append({"path": str(marker), "sha256": digest})
+    ghost = engaged / f"probe-{_UUID_B[:8]}-9-deadbeef.json.tmp-1"
+    saved["cleanup_targets"].append({"path": str(ghost), "sha256": "0" * 64})
+    saved["collected_uuids"].append(_UUID_B)
+    saved["recordless_cleanup"][_UUID_B] = copy.deepcopy(saved["recordless_cleanup"][_UUID_A])
+    staging.write_text(json.dumps(saved), encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+    assert plan["barrier_ok"] is True
+    assert marker.exists(), "the body-owned marker holds under its owner's check"
+    assert _UUID_B in plan["retained_uuids"]
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "cannot tie staged marker" in text and "pass the committed report" in text for text in texts
+    ), texts
 
 
 def test_r43_f1_durable_authority_shape_and_receipt_tamper(
@@ -42046,16 +42462,19 @@ def test_r44_g7_entry_binds_adopted_probes(
     assert pspec["probes"] == [{"worker_uuid": _UUID_B, "probe_seq": 1}]
 
 
-def test_r44_g7_witnessed_replacement_converges(
+def test_r44_g7_witnessed_replacement_withholds(
     engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#88R44-G7: a replacement attesting its targets converges silently.
+    """#88R44-G7 as adjudicated in R44-R4: an attested replacement withholds.
 
     Producer A's live continuation folds the held probe's exact bytes
     (attested, 1 call) plus a genuine c/2 probe (2 calls, sidecarless
     so unattested), then emits P2 (same aggregate, receipt superset).
-    The retry spends the attestation as exact-target proof: the probe
-    releases, nothing re-emits, no recordless voice fires.
+    The retry must NOT spend the attestation as exact-target proof:
+    one line cannot establish which emission won, so the probe holds
+    loudly for the report. (A faulted empty append beside a logged
+    full one is observationally identical at the barrier -- same
+    bytes on disk -- so this pin covers that borrow shape too.)
     """
     import hashlib
     import warnings
@@ -42130,22 +42549,27 @@ def test_r44_g7_witnessed_replacement_converges(
         warnings.simplefilter("always")
         plan = durability.prepare_resume(engaged, prior_merged_jsonl=prior2)
     assert plan["barrier_ok"] is True
-    assert not probe.exists(), "the attested replacement releases its probe"
-    assert _UUID_A not in plan["retained_uuids"]
-    assert plan["cache_records"] == {}
+    assert probe.exists(), "the attested replacement withholds its probe"
+    assert _UUID_A in plan["retained_uuids"]
     texts = [str(found.message) for found in seen]
-    assert not any("recordless cleanup" in text for text in texts), texts
+    assert any(
+        "recordless cleanup" in text
+        and "no attestation proves" in text
+        and "adding another attestation cannot clear this release's hold" in text
+        and "restore a verified publication" in text
+        for text in texts
+    ), texts
 
 
 def test_r44_g7_two_producers_split_on_proof(
     engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#88R44-G7: attested and unproved uuids split (INTERIM: both hold).
+    """#88R44-G7: attested and unproved uuids split (both hold).
 
-    G7 spending still passes the attested uuid (no veto), but the F2
-    attestation arm withholds pending occurrence (#88R44-F6r3), so
-    both probes hold at the version verdict. Whether G7 spending
-    shares the flaw or deserves a bypass is for R4 to adjudicate.
+    R44-R4 adjudicated: G7 spending shares the version verdict's
+    attestation flaw (no bypass), so the attested uuid holds at the
+    recordless veto while the unproved uuid holds at the version
+    verdict -- both pending a verifiable occurrence association.
     """
     import hashlib
     import warnings
@@ -43999,6 +44423,250 @@ def test_r44_f8r3_collect_vacuous_marker_holds_unreadable_ledger(
     ), texts
 
 
+def test_r44_f8r4_collect_vacuous_marker_holds_torn_ledger(engaged: Path, tmp_path: Path) -> None:
+    """#88R44-F8r4: torn staging bytes cannot establish an empty ledger budget.
+
+    The G3r2 poison shape with the staging file truncated inside the
+    ledger section (honest torn bytes, no read patching): collect
+    must withhold both recoveries, retain both markers, and voice
+    the torn ledger with its restore-or-adjudicate exit -- present
+    but undecodable bytes are corruption, not an empty budget.
+    """
+    import warnings
+
+    keys = [_lost_key(_UUID_A, n) for n in (0, 1)]
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        engaged,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+        probes_lost=2,
+        lost_keys=keys,
+    )
+    _require_dead_producer(planted)
+    markers = [_r44_g10_vacuous_marker(engaged, seq=n, pid=pid, birth=birth) for n in (0, 1)]
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    staging.write_text(
+        '{"cache_records": {}, "consumed": 0, "heal_ledger": [{"public', encoding="utf-8"
+    )
+    child = _r42_7_prior(
+        tmp_path,
+        pid,
+        calls=1,
+        lost_keys=keys,
+        receipts=[
+            {"worker_uuid": _UUID_B, "probe_seq": 0},
+            {"worker_uuid": _UUID_B, "probe_seq": 1},
+        ],
+        name="f8r4-torn.jsonl",
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert _r42_7_all_recovered(records) == [], "the torn ledger withholds"
+    for marker in markers:
+        assert marker.exists(), "the marker retains with its hold"
+    assert staging.exists(), "collect never unlinks staging (no debris power here)"
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "torn heal ledger" in text
+        and "restore the verified spends from the preserved evidence" in text
+        for text in texts
+    ), texts
+
+
+def test_r44_f8r5_barrier_holds_torn_ledger_until_adjudicated(
+    engaged: Path, tmp_path: Path
+) -> None:
+    """#88R44-F8r5: the barrier refuses torn staging on every pass until adjudicated.
+
+    Reversal of the R4 once-then-forgives rule (Codex R5 Critical):
+    the forgiveness rationale was refuted -- barrier application can
+    publish records independently while retaining staging, so the
+    torn file's death proves no spend vanished. Same vacuous-marker
+    setup through the barrier: the torn pass refuses (bytes
+    preserved, poison voiced), the retry refuses AGAIN (no
+    forgiveness), and only the operator's adjudication (deleting the
+    torn file once its loss is adjudicated) lets the next pass
+    proceed to heal.
+    """
+    import warnings
+
+    keys = [_lost_key(_UUID_A, n) for n in (0, 1)]
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        engaged,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+        probes_lost=2,
+        lost_keys=keys,
+    )
+    _require_dead_producer(planted)
+    markers = [_r44_g10_vacuous_marker(engaged, seq=n, pid=pid, birth=birth) for n in (0, 1)]
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    torn_bytes = '{"cache_records": {}, "consumed": 0, "heal_ledger": [{"public'
+    staging.write_text(torn_bytes, encoding="utf-8")
+    prior = _r42_7_prior(
+        tmp_path,
+        pid,
+        calls=1,
+        lost_keys=keys,
+        receipts=[
+            {"worker_uuid": _UUID_B, "probe_seq": 0},
+            {"worker_uuid": _UUID_B, "probe_seq": 1},
+        ],
+        name="f8r5-torn-barrier.jsonl",
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        held = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+    assert held["barrier_ok"] is False, "the torn pass refuses without its memory"
+    recs = [record for per_unit in held["cache_records"].values() for record in per_unit]
+    assert _r42_7_all_recovered(recs) == [], "the torn pass withholds every heal"
+    for marker in markers:
+        assert marker.exists(), "the marker retains with its hold"
+    assert staging.read_text(encoding="utf-8") == torn_bytes, "damaged bytes preserved"
+    texts = [str(found.message) for found in seen]
+    assert any("torn heal ledger" in text for text in texts), texts
+    assert any(
+        "refuses without its memory" in text and "damaged bytes preserved" in text for text in texts
+    ), texts
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        again = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+    assert again["barrier_ok"] is False, "the retry refuses again (no forgiveness)"
+    assert staging.read_text(encoding="utf-8") == torn_bytes, "still preserved"
+    # The operator adjudicates the loss by deleting the torn file;
+    # the next pass proceeds on a fresh budget and the heals resume.
+    staging.unlink()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        resumed = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+    assert resumed["barrier_ok"] is True, "adjudication reopens the barrier"
+    recs3 = [record for per_unit in resumed["cache_records"].values() for record in per_unit]
+    assert _r42_7_all_recovered(recs3) != [], "the adjudicated retry heals"
+
+
+def test_r44_f8r5_collect_non_object_staging_holds_loudly(engaged: Path, tmp_path: Path) -> None:
+    """#88R44-F8r5: a non-object staging file is corruption, not an empty budget.
+
+    Codex R5 Critical repro 2: with staging holding ``[]`` (valid
+    JSON, wrong shape), collect silently healed both vacuous keys
+    and deleted both markers. A present-but-unshaped file cannot
+    establish an empty ledger budget: collect must withhold both
+    recoveries, retain both markers, preserve the bytes, and voice
+    the damage loudly -- the same treatment as torn bytes.
+    """
+    import warnings
+
+    keys = [_lost_key(_UUID_A, n) for n in (0, 1)]
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        engaged,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+        probes_lost=2,
+        lost_keys=keys,
+    )
+    _require_dead_producer(planted)
+    markers = [_r44_g10_vacuous_marker(engaged, seq=n, pid=pid, birth=birth) for n in (0, 1)]
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    staging.write_text("[]", encoding="utf-8")
+    child = _r42_7_prior(
+        tmp_path,
+        pid,
+        calls=1,
+        lost_keys=keys,
+        receipts=[
+            {"worker_uuid": _UUID_B, "probe_seq": 0},
+            {"worker_uuid": _UUID_B, "probe_seq": 1},
+        ],
+        name="f8r5-nonobject.jsonl",
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert _r42_7_all_recovered(records) == [], "the unshaped ledger withholds"
+    for marker in markers:
+        assert marker.exists(), "the marker retains with its hold"
+    assert staging.read_text(encoding="utf-8") == "[]", "damaged bytes preserved"
+    texts = [str(found.message) for found in seen]
+    assert any("is not an object" in text and "without a budget" in text for text in texts), texts
+
+
+def test_r44_f8r5_torn_staged_only_copy_refuses_without_prefix_recovery(
+    engaged: Path, tmp_path: Path
+) -> None:
+    """#88R44-F8r5: a torn staged-only copy refuses; no prefix recovery.
+
+    Codex R5 Critical repro 1: a barrier stages a partial and
+    consumes its source, so staging holds the only copy; truncating
+    mid-ledger leaves the complete ``cache_records`` object
+    recoverable from the prefix. The next barrier must NOT return
+    success with no records and unlink the only copy, and must NOT
+    get clever with prefix recovery either: it refuses without its
+    memory, preserves the damaged bytes, and holds again on retry.
+    Only the operator's adjudication (deleting the torn file once
+    its loss is adjudicated) reopens the barrier -- on a fresh
+    budget, with the consumed sources staying consumed (no
+    double-collect of the lost records).
+    """
+    import warnings
+
+    partial = {
+        "$report_type": "CallCountersPartial",
+        "worker_uuid": _UUID_A,
+        "run_id": _RUN,
+        "unit": "a.py",
+        "attempt": 0,
+        "counts": {"C_Digest": {"calls": 2, "by_rv": {"CKR_OK": 2}}},
+        "total_calls": 2,
+    }
+    staged = (
+        '{"cache_records": {"a.py": ['
+        + json.dumps(partial)
+        + ']}, "consumed": 1, "heal_ledger": [{"public'
+    )
+    engaged.mkdir(parents=True, exist_ok=True)
+    staging = engaged / durability.BARRIER_STAGING_FILENAME
+    staging.write_text(staged, encoding="utf-8")
+    prefix = staged[: staged.index('"heal_ledger"')]
+    assert json.loads(prefix + '"x": 0}')["cache_records"], "prefix premise: records intact"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        held = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+    assert held["barrier_ok"] is False, "the torn pass refuses without its memory"
+    assert held["cache_records"] == {}, "no prefix recovery, no records"
+    assert staging.read_text(encoding="utf-8") == staged, "the only copy is preserved"
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "refuses without its memory" in text and "damaged bytes preserved" in text for text in texts
+    ), texts
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        again = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+    assert again["barrier_ok"] is False, "the retry refuses again (no forgiveness)"
+    assert staging.read_text(encoding="utf-8") == staged, "still preserved"
+    # The operator adjudicates the loss; the barrier converges on a
+    # fresh budget without resurrecting the consumed records.
+    staging.unlink()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        resumed = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+    assert resumed["barrier_ok"] is True, "adjudication reopens the barrier"
+    assert resumed["cache_records"] == {}, "the lost records stay lost (no phantom)"
+
+
 def test_r44_g3r2_collect_vacuous_marker_heals_clean_ledger(
     engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -44164,6 +44832,274 @@ def test_r44_f3r3_clean_tail_partial_present_holds(tmp_path: Path) -> None:
     assert child.read_bytes() == before, "the held retry writes nothing"
     texts = [str(found.message) for found in seen]
     assert any("partially appended" in text for text in texts), texts
+
+
+def test_r44_f3r4_evolved_batch_holds_on_published_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F3r4: an evolved batch holds when its scope already published.
+
+    The R4 repro: a two-call partial lands with a final LF, the next
+    write faults, then the retained checkpoint advances to seven
+    calls. The retry must NOT append the seven-call batch (the
+    extractor folds first-wins per producer+scope, so the new counts
+    would shadow-delete while their checkpoint consumes): it holds
+    all consumption loudly until the report is reconciled.
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid_a, birth_a = _dead_pid_with_birth()
+    fix_a = _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid_a,
+        birth=birth_a,
+        in_progress=_counts_block(2, fn="C_Digest"),
+        lost_keys=[_lost_key(_UUID_B, 1)],
+        probes_lost=1,
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    real_open = open
+    writes = {"n": 0}
+
+    class _FailSecondWrite:
+        def __init__(self, fh: Any) -> None:
+            self._fh = fh
+
+        def write(self, data: str) -> int:
+            writes["n"] += 1
+            if writes["n"] == 2:
+                raise OSError("simulated mid-append failure")
+            return self._fh.write(data)
+
+        def __enter__(self) -> _FailSecondWrite:
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self._fh.__exit__(*exc)
+
+    def _fail_once(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        fh = real_open(file, mode, *args, **kwargs)
+        if str(file) == str(child) and "a" in str(mode) and writes["n"] == 0:
+            return _FailSecondWrite(fh)
+        return fh
+
+    monkeypatch.setattr(durability, "open", _fail_once, raising=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        durability.collect_unit(root, unit="a.py", child_jsonl=child, status="passed", returncode=0)
+    assert Path(fix_a["sidecar"]).exists(), "the uncertain producer retains (premise)"
+    assert len(child.read_bytes().splitlines()) == 2, "one partial record landed (premise)"
+    sidecar = json.loads(Path(fix_a["sidecar"]).read_text(encoding="utf-8"))
+    sidecar["in_progress"] = _counts_block(7, fn="C_Digest")
+    Path(fix_a["sidecar"]).write_text(json.dumps(sidecar), encoding="utf-8")
+    monkeypatch.setattr(durability, "open", real_open, raising=False)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert records == [], "the evolved retry publishes nothing"
+    assert Path(fix_a["sidecar"]).exists(), "the advanced checkpoint is not consumed"
+    assert len(child.read_bytes().splitlines()) == 2, "the evolved batch never appends"
+    texts = [str(found.message) for found in seen]
+    assert any("already-published version" in text and "first-wins" in text for text in texts), (
+        texts
+    )
+
+
+def test_r44_f3r5_shadowed_exact_retry_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F3r5: exact presence still holds when an earlier version won.
+
+    A child holding a two-call partial followed by its seven-call
+    evolution, retried with the seven-call batch: every wanted
+    digest is present, but the earlier two-call version folds
+    first-wins -- consuming would authorize evidence whose counts
+    never fold. All bytes are production-generated (the seven-call
+    line is collected clean elsewhere, then arranged beside the
+    stale one to simulate the merged/legacy state).
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid_a, birth_a = _dead_pid_with_birth()
+    fix_a = _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid_a,
+        birth=birth_a,
+        in_progress=_counts_block(2, fn="C_Digest"),
+        lost_keys=[_lost_key(_UUID_B, 1)],
+        probes_lost=1,
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    real_open = open
+    writes = {"n": 0}
+
+    class _FailSecondWrite:
+        def __init__(self, fh: Any) -> None:
+            self._fh = fh
+
+        def write(self, data: str) -> int:
+            writes["n"] += 1
+            if writes["n"] == 2:
+                raise OSError("simulated mid-append failure")
+            return self._fh.write(data)
+
+        def __enter__(self) -> _FailSecondWrite:
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self._fh.__exit__(*exc)
+
+    def _fail_once(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        fh = real_open(file, mode, *args, **kwargs)
+        if str(file) == str(child) and "a" in str(mode) and writes["n"] == 0:
+            return _FailSecondWrite(fh)
+        return fh
+
+    monkeypatch.setattr(durability, "open", _fail_once, raising=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        durability.collect_unit(root, unit="a.py", child_jsonl=child, status="passed", returncode=0)
+    assert len(child.read_bytes().splitlines()) == 2, "one partial landed (premise)"
+    sidecar = json.loads(Path(fix_a["sidecar"]).read_text(encoding="utf-8"))
+    sidecar["in_progress"] = _counts_block(7, fn="C_Digest")
+    Path(fix_a["sidecar"]).write_text(json.dumps(sidecar), encoding="utf-8")
+    sidecar_seven = Path(fix_a["sidecar"]).read_bytes()
+    registry_seven = Path(fix_a["registry"]).read_bytes()
+    monkeypatch.setattr(durability, "open", real_open, raising=False)
+    # Collect the seven-call batch against a scratch child, then carry
+    # its lines beside the stale one (and restore the consumed
+    # evidence, simulating the merged/legacy co-occurrence).
+    scratch = base / "scratch.jsonl"
+    scratch.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        durability.collect_unit(
+            root, unit="a.py", child_jsonl=scratch, status="passed", returncode=0
+        )
+    carried = [
+        line
+        for line in scratch.read_bytes().splitlines()
+        if b"CallCountersPartial" in line or b"CallCountersLost" in line
+    ]
+    assert len(carried) == 2, "partial + lost collected (premise)"
+    with child.open("ab") as fh:
+        for line in carried:
+            fh.write(line + b"\n")
+    assert len(child.read_bytes().splitlines()) == 4, "both versions landed (premise)"
+    Path(fix_a["sidecar"]).write_bytes(sidecar_seven)
+    Path(fix_a["registry"]).write_bytes(registry_seven)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    assert records == [], "the shadowed retry publishes nothing"
+    assert Path(fix_a["sidecar"]).exists(), "shadowed evidence is not consumed"
+    assert len(child.read_bytes().splitlines()) == 4, "nothing appends"
+    texts = [str(found.message) for found in seen]
+    assert any("shadows this batch" in text and "first-wins" in text for text in texts), texts
+
+
+def test_r44_f3r5_implicit_run_scopes_conflict(tmp_path: Path) -> None:
+    """#88R44-F3r5: run-less records scope to the implicit run (no silent append).
+
+    Records without a run_id key (the direct-pytest shape) scope to
+    the extractor's implicit run -- two versions there compete
+    exactly like named runs, instead of sliding past the scope
+    check as unkeyable. All bytes are production-generated (run_id
+    stripped after collection).
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid_a, birth_a = _dead_pid_with_birth()
+    _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid_a,
+        birth=birth_a,
+        in_progress=_counts_block(2, fn="C_Digest"),
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records_two = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    partial_two = next(
+        rec for rec in records_two if rec.get("$report_type") == "CallCountersPartial"
+    )
+    partial_two = dict(partial_two)
+    del partial_two["run_id"]
+    child.write_text('{"n": 1}\n' + json.dumps(partial_two) + "\n", encoding="utf-8")
+    partial_seven = dict(partial_two)
+    block = _counts_block(7, fn="C_Digest")
+    partial_seven["total_calls"] = 7
+    partial_seven["by_module"] = block["by_module"]
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        result = durability._append_collected(child, [partial_seven])
+    assert result is None, "the implicit-run evolution holds"
+    assert len(child.read_bytes().splitlines()) == 2, "nothing appends"
+    texts = [str(found.message) for found in seen]
+    assert any("already-published version" in text for text in texts), texts
+
+
+def test_r44_f3r5_extractor_ignored_records_never_conflict(tmp_path: Path) -> None:
+    """#88R44-F3r5: records the extractor skips never block an append.
+
+    A landed partial missing total_calls is extractor-invisible, so
+    a valid same-scope batch appends cleanly instead of holding on
+    a version that folds nowhere.
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid_a, birth_a = _dead_pid_with_birth()
+    _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid_a,
+        birth=birth_a,
+        in_progress=_counts_block(7, fn="C_Digest"),
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    valid = next(rec for rec in records if rec.get("$report_type") == "CallCountersPartial")
+    malformed = dict(valid)
+    del malformed["total_calls"]
+    child.write_text('{"n": 1}\n' + json.dumps(malformed) + "\n", encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        result = durability._append_collected(child, [dict(valid)])
+    assert result is True, "the valid batch appends beside ignored bytes"
+    assert len(child.read_bytes().splitlines()) == 3, "the valid line lands"
+    texts = [str(found.message) for found in seen]
+    assert not any("already-published version" in text for text in texts), texts
 
 
 def test_r44_f3r3_hold_all_retry_never_duplicates(
@@ -44340,13 +45276,208 @@ def test_r44_f3r3_voice_hold_all_names_quarantined_originals(
         warnings.simplefilter("always")
         durability.collect_unit(root, unit="a.py", child_jsonl=child, status="passed", returncode=0)
     assert not tmp_a.exists() and not tmp_b.exists(), "the divergent tmps quarantine first"
+    landed = sorted(p.name for p in root.glob("probe-*.quarantined-*"))
+    assert len(landed) == 2, "both moves land"
     texts = [str(found.message) for found in seen]
     assert any(
         "everything retained" in text
         and "2 original names already moved to quarantine" in text
-        and tmp_a.name in text
-        and tmp_b.name in text
-        and ".quarantined- names" in text
+        and f"{tmp_a.name} → " in text
+        and f"{tmp_b.name} → " in text
+        and landed[0] in text
+        and landed[1] in text
+        for text in texts
+    ), texts
+
+
+def test_r44_f3r4_voice_hold_all_names_fallback_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F3r4-voice: the hold-all voice keeps the true pair under a fallback archive.
+
+    With the primary archive name occupied, the move lands on a
+    suffixed fallback: the voice must name the actual
+    (source → archive) pair, never a string-surgically reconstructed
+    original that never existed.
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid_a, birth_a = _dead_pid_with_birth()
+    _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid_a,
+        birth=birth_a,
+        in_progress=_counts_block(2, fn="C_Digest"),
+        lost_keys=[_lost_key(_UUID_B, 1)],
+        probes_lost=1,
+    )
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=_UUID_A,
+        child_uuid="c" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2], ["m", "C_Digest", None, 1]],
+        identity=None,
+        pid=pid_a,
+        birth=birth_a,
+    )
+
+    def _legacy(payload: dict[str, Any]) -> dict[str, Any]:
+        for stamp in ("parent_uuid", "run_id", "unit", "attempt", "role", "isolation"):
+            payload.pop(stamp, None)
+        return payload
+
+    tmp_a = _plant_probe_tmp(
+        probe,
+        _legacy(
+            _probe_tmp_payload("c" * 32, 0, [["m", "C_Digest", 9, 2], ["m", "C_Digest", 0, 1]])
+        ),
+        pid=1001,
+    )
+    tmp_b = _plant_probe_tmp(
+        probe,
+        _legacy(
+            _probe_tmp_payload("c" * 32, 0, [["m", "C_Digest", 9, 2], ["m", "C_Digest", 1, 1]])
+        ),
+        pid=1002,
+    )
+    occupant = probe.with_name(tmp_a.name.replace(".tmp-", ".quarantined-", 1))
+    occupant.write_text(
+        json.dumps(_probe_tmp_payload("d" * 32, 0, [["m", "C_Digest", 0, 1]])),
+        encoding="utf-8",
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    real_open = open
+    writes = {"n": 0}
+
+    class _FailSecondWrite:
+        def __init__(self, fh: Any) -> None:
+            self._fh = fh
+
+        def write(self, data: str) -> int:
+            writes["n"] += 1
+            if writes["n"] == 2:
+                raise OSError("simulated mid-append failure")
+            return self._fh.write(data)
+
+        def __enter__(self) -> _FailSecondWrite:
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self._fh.__exit__(*exc)
+
+    def _fail_once(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        fh = real_open(file, mode, *args, **kwargs)
+        if str(file) == str(child) and "a" in str(mode) and writes["n"] == 0:
+            return _FailSecondWrite(fh)
+        return fh
+
+    monkeypatch.setattr(durability, "open", _fail_once, raising=False)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.collect_unit(root, unit="a.py", child_jsonl=child, status="passed", returncode=0)
+    fallback = occupant.with_name(occupant.name + ".1")
+    assert fallback.exists(), "the occupied primary diverts to a suffixed fallback"
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "everything retained" in text
+        and f"{tmp_a.name} → {fallback.name}" in text
+        and f"{tmp_b.name} → " in text
+        for text in texts
+    ), texts
+    assert not any("tmp-1001.1" in text for text in texts), (
+        "no reconstructed original is ever named",
+        texts,
+    )
+
+
+def test_r44_f3r4_voice_hold_all_names_sidecar_tmp_pairs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F3r4-voice: the hold-all voice also names producer-tmp moves.
+
+    Divergent sidecar rewrite tmps quarantine during the first
+    producer's replay; a mid-batch append fault then holds all
+    consumption. The voice must name the sidecar tmp pairs too --
+    moved-original coverage is per-pass, not per-replay-kind.
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid_a, birth_a = _dead_pid_with_birth()
+    planted_a = _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid_a,
+        birth=birth_a,
+        in_progress=_entry_only_block(2),
+    )
+    block_a = _entry_only_block(2)
+    block_a["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "0": {"name": "CKR_OK", "count": 2}
+    }
+    block_b = _entry_only_block(2)
+    block_b["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "1": {"name": "CKR_CANCEL", "count": 2}
+    }
+    sidecar_a = Path(planted_a["sidecar"])
+    tmp_a = _plant_tmp(sidecar_a, _tmp_payload(_UUID_A, block_a, pid=pid_a), nonce="aaa")
+    tmp_b = _plant_tmp(sidecar_a, _tmp_payload(_UUID_A, block_b, pid=pid_a), nonce="bbb")
+    pid_b, birth_b = _dead_pid_with_birth()
+    _plant_producer(
+        root,
+        uuid=_UUID_B,
+        pid=pid_b,
+        birth=birth_b,
+        in_progress=_counts_block(2, fn="C_Digest"),
+    )
+    child = base / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    real_open = open
+    writes = {"n": 0}
+
+    class _FailSecondWrite:
+        def __init__(self, fh: Any) -> None:
+            self._fh = fh
+
+        def write(self, data: str) -> int:
+            writes["n"] += 1
+            if writes["n"] == 2:
+                raise OSError("simulated mid-batch failure")
+            return self._fh.write(data)
+
+        def __enter__(self) -> _FailSecondWrite:
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self._fh.__exit__(*exc)
+
+    def _fail_always(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        fh = real_open(file, mode, *args, **kwargs)
+        if str(file) == str(child) and "a" in str(mode):
+            return _FailSecondWrite(fh)
+        return fh
+
+    monkeypatch.setattr(durability, "open", _fail_always, raising=False)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        durability.collect_unit(root, unit="a.py", child_jsonl=child, status="passed", returncode=0)
+    assert not tmp_a.exists() and not tmp_b.exists(), "the divergent tmps quarantine first"
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "everything retained" in text
+        and "2 original names already moved to quarantine" in text
+        and f"{tmp_a.name} → " in text
+        and f"{tmp_b.name} → " in text
         for text in texts
     ), texts
 
@@ -54683,6 +55814,330 @@ def test_r44_ar3_ambiguous_covered_divergent_tmps_hold_before_quarantine(
     assert not any("divergent rewrites under marker coverage" in text for text in texts), texts
 
 
+def test_r44_ar4_ambiguity_survives_collider_retry(tmp_path: Path) -> None:
+    """#88R44-[A]r4: an ambiguous hold pins its colliders across retries.
+
+    The R4 repro: two colliding parents in different units, unit A's
+    checkpoint covering a legacy orphan. The first collect holds the
+    orphan -- and must retain A's registry as ambiguity evidence,
+    so the second collect (B's unit) still sees the collision and
+    holds again instead of folding the orphan into B as a false
+    unique match.
+    """
+    import warnings
+
+    from pkcs11_check.raw.rv import ckr_name
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    checkpoint = _counts_block(5, fn="C_Digest")
+    checkpoint["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "9": {"name": ckr_name(9), "count": 5}
+    }
+    planted_a = _plant_producer(
+        root,
+        uuid=first,
+        pid=pid,
+        birth=birth,
+        unit="a.py",
+        in_progress=checkpoint,
+        receipts=[{"worker_uuid": "e" * 32, "probe_seq": 0}],
+    )
+    _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, unit="b.py", in_progress=_counts_block(7)
+    )
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    raw = json.loads(probe.read_bytes())
+    raw["lost_keys"] = [_lost_key(_UUID_B, 1)]
+    probe.write_text(json.dumps(raw), encoding="utf-8")
+
+    def _child(name: str, nodeid: str) -> Path:
+        return _write_jsonl(
+            base / name,
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                {
+                    "$report_type": "TestReport",
+                    "nodeid": nodeid,
+                    "when": "setup",
+                    "outcome": "passed",
+                },
+            ],
+        )
+
+    with warnings.catch_warnings(record=True) as seen_a:
+        warnings.simplefilter("always")
+        records_a = durability.collect_unit(
+            root,
+            unit="a.py",
+            child_jsonl=_child("child-a.jsonl", "a.py::test_first"),
+            status="passed",
+            returncode=0,
+        )
+    assert probe.exists(), "the first collect holds the ambiguous probe"
+    assert Path(planted_a["registry"]).exists(), "A's registry pins as ambiguity evidence"
+    totals_a = sorted(rec["total_calls"] for rec in records_a if "total_calls" in rec)
+    assert totals_a == [5], "A converges without the orphan"
+    texts_a = [str(found.message) for found in seen_a]
+    assert any("ambiguous probe orphan" in text for text in texts_a), texts_a
+    assert any("retained as ambiguity evidence" in text for text in texts_a), texts_a
+    with warnings.catch_warnings(record=True) as seen_b:
+        warnings.simplefilter("always")
+        records_b = durability.collect_unit(
+            root,
+            unit="b.py",
+            child_jsonl=_child("child-b.jsonl", "b.py::test_second"),
+            status="passed",
+            returncode=0,
+        )
+    assert probe.exists(), "the retry still sees the collision and holds"
+    totals_b = sorted(rec["total_calls"] for rec in records_b if "total_calls" in rec)
+    assert totals_b == [7], "the orphan never folds into B as a false unique match"
+    texts_b = [str(found.message) for found in seen_b]
+    # B is not the collision reporter, so its hold is silent -- but its
+    # pin voice fires, naming the hold it preserves evidence for.
+    assert any("retained as ambiguity evidence" in text for text in texts_b), texts_b
+
+
+def test_r44_ar5_pinned_retry_emits_no_phantom_loss(tmp_path: Path) -> None:
+    """#88R44-[A]r5: a pinned registry-only retry emits nothing.
+
+    After both units' sidecars consume, a third collect on a fresh
+    child re-holds the orphan (both registries still known) -- and
+    must not emit a CallCountersLost for already-published evidence.
+    """
+    import warnings
+
+    from pkcs11_check.raw.rv import ckr_name
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    checkpoint = _counts_block(5, fn="C_Digest")
+    checkpoint["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "9": {"name": ckr_name(9), "count": 5}
+    }
+    planted_a = _plant_producer(
+        root,
+        uuid=first,
+        pid=pid,
+        birth=birth,
+        unit="a.py",
+        in_progress=checkpoint,
+        receipts=[{"worker_uuid": "e" * 32, "probe_seq": 0}],
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, unit="b.py", in_progress=_counts_block(7)
+    )
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    raw = json.loads(probe.read_bytes())
+    raw["lost_keys"] = [_lost_key(_UUID_B, 1)]
+    probe.write_text(json.dumps(raw), encoding="utf-8")
+
+    def _child(name: str, nodeid: str) -> Path:
+        return _write_jsonl(
+            base / name,
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                {
+                    "$report_type": "TestReport",
+                    "nodeid": nodeid,
+                    "when": "setup",
+                    "outcome": "passed",
+                },
+            ],
+        )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        durability.collect_unit(
+            root,
+            unit="a.py",
+            child_jsonl=_child("child-a.jsonl", "a.py::test_first"),
+            status="passed",
+            returncode=0,
+        )
+        durability.collect_unit(
+            root,
+            unit="b.py",
+            child_jsonl=_child("child-b.jsonl", "b.py::test_second"),
+            status="passed",
+            returncode=0,
+        )
+    assert Path(planted_a["registry"]).exists(), "A pinned (premise)"
+    assert Path(planted_b["registry"]).exists(), "B pinned (premise)"
+    assert not Path(planted_a["sidecar"]).exists(), "A sidecar consumed (premise)"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records_c = durability.collect_unit(
+            root,
+            unit="a.py",
+            child_jsonl=_child("child-c.jsonl", "a.py::test_third"),
+            status="passed",
+            returncode=0,
+        )
+    assert records_c == [], "the pinned retry emits no phantom loss"
+    assert probe.exists(), "the orphan still holds"
+    assert Path(planted_a["registry"]).exists(), "A stays pinned"
+    texts = [str(found.message) for found in seen]
+    assert any(
+        "registry-only and ambiguity-pinned" in text and "loss withheld" in text for text in texts
+    ), texts
+
+
+def test_r44_ar5_unpinned_registry_only_still_reports_loss(tmp_path: Path) -> None:
+    """#88R44-[A]r5 control: suppression is pin-gated, not blanket.
+
+    A registry-only producer with no ambiguity anywhere still emits
+    its lost record: only pinned (already-published) registries
+    withhold.
+    """
+    import warnings
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    planted = _plant_producer(
+        root,
+        uuid=_UUID_A,
+        pid=pid,
+        birth=birth,
+        in_progress=_counts_block(2, fn="C_Digest"),
+    )
+    Path(planted["sidecar"]).unlink()
+    child = _write_jsonl(
+        base / "child.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_first",
+                "when": "setup",
+                "outcome": "passed",
+            },
+        ],
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        records = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    kinds = [rec.get("$report_type") for rec in records]
+    assert "CallCountersLost" in kinds, "unpinned registry-only still reports loss"
+    texts = [str(found.message) for found in seen]
+    assert not any("ambiguity-pinned; loss withheld" in text for text in texts), texts
+
+
+def test_r44_ar5_sweep_honors_ambiguity_pins(tmp_path: Path) -> None:
+    """#88R44-[A]r5: pinned colliders ride retained_uuids past the resume sweep.
+
+    A barrier that holds ambiguously carries its pins on the plan,
+    so the resume-path sweep excludes the pinned registries instead
+    of reaping them (which would dissolve the ambiguity the hold
+    preserved).
+    """
+    import warnings
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pkcs11_check.core import file_runner as file_runner_mod
+    from pkcs11_check.core._run_units import FileRunState
+    from pkcs11_check.core.file_runner import _setup_counters_durability
+    from pkcs11_check.raw.rv import ckr_name
+
+    base = tmp_path
+    root = base / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    first = "a" * 31 + "0"
+    second = "a" * 31 + "1"
+    checkpoint = _counts_block(5, fn="C_Digest")
+    checkpoint["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+        "9": {"name": ckr_name(9), "count": 5}
+    }
+    planted_a = _plant_producer(
+        root,
+        uuid=first,
+        pid=pid,
+        birth=birth,
+        in_progress=checkpoint,
+        receipts=[{"worker_uuid": "e" * 32, "probe_seq": 0}],
+    )
+    planted_b = _plant_producer(
+        root, uuid=second, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=first,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        plan = durability.prepare_resume(root, prior_merged_jsonl=None)
+    assert plan["barrier_ok"] is True
+    assert probe.exists(), "the barrier holds the ambiguous probe"
+    assert first in plan["retained_uuids"], "A's pin rides the plan"
+    assert second in plan["retained_uuids"], "B's pin rides the plan"
+    saved_active = file_runner_mod._ACTIVE_COUNTERS_DIR
+    try:
+        state = FileRunState(units=["a.py"], fingerprint="fp", results=[], counters_dir=str(root))
+        env = {durability.COUNTERS_DIR_ENV: str(root)}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _setup_counters_durability(
+                tmp_path / "state.json",
+                state,
+                ["a.py"],
+                True,
+                None,
+                _RUN,
+                env,
+                None,
+                Console(file=StringIO(), force_terminal=False),
+                barrier_plan=plan,
+            )
+    finally:
+        file_runner_mod._ACTIVE_COUNTERS_DIR = saved_active
+    assert Path(planted_a["registry"]).exists(), "the sweep spares pinned A"
+    assert Path(planted_b["registry"]).exists(), "the sweep spares pinned B"
+    assert probe.exists(), "the orphan still holds after the sweep"
+
+
 def test_r44_ar3_owned_divergent_tmps_voice_checkpoint_cover(tmp_path: Path) -> None:
     """#88R44-[A]r3: owned divergence under checkpoint cover voices its kind.
 
@@ -55337,7 +56792,11 @@ def test_r44_f7r2_version_hold_strips_spawn_with_orphan(tmp_path: Path) -> None:
     assert orphan.exists(), "the version-held orphan retains (premise)"
     assert spawn.exists(), "the held slot's launch record retains with it"
     texts = [str(found.message) for found in seen]
-    assert any("unproved probe version" in text for text in texts), texts
+    assert any(
+        "unproved probe version" in text
+        and "adding another attestation cannot clear this release's hold" in text
+        for text in texts
+    ), texts
 
 
 def test_r44_f7r2_version_hold_strips_all_bound_tmps(tmp_path: Path) -> None:
@@ -55766,15 +57225,17 @@ def test_r44_f5ar3_receiptless_dedup_changed_retains(engaged: Path, tmp_path: Pa
     assert any("deduplicated" in text and "retained" in text for text in texts), texts
 
 
-def test_r44_f5ar3_dedup_match_never_forces_tmps(engaged: Path, tmp_path: Path) -> None:
-    """#88R44-F5ar3: a deduplicated cleanup removes only the reverified baseline.
+def test_r44_f5r4_dedup_match_retains_baseline_beside_rewrite_stamped(
+    engaged: Path, tmp_path: Path
+) -> None:
+    """#88R44-F5r4: stamped variant of the baseline-anchor hold (reverses F5ar3).
 
-    Byte-identical baseline replayed beside a changed rewrite: the
-    baseline reverifies against the admission and consumes, but the
-    rewrite -- carrying rows no admission covers -- survives for file
-    collection instead of dying to forced cleanup.
+    Same shape as the receipt-less anchor test but through the
+    receipted validated arm: the duplicate baseline retains as its
+    rewrite's replay anchor instead of consuming beside it.
     """
     import hashlib
+    import warnings
 
     from pkcs11_check.testcases._probes.runner import ingest_probe_payload
 
@@ -55800,16 +57261,29 @@ def test_r44_f5ar3_dedup_match_never_forces_tmps(engaged: Path, tmp_path: Path) 
     rewrite.write_text(
         json.dumps(_tmp_payload(_UUID_B, _counts_block(7, fn="C_Digest"))), encoding="utf-8"
     )
-    assert ingest_probe_payload(cov, seq=seq, sidecar_path=file2) == "folded"
-    assert not file2.exists(), "the reverified duplicate consumes"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        assert ingest_probe_payload(cov, seq=seq, sidecar_path=file2) == "folded"
+    assert file2.exists(), "the baseline stays as the rewrite's replay anchor"
     assert rewrite.exists(), "the unadmitted rewrite survives for file collection"
+    texts = [str(found.message) for found in seen]
+    assert any("replay anchor" in text for text in texts), texts
 
 
-def test_r44_f5ar3_receiptless_dedup_match_consumes_baseline_only(
+def test_r44_f5r4_dedup_match_retains_baseline_beside_rewrite(
     engaged: Path, tmp_path: Path
 ) -> None:
-    """#88R44-F5ar3: receipt-less dedup-match consumes the baseline, keeps tmps."""
+    """#88R44-F5r4: a dedup-match baseline stays as its rewrite's replay anchor.
+
+    Reverses the F5ar3 baseline-only deletion: consuming the
+    baseline while a changed rewrite sits beside it strands the
+    rewrite (replay lists tmps per baseline, so a baseless rewrite
+    is invisible -- collect and resume neither recover nor name
+    it). The baseline retains as the anchor while any rewrite
+    remains undecided; file collection adjudicates the set.
+    """
     import hashlib
+    import warnings
 
     from pkcs11_check.testcases._probes.runner import ingest_probe_payload
 
@@ -55833,6 +57307,123 @@ def test_r44_f5ar3_receiptless_dedup_match_consumes_baseline_only(
     rewrite.write_text(
         json.dumps(_tmp_payload(_UUID_B, _counts_block(7, fn="C_Digest"))), encoding="utf-8"
     )
-    assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "folded"
-    assert not sidecar.exists(), "the reverified duplicate consumes"
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        assert ingest_probe_payload(cov, seq=seq, sidecar_path=sidecar) == "folded"
+    assert sidecar.exists(), "the baseline stays as the rewrite's replay anchor"
     assert rewrite.exists(), "the unadmitted rewrite survives for file collection"
+    texts = [str(found.message) for found in seen]
+    assert any("replay anchor" in text for text in texts), texts
+
+
+def test_r44_f5r4_retire_rechecks_admitted_digest(
+    engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F5r4: retirement re-checks bytes, not just the receipt.
+
+    Seven calls swapped in under the same receipt after the dedup
+    hash check: the commit-time re-verification must compare the
+    actual admitted digest, so the unadmitted replacement retains
+    instead of deleting under a receipt-only pass.
+    """
+    import hashlib
+    import warnings
+
+    import pkcs11_check.testcases._probes.runner as runner_mod
+    from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+    seq = call_counters.assign_probe_seq()
+    v1 = {
+        "worker_uuid": _UUID_B,
+        "probe_seq": seq,
+        "counters": [["m", "C_Digest", 0, 1]],
+    }
+    file1 = tmp_path / "probe-1.json"
+    file1.write_text(json.dumps(v1), encoding="utf-8")
+    cov = tmp_path / "cov.json"
+    payload1 = _coverage_payload(
+        [["m", "C_Digest", 0, 1]], receipt={"worker_uuid": _UUID_B, "probe_seq": seq}
+    )
+    payload1["sidecar_digest"] = hashlib.sha256(file1.read_bytes()).hexdigest()
+    cov.write_text(json.dumps(payload1), encoding="utf-8")
+    assert ingest_probe_payload(cov, seq=seq, sidecar_path=file1) == "folded"
+    assert not file1.exists(), "the admitted version consumes (premise)"
+    admitted_counts = call_counters.flatten_current()
+    file2 = tmp_path / "probe-2.json"
+    file2.write_text(json.dumps(v1), encoding="utf-8")
+    v2 = {
+        "worker_uuid": _UUID_B,
+        "probe_seq": seq,
+        "counters": [["m", "C_Digest", 0, 7]],
+    }
+    armed = {"swap": True}
+    real_owned = runner_mod._commit_sidecar_owned
+
+    def _swap_then_check(path: Any, expected: Any, absorbed: Any = None) -> bool:
+        if armed["swap"] and str(path) == str(file2):
+            armed["swap"] = False
+            file2.write_text(json.dumps(v2), encoding="utf-8")
+        return real_owned(path, expected, absorbed)
+
+    monkeypatch.setattr(runner_mod, "_commit_sidecar_owned", _swap_then_check)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        assert ingest_probe_payload(cov, seq=seq, sidecar_path=file2) == "folded"
+    assert file2.exists(), "the swapped replacement retains"
+    assert json.loads(file2.read_text(encoding="utf-8"))["counters"] == [["m", "C_Digest", 0, 7]]
+    assert call_counters.flatten_current() == admitted_counts, (
+        "the parent keeps its one admitted call"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("does not match its admitted version" in text for text in texts), texts
+
+
+def test_r44_f5r4_fallback_honors_dedup_rejection(engaged: Path, tmp_path: Path) -> None:
+    """#88R44-F5r4: the torn-coverage fallback honors a dedup rejection.
+
+    Seven-call sidecar under an already-admitted receipt with torn
+    exit coverage: dedup rejects the ingest (the parent holds one
+    call), so the fallback must retain the sidecar for file
+    collection instead of committing it away -- and report folded
+    (no phantom loss for parent-held counts).
+    """
+    import hashlib
+    import warnings
+
+    from pkcs11_check.testcases._probes.runner import ingest_probe_payload
+
+    seq = call_counters.assign_probe_seq()
+    v1 = {
+        "worker_uuid": _UUID_B,
+        "probe_seq": seq,
+        "counters": [["m", "C_Digest", 0, 1]],
+    }
+    file1 = tmp_path / "probe-1.json"
+    file1.write_text(json.dumps(v1), encoding="utf-8")
+    cov = tmp_path / "cov.json"
+    payload1 = _coverage_payload(
+        [["m", "C_Digest", 0, 1]], receipt={"worker_uuid": _UUID_B, "probe_seq": seq}
+    )
+    payload1["sidecar_digest"] = hashlib.sha256(file1.read_bytes()).hexdigest()
+    cov.write_text(json.dumps(payload1), encoding="utf-8")
+    assert ingest_probe_payload(cov, seq=seq, sidecar_path=file1) == "folded"
+    assert not file1.exists(), "the admitted version consumes (premise)"
+    admitted_counts = call_counters.flatten_current()
+    v2 = {
+        "worker_uuid": _UUID_B,
+        "probe_seq": seq,
+        "counters": [["m", "C_Digest", 0, 7]],
+    }
+    file2 = tmp_path / "probe-2.json"
+    file2.write_text(json.dumps(v2), encoding="utf-8")
+    torn = tmp_path / "cov-torn.json"
+    torn.write_bytes(b"{torn")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        assert ingest_probe_payload(torn, seq=seq, sidecar_path=file2) == "folded"
+    assert file2.exists(), "the dedup-rejected sidecar retains for collection"
+    assert call_counters.flatten_current() == admitted_counts, (
+        "the parent keeps its one admitted call"
+    )
+    texts = [str(found.message) for found in seen]
+    assert any("deduplicated without a matching admission" in text for text in texts), texts

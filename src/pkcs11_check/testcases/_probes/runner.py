@@ -257,21 +257,58 @@ def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool
 def _retire_dedup_baseline(sidecar: str | None, expected: tuple[str, int]) -> None:
     """Delete a deduplicated baseline reverified against its admission (#88R44-F5ar3).
 
-    Baseline only, no tmp handling at all: rewrites beside it carry
-    rows no admission covers, so each needs its own proof (file
-    collection adjudicates them with replay plus gates) instead of
-    dying to forced cleanup -- or even to the shared prune, whose
-    content rules assume post-reunion accounting that live ingest
-    never ran. The receipt re-checks against a fresh read, so a swap
-    between verification and delete still retains.
+    Baseline only, and only when no rewrite tmp sits beside it:
+    rewrites carry rows no admission covers, and replay lists tmps
+    per baseline -- deleting the baseline would strand them
+    invisible (collect and resume would neither recover nor name
+    them), so the baseline stays as their replay anchor while any
+    rewrite remains undecided, and file collection adjudicates the
+    set (#88R44-F5r4). The admitted DIGEST re-verifies immediately
+    before the unlink (not just the receipt at the ownership
+    check), so a swap any time after the dedup check still
+    retains. Check order is ownership, anchor, digest, unlink --
+    adjacent, narrowest window last. Residual: POSIX offers no
+    atomic conditional unlink, so a same-path writer racing the
+    final verify-to-unlink gap could still swap under it; no such
+    writer exists in the writer model (single-threaded ingest, dead
+    child), and any observed swap retains. Never raises.
     """
     if sidecar is None:
         return
-    if _commit_sidecar_owned(sidecar, expected):
-        try:
-            os.unlink(sidecar)
-        except OSError:
-            pass
+    if not _commit_sidecar_owned(sidecar, expected):
+        return
+    parent = os.path.dirname(sidecar) or "."
+    try:
+        names = os.listdir(parent)
+    except OSError:
+        warnings.warn(
+            f"probe sidecar {sidecar} rewrite listing failed (I/O fault); retained as "
+            "their replay anchor for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+    prefix = os.path.basename(sidecar) + ".tmp-"
+    if any(name.startswith(prefix) for name in names):
+        warnings.warn(
+            f"probe sidecar {sidecar} has undecided rewrite tmps; retained as their "
+            "replay anchor for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+    if not _sidecar_matches_admission(sidecar, expected):
+        warnings.warn(
+            f"probe sidecar {sidecar} does not match its admitted version (swapped or "
+            "evolved since the dedup check); retained for file collection",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+    try:
+        os.unlink(sidecar)
+    except OSError:
+        pass
 
 
 def _legacy_subsumption_proof(
@@ -800,7 +837,14 @@ def ingest_probe_payload(
             # no checkpoint ever carries absorbed counts without their
             # anti-double-fold proof (codex RC4-R1-2; a post-ingest
             # note would leave a death window after the K auto-flush).
-            ingest_child_evidence(
+            # The admission result gates the commit (#88R44-F5r4): a
+            # deduplicated fallback absorbed nothing, so committing
+            # would delete evidence the parent never took. A
+            # byte-identical duplicate retires like the receipted
+            # path; anything else retains for file collection (and
+            # reports folded -- the counts sit in the parent, so no
+            # phantom loss is noted for them).
+            admitted = ingest_child_evidence(
                 list(fallback_counters),
                 fallback.get("probes_lost", 0),
                 (),
@@ -808,6 +852,17 @@ def ingest_probe_payload(
                 source=source,
                 consumed_probe=validated_fallback,
             )
+            if not admitted:
+                if _sidecar_matches_admission(sidecar, validated_fallback):
+                    _retire_dedup_baseline(sidecar, validated_fallback)
+                else:
+                    warnings.warn(
+                        f"probe ingest for {validated_fallback} deduplicated without a "
+                        "matching admission; evidence retained for file collection",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                return "folded"
             _commit_probe_sidecar(sidecar, expected=validated_fallback)
             return "partial"
     if sidecar is not None and not _fallback_body_is_debris(fallback):

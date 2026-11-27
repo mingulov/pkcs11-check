@@ -23,6 +23,10 @@ report.jsonl.lock
 quality.json.lock
 coverage.json.lock
 provisioning.json.lock
+# Barrier-lock guards beside repo-root-relative test counters dirs (nonce
+# names cannot be enumerated; never tracked).
+*.counters.lock
+*.counters.*.lock
 .worktrees/
 .superpowers/
 *.report-records/
