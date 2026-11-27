@@ -21,6 +21,7 @@ writes them); shared keys keep their single home in ``_plugin_state``.
 
 from __future__ import annotations
 
+import json
 import os
 import warnings
 from typing import Any
@@ -28,7 +29,13 @@ from typing import Any
 import pytest
 
 from pkcs11_check._plugin_state import _is_testcase_item
-from pkcs11_check.core._counters_durability import durability_dir, reject_reserved_run_id
+from pkcs11_check.core._counters_durability import (
+    ATTESTATIONS_FILE_PREFIX,
+    ATTESTATIONS_FILE_SUFFIX,
+    _publication_digest,
+    durability_dir,
+    reject_reserved_run_id,
+)
 from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_PROPERTY,
     CALL_COUNTERS_REPORT_TYPE,
@@ -41,6 +48,7 @@ from pkcs11_check.core.call_counters import (
     current_receipts,
     diff_snapshots,
     flush_counters,
+    folded_probe_digests,
     get_worker_uuid,
     lost_probe_keys,
     pending_marker,
@@ -49,6 +57,7 @@ from pkcs11_check.core.call_counters import (
     serialize_current,
     take_snapshot,
 )
+from pkcs11_check.core.counters_schema import is_worker_uuid
 
 _BASELINE_KEY: pytest.StashKey[Snapshot] = pytest.StashKey()
 _ENTRY_KEY: pytest.StashKey[dict[str, Any]] = pytest.StashKey()
@@ -257,6 +266,49 @@ def build_session_record() -> dict[str, Any]:
     return record
 
 
+def _emit_probe_attestation(record: dict[str, Any]) -> None:
+    """Append one probe attestation record for the emitted session (#88R44-G7).
+
+    Best-effort, warns loudly on failure (never breaks session end):
+    the admitted folded-probe digests, keyed by the session's
+    publication digest, so a later recordless retry can prove exact
+    targets against a replacement publication. Skipped silently when
+    no digests were admitted (nothing to attest) or durability is
+    disengaged (no recordless scope). Never raises.
+    """
+    try:
+        digests = folded_probe_digests()
+        if not digests:
+            return
+        counters_dir = durability_dir()
+        if counters_dir is None:
+            return
+        publication = _publication_digest(record)
+        worker = record.get("worker_uuid")
+        if publication is None or not is_worker_uuid(worker):
+            warnings.warn(
+                "call-counter attestation skipped: session unattributable",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        assert isinstance(worker, str)
+        payload = {
+            "run_id": record.get("run_id", ""),
+            "worker_uuid": worker,
+            "publication": publication,
+            "attestations": [
+                {"worker_uuid": child, "probe_seq": seq, "digest": digest}
+                for (child, seq), digest in sorted(digests.items())
+            ],
+        }
+        path = counters_dir / f"{ATTESTATIONS_FILE_PREFIX}{worker}{ATTESTATIONS_FILE_SUFFIX}"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except (OSError, TypeError, ValueError) as exc:
+        warnings.warn(f"call-counter attestation write failed: {exc}", UserWarning, stacklevel=2)
+
+
 def emit_session_record(config: pytest.Config) -> None:
     """Write one CallCountersReport record via the report-log plugin when present.
 
@@ -270,4 +322,6 @@ def emit_session_record(config: pytest.Config) -> None:
         warnings.warn(f"call-counter session flush failed: {exc}", UserWarning, stacklevel=2)
     report_log_plugin = getattr(config, "_report_log_plugin", None)
     if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
-        report_log_plugin._write_json_data(build_session_record())
+        record = build_session_record()
+        report_log_plugin._write_json_data(record)
+        _emit_probe_attestation(record)

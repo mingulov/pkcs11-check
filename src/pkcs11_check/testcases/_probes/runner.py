@@ -46,6 +46,7 @@ from pkcs11_check.core._counters_durability import (
     PROBE_UNIT_ENV,
     CounterPersistenceError,
     _DeferProducerError,
+    _is_sha256_hex,
     _prune_sidecar_tmps,
     _replay_probe_tmp_rows,
     _snapshot_covered_by,
@@ -62,6 +63,7 @@ from pkcs11_check.core.call_counters import (
     forget_probe_spawn,
     get_worker_uuid,
     ingest_child_evidence,
+    note_folded_probe_digest,
     note_lost_probe,
     note_probe_spawned,
     registration_info,
@@ -508,6 +510,30 @@ def _fallback_identity_clash(
     return None
 
 
+def _admit_folded_probe_digest(data: Any, validated: tuple[str, int]) -> None:
+    """Admit one folded probe's sidecar digest for attestation (#88R44-G7).
+
+    Called on the folded paths only, after the receipt validated and
+    only when the counters transaction applied (the caller gates on
+    the ingest's admitted flag (#88R44-F5): a deduplicated re-ingest
+    admits nothing, so proof never advances past counts). The digest
+    attests the exact sidecar bytes the exit coverage was written
+    against, keyed by the validated receipt. Absent (legacy coverage)
+    or malformed digests admit nothing, silently: hostile payload
+    values stay silent on the ingest path by design (add_lost_probes
+    precedent); a systematically missing digest surfaces loudly at
+    the veto as an unproved replacement hold instead. Never raises.
+    """
+    if not isinstance(data, dict):
+        return
+    digest = data.get("sidecar_digest")
+    if digest is None:
+        return
+    if not _is_sha256_hex(digest):
+        return
+    note_folded_probe_digest(child_uuid=validated[0], probe_seq=validated[1], digest=digest)
+
+
 def ingest_probe_payload(
     cov_path: str | Path,
     *,
@@ -585,6 +611,8 @@ def ingest_probe_payload(
                 source=source,
                 consumed_probe=proved_receipt,
             )
+            if proved_receipt is not None:
+                _admit_folded_probe_digest(data, proved_receipt)
             absorbed_keys = frozenset((key["parent_uuid"], key["probe_seq"]) for key in extra_keys)
             # Exit coverage subsumes every mid-run tmp (#88R3).
             _commit_probe_sidecar(
@@ -600,13 +628,18 @@ def ingest_probe_payload(
                     list(data["receipts"]) if isinstance(data.get("receipts"), list) else []
                 )
                 propagated.append({"worker_uuid": validated[0], "probe_seq": validated[1]})
-                ingest_child_evidence(
+                admitted = ingest_child_evidence(
                     list(counters),
                     data.get("probes_lost", 0),
                     propagated,
                     lost_keys=data.get("lost_keys", ()),
                     source=source,
                 )
+                # Admit the digest only when the counters transaction
+                # applied (#88R44-F5): a deduplicated re-ingest must
+                # not advance attestation past the counts it skipped.
+                if admitted:
+                    _admit_folded_probe_digest(data, validated)
                 # Exit coverage subsumes every mid-run tmp (#88R3).
                 _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
                 return "folded"
@@ -649,6 +682,12 @@ def ingest_probe_payload(
                 # garbage is warned inside the replay; live ingest has
                 # no receipt flags (it never heals), so the flag reads
                 # here only to keep the 3-tuple unpack aligned.
+                # Containment anchors the engaged counters dir (authoritative),
+                # never the sidecar's own parent: the sidecar path rides the
+                # child payload, so deriving root from it would be
+                # self-justifying (#88R44-F1b). The parent fallback covers
+                # durability-off unit shapes only.
+                quarantine_root = durability_dir() or Path(sidecar).parent
                 fallback_counters, _divergent, _refused_garbage = _replay_probe_tmp_rows(
                     Path(sidecar),
                     validated_fallback[0],
@@ -660,6 +699,7 @@ def ingest_probe_payload(
                     orphan_pid=fallback.get("pid"),
                     orphan_birth=fallback.get("birth_token"),
                     producer_uuid=get_worker_uuid(),
+                    root=quarantine_root,
                 )
             except _DeferProducerError:
                 # An unreadable rewrite tmp is not a definitive miss:

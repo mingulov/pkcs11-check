@@ -153,7 +153,9 @@ def _write_raw_coverage() -> None:
     """
     flattened = flatten_current()
     keys = lost_probe_keys()
-    flush_probe_sidecar(flattened, lost_keys=keys or None, probes_lost=probes_lost())
+    sidecar_digest = flush_probe_sidecar(
+        flattened, lost_keys=keys or None, probes_lost=probes_lost()
+    )
     write_coverage(
         {},
         {},
@@ -162,6 +164,7 @@ def _write_raw_coverage() -> None:
         receipt=probe_coverage_receipt(),
         receipts=current_receipts() or None,
         lost_keys=keys or None,
+        sidecar_digest=sidecar_digest,
     )
 
 

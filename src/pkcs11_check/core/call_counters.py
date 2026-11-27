@@ -154,6 +154,11 @@ _receipts: set[tuple[str, int]] = set()
 #: flush landing between passes cannot fold into a retry whose counts
 #: first-wins already discarded (#88R22-4). Absorbs prune by seq.
 _spawned_children: list[dict[str, Any]] = []
+#: Admitted folded-probe sidecar digests ``{(child_uuid, probe_seq): sha256}``:
+#: the exact sidecar bytes each folded exit coverage was written against,
+#: attested by the session emitter (#88R44-G7). In-memory only (the emitter
+#: runs in the ingesting process); a crash before emission attests nothing.
+_folded_probe_digests: dict[tuple[str, int], str] = {}
 _probe_seq = 0
 _inprog_entry: Counter[tuple[str, str, str]] = Counter()
 _inprog_exit: Counter[tuple[str, str, str, int]] = Counter()
@@ -929,7 +934,7 @@ def ingest_child_evidence(
     lost_keys: Any = (),
     source: Any = None,
     consumed_probe: Any = None,
-) -> None:
+) -> bool:
     """Merge one child's evidence atomically: counts + losses + receipts.
 
     ``consumed_probe`` is a validated ``(child_uuid, probe_seq)`` pair
@@ -946,7 +951,11 @@ def ingest_child_evidence(
 
     ONE atomic transaction under the counters lock (validate counts,
     propagated losses, keys, and receipt inserts, apply, mark dirty):
-    checkpoints and flushes observe all-or-none. Garbage-tolerant per item
+    checkpoints and flushes observe all-or-none. Returns True when the
+    transaction applied, False when a repeated source dedups it away
+    (#88R44-F5: callers admit side effects -- attestation digests --
+    only on True, so a skipped re-ingest never advances proof past
+    counts). Garbage-tolerant per item
     (a hostile row, loss value, key, or receipt never breaks the ingest);
     an explicitly unknown ``bucket`` raises ValueError like
     ``counted_bucket``. Keyed losses union (idempotent); the scalar covers
@@ -982,7 +991,7 @@ def ingest_child_evidence(
         target = _resolve_bucket_locked(bucket)
         _ensure_registered_locked()
         if src is not None and src in _ingested_sources:
-            return
+            return False
         for module, fn, rv, count in parsed:
             _entry_counts[(module, target, fn)] += count
             if _registration is not None:
@@ -1018,6 +1027,7 @@ def ingest_child_evidence(
             except CounterPersistenceError:
                 _set_pending_locked("ingest")
                 raise
+        return True
 
 
 def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
@@ -1172,6 +1182,34 @@ def forget_probe_spawn(probe_seq: int) -> None:
         if len(kept) != len(_spawned_children):
             _spawned_children[:] = kept
             _dirty = True
+
+
+def note_folded_probe_digest(*, child_uuid: Any, probe_seq: Any, digest: Any) -> None:
+    """Record one folded probe's attested sidecar digest (#88R44-G7).
+
+    Called in the same transaction as the counters ingest, after the
+    receipt validated: the exact sidecar bytes the exit coverage was
+    written against, keyed by the validated receipt. The session
+    emitter attests these alongside the session publication.
+    Malformed arguments raise ``ValueError`` (fail fast: only
+    validated ingest calls).
+    """
+    if not is_worker_uuid(child_uuid):
+        raise ValueError(f"bad child_uuid for folded digest: {child_uuid!r}")
+    if not is_probe_seq(probe_seq):
+        raise ValueError(f"bad probe_seq for folded digest: {probe_seq!r}")
+    if not isinstance(digest, str) or not digest:
+        raise ValueError(f"bad digest for folded digest: {digest!r}")
+    assert isinstance(child_uuid, str) and isinstance(probe_seq, int)
+    assert isinstance(digest, str)
+    with _lock:
+        _folded_probe_digests[(child_uuid, probe_seq)] = digest
+
+
+def folded_probe_digests() -> dict[tuple[str, int], str]:
+    """Snapshot the admitted folded-probe digests (emitter reads once)."""
+    with _lock:
+        return dict(_folded_probe_digests)
 
 
 def add_lost_probes(n: Any) -> None:
@@ -1342,6 +1380,7 @@ def reset_for_tests() -> None:
         _unkeyed_lost = 0
         _ingested_sources.clear()
         _spawned_children.clear()
+        _folded_probe_digests.clear()
         _persistence_pending = None
         _worker_uuid = None
         _worker_uuid_pid = None
