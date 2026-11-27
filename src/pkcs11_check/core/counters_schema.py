@@ -183,20 +183,36 @@ def _is_decimal_rv_key(value: object) -> bool:
 
 
 def _is_hex_mech_key(value: object) -> bool:
-    """Whether ``value`` is a ``0x``-prefixed 1-8 digit hex mechanism key."""
-    if not isinstance(value, str) or len(value) < 3 or len(value) > 10:
+    """Whether ``value`` is a canonical hex mechanism key.
+
+    Lowercase ``0x`` + exactly 8 digits, or 9-16 digits without redundant
+    leading zeros (64-bit CK_ULONG ids need up to 16 digits on POSIX).
+    The writer emits ``0x%08x`` which always matches; any other spelling
+    is rejected so one mechanism cannot validate under two keys that
+    would merge as separate entries.
+    """
+    if not isinstance(value, str) or not value.startswith("0x"):
         return False
-    if not value.startswith(("0x", "0X")):
+    digits = value[2:]
+    if not digits or len(digits) > 16:
         return False
-    return all(char in "0123456789abcdefABCDEF" for char in value[2:])
+    if any(char not in "0123456789abcdef" for char in digits):
+        return False
+    if len(digits) == 8:
+        return True
+    if len(digits) < 8:
+        return False
+    return digits[0] != "0"
 
 
-def _by_mechanism_valid(by_mech: object, fn_calls: int) -> bool:
+def _by_mechanism_valid(by_mech: object, fn_calls: int, fn_by_rv: Mapping[str, Any]) -> bool:
     """Whether a ``by_mechanism`` block is well-formed (0.3.2, #87 item 1).
 
     Hex mechanism keys map to ``{name, calls, by_rv}`` mirroring the fn
     block; mech calls sum at or below the fn calls (unattributed calls are
-    simply absent) and each mech ``by_rv`` obeys the same never-above rule.
+    simply absent), each mech ``by_rv`` obeys the same never-above rule,
+    and every mech RV row must fit inside the fn's own row for that code
+    (a refusal the function never returned fails the block closed).
     """
     if not isinstance(by_mech, dict):
         return False
@@ -223,6 +239,15 @@ def _by_mechanism_valid(by_mech: object, fn_calls: int) -> bool:
             if not _is_nonneg_int(count):
                 return False
             assert isinstance(count, int)
+            fn_row = fn_by_rv.get(rv_key)
+            if not isinstance(fn_row, dict):
+                return False
+            fn_count = fn_row.get("count")
+            if not _is_nonneg_int(fn_count):
+                return False
+            assert isinstance(fn_count, int)
+            if count > fn_count:
+                return False
             mech_rv_total += count
         if mech_rv_total > mech_calls:
             return False
@@ -281,7 +306,7 @@ def _buckets_valid(buckets: object, *, allowed: frozenset[str]) -> bool:
             if rv_total > fn_calls:
                 return False
             if "by_mechanism" in fn_block and not _by_mechanism_valid(
-                fn_block["by_mechanism"], fn_calls
+                fn_block["by_mechanism"], fn_calls, by_rv
             ):
                 return False
             fn_total += fn_calls
@@ -1016,7 +1041,7 @@ def _resolve_mech_name(first: str, second: str) -> str:
     return _resolve_rv_name(first, second)
 
 
-def _merge_by_mechanism(target_fn: dict[str, Any], fn_block: Mapping[str, Any]) -> None:
+def merge_by_mechanism(target_fn: dict[str, Any], fn_block: Mapping[str, Any]) -> None:
     """Union one fn block's ``by_mechanism`` into its target in place."""
     incoming = fn_block.get("by_mechanism")
     if not isinstance(incoming, dict):
@@ -1085,7 +1110,7 @@ def merge_module_first(target: dict[str, Any], incoming: Mapping[str, Any]) -> d
                     else:
                         existing["count"] += rv_block["count"]
                         existing["name"] = _resolve_rv_name(existing["name"], rv_block["name"])
-                _merge_by_mechanism(target_fn, fn_block)
+                merge_by_mechanism(target_fn, fn_block)
     return target
 
 

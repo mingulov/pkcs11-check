@@ -96,13 +96,15 @@ Module-first: `{total_calls, by_module{module: {calls, buckets}}}`.
 - `sum(by_rv) <= calls` per function: entry increments `calls`, exit adds the
   RV, so a call that never returns counts with no RV row.
 - Mechanism calls additionally carry `by_mechanism` under their fn block
-  (#87 item 1): hex keys (`0x` + 1-8 digits, emitted zero-padded to 8)
-  mapping to `{name, calls, by_rv}` mirroring the fn block. Keys come from
-  `ckm_name` (symbolic or hex fallback); only type ids are recorded, never
-  mechanism params. Unattributed calls (not a mechanism call, or an
-  unreadable struct) are simply absent, so mech calls sum at or below the
-  fn calls. Merge unions the sub-blocks (deterministic symbolic-preferred
-  names); canonicalization carries them sorted.
+  (#87 item 1): canonical hex keys (lowercase `0x` + exactly 8 digits, or
+  9-16 without redundant zeros for >32-bit POSIX ids) mapping to
+  `{name, calls, by_rv}` mirroring the fn block. Names come from `ckm_name`
+  (symbolic or hex fallback); only type ids are recorded, never mechanism
+  params. Unattributed calls (not a mechanism call, or an unreadable
+  struct) are simply absent, so mech calls sum at or below the fn calls,
+  and every mech RV row fits inside the fn's own row for that code.
+  Merge unions the sub-blocks (deterministic symbolic-preferred names);
+  canonicalization carries them sorted.
 - Invariant: `total_calls` equals the sum of the per-module `calls`, and
   each module's `calls` equals the sum of its buckets.
 - Legacy rc1 blocks (`{total_calls, buckets}`) still parse: readers

@@ -961,40 +961,46 @@ def flatten_current() -> list[list[str | int | None]]:
         exit_mech: Counter[tuple[str, str, int, int]] = Counter()
         for (module, _bucket, fn, rv, mech), count in _exit_mech_counts.items():
             exit_mech[(module, fn, rv, mech)] += count
+    # Group mech pools once: per-group dicts drain in ascending mech-id
+    # order, so attribution is deterministic and linear in the rows.
+    exit_pool: dict[tuple[str, str, int], dict[int, int]] = {}
+    for (module, fn, rv, mech), count in exit_mech.items():
+        if count > 0:
+            group = exit_pool.setdefault((module, fn, rv), {})
+            group[mech] = group.get(mech, 0) + count
+    entry_pool: dict[tuple[str, str], dict[int, int]] = {}
+    for (module, fn, mech), calls in entry_mech.items():
+        if calls > 0:
+            group = entry_pool.setdefault((module, fn), {})
+            group[mech] = group.get(mech, 0) + calls
     typed: list[tuple[str, str, int | None, int, int | None]] = []
     # Paired halves share their mechanism (record_* contract), so a returned
     # call's mech is known exactly from its exit row; deduct it from the
     # entry pool so unreturned rows cannot inherit a returned call's mech.
-    returned_mech: Counter[tuple[str, str, int]] = Counter()
     for (module, fn, rv), count in exits.items():
         remaining = count
-        for (emod, efn, erv, emech), mcount in sorted(exit_mech.items()):
-            if (emod, efn, erv) != (module, fn, rv):
-                continue
-            use = min(mcount, remaining)
+        for mech in sorted(exit_pool.get((module, fn, rv), {})):
+            use = min(exit_pool[(module, fn, rv)][mech], remaining)
             if use <= 0:
                 continue
-            typed.append((module, fn, rv, use, emech))
-            exit_mech[(emod, efn, erv, emech)] -= use
-            returned_mech[(module, fn, emech)] += use
+            typed.append((module, fn, rv, use, mech))
+            exit_pool[(module, fn, rv)][mech] -= use
+            entry_group = entry_pool.setdefault((module, fn), {})
+            entry_group[mech] = entry_group.get(mech, 0) - use
             remaining -= use
         if remaining > 0:
             typed.append((module, fn, rv, remaining, None))
         entries[(module, fn)] -= count
-    for key, used in returned_mech.items():
-        entry_mech[key] -= used
     for (module, fn), unreturned in entries.items():
         if unreturned <= 0:
             continue
         remaining = unreturned
-        for (emod, efn, emech), mcount in sorted(entry_mech.items()):
-            if (emod, efn) != (module, fn):
-                continue
-            use = min(mcount, remaining)
+        for mech in sorted(entry_pool.get((module, fn), {})):
+            use = min(entry_pool[(module, fn)][mech], remaining)
             if use <= 0:
                 continue
-            typed.append((module, fn, None, use, emech))
-            entry_mech[(emod, efn, emech)] -= use
+            typed.append((module, fn, None, use, mech))
+            entry_pool[(module, fn)][mech] -= use
             remaining -= use
         if remaining > 0:
             typed.append((module, fn, None, remaining, None))

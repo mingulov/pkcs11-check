@@ -143,6 +143,92 @@ def test_schema_accepts_valid_by_mechanism_and_rejects_malformed() -> None:
     assert schema.is_module_first_block(legacy) is True
 
 
+def test_schema_mech_rv_must_fit_inside_fn_rv() -> None:
+    """A refusal the function never returned fails the block closed."""
+    import copy
+
+    base = {
+        "total_calls": 1,
+        "by_module": {
+            "": {
+                "calls": 1,
+                "buckets": {
+                    "test": {
+                        "calls": 1,
+                        "by_fn": {
+                            "C_SignInit": {
+                                "calls": 1,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                "by_mechanism": {
+                                    RSA_PKCS_HEX: {
+                                        "name": "CKM_RSA_PKCS",
+                                        "calls": 1,
+                                        "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                    }
+                                },
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+    assert schema.is_module_first_block(base) is True
+
+    forged_rv = copy.deepcopy(base)
+    forged_rv["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"]["by_mechanism"][
+        RSA_PKCS_HEX
+    ]["by_rv"]["112"] = {"name": "CKR_MECHANISM_INVALID", "count": 1}
+    assert schema.is_module_first_block(forged_rv) is False
+
+    over_count = copy.deepcopy(base)
+    over_count["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"]["by_mechanism"][
+        RSA_PKCS_HEX
+    ]["by_rv"]["0"]["count"] = 2
+    assert schema.is_module_first_block(over_count) is False
+
+
+def test_schema_mech_key_rules() -> None:
+    """64-bit ids validate; uppercase spellings do not (merge-split)."""
+    import copy
+
+    base = {
+        "total_calls": 1,
+        "by_module": {
+            "": {
+                "calls": 1,
+                "buckets": {
+                    "test": {
+                        "calls": 1,
+                        "by_fn": {
+                            "C_SignInit": {
+                                "calls": 1,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                "by_mechanism": {},
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+
+    def with_mech(key: str) -> dict[str, Any]:
+        block = copy.deepcopy(base)
+        block["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"]["by_mechanism"] = {
+            key: {"name": "X", "calls": 1, "by_rv": {"0": {"name": "CKR_OK", "count": 1}}}
+        }
+        return block
+
+    assert schema.is_module_first_block(with_mech("0x00001082")) is True
+    assert schema.is_module_first_block(with_mech("0x1ffffffff")) is True
+    assert schema.is_module_first_block(with_mech("0x1082")) is False
+    assert schema.is_module_first_block(with_mech("0x000000001")) is False
+    assert schema.is_module_first_block(with_mech("0X00001082")) is False
+    assert schema.is_module_first_block(with_mech("0x0000108G")) is False
+    assert schema.is_module_first_block(with_mech("1082")) is False
+
+
 def test_merge_unions_by_mechanism_deterministically() -> None:
     left = {
         "total_calls": 1,
@@ -354,3 +440,184 @@ def test_extractor_folds_by_mechanism_into_output(tmp_path: Path) -> None:
     ][RSA_PKCS_HEX]
     assert mech["calls"] == 1
     assert mech["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
+
+
+def test_probe_rows_to_block_folds_five_element_rows() -> None:
+    """Crashed-probe recovery folds mech rows (not garbage) with detail."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    rows = [
+        ["m", "C_SignInit", 0, 2, RSA_PKCS],
+        ["m", "C_SignInit", None, 1, AES_CBC],
+        ["m", "C_Login", 0, 1],
+    ]
+    assert durability._probe_rows_garbage_count(rows) == 0
+    block = durability._probe_rows_to_block(rows)
+    assert block is not None
+    assert schema.is_module_first_block(block) is True
+    fn_block = block["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_SignInit"]
+    assert fn_block["calls"] == 3
+    assert fn_block["by_mechanism"][RSA_PKCS_HEX]["calls"] == 2
+    assert fn_block["by_mechanism"][RSA_PKCS_HEX]["by_rv"]["0"]["count"] == 2
+    assert fn_block["by_mechanism"][AES_CBC_HEX]["calls"] == 1
+    assert "C_Login" in block["by_module"]["m"]["buckets"]["test"]["by_fn"]
+    assert "by_mechanism" not in block["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Login"]
+
+
+def test_replay_tmp_returns_carries_by_mechanism() -> None:
+    """Newer tmp detail supersedes; absent detail never destroys committed."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    def leaf(calls: int, mech: dict[str, Any] | None) -> dict[str, Any]:
+        block: dict[str, Any] = {
+            "calls": calls,
+            "by_rv": {"0": {"name": "CKR_OK", "count": calls}},
+        }
+        if mech is not None:
+            block["by_mechanism"] = mech
+        return block
+
+    def sidecar(fn_block: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "in_progress": {
+                "total_calls": fn_block["calls"],
+                "by_module": {
+                    "": {
+                        "calls": fn_block["calls"],
+                        "buckets": {
+                            "test": {
+                                "calls": fn_block["calls"],
+                                "by_fn": {"C_SignInit": fn_block},
+                            }
+                        },
+                    }
+                },
+            },
+            "receipts": [],
+            "consumed_probes": [],
+        }
+
+    committed = sidecar(leaf(1, None))
+    tmp = sidecar(
+        leaf(
+            1,
+            {
+                RSA_PKCS_HEX: {
+                    "name": "CKM_RSA_PKCS",
+                    "calls": 1,
+                    "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                }
+            },
+        )
+    )
+    merged, _eligibility = durability._replay_tmp_returns(committed, tmp)
+    gained = merged["in_progress"]["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"][
+        "by_mechanism"
+    ][RSA_PKCS_HEX]
+    assert gained["calls"] == 1
+
+    # Reverse: tmp without detail keeps the committed detail, never wipes it.
+    merged2, _ = durability._replay_tmp_returns(tmp, committed)
+    kept = merged2["in_progress"]["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"][
+        "by_mechanism"
+    ][RSA_PKCS_HEX]
+    assert kept["calls"] == 1
+
+
+def test_rebucket_preserves_by_mechanism() -> None:
+    from pkcs11_check.core.preflight import rebucket_to_preflight
+
+    block = {
+        "total_calls": 2,
+        "by_module": {
+            "": {
+                "calls": 2,
+                "buckets": {
+                    "test": {
+                        "calls": 1,
+                        "by_fn": {
+                            "C_SignInit": {
+                                "calls": 1,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                "by_mechanism": {
+                                    RSA_PKCS_HEX: {
+                                        "name": "CKM_RSA_PKCS",
+                                        "calls": 1,
+                                        "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                    }
+                                },
+                            }
+                        },
+                    },
+                    "setup_teardown": {
+                        "calls": 1,
+                        "by_fn": {
+                            "C_SignInit": {
+                                "calls": 1,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                "by_mechanism": {
+                                    AES_CBC_HEX: {
+                                        "name": "CKM_AES_CBC",
+                                        "calls": 1,
+                                        "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                    }
+                                },
+                            }
+                        },
+                    },
+                },
+            }
+        },
+    }
+    uniform = rebucket_to_preflight(block)
+    assert uniform is not None
+    assert schema.is_module_first_block(uniform) is True
+    mech = uniform["by_module"][""]["buckets"]["preflight"]["by_fn"]["C_SignInit"]["by_mechanism"]
+    assert mech[RSA_PKCS_HEX]["calls"] == 1
+    assert mech[AES_CBC_HEX]["calls"] == 1
+
+
+def test_flatten_unreturned_mech_split_is_exact() -> None:
+    """Unreturned rows inherit leftover mechs, never returned ones."""
+    with call_counters.counted_bucket("test"):
+        call_counters.record_call("C_SignInit", mech=RSA_PKCS)
+        call_counters.record_return("C_SignInit", 0, mech=RSA_PKCS)
+        call_counters.record_call("C_SignInit", mech=AES_CBC)
+    flat = call_counters.flatten_current()
+    assert ["", "C_SignInit", 0, 1, RSA_PKCS] in flat
+    assert ["", "C_SignInit", None, 1, AES_CBC] in flat
+    call_counters.reset_for_tests()
+    with call_counters.counted_bucket("test"):
+        assert call_counters.ingest_child_evidence(flat) is True
+    snap = call_counters.serialize_current()
+    mech = snap["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"]["by_mechanism"]
+    assert mech[RSA_PKCS_HEX]["calls"] == 1
+    assert mech[RSA_PKCS_HEX]["by_rv"]["0"]["count"] == 1
+    assert mech[AES_CBC_HEX]["calls"] == 1
+    assert mech[AES_CBC_HEX]["by_rv"] == {}
+
+
+def test_entry_flush_failure_rolls_back_mech(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed entry flush unadmits the mech key with the plain key."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    root = tmp_path / "counters"
+    monkeypatch.setenv(durability.COUNTERS_DIR_ENV, str(root))
+    monkeypatch.setenv(durability.COUNTERS_UNIT_ENV, "a.py")
+    monkeypatch.setenv(durability.COUNTERS_ATTEMPT_ENV, "0")
+    monkeypatch.setenv(durability.COUNTERS_ROLE_ENV, "unit")
+    monkeypatch.setenv(call_counters.RUN_ID_ENV, "run-rollback")
+    monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "1")
+
+    def _broken_writer(path: Any, payload: Any) -> None:
+        raise durability.CounterPersistenceError("disk full")
+
+    monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+    with pytest.raises(durability.CounterPersistenceError):
+        with call_counters.counted_bucket("test"):
+            call_counters.record_call("C_SignInit", mech=RSA_PKCS)
+    snap = call_counters.serialize_current()
+    assert snap["total_calls"] == 0
+    assert snap["by_module"] == {}

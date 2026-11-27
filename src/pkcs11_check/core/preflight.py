@@ -57,6 +57,7 @@ from pkcs11_check.core.counters_schema import (
     is_preflight_synth_record,
     is_receipt,
     is_worker_uuid,
+    merge_by_mechanism,
 )
 from pkcs11_check.core.crash_codes import (
     crash_detail_name,
@@ -172,10 +173,11 @@ def rebucket_to_preflight(block: Any) -> dict[str, Any] | None:
 
     The child records under its natural buckets (loader traffic lands in
     ``module_init``, the census under the default phase); the parent
-    synthesizes one ``preflight`` bucket per module with merged functions
-    and RVs, zero-filling the other four buckets (uniform-five emission).
-    Totals, RV names, and the ``sum(by_rv) <= calls`` bound are
-    preserved exactly; garbage in yields None (never invented counts).
+    synthesizes one ``preflight`` bucket per module with merged functions,
+    RVs, and mechanisms, zero-filling the other four buckets (uniform-five
+    emission). Totals, RV/mechanism names, and the ``sum(by_rv) <= calls``
+    bound are preserved exactly; garbage in yields None (never invented
+    counts).
     """
     if not is_module_first_block(block):
         return None
@@ -192,6 +194,7 @@ def rebucket_to_preflight(block: Any) -> dict[str, Any] | None:
                 for rv, leaf in fn_block["by_rv"].items():
                     slot = target["by_rv"].setdefault(rv, {"name": leaf["name"], "count": 0})
                     slot["count"] += leaf["count"]
+                merge_by_mechanism(target, fn_block)
         by_module[module] = {
             "calls": calls,
             "buckets": ensure_five_buckets({"preflight": {"calls": calls, "by_fn": merged_by_fn}}),
