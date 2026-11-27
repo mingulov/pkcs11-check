@@ -1891,13 +1891,13 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 2481, characterization.total),
-        ("candidate_total", 1953, characterization.candidate_total),
+        ("total", 2482, characterization.total),
+        ("candidate_total", 1954, characterization.candidate_total),
         ("file_total", 261, characterization.file_total),
         (
             "statuses",
             (
-                ("explicit_mechanism_grouping", 789),
+                ("explicit_mechanism_grouping", 790),
                 ("explicit_mechanism_readback", 61),
                 ("non_readback", 528),
                 ("safe_mechanism_free_readback", 305),
@@ -1907,22 +1907,22 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "2252f9f3d2e75e24d80871294d2d22da94e14a8a245abeadac81e8c84371e517",
+            "54e7ef42f6cf33f7d69db853f9c86e098c0739625ec99278e184f27b64ba1bd6",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "54fea761624e0dc65a9b7433cf536c125b6d99c9be4848111970173ac51e6250",
+            "e26160d8f074b0cbbdc04bbe18d812cfc2952021c6737ca6244e1e40bfc0184a",
             characterization.candidate_digest,
         ),
         (
             "state_statuses",
             (
-                ("explicit_mechanism_grouping", 2146),
+                ("explicit_mechanism_grouping", 2147),
                 ("explicit_mechanism_readback", 357),
                 ("non_readback", 1721),
                 ("safe_mechanism_free_readback", 3320),
-                ("unresolved", 2975),
+                ("unresolved", 2980),
                 ("unsafe_inherited_readback", 22),
             ),
             characterization.state_statuses,
@@ -1936,7 +1936,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             "direct_emitter_census",
             (
                 ("assert_correct", 288),
-                ("classify", 599),
+                ("classify", 600),
                 ("fail_as", 492),
                 ("record_as", 494),
                 ("xfail_as", 398),
