@@ -64316,6 +64316,10 @@ def test_r44_ar38_archival_inventory_is_family_scoped(tmp_path: Path) -> None:
     the fresh inventory to the named family, requires ownership
     verification at action time, and keeps the family in place
     when ownership or completeness cannot be established.
+
+    #88R44-[A]r44 (Claude Q3 L8): per-voice negatives prove the
+    scoping -- each family's voice names its own probe and never
+    the other's -- instead of pinning the wording alone.
     """
     import warnings
 
@@ -64364,6 +64368,14 @@ def test_r44_ar38_archival_inventory_is_family_scoped(tmp_path: Path) -> None:
     assert any("ownership at action time" in text for text in texts), texts
     assert any("together with this family" in text for text in texts), texts
     assert any(probe_u.name in text for text in texts), texts
+    solo_voices = [text for text in texts if f"registry {solo}.json" in text]
+    other_voices = [text for text in texts if f"registry {other}.json" in text]
+    assert solo_voices, "solo's hold voice printed"
+    assert other_voices, "other's hold voice printed"
+    assert any(probe_u.name in text for text in solo_voices), solo_voices
+    assert not any(probe_x.name in text for text in solo_voices), solo_voices
+    assert any(probe_x.name in text for text in other_voices), other_voices
+    assert not any(probe_u.name in text for text in other_voices), other_voices
 
 
 def test_r44_ar37_archival_names_are_diagnostic_only(tmp_path: Path) -> None:
@@ -64513,6 +64525,10 @@ def test_r44_ar39_own_torn_member_fault_keeps_in_place(tmp_path: Path) -> None:
     machinery: a listing fault suppresses the archival list (no
     partial names) and keeps the family in place until the
     inventory can be listed. The hold itself is unaffected.
+
+    #88R44-[A]r44 (Claude Q3 M5): the fault exit names the
+    unreadable member and speaks the shared fix-and-rerun
+    vocabulary, so the operator knows what to restore.
     """
     import warnings
     from unittest import mock
@@ -64553,8 +64569,11 @@ def test_r44_ar39_own_torn_member_fault_keeps_in_place(tmp_path: Path) -> None:
     assert registry.exists(), "the hold never depended on the listing"
     assert swept["removed"] == 0, swept
     texts = [str(found.message) for found in seen]
-    assert any("keep the family in place" in text for text in texts), texts
-    assert any("until it can be listed" in text for text in texts), texts
+    fault_voices = [text for text in texts if "could not be verified" in text]
+    assert fault_voices, texts
+    assert any(sidecar.name in text for text in fault_voices), texts
+    assert any("fix the unreadable evidence and rerun" in text for text in fault_voices), texts
+    assert not any("archive the listed" in text for text in texts), texts
 
 
 def test_r44_ar39_run_credit_hold_converges_via_barrier(tmp_path: Path) -> None:
@@ -64656,8 +64675,11 @@ def test_r44_ar40_member_reread_never_blocks_on_fifo(tmp_path: Path) -> None:
     the census hung the sweep inside the new re-read (the parent
     commit returned promptly -- it never re-read). The re-read
     uses the nonblocking regular-file reader now: an unverifiable
-    member fails as a fault (keep the family in place until the
-    inventory can be listed), never a hang.
+    member fails as a fault, never a hang.
+
+    #88R44-[A]r44 (Claude Q3 M5): the fault exit names the
+    faulting member and speaks the shared fix-and-rerun
+    vocabulary.
     """
     import os
     import warnings
@@ -64704,8 +64726,11 @@ def test_r44_ar40_member_reread_never_blocks_on_fifo(tmp_path: Path) -> None:
     assert registry.exists(), "the hold never depended on the read"
     assert swept["removed"] == 0, swept
     texts = [str(found.message) for found in seen]
-    assert any("keep the family in place" in text for text in texts), texts
-    assert any("until it can be listed" in text for text in texts), texts
+    fault_voices = [text for text in texts if "could not be verified" in text]
+    assert fault_voices, texts
+    assert any(sidecar.name in text for text in fault_voices), texts
+    assert any("fix the unreadable evidence and rerun" in text for text in fault_voices), texts
+    assert not any("archive the listed" in text for text in texts), texts
 
 
 def test_r44_ar40_schema_invalid_registry_archives(tmp_path: Path) -> None:
@@ -64827,7 +64852,9 @@ def test_r44_ar40_rescan_churn_preserves_listing_fault(tmp_path: Path) -> None:
         inventory, _raced = real_scan(scan_root)
         if scans["n"] == 1:
             return inventory, False
-        return inventory._replace(readable=False), True
+        # Reachable unreadable shape (Claude Q3 nit): production
+        # builds readable=False only with a missing name set.
+        return inventory._replace(readable=False, marker_names=None), True
 
     with (
         mock.patch.object(durability, "_list_tmp_paths", _fault_legacy_rewrites),
@@ -64978,3 +65005,6585 @@ def test_r44_ar40_orphan_journal_is_named(tmp_path: Path) -> None:
     texts = [str(found.message) for found in seen]
     assert any(orphan.name in text for text in texts), texts
     assert any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar42_absolute_outside_link_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r42: an outside-resolving link never aborts sweep.
+
+    Codex R41-1: a registry sidecar field pointing at an existing
+    journal outside the counters root raised an uncaught ValueError
+    out of the preview (aborting sweep). Links resolve with the
+    registry consumer's path semantics (verbatim: absolute as-is,
+    relative CWD-anchored) and must land inside the counters root;
+    anything else warns loudly naming the link and keeps the family
+    in place. The outside file is never touched.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    outside = tmp_path / "evil"
+    outside.mkdir()
+    outside_journal = outside / "x.windows.jsonl"
+    outside_journal.write_text("{}\n", encoding="utf-8")
+    outside_sidecar = outside / "x.partial.json"
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(outside_sidecar)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert outside_journal.exists(), "the outside file is never touched"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("links outside the counters" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar42_dotdot_link_keeps_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r42: a `..`-escaping link never joins the preview.
+
+    Codex R41-1: a dotdot sidecar field resolved (lexically) to a
+    real journal outside the counters root and was previewed for
+    archival. Links normalize before the containment check now,
+    so escaping shapes fail loudly with the family kept in place.
+
+    #88R44-[A]r44 (Claude Q3 L7): the sweep runs chdir'd into the
+    counters root, so the relative field really escapes to the
+    planted outside journal (CWD-anchored semantics) instead of
+    resolving against pytest's directory -- any relative link
+    would read as outside, so only a genuine escape proves the
+    `..` normalization. The voice also names relocation as a
+    possible cause (Claude Q3 L9).
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    escape_journal = tmp_path / "escape.windows.jsonl"
+    escape_journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = "../escape.partial.json"
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    monkeypatch.chdir(root)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert escape_journal.exists(), "the outside file is never touched"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("links outside the counters" in text for text in texts), texts
+    assert any("moved since registration" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar42_contradictory_registry_links_nothing(tmp_path: Path) -> None:
+    """#88R44-[A]r42: a contradictory registry body links no journal.
+
+    Codex R41-2: a mid-voice flip replacing the registry body with
+    a contradictory object (another producer plus its sidecar)
+    passed the unvalidated link through, previewing the foreign
+    producer's journal. The body validates against the schema and
+    filename uuid first now; anything else drops the link and
+    re-observes (transient: the next pass routes the flipped
+    registry to its own arm).
+
+    #88R44-[A]r44 (Claude Q3 L7): the flipped field is absolute
+    and owned-shaped (this producer's own filename), so the
+    journal negative is real -- without validation the link
+    resolves, verifies ownership, and names the journal. A
+    relative claimless field could never reach it.
+    """
+    import json
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    evil_journal = root / f"{solo}-evil.windows.jsonl"
+    evil_journal.write_text("{}\n", encoding="utf-8")
+    real_regular = durability._read_regular_file_bytes
+
+    def _read_then_contradict(path: Path) -> bytes | None:
+        data = real_regular(path)
+        if Path(path) == registry and data is not None:
+            return json.dumps(
+                {
+                    "worker_uuid": rival,
+                    "sidecar": str(root / f"{solo}-evil.partial.json"),
+                }
+            ).encode()
+        return data
+
+    with mock.patch.object(durability, "_read_regular_file_bytes", _read_then_contradict):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any(evil_journal.name in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar42_relative_root_absolute_link_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[A]r42: mixed relative-root/absolute-link resolves safely.
+
+    Codex R41-1: with a relative counters root, an absolute in-root
+    link crashed the preview (mixed relative/absolute `relative_to`).
+    Both sides normalize before the containment check now, so the
+    linked journal is named and archival stays offered.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-link.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    journal = root / f"{solo}-link.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    monkeypatch.chdir(tmp_path)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(
+            Path("counters"), current_run=_RUN, committed_uuids=frozenset({solo})
+        )
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any(journal.name in text for text in texts), texts
+    assert any("together with this family" in text for text in texts), texts
+    assert any(
+        "the registry, sidecars, journals, and their rewrite companions" in text for text in texts
+    ), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar43_inward_symlink_parent_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r43: an inward-symlink enumeration parent faults loudly.
+
+    Codex R42-1: an outside journal symlink pointing inward passed
+    file containment, and the helper then listed the outside parent
+    dir -- previewing outside rewrite companions. The actual
+    enumerated directory resolves strictly and must stay inside
+    now; anything else warns loudly naming the directory and keeps
+    the family in place.
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    target = root / "real-target.windows.jsonl"
+    target.write_text("{}\n", encoding="utf-8")
+    outside = tmp_path / "evil"
+    outside.mkdir()
+    link_journal = outside / f"{solo}-link.windows.jsonl"
+    os.symlink(target, link_journal)
+    link_sidecar = outside / f"{solo}-link.partial.json"
+    link_sidecar.write_text(json.dumps({"worker_uuid": solo}), encoding="utf-8")
+    decoy = outside / f"{solo}-link.windows.jsonl.tmp-7"
+    decoy.write_text("{torn", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(link_sidecar)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("outside the counters" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+    assert not any(decoy.name in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar43_symlink_loop_dependent_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r43: an unresolvable dependent fails closed, never hangs.
+
+    Codex R42-1: a self-looping journal symlink passed the
+    non-strict realpath check. Resolution is strict now: loops
+    (and any other unresolvable shape) fail as faults with the
+    family kept in place. Nothing follows the loop, so nothing
+    can hang on it.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    loop = root / f"probe-{solo[:8]}-0-loop.json"
+    os.symlink(loop, loop)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        nonce="second",
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probes float"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar43_foreign_sidecar_link_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r43: a foreign-producer link never joins the preview.
+
+    Codex R42-2: a schema-valid registry pointing at another
+    producer's sidecar previewed that producer's journal. The
+    linked sidecar filename must name this producer now
+    (production always writes uuid-first names); anything else --
+    foreign or unattributable -- warns loudly naming the link and
+    keeps the family in place.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    foreign_sidecar = root / f"{rival}-nonce1.partial.json"
+    foreign_sidecar.write_text("{torn", encoding="utf-8")
+    foreign_journal = root / f"{rival}-nonce1.windows.jsonl"
+    foreign_journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(foreign_sidecar)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not foreign_sidecar.exists(), "rival debris converges on its own route"
+    assert not foreign_journal.exists(), "its orphan journal goes with it"
+    assert swept["removed"] == 2, swept
+    texts = [str(found.message) for found in seen]
+    assert any("outside this family" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any(foreign_journal.name in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar41_directory_member_archives_by_name(tmp_path: Path) -> None:
+    """#88R44-[A]r41: a directory at a member path archives, never faults.
+
+    Codex R40-1: a directory with a valid sidecar filename was
+    filed torn by the census but fault by the re-read, so every
+    sweep repeated the fault exit ("until it can be listed")
+    while listing worked fine -- and collection stayed blocked.
+    Confirmed directories read torn like the census files them,
+    so the exit names the blocking path for archival (fifos and
+    unverifiable files keep the fault behavior).
+    """
+    import shutil
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    squatter = root / f"{solo}-nonce2.partial.json"
+    squatter.mkdir()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        first = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert first["removed"] == 0, first
+    texts = [str(found.message) for found in seen]
+    assert any("with torn evidence while" in text for text in texts), texts
+    assert any(squatter.name in text for text in texts), texts
+    assert any("quiescent" in text for text in texts), texts
+    assert not any("until it can be listed" in text for text in texts), texts
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    shutil.move(str(squatter), archive / squatter.name)
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        published = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    totals = [
+        rec["total_calls"]
+        for rec in published
+        if rec.get("worker_uuid") == solo and rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [11], f"collection recovers own 2 + probe 9: {totals}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, "nothing left to remove"
+
+
+def test_r44_ar41_raced_rescan_fault_stays_fault(tmp_path: Path) -> None:
+    """#88R44-[A]r41: a faulted rescan listing fails as fault when raced.
+
+    Codex R40-2: a rescan whose marker listing failed during a
+    raced pass produced the transient rerun exit -- the raced flag
+    overwrote the fault. Listing failure is tracked independently
+    of churn now: a missing probe or marker set fails as a fault
+    whether or not the pass also raced.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_scan = durability._probe_ambiguity_prefixes
+    scans = {"n": 0}
+
+    def _scan_then_race_fault(scan_root: Path) -> Any:
+        scans["n"] += 1
+        inventory, _raced = real_scan(scan_root)
+        if scans["n"] == 1:
+            return inventory, False
+        return inventory._replace(readable=False, marker_names=None), True
+
+    with mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_race_fault):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert scans["n"] >= 2, "the rescan ran after the verdict scan (premise)"
+    assert registry.exists(), "the hold never depended on either check"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+def test_r44_ar41_registry_field_without_uuid_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r41: a claimless unattested field link faults loudly.
+
+    Codex R40-3 first named the journal a registry field pointed at
+    even without a uuid in the link. Codex R43-3 distinguishes the
+    shapes: an explicitly foreign filename withholds as foreign,
+    while a claimless name with no attesting body withholds as
+    unattributable (never as foreign, which names a rival that may
+    not exist). The voice names the registry relkey, and the field
+    value stays out of the output -- the named body holds it.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / "claimless.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    journal = root / "claimless.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert journal.exists(), "nothing else touches the journal"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    unattributed = [text for text in texts if "no attributable owner" in text]
+    assert unattributed, texts
+    assert any(f"registrations/{registry.name}" in text for text in unattributed), texts
+    assert not any(str(root) in text for text in unattributed), texts
+    # The voice names the unattributable target as the suspect
+    # (diagnostic identification, not an archival directive), so
+    # the no-preview proof is the missing offer, not the name.
+    assert any(journal.name in text for text in unattributed), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar44_slash_sidecar_field_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a `/` sidecar field faults, never aborts.
+
+    Claude Q3 M2: the empty basename raised inside journal
+    derivation before any guard, aborting the sweep. Unusable
+    fields fail as faults now: the family keeps in place with a
+    loud voice naming the registry, and the sweep completes.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = "/"
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("unusable sidecar path" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar44_dot_sidecar_field_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a `.` sidecar field faults, never aborts.
+
+    Claude Q3 M2, sibling of the `/` shape: a dot-only field
+    also carries an empty basename and raised in the same spot.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = "."
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("unusable sidecar path" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar44_null_field_link_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a null-byte sidecar field faults, never aborts.
+
+    Claude Q3 M2: null bytes break `Path` construction itself,
+    before journal derivation. The link fails as unusable with
+    the registry named; the value stays out of the output.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = "x\x00y.partial.json"
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("unusable sidecar path" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar44_producer_files_skips_unusable_field(tmp_path: Path) -> None:
+    """#88R44-[A]r44: producer files skip unusable fields, never raise.
+
+    Claude Q3 M2: the same empty-basename shapes reached journal
+    derivation on the committed route. The registry still rides
+    alone; its own bytes decide it. Only crash shapes skip --
+    every other field keeps its pre-existing handling (M8's
+    outside-path loudness in particular).
+    """
+    registry_path = tmp_path / "registrations" / ("c" * 32 + ".json")
+    for field in ("/", ".", "x\x00y.partial.json"):
+        files = durability._producer_files({"sidecar": field}, registry_path)
+        assert files == [registry_path], field
+    journal = durability._journal_for_sidecar(Path("notes.txt"))
+    assert durability._producer_files({"sidecar": "notes.txt"}, registry_path) == [
+        registry_path,
+        Path("notes.txt"),
+        journal,
+    ]
+
+
+def test_r44_ar44_registry_linking_rival_journal_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a registry linking a rival's journal withholds.
+
+    Claude Q3 M1: a schema-valid registry whose sidecar field
+    names another family's in-root file passed containment and
+    joined this family's preview. The resolved link must verify
+    ownership now -- a foreign file withholds loudly and is
+    never offered. (The r43 filename gate already withheld the
+    direct shape, but r44 changed what the voice renders: the
+    resolved foreign target as the suspect (diagnostic
+    identification, not an archival directive), so the
+    no-preview proof is the missing offer, not the name. RED on
+    r43 for the rendering; the withhold itself is the lock.)
+    The rival's orphan journal converges on its own debris
+    route -- the rival has no family -- while this family
+    withholds.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{rival}-9.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    foreign_voices = [text for text in texts if "outside this family" in text]
+    assert foreign_voices, texts
+    assert any(rival_journal.name in text for text in foreign_voices), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar44_symlinked_parent_link_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a link through a symlinked parent withholds.
+
+    Claude Q3 L7: the r42 containment comment claims the
+    symlinked-parent shape fails loudly, but no test planted
+    one. A field reaching through a parent symlink to an outside
+    journal withholds with the outside voice; the outside file
+    is never named. (The r42 realpath containment already
+    closed it; this test locks the claimed shape.)
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    outside = tmp_path / "evil"
+    outside.mkdir()
+    outside_journal = outside / f"{solo}-s.windows.jsonl"
+    outside_journal.write_text("{}\n", encoding="utf-8")
+    os.symlink(outside, root / "sub")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / "sub" / f"{solo}-s.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert outside_journal.exists(), "the outside file is never touched"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("links outside the counters" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any(outside_journal.name in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar44_dotdot_sibling_prefix_link_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a dotdot sibling-prefix link withholds.
+
+    Claude Q3 L7: the r42 containment comment claims the
+    double-prefixed shape fails loudly, but no test planted one.
+    A field sharing the root's full string prefix plus extra
+    characters (a sibling directory reached through `..`) still
+    resolves outside and withholds; a naive string-prefix check
+    would have called it inside. (The r42 commonpath containment
+    already closed it; this test locks the claimed shape.)
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    evil = tmp_path / "counters-evil"
+    evil.mkdir()
+    evil_journal = evil / f"{solo}-e.windows.jsonl"
+    evil_journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / ".." / "counters-evil" / f"{solo}-e.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert evil_journal.exists(), "the outside file is never touched"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("links outside the counters" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any(evil_journal.name in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar44_linked_journal_symlink_to_rival_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r44: an owned-named journal symlinking to a rival withholds.
+
+    Codex R43-2: a journal with this producer's filename
+    symlinking to another producer's in-root journal passed the
+    filename gate, and the preview printed the rival's path.
+    Ownership verifies the RESOLVED identity now, so the link
+    withholds as foreign and the rival's target is named only
+    as the suspect (diagnostic identification, never an
+    archival directive). The rival's orphan name converges on
+    its own debris route; the linked decoy name survives (the
+    hold is respected).
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    decoy_link = root / f"{solo}-3.windows.jsonl"
+    os.symlink(rival_journal, decoy_link)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-3.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert decoy_link.is_symlink(), "the linked decoy name survives the hold"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    foreign_voices = [text for text in texts if "outside this family" in text]
+    assert foreign_voices, texts
+    assert any(rival_journal.name in text for text in foreign_voices), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX link semantics")
+def test_r44_ar44_hardlinked_journal_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a multi-linked journal withholds.
+
+    Codex R43-2: a hardlink to another producer's journal was
+    accepted -- hardlinks keep the owned filename, so no name
+    check can see the shared bytes. Production never hardlinks
+    evidence, so a non-directory leg with more than one link
+    withholds loudly instead of joining the preview. The
+    rival's orphan name converges on its own debris route; the
+    linked name survives with the bytes (the hold is respected).
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    linked_name = root / f"{solo}-3.windows.jsonl"
+    os.link(rival_journal, linked_name)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-3.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert linked_name.exists(), "the linked name survives with the bytes"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    assert any("more than one link" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar44_alias_lists_target_companions(tmp_path: Path) -> None:
+    """#88R44-[A]r44: an in-family alias lists the target's companions.
+
+    Codex R43-2: an alias within the family rendered the target
+    path while searching for companions under the alias name,
+    omitting the target's rewrite. Companions list beside the
+    verified target now, and the target renders -- the alias
+    name never prints.
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    real = root / "real"
+    real.mkdir()
+    target = real / f"{solo}-r.partial.json"
+    sidecar.rename(target)
+    rewrite = real / f"{target.name}.tmp-5"
+    rewrite.write_text("{torn", encoding="utf-8")
+    alias = root / "alias.partial.json"
+    os.symlink(target, alias)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(alias)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(f"real/{rewrite.name}" in text for text in texts), texts
+    assert any(f"real/{target.name}" in text for text in texts), texts
+    assert not any(alias.name in text for text in texts), texts
+
+
+def test_r44_ar44_claimless_attested_sidecar_offers(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a claimless attested sidecar link offers archival.
+
+    Codex R43-3: the r43 gate withheld every claimless name as
+    foreign -- including one whose readable body attests this
+    producer and whose census records that ownership (the
+    parent offered it). Claimless names consult the body's
+    attestation through the shared rule now: attested joins.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    claimless = root / "claimless.partial.json"
+    sidecar.rename(claimless)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(claimless)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    journal = root / "claimless.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(journal.name in text for text in texts), texts
+    assert any(claimless.name in text for text in texts), texts
+
+
+def test_r44_ar44_parentless_tmp_beside_linked_sidecar_named(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a parentless tmp beside a linked sidecar is named.
+
+    Claude Q3 M3: the preview listed only the registry and the
+    linked journal, missing the linked sidecar's own rewrite
+    companions -- a first flush crashing before its rename
+    leaves a parentless sidecar tmp, and archiving without it
+    strands its returns. The linked sidecar lists companions
+    whether present or not now.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-n.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    journal = root / f"{solo}-n.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    orphan_tmp = root / f"{solo}-n.partial.json.tmp-9"
+    orphan_tmp.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(journal.name in text for text in texts), texts
+    assert any(orphan_tmp.name in text for text in texts), texts
+
+
+def test_r44_ar44_other_run_tmp_listed_by_uuid_prefix(tmp_path: Path) -> None:
+    """#88R44-[A]r44: another run's parentless tmp lists by uuid prefix.
+
+    Claude Q3 M3: parentless rewrites from other runs of the
+    same producer (sidecar gone, tmp left) are invisible to the
+    sidecar bases. The link adoption lists same-uuid rewrite
+    shapes in the linked directory, so they travel with the
+    family instead of stranding.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    stray_tmp = root / f"{solo}-m.partial.json.tmp-3"
+    stray_tmp.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(stray_tmp.name in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar44_companion_symlink_outside_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r44: an outside rewrite companion faults, never renders.
+
+    Codex R43-1: companions enumerated beside a base were never
+    validated -- a rewrite symlink pointing outside rendered as
+    a `..` name in the verified list. Each companion resolves
+    strictly and must stay inside now; anything else warns
+    naming the base and keeps the family in place.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    outside = tmp_path / "outside-decoy"
+    outside.write_text("{}\n", encoding="utf-8")
+    os.symlink(outside, root / f"{sidecar.name}.tmp-7")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("outside the counters" in text for text in texts), texts
+    assert any(sidecar.name in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar44_nested_parent_swap_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a mid-pass nested parent swap reruns, never verifies.
+
+    Codex R43-1: a nested parent symlink swapped between the
+    check and the second resolution enumerated the new
+    directory under the old verdict. The helper uses the
+    checked directory from a single resolution now, and the
+    bracket samples every enumerated parent (Claude Q3 L6), so
+    a swap landing mid-pass mismatches the bracket and
+    re-observes instead of printing a stale list.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    real2 = root / "real2"
+    real2.mkdir()
+    link = level1 / "link"
+    os.symlink(real1, link)
+    journal = real1 / f"{solo}-x.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(link / f"{solo}-x.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+    swapped: list[bool] = []
+    real1_resolved = os.path.realpath(real1)
+
+    def _list_then_swap(directory: Any, prefix: str) -> Any:
+        # Trip only inside the verdict helper's enumeration (which
+        # lists resolved directories): earlier sweep listings must
+        # see the pre-swap layout, or both bracket samples agree.
+        if not swapped and os.path.realpath(directory) == real1_resolved:
+            swapped.append(True)
+            os.unlink(link)
+            os.symlink(real2, link)
+        return real_list(directory, prefix)
+
+    with mock.patch.object(durability, "_list_tmp_paths", _list_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed mid-pass (premise)"
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar44_registry_unlinked_midpass_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a registry unlinked mid-pass reruns, never verifies.
+
+    Claude Q3 L6: the bracket watched only the root clock, so a
+    registry unlinked between the scan and the print (bumping
+    only `registrations/`) printed a verified list. The bracket
+    samples every enumerated parent now, so the drift
+    re-observes instead. The sweep's sidecar loop then
+    converges on the refreshed state (registry gone) with its
+    own offer -- both voices print by design; the rerun voice
+    is what proves the drift was caught.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+    unlinked: list[bool] = []
+    regdir_resolved = os.path.realpath(root / "registrations")
+
+    def _list_then_unlink(directory: Any, prefix: str) -> Any:
+        # Trip only inside the verdict helper's enumeration (which
+        # lists resolved directories): earlier sweep listings must
+        # see the pre-unlink layout, or both bracket samples agree.
+        if not unlinked and os.path.realpath(directory) == regdir_resolved:
+            unlinked.append(True)
+            registry.unlink()
+        return real_list(directory, prefix)
+
+    with mock.patch.object(durability, "_list_tmp_paths", _list_then_unlink):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert unlinked, "the unlink landed mid-pass (premise)"
+    assert not registry.exists(), "the fixture unlinked the registry mid-pass"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+def test_r44_ar44_healed_member_reruns_without_archive(tmp_path: Path) -> None:
+    """#88R44-[A]r44: a member healed after the census reruns, never archives.
+
+    Claude Q3 M4: no test re-read a member as healed, so a
+    regression counting "ok" as torn would print a healed,
+    recoverable sidecar in the archival list -- direct evidence
+    loss. A healed member re-observes instead, and its name
+    stays out of every archival voice. (Characterization pin:
+    the rerun path predates this round; the test locks it.)
+    """
+    import json
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    sidecar.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_census = durability._owner_census
+    healed: list[bool] = []
+
+    def _census_then_heal(root_arg: Path) -> Any:
+        census = real_census(root_arg)
+        if root_arg == root and not healed:
+            healed.append(True)
+            sidecar.write_text(json.dumps({"worker_uuid": solo}), encoding="utf-8")
+        return census
+
+    with mock.patch.object(durability, "_owner_census", _census_then_heal):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert healed, "the heal landed after the census (premise)"
+    assert registry.exists(), "the hold never depended on the member"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    archive_voices = [text for text in texts if "archive the listed" in text]
+    assert not any(sidecar.name in text for text in archive_voices), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+@pytest.mark.timeout(30)
+def test_r44_ar44_fault_voice_names_unreadable_members(tmp_path: Path) -> None:
+    """#88R44-[A]r44: the own-torn fault exit names the unreadable members.
+
+    Claude Q3 M5: the fault exit said only "keep the family in
+    place until it can be listed" -- no member, no action -- so
+    an operator could not locate the fault the hold waited on.
+    The exit names each unreadable member and speaks the shared
+    fix-and-rerun vocabulary. It stays arm-specific (not the
+    shared fault constant) because this arm keeps the probe,
+    never collects it.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    sidecar.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_census = durability._owner_census
+    swapped: list[bool] = []
+
+    def _census_then_fifo(root_arg: Path) -> Any:
+        census = real_census(root_arg)
+        if root_arg == root and not swapped:
+            swapped.append(True)
+            os.unlink(sidecar)
+            os.mkfifo(sidecar)
+        return census
+
+    with mock.patch.object(durability, "_owner_census", _census_then_fifo):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the FIFO landed after the census (premise)"
+    assert registry.exists(), "the hold never depended on the read"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    fault_voices = [
+        text for text in texts if "could not be verified" in text and "torn evidence while" in text
+    ]
+    assert fault_voices, texts
+    assert any(sidecar.name in text for text in fault_voices), texts
+    assert any("fix the unreadable evidence and rerun" in text for text in fault_voices), texts
+
+
+def test_r44_ar45_unusable_field_retains_registry(tmp_path: Path) -> None:
+    """#88R44-[A]r45: an unusable field retains the registry, never removes it.
+
+    Codex R44-1 (regression introduced in r44): the crash guard read
+    unusable fields as absent, so the veto passed ("ok", None) and the
+    committed route silently removed the registry -- on the parent a
+    "/" field read unreadable (a directory) and retained. Collection
+    then published nothing for an attributed five-call probe. Unusable
+    fields retain with a named fault now; repairing the field lets
+    collection publish the probe's calls.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(0))
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = "/"
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity={"parent_uuid": solo, "run_id": _RUN, "unit": "a.py"},
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "an unusable field withholds removal"
+    assert sidecar.exists(), "the family waits for the field repair"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("links an unusable sidecar path" in text for text in texts), texts
+    registry_payload["sidecar"] = str(sidecar)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        published = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    totals = [
+        rec["total_calls"]
+        for rec in published
+        if rec.get("worker_uuid") == solo and rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [5], f"collection publishes the probe's 5 calls: {totals}"
+
+
+def test_r44_ar45_null_field_retains_registry(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a null-byte field retains the registry, never aborts.
+
+    Codex R44-1: null bytes crashed `Path` construction on the parent
+    (no behavior to preserve) and removed the registry in r44 (the
+    absent-field regression). Unusable fields retain with a named
+    fault now -- no crash, no removal.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(0))
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = "x\x00y.partial.json"
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity={"parent_uuid": solo, "run_id": _RUN, "unit": "a.py"},
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "an unusable field withholds removal"
+    assert sidecar.exists(), "the family waits for the field repair"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("links an unusable sidecar path" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_rewrite_companion_pointing_elsewhere_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a rewrite companion pointing elsewhere faults.
+
+    Codex R44-2: companions verified containment only, so a probe
+    rewrite symlink to another producer's in-root journal joined
+    this family's preview under the rival's name. Companions must
+    keep the base's rewrite shape now -- a target that is not
+    this base's rewrite warns naming the base and keeps the
+    family in place. (The rival's orphan name converges on its
+    own debris route.)
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    os.symlink(rival_journal, root / f"{probe.name}.tmp-4")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    assert any("pointing at another file" in text for text in texts), texts
+    assert any(probe.name in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_direct_journal_symlink_to_rival_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r45: an owned-named direct journal symlinking out withholds.
+
+    Codex R44-2: ownership covered registry-field legs only, so an
+    extra owned-named journal symlinking to another producer's
+    journal joined through the direct-orphan scan. Every sidecar
+    and journal base verifies the resolved identity now -- a
+    foreign target withholds loudly and is named only as the
+    suspect. The rival's orphan name converges on its own debris
+    route; the linked decoy name survives (the hold is respected).
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    decoy_link = root / f"{solo}-9.windows.jsonl"
+    os.symlink(rival_journal, decoy_link)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert decoy_link.is_symlink(), "the linked decoy name survives the hold"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    foreign_voices = [text for text in texts if "another producer's file" in text]
+    assert foreign_voices, texts
+    assert any(rival_journal.name in text for text in foreign_voices), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_derived_journal_symlink_to_rival_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a derived journal symlinking out withholds.
+
+    Codex R44-2, sibling of the direct shape: a journal derived
+    from an owned sidecar's stem symlinking to another producer's
+    journal. Same resolved-identity rule, same loud withhold.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    stem = sidecar.name[: -len(".partial.json")]
+    decoy_link = root / f"{stem}.windows.jsonl"
+    os.symlink(rival_journal, decoy_link)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert decoy_link.is_symlink(), "the linked decoy name survives the hold"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    foreign_voices = [text for text in texts if "another producer's file" in text]
+    assert foreign_voices, texts
+    assert any(rival_journal.name in text for text in foreign_voices), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX link semantics")
+def test_r44_ar45_direct_journal_hardlink_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a multi-linked direct journal withholds.
+
+    Codex R44-2: the link-count check covered registry-field legs
+    only. Every candidate verifies now -- production never
+    hardlinks evidence, so a non-directory base with more than
+    one link withholds loudly instead of joining the preview.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    linked_name = root / f"{solo}-9.windows.jsonl"
+    os.link(rival_journal, linked_name)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert linked_name.exists(), "the linked name survives with the bytes"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    assert any("more than one link" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_linked_dependent_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a symlinked dependent withholds.
+
+    Codex R44-2: dependents verified containment only, so a probe
+    symlink to another probe's bytes joined under the pinned name.
+    Dependents must be regular files (their pinned identity is the
+    scanned path's bytes -- probes have no body rule to verify a
+    target with), so links fail loudly at assembly and again at
+    use, and the family keeps in place.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    other = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    target = _plant_probe_orphan(
+        root,
+        parent_uuid=other,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 7]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    probe.unlink()
+    os.symlink(target, probe)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("as a link" in text for text in texts), texts
+    assert any(probe.name in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_owned_alias_sidecar_offers(tmp_path: Path) -> None:
+    """#88R44-[A]r45: an owned-named alias sidecar still offers archival.
+
+    Codex R44-2 no-regression pin: the uniform leg verification
+    must keep accepting in-family aliases (an owned-named link to
+    an owned target with an attesting body). The target renders
+    and its companions list beside it; the alias name never
+    prints. (Characterization pin: r44 already behaves this way
+    through the link path; this test locks the trusted-base path
+    against over-strictness.)
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    real = root / "real"
+    real.mkdir()
+    target = real / sidecar.name
+    sidecar.rename(target)
+    rewrite = real / f"{target.name}.tmp-5"
+    rewrite.write_text("{torn", encoding="utf-8")
+    alias = root / sidecar.name
+    os.symlink(target, alias)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(alias)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(f"real/{rewrite.name}" in text for text in texts), texts
+    assert any(f"real/{target.name}" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_pre_bracket_link_swap_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a link swap between adoption and bracket reruns.
+
+    Codex R44-2: a checked registry-linked journal replaced by an
+    in-root symlink to another producer's journal before the
+    leading bracket verified stale -- the adoption predates the
+    bracket, so the clocks never see the swap. Adopted legs
+    re-resolve post-bracket now: an identity mismatch re-observes
+    instead of previewing the rival's file. (The sidecar stays
+    unlinked, so no second loop converges -- the rerun stands
+    alone. The rival's orphan name converges on its own debris
+    route.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    journal = root / f"{solo}-n.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-n.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    root_resolved = os.path.realpath(root)
+    swapped: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        # Trip after the adoption's prefix listing (its last I/O):
+        # the swap lands between adoption and the leading bracket,
+        # where no clock looks.
+        if not swapped and prefix == f"{solo}-" and os.path.realpath(directory) == root_resolved:
+            swapped.append(True)
+            journal.unlink()
+            os.symlink(rival_journal, journal)
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-adoption (premise)"
+    assert registry.exists(), "the hold never depended on the link"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert journal.is_symlink(), "the swapped link survives the hold"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar45_prefix_listing_staleness_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a rewrite arriving after the prefix listing reruns.
+
+    Codex R44-3: a parentless rewrite arriving between the
+    uuid-prefix listing and the leading bracket was omitted --
+    both samples postdate it, so the clocks match on a stale
+    set. The prefix listing re-runs post-bracket now and the
+    sets must agree, or the preview re-observes.
+    """
+    import json
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-n.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    journal = root / f"{solo}-n.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    planted_late: list[bool] = []
+
+    def _list_then_plant(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if not planted_late and prefix == f"{solo}-":
+            planted_late.append(True)
+            late = root / f"{solo}-n.partial.json.tmp-late"
+            late.write_text("{torn", encoding="utf-8")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_late, "the plant landed post-listing (premise)"
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar45_rewrite_beside_resolved_target_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r45: a rewrite arriving beside a link target reruns.
+
+    Codex R44-3: the bracket sampled lexical parents only, so a
+    rewrite arriving beside a symlink's resolved target -- the
+    directory actually enumerated -- bumped an unwatched clock
+    and was omitted from a verified list. Enumerated directories
+    sample alongside the lexical anchors now, so the arrival
+    re-observes. (The sidecar loop converges on the refreshed
+    state with its own offer -- both voices print by design, as
+    in the r44 registry-unlink test; the rerun voice proves the
+    catch.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    real = root / "real"
+    real.mkdir()
+    target = real / f"{solo}-r.partial.json"
+    sidecar.rename(target)
+    alias = root / "alias.partial.json"
+    os.symlink(target, alias)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(alias)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+    real_resolved = os.path.realpath(real)
+    planted_late: list[bool] = []
+
+    def _list_then_plant(directory: Any, prefix: str) -> Any:
+        # Trip inside the verdict helper's enumeration of the
+        # resolved target dir (its first listing): the plant lands
+        # mid-bracket in a directory the lexical-only sample never
+        # watched.
+        if not planted_late and os.path.realpath(directory) == real_resolved:
+            planted_late.append(True)
+            late = real / f"{target.name}.tmp-late"
+            late.write_text("{torn", encoding="utf-8")
+        return real_list(directory, prefix)
+
+    with mock.patch.object(durability, "_list_tmp_paths", _list_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_late, "the plant landed mid-enumeration (premise)"
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+def test_r44_ar46_directory_dependent_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a directory at a dependent path withholds.
+
+    Codex R45-3: both dependent checks rejected symlinks and
+    multi-linked non-directories but never required a regular
+    file, so a directory bearing a valid legacy probe name
+    joined the archival preview. Dependents must be regular
+    files now (which also excludes fifos, sockets, and devices
+    by predicate -- no fifo test: the probe inventory reads
+    bodies blocking, so a fifo would hang the sweep before any
+    verdict, a separate pre-existing issue).
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    probe.unlink()
+    probe.mkdir()
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert probe.is_dir(), "the directory waits for the operator"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("must be regular files" in text for text in texts), texts
+    assert any(probe.name in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_persistent_sample_fault_keeps_fault_exit(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a persistent sample fault keeps the fault exit.
+
+    Codex R45-4: a failed bracket sample made the bracket unclean
+    without establishing drift, so an established fault degraded
+    to rerun -- and a persistent failure reran forever. The fault
+    exit stands unless two successful observations actually
+    differ; only proven drift explains faults away.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    link = level1 / "link"
+    os.symlink(real1, link)
+    journal = real1 / f"{solo}-x.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(link / f"{solo}-x.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_mtime = durability._dir_mtime_ns
+    real_list = durability._list_tmp_paths
+    real1_resolved = os.path.realpath(real1)
+
+    def _mtime_or_none(path: Path) -> Any:
+        if os.path.realpath(path) == real1_resolved:
+            return None
+        return real_mtime(path)
+
+    def _list_or_none(directory: Any, prefix: str) -> Any:
+        if os.path.realpath(directory) == real1_resolved:
+            return None
+        return real_list(directory, prefix)
+
+    with (
+        mock.patch.object(durability, "_dir_mtime_ns", _mtime_or_none),
+        mock.patch.object(durability, "_list_tmp_paths", _list_or_none),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+def test_r44_ar46_own_torn_sample_fault_keeps_fault_exit(tmp_path: Path) -> None:
+    """#88R44-[A]r46: an own-torn sample fault keeps the fault exit.
+
+    Codex R45-4, own-torn mirror: the member bracket used the same
+    unclean-suppresses-fault condition. A faulting member plus a
+    persistently unreadable member directory fails as a fault
+    (naming the member) instead of rerunning forever. (The voice
+    is scoped by content: the torn registry routes through the
+    sidecar loop's verdict, not the registry loop's.)
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_mtime = durability._dir_mtime_ns
+    real_regular = durability._read_regular_file_bytes
+    regdir_resolved = os.path.realpath(root / "registrations")
+
+    def _mtime_or_none(path: Path) -> Any:
+        if os.path.realpath(path) == regdir_resolved:
+            return None
+        return real_mtime(path)
+
+    def _read_or_none(path: Path) -> Any:
+        if Path(path) == registry:
+            return None
+        return real_regular(path)
+
+    with (
+        mock.patch.object(durability, "_dir_mtime_ns", _mtime_or_none),
+        mock.patch.object(durability, "_read_regular_file_bytes", _read_or_none),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the torn member waits for archival"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    own_voices = [
+        text for text in texts if "could not be verified" in text and "torn evidence while" in text
+    ]
+    assert own_voices, texts
+    assert any(f"registrations/{registry.name}" in text for text in own_voices), texts
+    assert not any("rerun to re-list" in text for text in own_voices), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_prefix_rewrite_symlink_to_rival_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a prefix rewrite symlinking out withholds.
+
+    Codex R45-1: uuid-prefix rewrite discovery admitted hits by
+    lexical name, so a parentless owned-prefixed rewrite symlink
+    to another producer's journal joined the preview under the
+    rival's name. Prefix hits verify the resolved identity now
+    (companion shape plus single link) -- a foreign target
+    withholds loudly and is named only as the suspect. (Other-run
+    tmp: no sidecar base covers its stem, so only the admission
+    check sees it.)
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    decoy_link = root / f"{solo}-m.partial.json.tmp-3"
+    os.symlink(rival_journal, decoy_link)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert decoy_link.is_symlink(), "the linked decoy name survives the hold"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    foreign_voices = [text for text in texts if "another producer's file" in text]
+    assert foreign_voices, texts
+    assert any(rival_journal.name in text for text in foreign_voices), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX link semantics")
+def test_r44_ar46_prefix_rewrite_hardlink_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a multi-linked prefix rewrite withholds.
+
+    Codex R45-1, hardlink sibling: a parentless rewrite hardlink
+    to another producer's journal appeared under its owned-looking
+    name despite having two links. Prefix hits verify the single
+    link now -- production never hardlinks evidence. (Other-run
+    tmp, so only the admission check sees it.)
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    rival_journal = root / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    linked_name = root / f"{solo}-m.partial.json.tmp-3"
+    os.link(rival_journal, linked_name)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert not rival_journal.exists(), "rival debris converges on its own route"
+    assert linked_name.exists(), "the linked name survives with the bytes"
+    assert swept["removed"] == 1, swept
+    texts = [str(found.message) for found in seen]
+    assert any("more than one link" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_subdir_link_swap_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a subdir link swap between adoption and bracket reruns.
+
+    A checked registry-linked journal in a subdirectory retargeted
+    between adoption and the leading bracket: the fixed early set
+    never sees the subdirectory and the late samples postdate the
+    swap, so only the adopted-leg identity compare catches it.
+    (Characterization pin: r45 already re-resolves legs; the
+    r45 root-level sibling catches early drift instead. This test
+    locks the leg-compare isolation.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    link = level1 / "link"
+    os.symlink(real1, link)
+    journal = real1 / f"{solo}-x.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    rival_journal = real1 / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(link / f"{solo}-x.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    real1_resolved = os.path.realpath(real1)
+    swapped: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        # Trip after the adoption's prefix listing (its last I/O):
+        # the swap lands between adoption and the leading bracket,
+        # in a directory the early set never sees.
+        if not swapped and prefix == f"{solo}-" and os.path.realpath(directory) == real1_resolved:
+            swapped.append(True)
+            journal.unlink()
+            os.symlink(rival_journal, journal)
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-adoption (premise)"
+    assert registry.exists(), "the hold never depended on the link"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_attestation_transfer_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a transferred census attestation withholds.
+
+    Codex R45-2: a claimless sidecar alias attested its target at
+    census time, then retargeted to a different file whose body
+    names another producer -- the stale attestation joined the
+    rival's bytes. Claimless trust re-attests the verified target
+    at assembly now: a foreign body withholds loudly.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    real = root / "real"
+    real.mkdir()
+    good = real / "good.partial.json"
+    good.write_text(json.dumps({"worker_uuid": solo}), encoding="utf-8")
+    evil = real / "evil.partial.json"
+    evil.write_text(json.dumps({"worker_uuid": rival}), encoding="utf-8")
+    alias = root / "stray.partial.json"
+    os.symlink(good, alias)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_census = durability._owner_census
+    swapped: list[bool] = []
+
+    def _census_then_swap(root_arg: Path) -> Any:
+        census = real_census(root_arg)
+        if root_arg == root and not swapped:
+            swapped.append(True)
+            alias.unlink()
+            os.symlink(evil, alias)
+        return census
+
+    with mock.patch.object(durability, "_owner_census", _census_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-census (premise)"
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    foreign_voices = [text for text in texts if "another producer's file" in text]
+    assert foreign_voices, texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_adopted_leg_dangling_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: an adopted leg turned dangling reruns.
+
+    A leg whose target vanishes between adoption and
+    re-verification reads missing and re-observes (drift, not a
+    fault). (Characterization pin: r45 already behaves this way;
+    this test locks it.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    journal = root / f"{solo}-n.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-n.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    dangled: list[bool] = []
+
+    def _list_then_dangle(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if not dangled and prefix == f"{solo}-":
+            dangled.append(True)
+            journal.unlink()
+            os.symlink(root / "gone.windows.jsonl", journal)
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_dangle):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert dangled, "the dangle landed post-adoption (premise)"
+    assert registry.exists(), "the hold never depended on the link"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX link semantics")
+def test_r44_ar46_adopted_leg_multilinked_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: an adopted leg gaining a link reruns.
+
+    A link count appearing mid-pass re-observes through the
+    early sample (link creation bumps the directory clock, and
+    the assembly-window sample predates it). (Characterization
+    pin: r45 already behaves this way; this test locks the
+    early-sample coverage.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    journal = root / f"{solo}-n.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-n.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    linked: list[bool] = []
+
+    def _list_then_link(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if not linked and prefix == f"{solo}-":
+            linked.append(True)
+            os.link(journal, root / f"{solo}-n.windows.jsonl.link2")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_link):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert linked, "the link landed post-adoption (premise)"
+    assert registry.exists(), "the hold never depended on the link"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_direct_alias_intermediate_swap_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a direct alias retargeted via a subdir link reruns.
+
+    Codex R45-2: a checked direct journal alias retargeted through
+    a subdirectory intermediate link during discovery verified
+    stale -- the early set never sees the subdirectory, the late
+    samples postdate the swap, and the relist finds the same
+    lexical entry. Adopted direct identities re-resolve
+    post-bracket now: a target change re-observes. (Path semantics
+    preserve the trailing name, so both targets are same-named;
+    the compare is on resolved directories.)
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    real2 = root / "real2"
+    real2.mkdir()
+    mid = level1 / "mid"
+    os.symlink(real1, mid)
+    own_journal = real1 / f"{solo}-9.windows.jsonl"
+    own_journal.write_text("{}\n", encoding="utf-8")
+    other_journal = real2 / f"{solo}-9.windows.jsonl"
+    other_journal.write_text("{}\n", encoding="utf-8")
+    decoy_link = root / f"{solo}-9.windows.jsonl"
+    os.symlink(mid / f"{solo}-9.windows.jsonl", decoy_link)
+    extra_sidecar = root / f"{solo}-9.partial.json"
+    extra_sidecar.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    swapped: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        # Trip after the adoption's prefix listing (its last I/O):
+        # direct verification already recorded the pre-swap target,
+        # and the swap lands between adoption and the leading
+        # bracket, where no clock looks (the intermediate link lives
+        # in level1/).
+        if not swapped and prefix == f"{solo}-":
+            swapped.append(True)
+            mid.unlink()
+            os.symlink(real2, mid)
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-discovery (premise)"
+    assert registry.exists(), "the hold never depended on the journal"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_subdir_prefix_staleness_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a subdir rewrite arriving after its listing reruns.
+
+    Prefix re-list isolation: the r45 rewrite test plants at root,
+    where the early sample also fires. A plant in the link
+    subdirectory is invisible to the fixed early set and postdates
+    the late sample, so only the prefix re-list compare catches
+    it. (Characterization pin: r45 already re-lists; this test
+    locks the isolation.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    link = level1 / "link"
+    os.symlink(real1, link)
+    journal = real1 / f"{solo}-x.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(link / f"{solo}-x.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    real1_resolved = os.path.realpath(real1)
+    planted_late: list[bool] = []
+
+    def _list_then_plant(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if (
+            not planted_late
+            and prefix == f"{solo}-"
+            and os.path.realpath(directory) == real1_resolved
+        ):
+            planted_late.append(True)
+            late = real1 / f"{solo}-x.partial.json.tmp-late"
+            late.write_text("{torn", encoding="utf-8")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_late, "the plant landed post-listing (premise)"
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar46_derived_subdir_journal_retarget_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: a derived subdir journal retargeted mid-pass reruns.
+
+    Codex R45-2: derived journals beside an alias target are
+    adopted during discovery, but a retarget between adoption
+    and the bracket verified stale (subdirectory, pre-sample,
+    same lexical entry). Adopted derived identities re-resolve
+    post-bracket now.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    real = root / "real"
+    real.mkdir()
+    target = real / f"{solo}-r.partial.json"
+    sidecar.rename(target)
+    target_journal = real / f"{solo}-r.windows.jsonl"
+    target_journal.write_text("{}\n", encoding="utf-8")
+    rival_journal = real / f"{rival}-9.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    alias = root / "alias.partial.json"
+    os.symlink(target, alias)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(alias)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    root_resolved = os.path.realpath(root)
+    swapped: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        # Trip after the adoption's prefix listing (its last I/O):
+        # the derived journal's target moves within its own
+        # subdirectory, invisible to the fixed early set.
+        if not swapped and prefix == f"{solo}-" and os.path.realpath(directory) == root_resolved:
+            swapped.append(True)
+            target_journal.unlink()
+            os.symlink(rival_journal, target_journal)
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-adoption (premise)"
+    assert registry.exists(), "the hold never depended on the journal"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX link semantics")
+def test_r44_ar46_subdir_leg_multilinked_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r46: an adopted subdir leg gaining a link reruns.
+
+    A link count appearing on an adopted leg between adoption
+    and re-verification re-observes (a persistent one faults at
+    the next adoption). The subdirectory shape isolates the
+    re-verify verdict: the fixed early set never sees it, so no
+    clock explains the change away.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    link = level1 / "link"
+    os.symlink(real1, link)
+    journal = real1 / f"{solo}-x.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(link / f"{solo}-x.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    real1_resolved = os.path.realpath(real1)
+    linked: list[bool] = []
+
+    def _list_then_link(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if not linked and prefix == f"{solo}-" and os.path.realpath(directory) == real1_resolved:
+            linked.append(True)
+            os.link(journal, real1 / "zzz.second-link")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_link):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert linked, "the link landed post-adoption (premise)"
+    assert registry.exists(), "the hold never depended on the link"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar47_reverify_stat_fault_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r47: a stat fault appearing at re-verification reruns.
+
+    Codex R46-4: an EACCES injected only at the adopted-leg stat
+    faulted the exit even though the helper had succeeded, the
+    listings stayed readable, and the bracket agreed. A fault
+    appearing mid-pass re-observes (uniform change-to-drift; a
+    persistent one faults at the next adoption) instead of
+    selecting the fault exit.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    journal = root / f"{solo}-n.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(root / f"{solo}-n.partial.json")
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    sidecar.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_scan = durability._probe_ambiguity_prefixes
+    real_stat = os.stat
+    journal_keys = {os.fspath(journal), os.path.realpath(journal)}
+    scans: list[bool] = []
+    faulted: list[bool] = []
+
+    def _scan_then_arm(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan (after
+        # the snapshot's); arming there faults only the
+        # re-verification, which runs right after.
+        scans.append(True)
+        return real_scan(*args, **kwargs)
+
+    def _stat_or_fail(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if len(scans) > 1 and os.fspath(path) in journal_keys:
+            faulted.append(True)
+            raise PermissionError(13, "ar47 injected EACCES")
+        return real_stat(path, *args, **kwargs)
+
+    with (
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_arm),
+        mock.patch.object(os, "stat", _stat_or_fail),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert faulted, "the fault landed at re-verification (premise)"
+    assert registry.exists(), "the hold never depended on the stat"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar47_derived_absence_appearance_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r47: a derived journal appearing mid-pass reruns.
+
+    Codex R46-3: an owned journal created beside an alias target
+    after derivation observed it missing and before the late
+    sample was silently omitted -- the subdirectory escapes the
+    fixed early set. Derived absence records like the link legs
+    now: an appearance re-observes. (The sidecar loop converges
+    on the refreshed state with its own offer -- both voices
+    print by design; the registry-scoped rerun proves the catch.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    real = root / "real"
+    real.mkdir()
+    target = real / f"{solo}-r.partial.json"
+    sidecar.rename(target)
+    alias = root / "alias.partial.json"
+    os.symlink(target, alias)
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = str(alias)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    root_resolved = os.path.realpath(root)
+    planted_late: list[bool] = []
+
+    def _list_then_plant(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if (
+            not planted_late
+            and prefix == f"{solo}-"
+            and os.path.realpath(directory) == root_resolved
+        ):
+            planted_late.append(True)
+            late = real / f"{solo}-r.windows.jsonl"
+            late.write_text("{}\n", encoding="utf-8")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_late, "the plant landed post-derivation (premise)"
+    assert registry.exists(), "the hold never depended on the journal"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar47_member_retarget_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r47: a member retargeted mid-pass reruns.
+
+    A torn member alias retargeted after reread recorded it,
+    dangling the alias: the use check finds no target where
+    reread verified torn bytes, so the pass re-observes (member
+    drift; the closing bracket independently drops the vanished
+    target directory). Persistent-shape pin: the retarget
+    dangles, so no restore-based rendering variant applies.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    real2 = root / "real2"
+    real2.mkdir()
+    mid = level1 / "mid"
+    os.symlink(real1, mid)
+    torn_target = real1 / "torn-target.partial.json"
+    torn_target.write_text("{torn", encoding="utf-8")
+    decoy_target = real2 / "decoy-torn.partial.json"
+    decoy_target.write_text("{torn", encoding="utf-8")
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid / "torn-target.partial.json", member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    member_key = os.fspath(member)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+
+    def _resolve_then_swap(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the member is fixed: leading
+        # bracket, reread recording, use check, closing bracket.
+        # The swap lands between recording and the use check, in
+        # an unsampled directory.
+        if os.fspath(path) == member_key:
+            resolves.append(True)
+            if len(resolves) == 3 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(real2, mid)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-reread (premise)"
+    assert registry.exists(), "the hold never depended on the member"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar47_registry_retarget_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r47: a registry retargeted mid-pass reruns.
+
+    Codex R46-2: a registry symlink through a nested intermediate
+    link retargeted after its basename and body checks verified
+    X's registry -- the root and registrations clocks stayed
+    unchanged, and the preview named Y's registry. The registry
+    joins identity tracking now: a target change re-observes.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_reg.write_text(registry.read_bytes().decode("utf-8"), encoding="utf-8")
+    rival_reg = nested / f"{rival}.json"
+    rival_payload = {
+        "worker_uuid": rival,
+        "sidecar": str(root / f"{rival}-9.partial.json"),
+    }
+    rival_reg.write_text(json.dumps(rival_payload), encoding="utf-8")
+    link = nested / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    root_resolved = os.path.realpath(root)
+    swapped: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        found = real_evidence(directory, prefix, suffix)
+        if not swapped and prefix == f"{solo}-" and os.path.realpath(directory) == root_resolved:
+            swapped.append(True)
+            link.unlink()
+            os.symlink(rival_reg, link)
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-adoption (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar47_registry_render_swap_renders_verified(tmp_path: Path) -> None:
+    """#88R44-[A]r47: a mid-render registry swap renders the verified target.
+
+    Codex R46-1/2: a registry alias verified against X's registry,
+    pointed to Y's registry during rendering, then returned to X
+    before the final check -- brackets and re-verification all
+    matched on the restored state, but the preview named Y's
+    registry. Rendering uses the verified target now: the offer
+    names the adopted file even when a transient swap intervenes.
+    (Direct and member rendering share this helper mechanism.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_reg.write_text(registry.read_bytes().decode("utf-8"), encoding="utf-8")
+    rival_reg = nested / f"{rival}.json"
+    rival_payload = {
+        "worker_uuid": rival,
+        "sidecar": str(root / f"{rival}-9.partial.json"),
+    }
+    rival_reg.write_text(json.dumps(rival_payload), encoding="utf-8")
+    # The intermediate link lives in an unsampled directory while
+    # both targets share one resolved parent: the swap bumps no
+    # sampled clock and changes no sampled resolution string, so
+    # the brackets stay blind -- only rendering (then the drift
+    # check) can see it.
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    real_scan = durability._probe_ambiguity_prefixes
+    root_resolved = os.path.realpath(root)
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        # The link adoption's prefix listing runs after the
+        # registry's basename and body checks but before
+        # rendering: the swap lands in that window, in an
+        # unsampled directory (same proven hook as the
+        # retarget test).
+        found = real_evidence(directory, prefix, suffix)
+        if not swapped and prefix == f"{solo}-" and os.path.realpath(directory) == root_resolved:
+            swapped.append(True)
+            link.unlink()
+            os.symlink(rival_reg, link)
+        return found
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            link.unlink()
+            os.symlink(own_reg, link)
+        return result
+
+    with (
+        mock.patch.object(durability, "_list_evidence_files", _list_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed rendering (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(f"nested/{solo}.json" in text for text in offers), texts
+    assert not any(f"{rival}.json" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar47_direct_render_swap_renders_verified(tmp_path: Path) -> None:
+    """#88R44-[A]r47: a mid-render journal-alias swap renders the verified target.
+
+    Codex R46-1: a direct journal alias verified against X's
+    journal, pointed to Y's journal during rendering, then
+    returned to X before the final check -- brackets and
+    re-verification all matched on the restored state, but the
+    preview named Y's journal. Rendering uses the verified
+    target now: the offer names the adopted file even when a
+    transient swap intervenes. (No second sidecar: the derived
+    candidate for a same-path alias would re-verify the alias
+    itself, so the alias enters through the direct listing
+    only.)
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    # Both targets share one resolved parent while the
+    # intermediate link lives in an unsampled directory: the
+    # swap bumps no sampled clock and changes no sampled
+    # resolution string, so the brackets stay blind -- only
+    # rendering (then the drift check) can see it.
+    jlink = level1 / "jlink"
+    own_journal = real1 / f"{solo}-9.windows.jsonl"
+    own_journal.write_text("{}\n", encoding="utf-8")
+    other_journal = real1 / f"rival-{solo}-9.windows.jsonl"
+    other_journal.write_text("{}\n", encoding="utf-8")
+    os.symlink(own_journal, jlink)
+    alias = root / f"{solo}-9.windows.jsonl"
+    os.symlink(jlink, alias)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    real_scan = durability._probe_ambiguity_prefixes
+    root_resolved = os.path.realpath(root)
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        # Same proven hook as the retarget tests: the link
+        # adoption's prefix listing runs after adoption but
+        # before rendering.
+        found = real_evidence(directory, prefix, suffix)
+        if not swapped and prefix == f"{solo}-" and os.path.realpath(directory) == root_resolved:
+            swapped.append(True)
+            jlink.unlink()
+            os.symlink(other_journal, jlink)
+        return found
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            jlink.unlink()
+            os.symlink(own_journal, jlink)
+        return result
+
+    with (
+        mock.patch.object(durability, "_list_evidence_files", _list_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed rendering (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(f"real1/{solo}-9.windows.jsonl" in text for text in offers), texts
+    assert not any(f"rival-{solo}-9.windows.jsonl" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar47_derivation_uses_adopted_sidecar(tmp_path: Path) -> None:
+    """#88R44-[A]r47: journal derivation uses the adopted sidecar target.
+
+    Codex R46-1: a sidecar alias briefly pointed to Y's sidecar
+    during journal derivation, and Y's claimless journal beside
+    it joined the archival list. Derivation resolves the
+    sidecar through its adopted identity now: the transient
+    target's journal is never a candidate, so the offer names
+    only the family's own evidence.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    sub = root / "sub"
+    sub.mkdir()
+    # Both targets share one resolved parent while the
+    # intermediate link lives in an unsampled directory: the
+    # swap bumps no sampled clock and changes no sampled
+    # resolution string, so the brackets stay blind -- only
+    # derivation (then rendering and the drift check) can see
+    # it. The own journal stays absent; only Y's journal beside
+    # Y's sidecar exists.
+    slink = level1 / "slink"
+    own_sidecar = sub / "own-sidecar.partial.json"
+    own_sidecar.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    rival_sidecar = sub / "y-sidecar.partial.json"
+    rival_sidecar.write_text(json.dumps({"worker_uuid": rival}), encoding="utf-8")
+    rival_journal = sub / "y-sidecar.windows.jsonl"
+    rival_journal.write_text("{}\n", encoding="utf-8")
+    os.symlink(own_sidecar, slink)
+    alias = root / f"{solo}-9.partial.json"
+    os.symlink(slink, alias)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_journal_for = durability._journal_for_sidecar
+    real_scan = durability._probe_ambiguity_prefixes
+    alias_key = os.fspath(alias)
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _derive_then_swap(sidecar_path: Any) -> Any:
+        # Derivation's first use of the alias: the swap lands
+        # after the basis adoption but before the sidecar
+        # resolves, in an unsampled directory. Hooking the
+        # derivation call (not a resolve count) keeps the window
+        # exact whether the target resolves fresh or adopted.
+        if not swapped and os.fspath(sidecar_path) == alias_key:
+            swapped.append(True)
+            slink.unlink()
+            os.symlink(rival_sidecar, slink)
+        return real_journal_for(sidecar_path)
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            slink.unlink()
+            os.symlink(own_sidecar, slink)
+        return result
+
+    with (
+        mock.patch.object(durability, "_journal_for_sidecar", _derive_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed derivation (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any("sub/own-sidecar.partial.json" in text for text in offers), texts
+    assert not any("sub/y-sidecar" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar48_conflicting_adoptions_rerun(tmp_path: Path) -> None:
+    """#88R44-[A]r48: one lexical adopted twice with different targets reruns.
+
+    Codex R47-1: a journal alias adopted target A by the direct
+    scan, then target B by the link adoption after a swap --
+    rendering first-wins A while two staggered re-checks (B at
+    the leg check, A at the singleton check after a restore)
+    both pass and the same-directory brackets agree. Conflicting
+    records prove the pass observed mixed state now: combining
+    them re-observes instead of publishing.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    xside = root / f"{solo}-x.partial.json"
+    xside.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(xside)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    level1 = root / "level1"
+    level1.mkdir()
+    sub = root / "sub"
+    sub.mkdir()
+    target_a = sub / f"{solo}-x.windows.jsonl"
+    target_a.write_text("{}\n", encoding="utf-8")
+    target_b = sub / f"{solo}-y.windows.jsonl"
+    target_b.write_text("{}\n", encoding="utf-8")
+    ilink = level1 / "ilink"
+    os.symlink(target_a, ilink)
+    alias = root / f"{solo}-x.windows.jsonl"
+    os.symlink(ilink, alias)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    alias_key = os.fspath(alias)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _resolve_then_swap_restore(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the alias is fixed: direct adoption,
+        # derived verify, leg resolution, leading bracket, leg
+        # check, singleton check, closing bracket. The swap lands
+        # inside leg resolution (after both assembly adoptions
+        # recorded A, so only the cross-store merge can catch
+        # it); the restore lands between the two checks, so each
+        # passes on its own record while the brackets (same
+        # directory, clocks untouched in the unsampled swap
+        # directory) agree.
+        if os.fspath(path) == alias_key:
+            resolves.append(True)
+            if len(resolves) == 3 and not swapped:
+                swapped.append(True)
+                ilink.unlink()
+                os.symlink(target_b, ilink)
+            elif len(resolves) == 6 and swapped and not restored:
+                restored.append(True)
+                ilink.unlink()
+                os.symlink(target_a, ilink)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap_restore):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swaps bracketed the checks (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar48_derived_appearance_overwrite_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r48: a journal appearing between two adoptions reruns.
+
+    Codex R47-2: the derived loop recorded a missing journal as
+    absent for one sidecar base, then a second base deriving the
+    same path verified it present and silently overwrote the
+    absence. A disagreeing overwrite proves mid-pass change now:
+    the appearance re-observes instead of joining quietly.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    sub = root / "sub"
+    sub.mkdir()
+    target = sub / "t.shared.partial.json"
+    target.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    first = root / f"{solo}-a1.partial.json"
+    os.symlink(target, first)
+    second = root / f"{solo}-a2.partial.json"
+    os.symlink(target, second)
+    journal = sub / "t.shared.windows.jsonl"
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    journal_key = os.fspath(journal)
+    states: list[bool] = []
+    planted_journal: list[bool] = []
+
+    def _state_then_plant(path: Any) -> Any:
+        # Both aliases derive the same journal path; the first
+        # observation records its absence. Planting right after
+        # that observation (order-independent: whichever base
+        # runs first plants for the second) makes the second
+        # adoption verify it present.
+        result = real_state(path)
+        if os.fspath(path) == journal_key:
+            states.append(True)
+            if len(states) == 1 and not planted_journal:
+                planted_journal.append(True)
+                journal.write_text("{}\n", encoding="utf-8")
+        return result
+
+    with mock.patch.object(durability, "_path_state", _state_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_journal, "the journal appeared between adoptions (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar48_link_target_appearance_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r48: a journal appearing beside the linked target reruns.
+
+    Codex R47-2: the link adoption checked the redirected
+    sidecar's journal, found it missing, and recorded nothing --
+    a journal appearing there before the late bracket was
+    silently omitted from a successful preview. Missing link
+    targets record their absence now like derived journals.
+    (The link lives beside its target in a subdirectory, so no
+    census basis derives the journal: only the link path checks
+    it (probed). A root-level link would trip the census
+    contradiction arm on a rival body, or join the basis on a
+    valid one -- both mask the window.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    sub = root / "sub"
+    sub.mkdir()
+    real_sidecar = sub / f"{solo}-z.partial.json"
+    real_sidecar.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    linkside = sub / f"{solo}-link.partial.json"
+    os.symlink(real_sidecar, linkside)
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(linkside)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    journal = sub / f"{solo}-z.windows.jsonl"
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    planted_journal: list[bool] = []
+
+    def _list_then_plant(directory: Any, prefix: str, suffix: str) -> Any:
+        # The link adoption's prefix listing runs after its
+        # target-journal check but before rendering: planting
+        # there lands the appearance inside the unrecorded
+        # window (same proven hook as the retarget tests).
+        found = real_evidence(directory, prefix, suffix)
+        if not planted_journal and prefix == f"{solo}-":
+            planted_journal.append(True)
+            journal.write_text("{}\n", encoding="utf-8")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_journal, "the journal appeared post-check (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar48_registry_replacement_reads_recorded(tmp_path: Path) -> None:
+    """#88R44-[A]r48: the sidecar field reads through the recorded registry.
+
+    Codex R47-4: the preview recorded the registry's target,
+    then reopened the lexical path for the sidecar field -- a
+    transient same-UUID replacement contributed a different
+    sidecar and journal, and restoring the original before the
+    final check published those names alongside the original
+    registry. The field binds at assembly now (resolve, read,
+    re-resolve); the stashed body feeds adoption.
+    (The rival sidecar lives in a subdirectory: only the link
+    path can name it, since the census never bases subdir
+    files (probed). A root-level rival would trip the census
+    contradiction arm on a rival body, or join the basis on a
+    valid one -- both mask the window.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_body = registry.read_bytes().decode("utf-8")
+    own_reg.write_text(own_body, encoding="utf-8")
+    sub = root / "sub"
+    sub.mkdir()
+    rival_sidecar = sub / f"{solo}-y.partial.json"
+    rival_sidecar.write_text(Path(planted["sidecar"]).read_text(encoding="utf-8"), encoding="utf-8")
+    rival_reg = nested / "y-reg"
+    rival_body = dict(json.loads(own_body))
+    rival_body["sidecar"] = os.fspath(rival_sidecar)
+    rival_reg.write_text(json.dumps(rival_body), encoding="utf-8")
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    real_scan = durability._probe_ambiguity_prefixes
+    root_resolved = os.path.realpath(root)
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _list_then_swap(directory: Any, prefix: str, suffix: str) -> Any:
+        # The direct-journal listing runs after the registry's
+        # adoption but before its field read (probed: the only
+        # such listing in the pass): the swap lands in that
+        # window, in an unsampled directory.
+        found = real_evidence(directory, prefix, suffix)
+        if (
+            not swapped
+            and prefix == ""
+            and suffix == ".windows.jsonl"
+            and os.path.realpath(directory) == root_resolved
+        ):
+            swapped.append(True)
+            link.unlink()
+            os.symlink(rival_reg, link)
+        return found
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            link.unlink()
+            os.symlink(own_reg, link)
+        return result
+
+    with (
+        mock.patch.object(durability, "_list_evidence_files", _list_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed the field read (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(Path(planted["sidecar"]).name in text for text in offers), texts
+    assert not any(f"sub/{solo}-y.partial.json" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar48_appearing_registry_skips_links(tmp_path: Path) -> None:
+    """#88R44-[A]r48: a registry appearing mid-pass contributes no links.
+
+    Codex R47-4: a registry absent at assembly recorded nothing,
+    so the later field read adopted links from a registry the
+    pass never verified. Assembly-missing registries record
+    their absence now, and link adoption skips them for the
+    pass: the appearance re-observes without voicing transient
+    findings. (The early bracket independently reruns this
+    shape; the skip keeps the rerun quiet.)
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    saved_body = dict(json.loads(registry.read_text(encoding="utf-8")))
+    saved_body["sidecar"] = "/"
+    registry.unlink()
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    root_resolved = os.path.realpath(root)
+    appeared: list[bool] = []
+
+    def _list_then_appear(directory: Any, prefix: str, suffix: str) -> Any:
+        # The direct-journal listing runs after the assembly
+        # missing-check but before the field read (probed: the
+        # only such listing in the pass): the appearance lands
+        # in that window. The full valid body with an unusable
+        # field would voice if the pass adopted from it.
+        found = real_evidence(directory, prefix, suffix)
+        if (
+            not appeared
+            and prefix == ""
+            and suffix == ".windows.jsonl"
+            and os.path.realpath(directory) == root_resolved
+        ):
+            appeared.append(True)
+            registry.write_text(json.dumps(saved_body), encoding="utf-8")
+        return found
+
+    with mock.patch.object(durability, "_list_evidence_files", _list_then_appear):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert appeared, "the registry appeared pre-read (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("unusable sidecar path" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar48_member_samedir_retarget_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r48: a member retargeted inside one directory reruns.
+
+    Codex R47-minor: a torn member alias retargeted to another
+    torn file in the SAME directory after reread recorded it.
+    No sampled clock moves (the intermediate link lives in an
+    unsampled directory and the resolved parent is unchanged),
+    so only the recorded target compared at use catches it --
+    previously this misvoiced as a fault ("could not be
+    verified"), but mid-pass change re-observes. Both targets
+    are owned and torn, so the rest state is a valid offer and
+    only the change reruns.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    mid = level1 / "mid"
+    own_target = real1 / f"{solo}-torn.partial.json"
+    own_target.write_text("{torn", encoding="utf-8")
+    other_target = real1 / f"{solo}-torn2.partial.json"
+    other_target.write_text("{torn", encoding="utf-8")
+    os.symlink(own_target, mid)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    member_key = os.fspath(member)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+
+    def _resolve_then_swap(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the member is fixed: leading
+        # bracket, reread recording, use check, closing bracket.
+        # The swap lands between recording and the use check, in
+        # an unsampled directory.
+        if os.fspath(path) == member_key:
+            resolves.append(True)
+            if len(resolves) == 3 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(other_target, mid)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the swap landed post-reread (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_absent_leg_redirect_withholds(tmp_path: Path) -> None:
+    """#88R44-[A]r49: a leg absent at adoption renders nothing transient.
+
+    Codex R48-1: a linked sidecar absent at adoption (its
+    directory reached through an intermediate link in an
+    unsampled directory) briefly resolved during rendering via
+    a redirected intermediate, naming an unverified file and
+    its companions -- then the restore made the absence, the
+    parent, and both brackets agree. Recorded-absent legs
+    withhold as unverified now, and their companions enumerate
+    beside the adopted parent.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    adir = root / "Adir"
+    adir.mkdir()
+    bdir = root / "Bdir"
+    bdir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(adir, mid)
+    bside = bdir / f"{solo}-x.partial.json"
+    bside.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    (bdir / f"{solo}-x.partial.json.tmp-1").write_text("{}\n", encoding="utf-8")
+    base = wrap / "mid" / f"{solo}-x.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_scan = durability._probe_ambiguity_prefixes
+    base_key = os.path.abspath(os.fspath(base))
+    states: list[bool] = []
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _state_then_swap(path: Any) -> Any:
+        # Lexical touches of the base are fixed: the leading
+        # bracket, the render check, the re-verify, the closing
+        # bracket (probed; the adoption resolves the recorded
+        # spelling, never this one). The swap lands inside the
+        # render check, after the leading bracket sampled the
+        # absent parent.
+        result = real_state(path)
+        if os.path.abspath(os.fspath(path)) == base_key:
+            states.append(True)
+            if len(states) == 2 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(bdir, mid)
+                result = real_state(path)
+        return result
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            mid.unlink()
+            os.symlink(adir, mid)
+        return result
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed rendering (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+    assert not any("Bdir/" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_member_bytes_bound_to_record(tmp_path: Path) -> None:
+    """#88R44-[A]r49: member reread bytes come from the recorded target.
+
+    Codex R48-2: the member recorded target A, then reread the
+    lexical path -- a swap bracketing the read bound B's torn
+    verdict to A, and restoring A before the use check passed
+    the compare and offered the healed A for archival. Reread
+    bytes come through the recorded target now; here A healed,
+    so the pass re-observes instead of archiving it as torn.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    mid = level1 / "mid"
+    own_target = real1 / f"{solo}-torn.partial.json"
+    own_target.write_text("{torn", encoding="utf-8")
+    other_target = real1 / f"{solo}-torn2.partial.json"
+    other_target.write_text("{torn", encoding="utf-8")
+    os.symlink(own_target, mid)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    member_key = os.fspath(member)
+    resolves: list[bool] = []
+    interfered: list[bool] = []
+    restored: list[bool] = []
+
+    def _resolve_then_interfere(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the member is fixed: leading
+        # bracket, reread recording, use check, closing bracket.
+        # After recording returns A, heal A in place and swap to
+        # torn B for the reread read; the restore lands inside
+        # the use check, before it computes.
+        result = real_resolve(path, *args, **kwargs)
+        if os.fspath(path) == member_key:
+            resolves.append(True)
+            if len(resolves) == 2 and not interfered:
+                interfered.append(True)
+                own_target.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+                mid.unlink()
+                os.symlink(other_target, mid)
+            elif len(resolves) == 3 and interfered and not restored:
+                restored.append(True)
+                mid.unlink()
+                os.symlink(own_target, mid)
+                result = real_resolve(path, *args, **kwargs)
+        return result
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_interfere):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert interfered and restored, "the swaps bracketed the read (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_member_use_eloop_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r49: an unresolvable member at use fails, never drifts.
+
+    Codex R48-2: a use-time resolve failure is unknown, not
+    proven disappearance -- only vanished (ENOENT/ENOTDIR)
+    targets re-observe. A transient symlink loop at the use
+    check (restored before the closing bracket, so no clock
+    sees it) fails as a fault instead of suppressing genuine
+    co-faults behind a drift exit.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    mid = level1 / "mid"
+    own_target = real1 / f"{solo}-torn.partial.json"
+    own_target.write_text("{torn", encoding="utf-8")
+    os.symlink(own_target, mid)
+    loop = level1 / "loop"
+    os.symlink("loop", loop)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    member_key = os.fspath(member)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _resolve_then_swap(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the member is fixed: leading
+        # bracket, reread recording, use check, closing bracket.
+        # The loop lands inside the use check; the restore lands
+        # inside the closing bracket's resolve, so the brackets
+        # agree and only the use failure decides.
+        if os.fspath(path) == member_key:
+            resolves.append(True)
+            if len(resolves) == 3 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(loop, mid)
+            elif len(resolves) == 4 and swapped and not restored:
+                restored.append(True)
+                mid.unlink()
+                os.symlink(own_target, mid)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the loop bracketed the use check (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_registry_bytes_bound_at_assembly(tmp_path: Path) -> None:
+    """#88R44-[A]r49: a same-path registry replacement contributes nothing.
+
+    Codex R48-3: the recorded registry's bytes replaced after
+    assembly (same path, valid same-UUID body, different
+    sidecar), then restored before the late bracket -- both
+    swaps predate every sample of the nested directory, and the
+    final check compares pathnames, so the replacement's links
+    published alongside the original registry. The body binds
+    at assembly now (resolve, read, re-resolve); the stashed
+    body feeds adoption.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_body = registry.read_text(encoding="utf-8")
+    own_reg.write_text(own_body, encoding="utf-8")
+    sub = root / "sub"
+    sub.mkdir()
+    rival_sidecar = sub / f"{solo}-y.partial.json"
+    rival_sidecar.write_text(Path(planted["sidecar"]).read_text(encoding="utf-8"), encoding="utf-8")
+    rival_body = dict(json.loads(own_body))
+    rival_body["sidecar"] = os.fspath(rival_sidecar)
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+    root_resolved = os.path.realpath(root)
+    replaced: list[bool] = []
+    restored: list[bool] = []
+
+    def _list_then_replace(directory: Any, prefix: str, suffix: str) -> Any:
+        # The direct-journal listing runs after the assembly
+        # body read but before link adoption (probed: the only
+        # such listing in the pass): the replacement lands in
+        # that window.
+        found = real_evidence(directory, prefix, suffix)
+        if (
+            not replaced
+            and prefix == ""
+            and suffix == ".windows.jsonl"
+            and os.path.realpath(directory) == root_resolved
+        ):
+            replaced.append(True)
+            own_reg.write_text(json.dumps(rival_body), encoding="utf-8")
+        return found
+
+    def _restore_before_bracket(directory: Any, prefix: str, suffix: str) -> Any:
+        # The link adoption's prefix listing runs after adoption
+        # but before the late bracket opens (same proven hook as
+        # the retarget tests): restoring here leaves both
+        # bracket samples past both swaps, so the clocks agree.
+        found = real_evidence(directory, prefix, suffix)
+        if not restored and prefix == f"{solo}-":
+            restored.append(True)
+            own_reg.write_text(own_body, encoding="utf-8")
+        return found
+
+    with mock.patch.object(
+        durability,
+        "_list_evidence_files",
+        lambda directory, prefix, suffix: (
+            _restore_before_bracket(directory, prefix, suffix)
+            if prefix == f"{solo}-"
+            else _list_then_replace(directory, prefix, suffix)
+        ),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert replaced and restored, "the replacement bracketed adoption (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(Path(planted["sidecar"]).name in text for text in offers), texts
+    assert not any(f"sub/{solo}-y.partial.json" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_relative_spelling_conflicts(tmp_path: Path, monkeypatch: Any) -> None:
+    """#88R44-[A]r49: equivalent spellings meet as one record.
+
+    Codex R48-4: the direct scan recorded the absolute journal
+    spelling with target A while link adoption recorded the
+    CWD-relative spelling of the same file with target B --
+    different keys, no conflict, both targets published, and
+    staggered re-checks each passed on their own record. Keys
+    normalize through abspath now (the sweep never changes
+    directories), so equivalent spellings conflict like
+    identical ones.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    xside = root / f"{solo}-x.partial.json"
+    xside.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.path.join("counters", f"{solo}-x.partial.json")
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    level1 = root / "level1"
+    level1.mkdir()
+    sub = root / "sub"
+    sub.mkdir()
+    target_a = sub / f"{solo}-x.windows.jsonl"
+    target_a.write_text("{}\n", encoding="utf-8")
+    target_b = sub / f"{solo}-y.windows.jsonl"
+    target_b.write_text("{}\n", encoding="utf-8")
+    ilink = level1 / "ilink"
+    os.symlink(target_a, ilink)
+    alias = root / f"{solo}-x.windows.jsonl"
+    os.symlink(ilink, alias)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    alias_key = os.fspath(alias)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _resolve_then_swap_restore(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Absolute-spelling resolves of the alias are fixed:
+        # direct adoption, derived verify, leg resolution,
+        # leading bracket, singleton check, closing bracket
+        # (the leg check resolves the relative spelling, so it
+        # runs uncounted between the bracket and the singleton
+        # check). The swap lands inside leg resolution; the
+        # restore lands between the two checks.
+        if os.fspath(path) == alias_key:
+            resolves.append(True)
+            if len(resolves) == 3 and not swapped:
+                swapped.append(True)
+                ilink.unlink()
+                os.symlink(target_b, ilink)
+            elif len(resolves) == 5 and swapped and not restored:
+                restored.append(True)
+                ilink.unlink()
+                os.symlink(target_a, ilink)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap_restore):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swaps bracketed the checks (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_conflict_outranks_cofault(tmp_path: Path) -> None:
+    """#88R44-[A]r49: a proven identity conflict reruns past co-faults.
+
+    Codex R48-5: conflicting adoptions cleared the family flag
+    but never joined proven drift, so a pre-existing fault
+    (here a multiply linked family journal) plus clean brackets
+    took the fault exit instead of rerunning on the proven
+    change. Conflicts carry into proven drift now: two
+    successful observations differ, so the pass re-observes
+    (the co-fault still voices at detection).
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    xside = root / f"{solo}-x.partial.json"
+    xside.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(xside)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    level1 = root / "level1"
+    level1.mkdir()
+    sub = root / "sub"
+    sub.mkdir()
+    target_a = sub / f"{solo}-x.windows.jsonl"
+    target_a.write_text("{}\n", encoding="utf-8")
+    target_b = sub / f"{solo}-y.windows.jsonl"
+    target_b.write_text("{}\n", encoding="utf-8")
+    ilink = level1 / "ilink"
+    os.symlink(target_a, ilink)
+    alias = root / f"{solo}-x.windows.jsonl"
+    os.symlink(ilink, alias)
+    multilink = root / f"{solo}-m.windows.jsonl"
+    multilink.write_text("{}\n", encoding="utf-8")
+    os.link(multilink, root / f"{solo}-m2.windows.jsonl")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    alias_key = os.fspath(alias)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _resolve_then_swap_restore(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the alias is fixed: direct adoption,
+        # derived verify, leg resolution, leading bracket, leg
+        # check, singleton check, closing bracket. The swap lands
+        # inside leg resolution (after both assembly adoptions
+        # recorded A, so only the cross-store merge can catch
+        # it); the restore lands between the two checks.
+        if os.fspath(path) == alias_key:
+            resolves.append(True)
+            if len(resolves) == 3 and not swapped:
+                swapped.append(True)
+                ilink.unlink()
+                os.symlink(target_b, ilink)
+            elif len(resolves) == 6 and swapped and not restored:
+                restored.append(True)
+                ilink.unlink()
+                os.symlink(target_a, ilink)
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap_restore):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swaps bracketed the checks (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+    assert any("more than one link" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_link_target_vanish_recreate_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r49: a link-target journal vanishing then reappearing reruns.
+
+    Codex R48-6: the link adoption saw the redirected sidecar's
+    journal present, then lost it before verifying -- and
+    recorded nothing, so a recreation before the late bracket
+    slipped into a successful preview unlisted. Verify-missing
+    records the absence now like a missing check.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    sub = root / "sub"
+    sub.mkdir()
+    real_sidecar = sub / f"{solo}-z.partial.json"
+    real_sidecar.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    linkside = sub / f"{solo}-link.partial.json"
+    os.symlink(real_sidecar, linkside)
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(linkside)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    journal = sub / f"{solo}-z.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_evidence = durability._list_evidence_files
+    journal_key = os.fspath(journal)
+    states: list[bool] = []
+    vanished: list[bool] = []
+    recreated: list[bool] = []
+
+    def _state_then_vanish(path: Any) -> Any:
+        # Only the link adoption checks this path (probed): it
+        # sees the journal present, then loses it before the
+        # verify runs.
+        result = real_state(path)
+        if os.fspath(path) == journal_key:
+            states.append(True)
+            if len(states) == 1 and not vanished:
+                vanished.append(True)
+                journal.unlink()
+        return result
+
+    def _list_then_recreate(directory: Any, prefix: str, suffix: str) -> Any:
+        # The link adoption's prefix listing runs after the lost
+        # verify but before rendering: recreating there lands
+        # the reappearance inside the unrecorded window.
+        found = real_evidence(directory, prefix, suffix)
+        if not recreated and prefix == f"{solo}-":
+            recreated.append(True)
+            journal.write_text("{}\n", encoding="utf-8")
+        return found
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_vanish),
+        mock.patch.object(durability, "_list_evidence_files", _list_then_recreate),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert vanished and recreated, "the journal vanished then reappeared (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar49_derived_vanish_recreate_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r49: a derived journal vanishing then reappearing reruns.
+
+    Codex R48-6: the derived loop saw the candidate present,
+    then lost it before verifying -- and recorded nothing, so
+    a recreation before the late bracket slipped into a
+    successful preview unlisted. Verify-missing records the
+    absence now like a missing check.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    sub = root / "sub"
+    sub.mkdir()
+    target = sub / "t.shared.partial.json"
+    target.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    alias = root / f"{solo}-a1.partial.json"
+    os.symlink(target, alias)
+    journal = sub / "t.shared.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_evidence = durability._list_evidence_files
+    journal_key = os.fspath(journal)
+    states: list[bool] = []
+    vanished: list[bool] = []
+    recreated: list[bool] = []
+
+    def _state_then_vanish(path: Any) -> Any:
+        # Only the derived loop checks this path (no other
+        # site derives it): it sees the journal present, then
+        # loses it before the verify runs.
+        result = real_state(path)
+        if os.fspath(path) == journal_key:
+            states.append(True)
+            if len(states) == 1 and not vanished:
+                vanished.append(True)
+                journal.unlink()
+        return result
+
+    def _list_then_recreate(directory: Any, prefix: str, suffix: str) -> Any:
+        # The link adoption's prefix listing runs after the lost
+        # verify but before rendering: recreating there lands
+        # the reappearance inside the unrecorded window.
+        found = real_evidence(directory, prefix, suffix)
+        if not recreated and prefix == f"{solo}-":
+            recreated.append(True)
+            journal.write_text("{}\n", encoding="utf-8")
+        return found
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_vanish),
+        mock.patch.object(durability, "_list_evidence_files", _list_then_recreate),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert vanished and recreated, "the journal vanished then reappeared (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_identity_key_relative_matches_absolute(tmp_path: Path, monkeypatch: Any) -> None:
+    """#88R44-[A]r50: identity keys unify relative and absolute spellings."""
+    import os
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    target = sub / "file.partial.json"
+    target.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert durability._identity_key(os.path.join("sub", "file.partial.json")) == (
+        durability._identity_key(os.fspath(target))
+    )
+    assert durability._identity_key(os.path.join("sub", "other.partial.json")) != (
+        durability._identity_key(os.fspath(target))
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_identity_key_dotdot_across_link(tmp_path: Path) -> None:
+    """#88R44-[A]r50: identity keys resolve `..` across symlinks semantically.
+
+    Pure-textual normalization merges `root/hop/../x` with
+    `root/x` when `hop` points elsewhere; the identity key
+    resolves the parent, so equivalent spellings meet while
+    distinct files key apart.
+    """
+    import os
+
+    root = tmp_path / "root"
+    root.mkdir()
+    sub = root / "sub"
+    sub.mkdir()
+    inner = sub / "inner"
+    inner.mkdir()
+    hop = root / "hop"
+    os.symlink(inner, hop)
+    assert durability._identity_key(
+        os.fspath(root / "hop" / ".." / "x.partial.json")
+    ) == durability._identity_key(os.fspath(sub / "x.partial.json"))
+    assert durability._identity_key(
+        os.fspath(root / "hop" / ".." / "x.partial.json")
+    ) != durability._identity_key(os.fspath(root / "x.partial.json"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_dotdot_field_no_false_conflict(tmp_path: Path) -> None:
+    """#88R44-[A]r50: a `..` field spelling conflicts with nothing stable.
+
+    Codex R49-1: the registry field names a sidecar through an
+    intermediate link plus `..` while a trusted root-level
+    sidecar keeps the textually-collapsed spelling -- two
+    stable files owned by one producer. Textual key
+    normalization merged them and reran every pass; file
+    identity keeps them apart, so the pass offers.
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    sub = root / "sub"
+    sub.mkdir()
+    inner = sub / "inner"
+    inner.mkdir()
+    hop = root / "hop"
+    os.symlink(inner, hop)
+    linked = sub / f"{solo}-w.partial.json"
+    linked.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    shadow = root / f"{solo}-w.partial.json"
+    shadow.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(root / "hop" / ".." / f"{solo}-w.partial.json")
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_registry_reresolve_eio_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r50: a failed registry re-resolution fails, never drifts.
+
+    Codex R49-3: only a proven disappearance (or a different
+    target) re-observes -- an indeterminate re-resolution
+    failure (EIO here) fails closed, so a genuine co-fault
+    (a multiply linked journal) keeps its fault exit instead
+    of being suppressed behind a drift rerun.
+    """
+    import errno
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    multilink = root / f"{solo}-m.windows.jsonl"
+    multilink.write_text("{}\n", encoding="utf-8")
+    os.link(multilink, root / f"{solo}-m2.windows.jsonl")
+    registry = root / "registrations" / f"{solo}.json"
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    registry_key = os.fspath(registry)
+    resolves: list[bool] = []
+
+    def _resolve_then_eio(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Registry resolves are fixed: assembly verify, then two
+        # body re-resolves, brackets, and the late check
+        # (probed). The verify succeeds; every later resolution
+        # fails with EIO.
+        if os.fspath(path) == registry_key:
+            resolves.append(True)
+            if len(resolves) > 1:
+                raise OSError(errno.EIO, "injected fault")
+        return real_resolve(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_eio):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert len(resolves) > 1, "the re-resolves ran faulty (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+    assert any("more than one link" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_registry_read_window_content_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r50: bytes flipping inside the assembly read rerun.
+
+    Codex R49-2: a path re-resolution is blind to same-path byte
+    swaps, so a replacement landing between the assembly resolve
+    and read stashed foreign links under the recorded pathname.
+    The body reads twice now with a re-resolve between and
+    after; here the bytes flip back between the two reads, so
+    the disagreement re-observes instead of publishing.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_body = registry.read_text(encoding="utf-8")
+    own_reg.write_text(own_body, encoding="utf-8")
+    sub = root / "sub"
+    sub.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    rival_sidecar = sub / f"{solo}-y.partial.json"
+    rival_sidecar.write_text(Path(planted["sidecar"]).read_text(encoding="utf-8"), encoding="utf-8")
+    rival_body = dict(json.loads(own_body))
+    rival_body["sidecar"] = os.fspath(rival_sidecar)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read = durability._read_regular_file_bytes
+    real_scan = durability._probe_ambiguity_prefixes
+    own_key = os.fspath(own_reg)
+    reads: list[bool] = []
+    scans: list[bool] = []
+    flipped: list[bool] = []
+    restored: list[bool] = []
+
+    def _read_then_flip(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The assembly reads the recorded target twice (nothing
+        # else reads it: the census never scans the nested
+        # directory). The replacement lands before the first
+        # read; the restore lands before the second, so the two
+        # reads disagree while every path check agrees. (On a
+        # single-read tree the rescan hook below restores
+        # instead, so the same test RED-proves there too.)
+        if os.fspath(path) == own_key:
+            reads.append(True)
+            if len(reads) == 1 and not flipped:
+                flipped.append(True)
+                own_reg.write_text(json.dumps(rival_body), encoding="utf-8")
+            elif len(reads) == 2 and flipped and not restored:
+                restored.append(True)
+                own_reg.write_text(own_body, encoding="utf-8")
+        return real_read(path, *args, **kwargs)
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # Fallback restore for single-read trees: the verdict's
+        # rescan runs after adoption but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and flipped and not restored:
+            restored.append(True)
+            own_reg.write_text(own_body, encoding="utf-8")
+        return result
+
+    with (
+        mock.patch.object(durability, "_read_regular_file_bytes", _read_then_flip),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert flipped and restored, "the bytes flipped inside the reads (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_basis_hidden_by_redirect_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r50: a basis hidden by an ancestor redirect reruns.
+
+    Codex R49-4: the census attested a sidecar, but an ancestor
+    of the counters path redirected while the assembly
+    verified it, so the check saw a directory without the
+    entry -- and recorded nothing, publishing without it once
+    restored. Verify-missing records the absence now, so the
+    present re-verify re-observes. (Flat-scan root churn would
+    trip the early bracket; only the ancestor redirect, whose
+    swap lands outside every sampled directory, reaches the
+    late check silently.)
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    base = tmp_path / "base"
+    base.mkdir()
+    real = base / "real"
+    real.mkdir()
+    root = real / "counters"
+    root.mkdir()
+    link = base / "link"
+    os.symlink(real, link)
+    alt = base / "alt"
+    alt.mkdir()
+    via = link / "counters"
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        via, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    extra = via / f"{solo}-bb.partial.json"
+    extra.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    _plant_probe_orphan(
+        via,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    extra_key = os.fspath(extra)
+    states: list[bool] = []
+    blinked: list[bool] = []
+
+    def _state_then_blink(path: Any) -> Any:
+        # The assembly verify is the first touch of the basis
+        # path: redirect the ancestor for exactly this one call,
+        # so the check sees the entry missing, then restore
+        # before anything else observes. Every sample brackets
+        # the blink.
+        if os.fspath(path) == extra_key:
+            states.append(True)
+            if len(states) == 1 and not blinked:
+                blinked.append(True)
+                link.unlink()
+                os.symlink(alt, link)
+                try:
+                    return real_state(path)
+                finally:
+                    link.unlink()
+                    os.symlink(real, link)
+        return real_state(path)
+
+    with mock.patch.object(durability, "_path_state", _state_then_blink):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                via, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert blinked, "the redirect bracketed the verify (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_direct_hidden_by_redirect_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r50: a direct journal hidden by an ancestor redirect reruns.
+
+    Codex R49-4, direct twin: the root listing hit a journal,
+    but an ancestor of the counters path redirected while the
+    assembly verified it, so the check saw a directory without
+    the entry -- and recorded nothing, publishing without it
+    once restored. Verify-missing records the absence now.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    base = tmp_path / "base"
+    base.mkdir()
+    real = base / "real"
+    real.mkdir()
+    root = real / "counters"
+    root.mkdir()
+    link = base / "link"
+    os.symlink(real, link)
+    alt = base / "alt"
+    alt.mkdir()
+    via = link / "counters"
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        via, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    journal = via / f"{solo}-d.windows.jsonl"
+    journal.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        via,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    journal_key = os.fspath(journal)
+    states: list[bool] = []
+    blinked: list[bool] = []
+
+    def _state_then_blink(path: Any) -> Any:
+        # The assembly verify is the first touch of the listed
+        # path (listings use scandir, never this seam): redirect
+        # the ancestor for exactly this one call, then restore
+        # before anything else observes.
+        if os.fspath(path) == journal_key:
+            states.append(True)
+            if len(states) == 1 and not blinked:
+                blinked.append(True)
+                link.unlink()
+                os.symlink(alt, link)
+                try:
+                    return real_state(path)
+                finally:
+                    link.unlink()
+                    os.symlink(real, link)
+        return real_state(path)
+
+    with mock.patch.object(durability, "_path_state", _state_then_blink):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                via, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert blinked, "the redirect bracketed the verify (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_member_fallback_inspects_recorded(tmp_path: Path) -> None:
+    """#88R44-[A]r50: member fallback checks the recorded target, not lexical.
+
+    Codex R49-5: reread bytes failed on the recorded target
+    while the lexical path transiently named a directory --
+    the fallback inspected the lexical path and filed the
+    member torn by another directory's verdict, then the
+    restored use check verified the original and offered the
+    unreadable file for archival. The fallback inspects the
+    recorded target now, so this fails instead.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    bdir = real1 / "bdir"
+    bdir.mkdir()
+    mid = level1 / "mid"
+    own_target = real1 / f"{solo}-torn.partial.json"
+    own_target.write_text("{torn", encoding="utf-8")
+    os.symlink(own_target, mid)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read = durability._read_regular_file_bytes
+    real_resolve = os.path.realpath
+    member_key = os.fspath(member)
+    target_key = os.fspath(own_target)
+    reads: list[bool] = []
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _read_then_swap(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The reread read (member spelling before the fix,
+        # recorded target after; nothing else reads either):
+        # fail the bytes to simulate the unreadable target,
+        # then point the lexical path at the decoy directory
+        # for the fallback checks.
+        if os.fspath(path) in (member_key, target_key):
+            reads.append(True)
+            if len(reads) == 1 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(bdir, mid)
+                return None
+        return real_read(path, *args, **kwargs)
+
+    def _resolve_then_restore(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The use check is the third member resolve (leading
+        # bracket, recording, use): restore before it computes,
+        # so it verifies the original target.
+        if os.fspath(path) == member_key:
+            resolves.append(True)
+            if len(resolves) == 3 and swapped and not restored:
+                restored.append(True)
+                mid.unlink()
+                os.symlink(own_target, mid)
+        return real_resolve(path, *args, **kwargs)
+
+    with (
+        mock.patch.object(durability, "_read_regular_file_bytes", _read_then_swap),
+        mock.patch.object(os.path, "realpath", _resolve_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed the fallback (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar50_failed_adoption_renders_nothing(tmp_path: Path) -> None:
+    """#88R44-[A]r50: a failed link adoption stages no render bases.
+
+    Codex R49-minor: the linked sidecar joined the render bases
+    before target-journal and prefix validation, so a later
+    check failing left half-adopted bases resolving afresh
+    downstream (and voicing about transient targets). Bases
+    stage locally and join only on success now: the fault
+    stands without renderer voices.
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    rival = "d" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    sub = root / "sub"
+    sub.mkdir()
+    real_sidecar = sub / f"{solo}-link.partial.json"
+    real_sidecar.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    linkside = sub / f"{solo}-alias.partial.json"
+    os.symlink(real_sidecar, linkside)
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(linkside)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    os.symlink(outside, sub / f"{solo}-link.partial.json.tmp-9")
+    rival_target = sub / f"{rival}-x.windows.jsonl"
+    rival_target.write_text("{}\n", encoding="utf-8")
+    foreign_hit = sub / f"{solo}-q.partial.json.tmp-1"
+    os.symlink(rival_target, foreign_hit)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("with a rewrite companion outside" in text for text in texts), texts
+
+
+def test_r44_ar51_normdot_collapses_dots_not_dotdot() -> None:
+    """#88R44-[A]r51: the dot normalizer keeps `..` for the resolver."""
+    assert durability._normdot("a/./b") == "a/b"
+    assert durability._normdot("./x") == "x"
+    assert durability._normdot("a/../b") == "a/../b"
+    assert durability._normdot("/") == "/"
+    assert durability._normdot("") == "."
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_identity_key_dangling_hop_keeps_apart(tmp_path: Path) -> None:
+    """#88R44-[A]r51: unresolvable parents never merge onto valid entries.
+
+    Codex R50-minor: when the intermediate link dangles, strict
+    resolution fails and the fallback keeps the `..` spelling
+    textual -- it must not collapse onto the valid entry it
+    textually resembles.
+    """
+    import os
+
+    root = tmp_path / "root"
+    root.mkdir()
+    hop = root / "hop"
+    os.symlink(root / "nowhere", hop)
+    assert durability._identity_key(
+        os.fspath(root / "hop" / ".." / "x.partial.json")
+    ) != durability._identity_key(os.fspath(root / "x.partial.json"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_identity_key_dead_cwd_returns_raw(tmp_path: Path, monkeypatch: Any) -> None:
+    """#88R44-[A]r51: identity keys survive a deleted working directory.
+
+    Codex R50-minor: when even the working directory cannot be
+    determined, the key degrades to the raw spelling instead of
+    raising (matching degenerates to exact strings, never
+    crashes).
+    """
+    import os
+    import shutil
+
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    monkeypatch.chdir(victim)
+    shutil.rmtree(victim, ignore_errors=False)
+    try:
+        assert durability._identity_key(os.path.join("sub", "x")) == os.path.join("sub", "x")
+    finally:
+        monkeypatch.chdir(tmp_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_identity_key_nul_survives_opaque(tmp_path: Path, monkeypatch: Any) -> None:
+    """#88R44-[A]r51: NUL bytes survive opaquely in identity keys.
+
+    Codex R50-minor: keys are compared, never opened, so NUL
+    bytes ride through without raising (registry fields guard
+    NUL upstream; this pins totality, not reachability).
+    """
+    import os
+
+    monkeypatch.chdir(tmp_path)
+    keyed = durability._identity_key(os.path.join("sub", "\0x"))
+    assert "\0" in keyed
+    keyed_parent = durability._identity_key(os.path.join("a\0b", "x"))
+    assert "\0" in keyed_parent
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_member_nonutf8_journal_excluded(tmp_path: Path) -> None:
+    """#88R44-[A]r51: a non-UTF-8 journal target is excluded, not torn.
+
+    Codex R50-4: the kind check runs before decoding -- journal
+    bytes that fail even UTF-8 decoding previously misread as
+    torn and offered the healthy journal for archival as a
+    member. Role mismatches are voiced once and excluded
+    stably now.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    mid = level1 / "mid"
+    journal = real1 / f"{solo}-j.windows.jsonl"
+    journal.write_bytes(b"\xff\xfe\x00bad\n\x00more\n")
+    os.symlink(journal, mid)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [text for text in texts if "archive the listed members" in text]
+    assert offers, texts
+    assert not any(f"{solo}-j.windows.jsonl" in text for text in offers), texts
+    assert any("excludes misplaced members" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+    # Codex R51-3: the offer names alias repair as the
+    # prerequisite for collection, and the exclusion voice no
+    # longer suggests archiving targets alone (a dangling alias
+    # would keep degrading the census).
+    assert any("resolve the misplaced aliases first" in text for text in offers), texts
+    exclusions = [text for text in texts if "excludes misplaced members" in text]
+    assert all("dangling alias" in text for text in exclusions), texts
+    assert not any("archive the targets directly" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_member_misplaced_converges(tmp_path: Path) -> None:
+    """#88R44-[A]r51: a stable role mismatch offers without rerunning.
+
+    Codex R50-4: a sidecar-named member stably resolving to a
+    valid journal previously reran every pass (excluded as
+    re-observed-different, forever). Misplaced members are
+    voiced once and excluded stably now, so the rest of the
+    family archives without them.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    mid = level1 / "mid"
+    journal = real1 / f"{solo}-j.windows.jsonl"
+    journal.write_text("{}\n{}\n", encoding="utf-8")
+    os.symlink(journal, mid)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [text for text in texts if "archive the listed members" in text]
+    assert offers, texts
+    assert not any(f"{solo}-j.windows.jsonl" in text for text in offers), texts
+    assert any("excludes misplaced members" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+    # Codex R51-3: archiving the listed set alone never
+    # unblocks collection while the alias degrades, so the
+    # (here empty) offer names alias repair as the prerequisite
+    # first; the exclusion voice no longer suggests archiving
+    # targets alone.
+    assert any("resolve the misplaced aliases first" in text for text in offers), texts
+    exclusions = [text for text in texts if "excludes misplaced members" in text]
+    assert all("dangling alias" in text for text in exclusions), texts
+    assert not any("archive the targets directly" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_read_window_vanish_drifts(tmp_path: Path) -> None:
+    """#88R44-[A]r51: a registry vanishing inside the read window reruns.
+
+    Codex R50-3: the first assembly read failed because the
+    target vanished -- and the old code faulted without ever
+    re-resolving. Vanishing between two successful observations
+    is proven disappearance now, so it re-observes (and
+    outranks the co-faulting multilink journal).
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_reg.write_text(registry.read_bytes().decode("utf-8"), encoding="utf-8")
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    multilink = root / f"{solo}-m.windows.jsonl"
+    multilink.write_text("{}\n", encoding="utf-8")
+    os.link(multilink, root / f"{solo}-m2.windows.jsonl")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read = durability._read_regular_file_bytes
+    own_key = os.fspath(own_reg)
+    reads: list[bool] = []
+    vanished: list[bool] = []
+
+    def _read_then_vanish(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The assembly reads the recorded target twice (nothing
+        # else reads it: the census never scans the nested
+        # directory). Deleting before the first read makes it
+        # fail on a proven-vanished target.
+        if os.fspath(path) == own_key:
+            reads.append(True)
+            if len(reads) == 1 and not vanished:
+                vanished.append(True)
+                own_reg.unlink()
+        return real_read(path, *args, **kwargs)
+
+    with mock.patch.object(durability, "_read_regular_file_bytes", _read_then_vanish):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert vanished, "the target vanished inside the read (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+    assert any("more than one link" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_read_window_second_eio_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r51: an indeterminate second read fails, never drifts.
+
+    Codex R50-3: the second assembly read failed while its
+    re-resolve agreed -- an unexplained read failure, not
+    proven change. Comparing it unequal to bytes drifted; it
+    fails closed now. Codex R51-minor: the fixture's extra
+    link supplied the fault exit even if the registry read
+    itself only cleared verification, so the journal is
+    single-linked now and the fault exit proves the read
+    failed closed. The no-rerun assertion still guards
+    against treating the failed read as drift.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_reg.write_text(registry.read_bytes().decode("utf-8"), encoding="utf-8")
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    single = root / f"{solo}-m.windows.jsonl"
+    single.write_text("{}\n", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read = durability._read_regular_file_bytes
+    own_key = os.fspath(own_reg)
+    reads: list[bool] = []
+    faulted: list[bool] = []
+
+    def _read_then_fail(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The assembly reads the recorded target twice (nothing
+        # else reads it: the census never scans the nested
+        # directory). The second read fails outright while the
+        # path stays put.
+        if os.fspath(path) == own_key:
+            reads.append(True)
+            if len(reads) == 2 and not faulted:
+                faulted.append(True)
+                return None
+        return real_read(path, *args, **kwargs)
+
+    with mock.patch.object(durability, "_read_regular_file_bytes", _read_then_fail):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert faulted, "the second read failed (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("could not be verified" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+    assert not any("more than one link" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_read_window_diff_beats_eio(tmp_path: Path) -> None:
+    """#88R44-[A]r51: disagreeing reads outrank a failed re-resolution.
+
+    Codex R50-3: the two assembly reads returned different
+    bytes, but the final re-resolution failed -- and the old
+    code faulted without ever comparing the reads. Proven
+    content change drifts now even when the closing check
+    cannot run.
+    """
+    import errno
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_body = registry.read_text(encoding="utf-8")
+    own_reg.write_text(own_body, encoding="utf-8")
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    sub = root / "sub"
+    sub.mkdir()
+    rival_sidecar = sub / f"{solo}-y.partial.json"
+    rival_sidecar.write_text(Path(planted["sidecar"]).read_text(encoding="utf-8"), encoding="utf-8")
+    rival_body = dict(json.loads(own_body))
+    rival_body["sidecar"] = os.fspath(rival_sidecar)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_read = durability._read_regular_file_bytes
+    real_resolve = os.path.realpath
+    own_key = os.fspath(own_reg)
+    registry_key = os.fspath(registry)
+    reads: list[bool] = []
+    resolves: list[bool] = []
+    flipped: list[bool] = []
+    restored: list[bool] = []
+
+    def _read_then_flip(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The assembly reads the recorded target twice: the
+        # replacement lands before the first read, the restore
+        # before the second, so the reads disagree.
+        if os.fspath(path) == own_key:
+            reads.append(True)
+            if len(reads) == 1 and not flipped:
+                flipped.append(True)
+                own_reg.write_text(json.dumps(rival_body), encoding="utf-8")
+            elif len(reads) == 2 and flipped and not restored:
+                restored.append(True)
+                own_reg.write_text(own_body, encoding="utf-8")
+        return real_read(path, *args, **kwargs)
+
+    def _resolve_then_eio(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Registry resolves are fixed: assembly verify, first
+        # re-resolve, second re-resolve, then brackets and the
+        # late check. Only the second re-resolve fails.
+        if os.fspath(path) == registry_key:
+            resolves.append(True)
+            if len(resolves) == 3:
+                raise OSError(errno.EIO, "injected fault")
+        return real_resolve(path, *args, **kwargs)
+
+    with (
+        mock.patch.object(durability, "_read_regular_file_bytes", _read_then_flip),
+        mock.patch.object(os.path, "realpath", _resolve_then_eio),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert flipped and restored, "the bytes flipped inside the reads (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_registry_stable_transient_rereads(tmp_path: Path) -> None:
+    """#88R44-[A]r51: bytes stable at assembly re-verify before publish.
+
+    Codex R50-2: a replacement spanning every assembly
+    observation adopted consistently -- both reads agreed, all
+    path checks agreed -- then restored before the late
+    checks, which never re-read bytes. The recorded target
+    re-reads after the bracket now; any difference withholds
+    the preview.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    nested = root / "registrations" / "nested"
+    nested.mkdir()
+    level1 = root / "level1"
+    level1.mkdir()
+    own_reg = nested / f"{solo}.json"
+    own_body = registry.read_text(encoding="utf-8")
+    own_reg.write_text(own_body, encoding="utf-8")
+    link = level1 / "link"
+    os.symlink(own_reg, link)
+    registry.unlink()
+    os.symlink(link, registry)
+    sub = root / "sub"
+    sub.mkdir()
+    rival_sidecar = sub / f"{solo}-y.partial.json"
+    rival_sidecar.write_text(Path(planted["sidecar"]).read_text(encoding="utf-8"), encoding="utf-8")
+    rival_body = dict(json.loads(own_body))
+    rival_body["sidecar"] = os.fspath(rival_sidecar)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_scan = durability._probe_ambiguity_prefixes
+    scans: list[bool] = []
+    replaced: list[bool] = []
+    restored: list[bool] = []
+
+    def _scan_then_replace_restore(*args: Any, **kwargs: Any) -> Any:
+        # The main scan runs before assembly; the verdict's
+        # rescan runs after rendering but before the late
+        # checks. Replacing after the first scan keeps every
+        # assembly observation consistent on the replacement
+        # (content writes move no directory clock, so no
+        # bracket sees them); restoring after the second leaves
+        # the late checks a different body under the same path.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) == 1 and not replaced:
+            replaced.append(True)
+            own_reg.write_text(json.dumps(rival_body), encoding="utf-8")
+        elif len(scans) > 1 and replaced and not restored:
+            restored.append(True)
+            own_reg.write_text(own_body, encoding="utf-8")
+        return result
+
+    with mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_replace_restore):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert replaced and restored, "the replacement bracketed adoption (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [
+        text for text in texts if "rerun to re-list" in text and f"registry {solo}.json" in text
+    ]
+    assert reruns, texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_render_matches_exact_spelling(tmp_path: Path) -> None:
+    """#88R44-[A]r51: rendering uses the base's own record, never a twin's.
+
+    Codex R50-1: a link-adopted sidecar and a census-attested
+    same-named sidecar in another directory -- a transient
+    redirect during rendering made a live file-identity scan
+    return the census record first, rendering the wrong target
+    and omitting the adopted one (all checks agreed after the
+    restore). Rendering matches exact spellings now; identity
+    comparison stays in conflict detection, where order cannot
+    substitute values.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    adir = root / "Adir"
+    adir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(adir, mid)
+    asidem = adir / f"{solo}-x.partial.json"
+    aside = root / f"{solo}-x.partial.json"
+    asidem.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    aside.write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    base = wrap / "mid" / f"{solo}-x.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_scan = durability._probe_ambiguity_prefixes
+    base_key = os.fspath(base)
+    states: list[bool] = []
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _state_then_swap(path: Any) -> Any:
+        # Lexical touches of the base are fixed: the leading
+        # bracket, the render check, the re-verify, the closing
+        # bracket (the adoption resolves the recorded spelling,
+        # never this one). The swap lands inside the render
+        # check, pointing the intermediate at root itself.
+        result = real_state(path)
+        if os.fspath(path) == base_key:
+            states.append(True)
+            if len(states) == 2 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(root, mid)
+        return result
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            mid.unlink()
+            os.symlink(adir, mid)
+        return result
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed rendering (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(f"Adir/{solo}-x.partial.json" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar51_absent_leg_lists_adopted_companions(tmp_path: Path) -> None:
+    """#88R44-[A]r51: a stably absent leg lists adopted-parent companions.
+
+    Characterization pin (no transient here): a linked sidecar
+    absent at adoption and still absent at render contributes
+    no own name, but its rewrites beside the adopted parent
+    join the preview. Output-level only (Codex R51-minor):
+    the stable parent is available to the fallback and the
+    rewrite independently joins as a prefix hit, so this
+    fixture cannot prove the absent-map lookup lists it --
+    the ar52 transient-parent test proves the map's own
+    contribution.
+    """
+    import json
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    adir = root / "Adir"
+    adir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(adir, mid)
+    (adir / f"{solo}-x.partial.json.tmp-3").write_text("{}\n", encoding="utf-8")
+    base = wrap / "mid" / f"{solo}-x.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(f"Adir/{solo}-x.partial.json.tmp-3" in text for text in offers), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar52_agreeing_journal_leg_redirect_withholds_unadopted(tmp_path: Path) -> None:
+    """#88R44-[A]r52: an agreeing leg renders pinned, never live.
+
+    Codex R51-1: a direct journal scan and an absolute registry
+    link adopted the same journal under different spellings while
+    only the scan's spelling was pinned. The spellings share the
+    resolved parent and basename (identity keys resolve the
+    parent, never the final component), so they agreed at
+    merge; an intermediate link changing only during rendering
+    then made the unpinned spelling resolve live and add an
+    unadopted journal and its companions to the offer -- both
+    late checks passed after the restore. Agreeing legs pin
+    their own spelling now, so the transient target never
+    renders. The ar51 render test adopted distinct files, so it
+    missed this case.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    sidecar = Path(planted["sidecar"])
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    bdir = root / "Bdir"
+    bdir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(root, mid)
+    (root / f"{solo}-j.partial.json").write_text(
+        sidecar.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (root / f"{solo}-j.windows.jsonl").write_text("{}\n", encoding="utf-8")
+    (bdir / f"{solo}-j.windows.jsonl").write_text("{}\n", encoding="utf-8")
+    (bdir / f"{solo}-j.windows.jsonl.tmp-1").write_text("{}\n", encoding="utf-8")
+    base = wrap / "mid" / f"{solo}-j.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_scan = durability._probe_ambiguity_prefixes
+    real_match = durability._match_identity
+    base_key = os.fspath(base)
+    journal_name = f"{solo}-j.windows.jsonl"
+    states: list[bool] = []
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+    journal_matched: list[bool] = []
+
+    def _state_then_swap(path: Any) -> Any:
+        # Lexical touches of the sidecar base are fixed: the
+        # leading bracket, the render check, the re-verify, the
+        # closing bracket (the adoption resolves the recorded
+        # spelling, never this one). The swap lands inside the
+        # render check, pointing the shared intermediate at the
+        # unscanned directory; the journal leg rides the same
+        # intermediate. The sidecar base renders before the
+        # journal base (sorted bases), so the swap brackets the
+        # journal's render too.
+        result = real_state(path)
+        if os.fspath(path) == base_key:
+            states.append(True)
+            if len(states) == 2 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(bdir, mid)
+                result = real_state(path)
+        return result
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            mid.unlink()
+            os.symlink(root, mid)
+        return result
+
+    def _match_then_record(records: Any, lexical: Any) -> Any:
+        matched, previous = real_match(records, lexical)
+        if os.fspath(lexical).endswith(journal_name) and "mid" in os.fspath(lexical):
+            journal_matched.append(bool(matched))
+        return matched, previous
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+        mock.patch.object(durability, "_match_identity", _match_then_record),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed rendering (premise)"
+    assert journal_matched and all(journal_matched), (
+        "the journal leg agreed with the scan record at merge (premise)"
+    )
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert not any("Bdir/" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar52_misplaced_member_transient_target_reruns(tmp_path: Path) -> None:
+    """#88R44-[A]r52: a transient role mismatch reruns, never excludes.
+
+    Codex R51-2: the misplaced branch skipped the
+    recorded-target comparison used for torn members. An
+    intermediate symlink pointing at a journal during target
+    recording and then at a torn sidecar in the same target
+    directory -- both directory samples agreeing -- counted
+    the member as a verified exclusion and offered an
+    inventory omitting the torn sidecar. Exclusions re-verify
+    their recorded target now, so the drift reruns.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    level1 = root / "level1"
+    level1.mkdir()
+    real1 = root / "real1"
+    real1.mkdir()
+    mid = level1 / "mid"
+    torn_target = real1 / f"{solo}-torn.partial.json"
+    torn_target.write_text("{torn", encoding="utf-8")
+    journal_target = real1 / f"{solo}-j.windows.jsonl"
+    journal_target.write_text("{}\n{}\n", encoding="utf-8")
+    os.symlink(torn_target, mid)
+    member = root / f"{solo}-torn.partial.json"
+    os.symlink(mid, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_resolve = os.path.realpath
+    member_key = os.fspath(member)
+    resolves: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+
+    def _resolve_then_swap(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Resolve order for the member starts fixed: the leading
+        # bracket, then the recording pass. The swap lands after
+        # the bracket resolves, so the record pins the journal;
+        # the restore lands before the third resolve, so the
+        # misplaced re-verify rereads the torn target again --
+        # whether the third resolve is the re-verify itself or an
+        # earlier reread step, the restore precedes the fresh
+        # compare and the closing bracket sees the rest state.
+        if os.fspath(path) == member_key:
+            resolves.append(True)
+            if len(resolves) == 3 and swapped and not restored:
+                restored.append(True)
+                mid.unlink()
+                os.symlink(torn_target, mid)
+        result = real_resolve(path, *args, **kwargs)
+        if os.fspath(path) == member_key and len(resolves) == 1 and not swapped:
+            swapped.append(True)
+            mid.unlink()
+            os.symlink(journal_target, mid)
+        return result
+
+    with mock.patch.object(os.path, "realpath", _resolve_then_swap):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the target swap bracketed the record (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    reruns = [text for text in texts if "rerun to re-list" in text]
+    assert reruns, texts
+    assert any(f"registry {solo}.json" in text for text in reruns), texts
+
+
+def test_r44_ar52_normdot_altsep_splits_before_dots(monkeypatch: Any) -> None:
+    """#88R44-[A]r52: the dot normalizer splits the alt separator too.
+
+    Codex R51-minor: the normalizer split on the native
+    separator only, so forward-slash dot components in
+    Windows spellings survived. Both separators split now.
+    """
+    import os
+
+    monkeypatch.setattr(os, "sep", "\\")
+    monkeypatch.setattr(os.path, "sep", "\\")
+    monkeypatch.setattr(os.path, "altsep", "/")
+    assert durability._normdot("a/b") == "a\\b"
+    assert durability._normdot("a/./b") == "a\\b"
+    assert durability._normdot("a/../b") == "a\\..\\b"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar52_absent_leg_transient_parent_proves_map(tmp_path: Path) -> None:
+    """#88R44-[A]r52: absent companions enumerate beside the adopted parent.
+
+    Codex R51-minor: the stable absent-leg test prints the
+    rewrite even without the absent-map lookup -- the stable
+    parent is available to the fallback and the rewrite
+    independently joins as a prefix hit. Under a transient
+    redirect the fallback would enumerate the transient
+    directory instead, so the adopted-parent enumeration
+    recorded here is the map's own contribution: the leg
+    withholds its name, the transient parent stays unnamed,
+    and the companions still list.
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    wrap = root / "wrap"
+    wrap.mkdir()
+    adir = root / "Adir"
+    adir.mkdir()
+    bdir = root / "Bdir"
+    bdir.mkdir()
+    mid = wrap / "mid"
+    os.symlink(adir, mid)
+    (adir / f"{solo}-x.partial.json.tmp-3").write_text("{}\n", encoding="utf-8")
+    base = wrap / "mid" / f"{solo}-x.partial.json"
+    reg = json.loads(registry.read_text(encoding="utf-8"))
+    reg["sidecar"] = os.fspath(base)
+    registry.write_text(json.dumps(reg), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    real_scan = durability._probe_ambiguity_prefixes
+    real_list_tmp = durability._list_tmp_paths
+    base_key = os.fspath(base)
+    base_stem = f"{solo}-x.partial.json"
+    states: list[bool] = []
+    scans: list[bool] = []
+    swapped: list[bool] = []
+    restored: list[bool] = []
+    enumerated: list[tuple[str, str]] = []
+
+    def _state_then_swap(path: Any) -> Any:
+        # Lexical touches of the base are fixed: the leading
+        # bracket, the render check, the re-verify, the closing
+        # bracket (the adoption resolves the recorded spelling,
+        # never this one). The swap lands inside the render
+        # check, pointing the intermediate at an empty directory.
+        result = real_state(path)
+        if os.fspath(path) == base_key:
+            states.append(True)
+            if len(states) == 2 and not swapped:
+                swapped.append(True)
+                mid.unlink()
+                os.symlink(bdir, mid)
+                result = real_state(path)
+        return result
+
+    def _scan_then_restore(*args: Any, **kwargs: Any) -> Any:
+        # The verdict's rescan is the second inventory scan; the
+        # restore lands after rendering but before re-verification.
+        scans.append(True)
+        result = real_scan(*args, **kwargs)
+        if len(scans) > 1 and swapped and not restored:
+            restored.append(True)
+            mid.unlink()
+            os.symlink(adir, mid)
+        return result
+
+    def _list_then_record(directory: Any, prefix: str, *args: Any, **kwargs: Any) -> Any:
+        enumerated.append((os.fspath(directory), prefix))
+        return real_list_tmp(directory, prefix, *args, **kwargs)
+
+    with (
+        mock.patch.object(durability, "_path_state", _state_then_swap),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_restore),
+        mock.patch.object(durability, "_list_tmp_paths", _list_then_record),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped and restored, "the swap bracketed rendering (premise)"
+    assert (os.fspath(adir), f"{base_stem}.tmp-") in enumerated, (
+        "the absent map enumerated the adopted parent (premise)"
+    )
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    offers = [
+        text
+        for text in texts
+        if "together with this family" in text and f"registry {solo}.json" in text
+    ]
+    assert offers, texts
+    assert any(f"Adir/{solo}-x.partial.json.tmp-3" in text for text in offers), texts
+    assert not any("Bdir/" in text for text in texts), texts

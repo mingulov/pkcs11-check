@@ -8239,6 +8239,125 @@ def _journal_for_sidecar(sidecar_path: Path) -> Path:
     return sidecar_path.with_name(stem + JOURNAL_SUFFIX)
 
 
+def _usable_sidecar_field(raw: str) -> Path | None:
+    """A registry sidecar field as a path, else None (Claude Q3 M2).
+
+    Registry fields are untrusted bytes: ``"/"`` and ``"."`` carry an
+    empty basename (journal derivation raises) and null bytes break
+    :class:`Path` construction itself. Only those crash shapes read
+    as None -- every other field keeps its pre-existing handling
+    (in particular M8's outside-path loudness: an outside field
+    still reaches consume and warns). Callers on deletion paths
+    read None as absent for the veto (so the consult still runs
+    and voices) but gate removal on usability -- absent must
+    never authorize deletion (Codex R44-1); preview voices on
+    None; retained counting counts the registry alone. Content
+    adjudication keeps its own reads and null-guards only. Never
+    raises.
+    """
+    if not raw or "\0" in raw:
+        return None
+    try:
+        candidate = Path(raw)
+    except ValueError:
+        return None
+    if not candidate.name:
+        return None
+    return candidate
+
+
+def _relkey_or_name(candidate: str, resolved_root: str, fallback_name: str) -> str:
+    """``candidate`` relative to root, or ``fallback_name`` (Codex R43-4).
+
+    Total rendering for refusal voices: outside paths render as
+    ``..``-relative keys, never absolute; unrelatable spellings
+    (cross-drive) fall back to the bare name. Never raises.
+    """
+    try:
+        return os.path.relpath(candidate, resolved_root).replace(os.sep, "/")
+    except ValueError:
+        return fallback_name
+
+
+def _normdot(path: str) -> str:
+    """Collapse ``.`` components but never ``..`` (Codex R50-minor).
+
+    Dots name self, so dropping them is exact; ``..`` across a
+    symlink depends on live resolution, so it stays for the
+    resolver (or stays textual in the fallback, where merging
+    nothing beats merging wrongly). Both separators split on
+    Windows (Codex R51-minor): fields may use forward slashes
+    where the native separator is the backslash. Total (never
+    raises).
+    """
+    if os.path.altsep is not None:
+        path = path.replace(os.path.altsep, os.sep)
+    drive, rest = os.path.splitdrive(path)
+    leading = rest.startswith(os.sep)
+    parts = [part for part in rest.split(os.sep) if part not in ("", ".")]
+    rebuilt = os.sep.join(parts)
+    if leading:
+        rebuilt = os.sep + rebuilt
+    return drive + rebuilt if rebuilt else drive or "."
+
+
+def _identity_key(path: str) -> str:
+    """Canonical file-identity key for one lexical path (Codex R49-1).
+
+    The resolved parent plus the normcased basename: two
+    spellings name one file exactly when these agree --
+    relative vs absolute under a stable working directory, and
+    ``..`` across symlinks, which pure-textual normalization
+    mis-collapses (it would merge ``root/hop/../x`` with
+    ``root/x`` when ``hop`` points elsewhere). Total (never
+    raises): the parent resolves strictly, so an unresolvable
+    parent (missing, looping, unreadable) falls back to the
+    un-collapsed spelling instead of merging onto a valid entry
+    (Codex R50-minor); a dead working directory falls back to
+    the raw spelling. NUL bytes survive opaquely in the key
+    (keys are compared, never opened; registry fields guard NUL
+    upstream). Case follows the platform convention, not the
+    volume's (residual: case-insensitive POSIX volumes and
+    case-sensitive Windows directories with adversarial case
+    twins -- strictly narrower than the accepted classes, and
+    moot against adversaries who can plant files anyway).
+    Comparison only -- records keep original spellings so
+    re-verification re-resolves them. Used for conflict
+    detection only; rendering matches exact spellings (Codex
+    R50-1: a live scan at render time could substitute another
+    base's target under a transient redirect).
+    """
+    parent, name = os.path.split(os.fspath(path))
+    try:
+        resolved_parent = os.path.realpath(parent or ".", strict=True)
+    except (OSError, RuntimeError, ValueError):
+        try:
+            anchor = os.getcwd()
+        except OSError:
+            return os.fspath(path)
+        if os.path.isabs(parent):
+            resolved_parent = _normdot(parent)
+        else:
+            resolved_parent = _normdot(os.path.join(anchor, parent or "."))
+    return os.path.join(resolved_parent, os.path.normcase(name))
+
+
+def _match_identity(records: Mapping[str, Any], path: str) -> tuple[bool, Any]:
+    """First same-file record for a spelling, else (False, None).
+
+    Compares :func:`_identity_key` values, so equivalent
+    spellings (relative vs absolute, ``..`` across links) meet
+    as one record (Codex R49-1). Linear scan: record sets stay
+    tiny (bounded by family size), and sweeps are I/O-bound
+    anyway. Never raises.
+    """
+    want = _identity_key(path)
+    for lexical, recorded in records.items():
+        if _identity_key(lexical) == want:
+            return True, recorded
+    return False, None
+
+
 def _tmp_has_return_rows(payload: Any) -> bool:
     """Whether a parsed tmp payload carries any return rows (#88R3).
 
@@ -9437,9 +9556,13 @@ def _consume_producer_files(
 
 def _producer_files(registry: dict[str, Any], registry_path: Path) -> list[Path]:
     """Return the evidence files owned by one registry (registry first)."""
-    sidecar = Path(str(registry.get("sidecar", "")))
+    raw = str(registry.get("sidecar", ""))
     files = [registry_path]
-    if str(registry.get("sidecar", "")):
+    # Unusable fields (empty basename, null bytes) contribute
+    # nothing (Claude Q3 M2): journal derivation would raise.
+    # The registry still rides alone; its own bytes decide it.
+    sidecar = _usable_sidecar_field(raw) if raw else None
+    if sidecar is not None:
         files.append(sidecar)
         files.append(_journal_for_sidecar(sidecar))
     return files
@@ -17593,7 +17716,11 @@ def _collect_dead_producer(
     #88R42-7).
     """
     sidecar_raw = str(content.get("sidecar", ""))
-    sidecar_path = Path(sidecar_raw)
+    # Null bytes can never name a real file (Claude Q3 M2): read the
+    # field as the current directory instead, whose EISDIR classifies
+    # unreadable and defers exactly like any other unopenable body.
+    # Adjudication semantics for every other shape stay untouched.
+    sidecar_path = Path(sidecar_raw if "\0" not in sidecar_raw else ".")
     sidecar: Any | None = None
     sidecar_digest: str | None = None
     if sidecar_raw:
@@ -18058,7 +18185,11 @@ def _collect_committed_producer(
     emissions (retries keep the staged-target byte gate).
     """
     sidecar_raw = str(content.get("sidecar", ""))
-    sidecar_path = Path(sidecar_raw)
+    # Null bytes can never name a real file (Claude Q3 M2): read the
+    # field as the current directory instead, whose EISDIR classifies
+    # unreadable and defers exactly like any other unopenable body.
+    # Adjudication semantics for every other shape stay untouched.
+    sidecar_path = Path(sidecar_raw if "\0" not in sidecar_raw else ".")
     sidecar: Any | None = None
     tmp_reports: list[dict[str, Any]] = []
     if sidecar_raw:
@@ -19496,6 +19627,29 @@ def _torn_collision_witness(
     return others[0] if others else None
 
 
+@dataclass(frozen=True)
+class _AdoptedLink:
+    """One adopted registry link's verified identities (Codex R44-3).
+
+    The post-bracket re-verification compares these against fresh
+    resolution: the adoption predates the bracket, so a swap landing
+    between adoption and the leading sample is invisible to the
+    clocks and only the identity compare catches it. Lexical
+    spellings re-resolve fresh; resolved paths compare (None when
+    absent at adoption -- an appearance re-observes);
+    ``prefix_hits`` are the adopted same-uuid rewrites' resolved
+    paths as strings.
+    """
+
+    sidecar_lexical: str
+    journal_lexical: str
+    sidecar: str | None
+    journal: str | None
+    parent_lexical: str
+    parent: str
+    prefix_hits: frozenset[str]
+
+
 def sweep_orphans(
     counters_dir: Path | str,
     *,
@@ -19964,8 +20118,8 @@ def sweep_orphans(
         """
         blind_reason, collision_held = snapshot.blind_reason, snapshot.collision_held
 
-        def _member_reread_status(path: Path) -> str:
-            """Re-verify one torn member: torn, ok, fault, or gone (#88R44-[A]r40).
+        def _member_reread_status(path: Path, read_through: str | None) -> str:
+            """Re-verify one torn member: torn, ok, fault, gone, misplaced (#88R44-[A]r40).
 
             Nonblocking single-generation read (a FIFO swapped in
             reads fault, never hangs (Codex R39-2)), classified by
@@ -19976,17 +20130,50 @@ def sweep_orphans(
             unplaceable: the next pass routes it to its own arm);
             "fault" means unverifiable (retry only after restoring
             access); "gone" means vanished (simply dropped).
+            "misplaced" means a sidecar-named member resolving to
+            a non-sidecar file: not this arm's evidence (the
+            caller voices and excludes it stably instead of
+            rerunning forever). Bytes read through the RECORDED
+            target (Codex R48-2): reading the lexical path would
+            re-observe it, so a swap between recording and
+            rereading could bind one target's verdict to another's
+            bytes. Classification still uses the lexical path (a
+            recorded target may live under another name); None
+            reads the lexical path (nothing recorded: dangling at
+            record time).
             """
-            raw = _read_regular_file_bytes(path)
+            read_path = Path(read_through) if read_through is not None else path
+            raw = _read_regular_file_bytes(read_path)
             if raw is None:
-                if _path_state(path) == "missing":
+                # The fallback inspects the same target as the byte
+                # read (Codex R49-5): checking the lexical path
+                # here could bind another directory's verdict to
+                # this member under a transient redirect.
+                if _path_state(read_path) == "missing":
                     return "gone"
+                try:
+                    path_is_dir = read_path.is_dir()
+                except OSError:
+                    path_is_dir = False
+                if path_is_dir:
+                    # Confirmed directory: non-evidence, like the
+                    # census files it (Codex R40-1) -- name it for
+                    # archival instead of faulting. Same test the
+                    # census uses (fifos and unverifiable files keep
+                    # the fault behavior below).
+                    return "torn"
                 return "fault"
+            if path.name.endswith(SIDECAR_SUFFIX) and not read_path.name.endswith(SIDECAR_SUFFIX):
+                # Role mismatch before decoding (Codex R50-4): a
+                # journal's non-UTF-8 bytes would fail the decode
+                # below and misread as torn before the kind check
+                # could route them away.
+                return "misplaced"
             try:
                 text = raw.decode("utf-8")
             except ValueError:
                 return "torn"
-            if path.parent.name == REGISTRY_DIRNAME:
+            if path.parent == root / REGISTRY_DIRNAME:
                 if _parse_registry_content(path.name, text) is not None:
                     return "ok"
                 try:
@@ -20001,6 +20188,9 @@ def sweep_orphans(
                     return "ok"
                 return "torn"
             if path.name.endswith(SIDECAR_SUFFIX):
+                # Role mismatches returned "misplaced" above, so a
+                # sidecar-suffixed recorded target is established
+                # here.
                 try:
                     _json_loads_evidence(text)
                 except ValueError:
@@ -20008,38 +20198,820 @@ def sweep_orphans(
                 return "ok"
             return "fault"
 
-        def _move_rewrite_names(bases: Collection[Path]) -> tuple[set[str], bool, bool]:
+        def _move_rewrite_names(
+            bases: Collection[Path],
+            dependents: Collection[str],
+            verified: Mapping[str, str] | None = None,
+            absent: Mapping[str, str] | None = None,
+        ) -> tuple[set[str], bool, bool, set[str]]:
             """Rewrite/quarantine companions for archival preview (#88R44-[A]r39).
 
-            Returns (relkeys, verified, faulted): each base plus
-            every present `.tmp-*` and `.quarantined-*` rewrite
-            beside it (plus each marker's original slot). Any
-            listing fault, or an undeterminable marker slot, fails
-            verification as a fault (persistent: restore access);
-            the caller distinguishes it from transient churn
-            (bracket/rescan drift: rerun). Advisory only -- hold
-            decisions never depend on it. Names return as
-            root-relative keys so subdirectory members read
-            unambiguously.
+            Returns (relkeys, verified, faulted, fault_keys): each
+            base plus every present `.tmp-*` and `.quarantined-*`
+            rewrite beside it (plus each marker's original slot).
+            Absent bases still list companions but contribute no
+            own name (Claude Q3 M3: a registry-linked sidecar's
+            parentless rewrites strand otherwise). Every path used
+            -- base, enumerated directory, and each companion --
+            resolves once strictly and the USED value must stay
+            inside the counters root (Codex R43-1): no second
+            resolution can disagree with the check, so a mid-pass
+            parent swap or an outside companion fails instead of
+            enumerating or rendering outside files. Mapped bases
+            render their ADOPTED target (Codex R46-1/R46-2): a
+            fresh resolution at render time can name a transient
+            target the drift check then clears, so bases the
+            caller verified at assembly resolve through the
+            ``verified`` map (lexical fspath to adopted target)
+            with no second resolution to disagree -- the
+            post-bracket drift check still re-resolves the
+            lexical path and re-observes on any change, so
+            renders only survive when adopted and fresh agree.
+            Companion enumeration follows automatically: the
+            enumerated directory derives from the used value.
+            Recorded-absent link legs ride in ``absent``
+            (lexical fspath to adopted parent, Codex R48-1): a
+            base resolving now that was absent at adoption
+            withholds as unverified (never renders the
+            transient target), and companions enumerate beside
+            the adopted parent (never a transiently redirected
+            one). A vanished adopted parent withholds too (it
+            existed at adoption).
+            ``dependents`` (root-relative inventory names) must
+            be regular files (Codex R44-2): a linked dependent's
+            target bytes are unverified (probes have no body
+            rule), so links and multi-linked dependents fail
+            here at use time even when assembly verified them --
+            a post-assembly swap cannot slip one in. Names render
+            through the shared relkey helper; outside paths
+            render as root-relative keys, never absolute (Codex
+            R43-4). Any listing fault, or an undeterminable
+            marker slot, fails verification as a fault
+            (persistent: restore access); the caller
+            distinguishes it from transient churn (bracket/rescan
+            drift: rerun). Every fault records at least one key
+            naming the culprit base (or the outside key), so
+            voices can name the unreadable evidence (Claude Q3
+            M5). Advisory only -- hold decisions never depend on
+            it.
             """
-            names: set[str] = set()
-            for base in bases:
-                names.add(base.relative_to(root).as_posix())
-                for glob in (f"{base.name}.tmp-", f"{base.name}.quarantined-"):
-                    found = _list_tmp_paths(base.parent, glob)
+
+            def _resolve(path: Path) -> str | None:
+                """Adopted target for mapped bases, else a strict resolve."""
+                if verified is not None:
+                    # Exact spelling only (Codex R50-1): every mapped
+                    # base carries its own record under this same
+                    # spelling, while a live file-identity scan
+                    # could substitute another base's target under
+                    # a transient redirect.
+                    adopted = verified.get(os.fspath(path))
+                    if adopted is not None:
+                        return adopted
+                try:
+                    return os.path.realpath(path, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return None
+
+            def _resolved_inside(resolved: str) -> bool:
+                """Whether an already-resolved path stays inside root."""
+                try:
+                    return os.path.commonpath([resolved_root, resolved]) == resolved_root
+                except ValueError:
+                    return False
+
+            def _key(resolved: str) -> str:
+                """Relkey for a resolved inside path via the shared helper."""
+                return _evidence_relkey(Path(resolved_root), Path(resolved))
+
+            def _lexical_key(path: Path) -> str:
+                """Best-effort root-relative key; bare name when unrelatable."""
+                return _relkey_or_name(str(path), resolved_root, path.name)
+
+            def _outside_key(path: Path, resolved: str) -> str:
+                """Root-relative key for a resolved outside path (never absolute)."""
+                return _relkey_or_name(resolved, resolved_root, path.name)
+
+            def _validated_companions(
+                enumerated: Path, stem: str, base_key: str
+            ) -> set[str] | None:
+                """Companion relkeys in one directory, validated (None on fault).
+
+                Each companion resolves strictly and must stay
+                inside (Codex R43-1): an outside symlink companion
+                warns and fails instead of rendering an outside
+                name. The verified target must also keep the
+                base's rewrite shape and a single link (Codex
+                R44-2): a companion pointing at another file is
+                not this base's rewrite. Faults record their key
+                and warn; the caller fails verification.
+                """
+                found_names: set[str] = set()
+                for glob in (f"{stem}.tmp-", f"{stem}.quarantined-"):
+                    found = _list_tmp_paths(enumerated, glob)
                     if found is None:
-                        return set(), False, True
-                    names.update(entry.relative_to(root).as_posix() for entry in found)
-                if base.name.startswith(PROBE_CONSUMED_PREFIX):
-                    slot = _marker_slot_name(base.name)
+                        fault_keys.add(base_key)
+                        return None
+                    for entry in found:
+                        validated = _resolve(entry)
+                        if validated is None:
+                            fault_keys.add(_lexical_key(entry))
+                            return None
+                        if not _resolved_inside(validated):
+                            warnings.warn(
+                                f"archival preview found {base_key} with a rewrite "
+                                "companion outside the counters directory "
+                                f"({_outside_key(entry, validated)}); archival inventory "
+                                "keeps the family in place; exit: investigate the "
+                                "directory layout before archiving",
+                                UserWarning,
+                                stacklevel=4,
+                            )
+                            fault_keys.add(_outside_key(entry, validated))
+                            return None
+                        if not os.path.basename(validated).startswith(
+                            (f"{stem}.tmp-", f"{stem}.quarantined-")
+                        ):
+                            warnings.warn(
+                                f"archival preview found {base_key} with a rewrite "
+                                "companion pointing at another file "
+                                f"({_key(validated)}); archival inventory "
+                                "keeps the family in place; exit: investigate the "
+                                "directory layout before archiving",
+                                UserWarning,
+                                stacklevel=4,
+                            )
+                            fault_keys.add(_key(validated))
+                            return None
+                        try:
+                            entry_mode = os.stat(validated)
+                        except OSError:
+                            fault_keys.add(_lexical_key(entry))
+                            return None
+                        if not stat.S_ISDIR(entry_mode.st_mode) and entry_mode.st_nlink > 1:
+                            warnings.warn(
+                                f"archival preview found {base_key} with a rewrite "
+                                "companion with more than one link "
+                                f"({_key(validated)}); archival inventory "
+                                "keeps the family in place; exit: investigate the "
+                                "directory layout before archiving",
+                                UserWarning,
+                                stacklevel=4,
+                            )
+                            fault_keys.add(_key(validated))
+                            return None
+                        found_names.add(_key(validated))
+                return found_names
+
+            try:
+                resolved_root = os.path.realpath(root, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return set(), False, True, {"."}
+            names: set[str] = set()
+            fault_keys: set[str] = set()
+
+            def _fail(key: str) -> tuple[set[str], bool, bool, set[str]]:
+                fault_keys.add(key)
+                return set(), False, True, fault_keys
+
+            for base in bases:
+                base_key = os.fspath(base)
+                absent_parent = absent.get(base_key) if absent is not None else None
+                if _path_state(base) == "missing":
+                    if absent_parent is not None:
+                        # Recorded-absent leg companions enumerate
+                        # beside the adopted parent (Codex R48-1),
+                        # never a transiently redirected one.
+                        if _path_state(absent_parent) == "missing":
+                            return set(), False, False, set()
+                        companions = _validated_companions(
+                            Path(absent_parent), base.name, _lexical_key(base)
+                        )
+                        if companions is None:
+                            return set(), False, True, fault_keys
+                        names.update(companions)
+                        continue
+                    # Companion-only base (Claude Q3 M3): rewrites may
+                    # sit beside an absent sidecar, but it names
+                    # nothing itself.
+                    if _path_state(base.parent) == "missing":
+                        continue
+                    resolved_parent = _resolve(base.parent)
+                    if resolved_parent is None:
+                        return _fail(_lexical_key(base.parent))
+                    if not _resolved_inside(resolved_parent):
+                        _outside = _outside_key(base.parent, resolved_parent)
+                        warnings.warn(
+                            f"archival preview found {_lexical_key(base)} with its "
+                            "parent outside the counters directory "
+                            f"({_outside}); archival inventory keeps the family in "
+                            "place; exit: investigate the directory layout before "
+                            "archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        return _fail(_outside)
+                    companions = _validated_companions(
+                        Path(resolved_parent), base.name, _lexical_key(base)
+                    )
+                    if companions is None:
+                        return set(), False, True, fault_keys
+                    names.update(companions)
+                    continue
+                if _lexical_key(base) in dependents:
+                    base_lexical = _lexical_key(base)
+                    try:
+                        base_lstat = os.lstat(base)
+                    except OSError:
+                        return _fail(base_lexical)
+                    if stat.S_ISLNK(base_lstat.st_mode):
+                        warnings.warn(
+                            f"archival preview found dependent {base_lexical} as a link "
+                            "(dependents must be regular files); archival inventory "
+                            "keeps the family in place; exit: investigate the directory "
+                            "layout before archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        return _fail(base_lexical)
+                    if not stat.S_ISREG(base_lstat.st_mode):
+                        warnings.warn(
+                            f"archival preview found dependent {base_lexical} not as a "
+                            "regular file (dependents must be regular files); archival "
+                            "inventory keeps the family in place; exit: investigate the "
+                            "directory layout before archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        return _fail(base_lexical)
+                    if not stat.S_ISDIR(base_lstat.st_mode) and base_lstat.st_nlink > 1:
+                        warnings.warn(
+                            f"archival preview found dependent {base_lexical} with more "
+                            "than one link; archival inventory keeps the family in "
+                            "place; exit: investigate the directory layout before "
+                            "archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        return _fail(base_lexical)
+                if absent_parent is not None:
+                    # A base resolving now that was absent at adoption
+                    # (Codex R48-1): a transient redirect made it
+                    # appear -- withhold as unverified (never render
+                    # the transient target); the drift check
+                    # re-observes.
+                    return set(), False, False, set()
+                resolved_base = _resolve(base)
+                if resolved_base is None:
+                    return _fail(_lexical_key(base))
+                if not _resolved_inside(resolved_base):
+                    _outside = _outside_key(base, resolved_base)
+                    warnings.warn(
+                        f"archival preview found a removal candidate outside the "
+                        f"counters directory ({_outside}); archival inventory keeps "
+                        "the family in place; exit: investigate the directory "
+                        "layout before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return _fail(_outside)
+                base_key = _key(resolved_base)
+                names.add(base_key)
+                # The enumerated directory IS the checked value's
+                # parent (Codex R43-1): used directly, never
+                # re-resolved -- a second resolution is exactly what
+                # a mid-pass swap could disagree with. A base
+                # resolving to the root itself (a symlink to the
+                # counters dir) has its parent outside, so it warns
+                # and fails instead of listing outside files.
+                enumerated = Path(resolved_base).parent
+                if not _resolved_inside(str(enumerated)):
+                    warnings.warn(
+                        f"archival preview found {base_key} with its parent "
+                        "outside the counters directory; archival inventory "
+                        "keeps the family in place; exit: investigate the "
+                        "directory layout before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return _fail(base_key)
+                # Companion stems come from the VERIFIED basename
+                # (Codex R43-2): searching under the alias stem
+                # beside the target directory omits the target's
+                # rewrites -- the exact strand the alias fix closes.
+                stem = os.path.basename(resolved_base)
+                companions = _validated_companions(enumerated, stem, base_key)
+                if companions is None:
+                    return set(), False, True, fault_keys
+                names.update(companions)
+                if stem.startswith(PROBE_CONSUMED_PREFIX):
+                    slot = _marker_slot_name(stem)
                     if slot is None:
-                        return set(), False, True
-                    for glob in (f"{slot}.tmp-", f"{slot}.quarantined-"):
-                        found = _list_tmp_paths(root, glob)
-                        if found is None:
-                            return set(), False, True
-                        names.update(entry.relative_to(root).as_posix() for entry in found)
-            return names, True, False
+                        return _fail(base_key)
+                    slot_names = _validated_companions(Path(resolved_root), slot, base_key)
+                    if slot_names is None:
+                        return set(), False, True, fault_keys
+                    names.update(slot_names)
+            return names, True, False, set()
+
+        def _sample_dirs(
+            dirs: Collection[Path | str],
+        ) -> dict[str, tuple[str, int]] | None:
+            """Resolution-plus-clock sample for fixed directories (Codex R44-3).
+
+            Each entry records the strict resolution AND the
+            resolved directory's clock, keyed lexically. None when
+            any directory is unresolvable or unstatable (fail
+            closed: the caller treats it as drift). Never raises.
+            """
+            sample: dict[str, tuple[str, int]] = {}
+            for directory in dirs:
+                try:
+                    resolved = os.path.realpath(directory, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return None
+                mtime = _dir_mtime_ns(Path(resolved))
+                if mtime is None:
+                    return None
+                sample[os.fspath(directory)] = (resolved, mtime)
+            return sample
+
+        def _bracket_sample(
+            bases: Collection[Path],
+        ) -> dict[str, tuple[str, int]] | None:
+            """Bracket sample for archival bases (Claude Q3 L6, Codex R44-3).
+
+            Root, registrations, and every base parent, keyed
+            lexically (each entry records the strict resolution
+            AND the clock): clocks catch rewrite arrivals and
+            departures, resolution strings catch mid-pass parent
+            swaps deterministically (no stat tuple distinguishes
+            a re-symlink -- inodes reuse, ticks collide -- but
+            the resolved path differs). Enumerated directories
+            sample alongside the lexical anchors: the helper
+            enumerates beside the RESOLVED base/parent, so a
+            rewrite arriving beside a symlink's target bumps a
+            clock no lexical parent owns. Unresolvable bases skip
+            their enumerated entry (the helper faults on them,
+            which the exit precedence routes). None when any
+            sampled directory is unresolvable or unstatable (fail
+            closed). Never raises.
+            """
+            anchors: list[Path | str] = [root, root / REGISTRY_DIRNAME]
+            anchors.extend(base.parent for base in bases)
+            for base in bases:
+                if _path_state(base) == "missing":
+                    try:
+                        anchors.append(os.path.realpath(base.parent, strict=True))
+                    except (OSError, RuntimeError, ValueError):
+                        continue
+                else:
+                    try:
+                        resolved_base = os.path.realpath(base, strict=True)
+                    except (OSError, RuntimeError, ValueError):
+                        continue
+                    anchors.append(os.path.dirname(resolved_base))
+            return _sample_dirs(anchors)
+
+        def _verify_singleton(
+            path: Path, pair: Literal["body", "name", "none"]
+        ) -> tuple[str, str | None]:
+            """Verdict for one sidecar/journal base (Codex R44-2).
+
+            Returns (verdict, resolved-or-None). Ownership verifies
+            the RESOLVED identity, exactly like registry-field legs:
+            "join", "foreign" (resolved target names another
+            producer), "unattributable" (claimless target with no
+            pair cover), "multilink" (non-directory with more than
+            one link), "outside" (resolved outside the counters
+            root), "unusable" (unresolvable or unstatable),
+            "missing" (vanished mid-pass -- the caller skips it and
+            the bracket flags the churn). Claimless targets join
+            only under pair cover: "body" (census or sidecar-body
+            attestation, redirects irrelevant -- the bytes are
+            verified), "name" (an owned sidecar beside a journal:
+            unredirected joins by pair agreement, redirected
+            withholds); "none" withholds claimless. Never raises.
+            """
+            if _path_state(path) == "missing":
+                return ("missing", None)
+            try:
+                preview_root = os.path.realpath(root, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return ("unusable", None)
+            try:
+                resolved = os.path.realpath(path, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return ("unusable", None)
+            try:
+                inside = os.path.commonpath([preview_root, resolved]) == preview_root
+            except ValueError:
+                inside = False
+            if not inside:
+                return ("outside", resolved)
+            try:
+                mode = os.stat(resolved)
+            except OSError:
+                return ("unusable", None)
+            if not stat.S_ISDIR(mode.st_mode) and mode.st_nlink > 1:
+                return ("multilink", resolved)
+            claim = _uuid_from_evidence_name(os.path.basename(resolved))
+            if claim is not None and claim != uuid:
+                return ("foreign", resolved)
+            if claim is None and pair == "none":
+                return ("unattributable", resolved)
+            if claim is None and pair == "name":
+                try:
+                    parent_resolved = os.path.realpath(path.parent, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return ("unusable", None)
+                if os.path.join(parent_resolved, path.name) != resolved:
+                    return ("unattributable", resolved)
+            return ("join", resolved)
+
+        def _is_rewrite_hit(name: str) -> bool:
+            """Whether a filename is a parentless-rewrite shape (Claude Q3 M3)."""
+            return (
+                f"{SIDECAR_SUFFIX}.tmp-" in name
+                or f"{SIDECAR_SUFFIX}.quarantined-" in name
+                or f"{JOURNAL_SUFFIX}.tmp-" in name
+                or f"{JOURNAL_SUFFIX}.quarantined-" in name
+            )
+
+        def _voice_base_verdict(
+            verdict: str, lexical: Path, resolved: str | None, preview_root: str | None
+        ) -> None:
+            """Voice one verified-base refusal (family flags set by caller)."""
+            if preview_root is None:
+                return
+            lexical_key = _relkey_or_name(os.fspath(lexical), preview_root, lexical.name)
+            if verdict == "nonregular":
+                what = f"{lexical_key} is not a regular file"
+            elif resolved is None:
+                return
+            elif verdict == "outside":
+                what = (
+                    f"{lexical_key} outside the counters directory "
+                    f"({_relkey_or_name(resolved, preview_root, lexical.name)})"
+                )
+            elif verdict == "foreign":
+                what = (
+                    f"{lexical_key} resolving to another producer's file "
+                    f"({_evidence_relkey(Path(preview_root), Path(resolved))})"
+                )
+            elif verdict == "unattributable":
+                what = (
+                    f"{lexical_key} resolving to unattributable evidence "
+                    f"({_evidence_relkey(Path(preview_root), Path(resolved))})"
+                )
+            elif verdict == "misplaced":
+                what = (
+                    f"{lexical_key} resolving to a different file "
+                    f"({_evidence_relkey(Path(preview_root), Path(resolved))})"
+                )
+            elif verdict == "multilink":
+                what = (
+                    f"{lexical_key} with more than one link "
+                    f"({_evidence_relkey(Path(preview_root), Path(resolved))})"
+                )
+            else:
+                return
+            warnings.warn(
+                f"archival preview found {what}; archival inventory keeps the family "
+                "in place; exit: investigate the directory layout before archiving",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        def _verify_rewrite_hit(hit: Path) -> tuple[str, str | None]:
+            """Verdict for one prefix-listed rewrite (Codex R45-1).
+
+            Returns (verdict, resolved-or-None): "join",
+            "foreign" (link to another producer's file),
+            "misplaced" (link to any other file -- production
+            never links rewrites, so even a same-shape link
+            withholds: archiving it would dangle), "multilink",
+            "outside", "nonregular", "unusable", "missing".
+            Stricter than the companion shape rule it extends: the
+            shape rule alone would admit a same-shape link whose
+            archival dangles. Never raises.
+            """
+            if _path_state(hit) == "missing":
+                return ("missing", None)
+            try:
+                hit_lstat = os.lstat(hit)
+            except OSError:
+                return ("unusable", None)
+            if stat.S_ISLNK(hit_lstat.st_mode):
+                try:
+                    resolved = os.path.realpath(hit, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return ("unusable", None)
+                try:
+                    link_root = os.path.realpath(root, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return ("unusable", None)
+                try:
+                    inside = os.path.commonpath([link_root, resolved]) == link_root
+                except ValueError:
+                    inside = False
+                if not inside:
+                    return ("outside", resolved)
+                claim = _uuid_from_evidence_name(os.path.basename(resolved))
+                if claim is not None and claim != uuid:
+                    return ("foreign", resolved)
+                return ("misplaced", resolved)
+            if not stat.S_ISREG(hit_lstat.st_mode):
+                return ("nonregular", None)
+            if hit_lstat.st_nlink > 1:
+                try:
+                    resolved = os.path.realpath(hit, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return ("unusable", None)
+                return ("multilink", resolved)
+            try:
+                resolved = os.path.realpath(hit, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return ("unusable", None)
+            return ("join", resolved)
+
+        def _adopt_registry_link(
+            registry_key: str, usable_sidecar: Path, adopted_out: list[_AdoptedLink]
+        ) -> tuple[bool, bool]:
+            """Adopt one verified registry's sidecar link (Codex R43-2/3).
+
+            Returns (ok, faulted) for the family verdict; owned bases
+            append to ``move_bases`` and the verified identities
+            append to ``adopted_out`` (at most one) for the
+            post-bracket re-verification. Ownership and companion
+            lookup agree on the same verified identity -- the
+            RESOLVED names, never the field spelling: a uuid-named
+            path symlinking to another producer's journal, a
+            multi-linked journal, or a redirected alias resolves
+            foreign and withholds, while companions list beside the
+            verified target. Claimless names consult the sidecar
+            body's attestation through the shared rule (fresh
+            read): attested joins, unattested withholds as
+            unattributable (never as foreign). Journals ride no
+            body rule, so a redirected claimless journal withholds
+            too. Voices name the registry relkey and render targets
+            root-relatively, never absolute (Codex R43-4). Never
+            raises.
+            """
+
+            def _leg_identity(resolved: str) -> tuple[str | None, bool, str] | None:
+                """(uuid claim, redirected, final path); None if unresolvable."""
+                try:
+                    final = os.path.realpath(resolved, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    return None
+                return (
+                    _uuid_from_evidence_name(os.path.basename(final)),
+                    final != resolved,
+                    final,
+                )
+
+            try:
+                link_root = os.path.realpath(root, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return False, True
+            parent = usable_sidecar.parent
+            if _path_state(parent) == "missing":
+                # Nothing can exist beside a missing directory; the
+                # bracket flags mid-pass churn.
+                return True, False
+            try:
+                resolved_parent = os.path.realpath(parent, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                warnings.warn(
+                    f"registry {registry_key} links an unusable sidecar path; "
+                    "archival inventory keeps the family in place; exit: "
+                    "investigate the registry body before archiving",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return False, True
+            try:
+                parent_inside = os.path.commonpath([link_root, resolved_parent]) == link_root
+            except ValueError:
+                parent_inside = False
+            if not parent_inside:
+                warnings.warn(
+                    f"registry {registry_key} links outside the counters directory "
+                    f"({_relkey_or_name(resolved_parent, link_root, parent.name)}); "
+                    "archival inventory keeps the family in place; exit: investigate "
+                    "the registry body before archiving (the directory may have moved "
+                    "since registration -- absolute sidecar fields go stale on move)",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return False, True
+            resolved_sidecar = os.path.join(resolved_parent, usable_sidecar.name)
+            resolved_journal = os.path.join(
+                resolved_parent, _journal_for_sidecar(usable_sidecar).name
+            )
+            legs: list[tuple[str, tuple[str | None, bool, str] | None]] = []
+            for leg_path in (resolved_sidecar, resolved_journal):
+                if _path_state(leg_path) == "missing":
+                    legs.append((leg_path, None))
+                    continue
+                identity = _leg_identity(leg_path)
+                if identity is None:
+                    warnings.warn(
+                        f"registry {registry_key} links an unusable sidecar path; "
+                        "archival inventory keeps the family in place; exit: "
+                        "investigate the registry body before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return False, True
+                legs.append((leg_path, identity))
+            for leg_path, identity in legs:
+                if identity is None:
+                    continue
+                _, _, final = identity
+                try:
+                    final_inside = os.path.commonpath([link_root, final]) == link_root
+                except ValueError:
+                    final_inside = False
+                if not final_inside:
+                    warnings.warn(
+                        f"registry {registry_key} links outside the counters directory "
+                        f"({_relkey_or_name(final, link_root, os.path.basename(final))}); "
+                        "archival inventory keeps the family in place; exit: investigate "
+                        "the registry body before archiving (the directory may have moved "
+                        "since registration -- absolute sidecar fields go stale on move)",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return False, True
+                try:
+                    mode = os.stat(final)
+                except OSError:
+                    warnings.warn(
+                        f"registry {registry_key} links an unusable sidecar path; "
+                        "archival inventory keeps the family in place; exit: "
+                        "investigate the registry body before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return False, True
+                if not stat.S_ISDIR(mode.st_mode) and mode.st_nlink > 1:
+                    warnings.warn(
+                        f"registry {registry_key} links evidence with more than one "
+                        f"link ({_evidence_relkey(Path(link_root), Path(final))}); "
+                        "archival inventory keeps the family in place; exit: "
+                        "investigate the registry body before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return False, True
+            claims = [identity[0] for _, identity in legs if identity is not None]
+            if any(claim is not None and claim != uuid for claim in claims):
+                foreign = next(
+                    identity[2]
+                    for _, identity in legs
+                    if identity is not None and identity[0] not in (None, uuid)
+                )
+                warnings.warn(
+                    f"registry {registry_key} links a sidecar outside this family "
+                    f"({_evidence_relkey(Path(link_root), Path(foreign))}); archival "
+                    "inventory keeps the family in place; exit: investigate the "
+                    "registry body before archiving",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return False, True
+            sidecar_leg = legs[0][1]
+            journal_leg = legs[1][1]
+            if sidecar_leg is not None and sidecar_leg[0] is None:
+                # Claimless sidecar (Codex R43-3): the body's
+                # attestation through the shared rule decides --
+                # attested joins, unattested withholds as
+                # unattributable (never as foreign, which names a
+                # rival that may not exist).
+                if _consistent_sidecar_owner(Path(sidecar_leg[2])) != uuid:
+                    warnings.warn(
+                        f"registry {registry_key} links a sidecar with no attributable "
+                        f"owner ({_evidence_relkey(Path(link_root), Path(sidecar_leg[2]))}); "
+                        "archival inventory keeps the family in place; exit: "
+                        "investigate the registry body before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return False, True
+            if (
+                journal_leg is not None
+                and journal_leg[0] is None
+                and (journal_leg[1] or sidecar_leg is None)
+            ):
+                # A redirected claimless journal, or a claimless
+                # journal with no sidecar to attest the pair:
+                # journals ride no body rule, so nothing attributes
+                # it. An unredirected claimless journal beside an
+                # owned sidecar leg is covered by the pair agreement
+                # (same stem, same directory, no redirect).
+                warnings.warn(
+                    f"registry {registry_key} links a sidecar with no attributable "
+                    f"owner ({_evidence_relkey(Path(link_root), Path(journal_leg[2]))}); "
+                    "archival inventory keeps the family in place; exit: "
+                    "investigate the registry body before archiving",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return False, True
+            if sidecar_leg is None and journal_leg is None:
+                if _uuid_from_evidence_name(usable_sidecar.name) is None:
+                    # A dangling claimless link attests nothing (Codex
+                    # R43-3): withhold loudly rather than list -- or
+                    # silently strand -- unattributable companions.
+                    # The operator sees one named file to inspect.
+                    warnings.warn(
+                        f"registry {registry_key} links a sidecar with no attributable "
+                        f"owner ({_evidence_relkey(Path(link_root), Path(resolved_sidecar))}); "
+                        "archival inventory keeps the family in place; exit: "
+                        "investigate the registry body before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    return False, True
+            # Owned: the LINK spellings join as bases -- the
+            # companion helper resolves, validates, and renders the
+            # verified target itself (Claude Q3 L10), and the
+            # bracket covers the lexical parents, so a mid-pass
+            # parent swap mismatches instead of verifying a stale
+            # resolution (Codex R43-1). The linked sidecar lists
+            # its rewrites whether present or not (Claude Q3 M3).
+            # Bases stage locally and join only on success (Codex
+            # R49-minor): a later check failing must not leave
+            # half-adopted bases rendering afresh downstream.
+            link_bases: list[Path] = []
+            if journal_leg is not None:
+                link_bases.append(_journal_for_sidecar(usable_sidecar))
+            link_bases.append(usable_sidecar)
+            if sidecar_leg is not None and sidecar_leg[1]:
+                # A redirected sidecar's journal beside the verified
+                # target (Codex R44-2): the lexical derivation above
+                # covers the link spelling only, so the target's own
+                # journal would strand without this. Same pair cover
+                # as the lexical one (the sidecar leg verified).
+                target_journal = _journal_for_sidecar(Path(sidecar_leg[2]))
+                if _path_state(target_journal) == "missing":
+                    # Absence records like derived journals (Codex
+                    # R47-2): a journal appearing beside the linked
+                    # target before the late bracket must re-observe
+                    # instead of being silently omitted.
+                    if _record_identity(os.fspath(target_journal), None):
+                        return False, False
+                else:
+                    target_verdict, target_resolved = _verify_singleton(target_journal, "name")
+                    if target_verdict == "join":
+                        link_bases.append(target_journal)
+                        if target_resolved is not None:
+                            if _record_identity(os.fspath(target_journal), target_resolved):
+                                return False, False
+                    elif target_verdict == "missing":
+                        # Vanished between the presence check and the
+                        # verify (Codex R48-6): record the absence so
+                        # a recreation before the late check
+                        # re-observes instead of slipping into the
+                        # preview unlisted.
+                        if _record_identity(os.fspath(target_journal), None):
+                            return False, False
+                    else:
+                        _voice_base_verdict(
+                            target_verdict, target_journal, target_resolved, link_root
+                        )
+                        return False, True
+            # Plus any parentless same-uuid rewrite in the linked
+            # directory (Claude Q3 M3); the lexical sidecar base
+            # above anchors the directory for the bracket.
+            prefix_hits = _list_evidence_files(Path(resolved_parent), f"{uuid}-", "")
+            if prefix_hits is None:
+                return False, True
+            adopted_hits: list[str] = []
+            for hit in prefix_hits:
+                if not _is_rewrite_hit(hit.name):
+                    continue
+                hit_verdict, hit_resolved = _verify_rewrite_hit(hit)
+                if hit_verdict == "join" and hit_resolved is not None:
+                    link_bases.append(hit)
+                    adopted_hits.append(hit_resolved)
+                elif hit_verdict != "missing":
+                    _voice_base_verdict(hit_verdict, hit, hit_resolved, link_root)
+                    return False, True
+            move_bases.extend(link_bases)
+            adopted_out.append(
+                _AdoptedLink(
+                    sidecar_lexical=os.fspath(usable_sidecar),
+                    journal_lexical=os.fspath(_journal_for_sidecar(usable_sidecar)),
+                    sidecar=sidecar_leg[2] if sidecar_leg is not None else None,
+                    journal=journal_leg[2] if journal_leg is not None else None,
+                    parent_lexical=os.fspath(parent),
+                    parent=resolved_parent,
+                    prefix_hits=frozenset(adopted_hits),
+                )
+            )
+            return True, False
 
         if blind_reason is not None:
             # A raced scan reruns first (#88R44-[A]r22, Claude Q3):
@@ -20119,35 +21091,214 @@ def sweep_orphans(
                 # voice is not listed (no census rescan on this
                 # path); the next pass re-observes it -- same
                 # accepted class as the r36 sub-read residual.
-                member_before = _dir_mtime_ns(root)
+                member_before = _bracket_sample([root / key for key in own_torn])
                 still_torn: list[str] = []
+                misplaced_keys: list[str] = []
                 member_faulted = False
+                member_drifted = False
+                faulted_keys: set[str] = set()
+                member_targets: dict[str, str | None] = {}
                 for key in own_torn:
-                    member_status = _member_reread_status(root / key)
+                    member_path = root / key
+                    # Members record their verified target at reread
+                    # (Codex R47-minor): same-directory retargets move
+                    # no sampled clock, so only a recorded target
+                    # compared at use catches them. Keys keep
+                    # original spellings; matching compares file
+                    # identity (Codex R49-1/R50-1).
+                    member_key = os.fspath(member_path)
+                    try:
+                        member_targets[member_key] = os.path.realpath(member_path, strict=True)
+                    except (OSError, RuntimeError, ValueError):
+                        member_targets[member_key] = None
+                    member_status = _member_reread_status(member_path, member_targets[member_key])
+                    if member_status == "misplaced":
+                        # Even exclusions re-verify (Codex R51-2): a
+                        # transient role mismatch must not exclude a
+                        # genuinely torn member, so the recorded
+                        # target compares exactly like the use check
+                        # below (same errno split: proven
+                        # disappearance drifts, anything else
+                        # fails).
+                        try:
+                            misplaced_fresh = os.path.realpath(member_path, strict=True)
+                        except OSError as exc:
+                            if exc.errno in (errno.ENOENT, errno.ENOTDIR):
+                                member_drifted = True
+                            else:
+                                member_faulted = True
+                                faulted_keys.add(key)
+                            continue
+                        except (RuntimeError, ValueError):
+                            member_faulted = True
+                            faulted_keys.add(key)
+                            continue
+                        if misplaced_fresh != member_targets[member_key]:
+                            member_drifted = True
+                            continue
+                        misplaced_keys.append(key)
+                        continue
                     if member_status == "torn":
+                        # Links verify at use (Codex R44-2): a member
+                        # symlink to another file would archive under
+                        # the wrong identity. The census key claims
+                        # this uuid (claimless torn never degrades),
+                        # so the resolved target must agree, with a
+                        # single link; registries (no evidence
+                        # suffix) need exact basename agreement.
+                        # Faults join the named set the fault exit
+                        # prints (Claude Q3 M5).
+                        member_recorded = member_targets[member_key]
+                        try:
+                            member_lstat = os.lstat(member_path)
+                        except OSError:
+                            member_faulted = True
+                            faulted_keys.add(key)
+                            continue
+                        if stat.S_ISLNK(member_lstat.st_mode):
+                            try:
+                                member_resolved = os.path.realpath(member_path, strict=True)
+                            except OSError as exc:
+                                if exc.errno in (errno.ENOENT, errno.ENOTDIR):
+                                    # The target vanished after reread
+                                    # verified torn bytes through it
+                                    # (Codex R48-2): proven
+                                    # disappearance re-observes.
+                                    member_drifted = True
+                                else:
+                                    # Unresolvable but not proven gone
+                                    # (ELOOP, EIO, EACCES): a failed
+                                    # observation is unknown, not
+                                    # drift (Codex R45-4) -- fail
+                                    # closed so a genuine co-fault
+                                    # keeps its exit.
+                                    member_faulted = True
+                                    faulted_keys.add(key)
+                                continue
+                            except (RuntimeError, ValueError):
+                                member_faulted = True
+                                faulted_keys.add(key)
+                                continue
+                            if member_recorded is None or member_resolved != member_recorded:
+                                # The target changed after reread:
+                                # re-observe (proven drift outranks
+                                # co-faults, Codex R45-4).
+                                member_drifted = True
+                                continue
+                            member_base = os.path.basename(member_resolved)
+                            if key.startswith(f"{REGISTRY_DIRNAME}/"):
+                                owned = member_base == key.rsplit("/", 1)[-1]
+                            else:
+                                owned = _uuid_from_evidence_name(member_base) == uuid
+                            if not owned:
+                                member_faulted = True
+                                faulted_keys.add(key)
+                                continue
+                            try:
+                                member_target = os.stat(member_resolved)
+                            except OSError:
+                                member_faulted = True
+                                faulted_keys.add(key)
+                                continue
+                            if (
+                                not stat.S_ISDIR(member_target.st_mode)
+                                and member_target.st_nlink > 1
+                            ):
+                                member_faulted = True
+                                faulted_keys.add(key)
+                                continue
+                        elif not stat.S_ISDIR(member_lstat.st_mode) and member_lstat.st_nlink > 1:
+                            member_faulted = True
+                            faulted_keys.add(key)
+                            continue
                         still_torn.append(key)
                     elif member_status == "fault":
                         member_faulted = True
-                member_names, member_verified, member_helper_faulted = _move_rewrite_names(
-                    [root / key for key in still_torn]
+                        faulted_keys.add(key)
+                (
+                    member_names,
+                    member_verified,
+                    member_helper_faulted,
+                    member_helper_keys,
+                    # Members render their recorded targets (Codex
+                    # R47-minor): the drift above already excludes
+                    # changed members, so rendering adopted keeps the
+                    # list consistent with what reread verified.
+                ) = _move_rewrite_names(
+                    [root / key for key in still_torn],
+                    frozenset(),
+                    {
+                        lexical: recorded
+                        for lexical, recorded in member_targets.items()
+                        if recorded is not None
+                    },
                 )
                 member_faulted = member_faulted or member_helper_faulted
-                if len(still_torn) != len(own_torn):
+                faulted_keys.update(member_helper_keys)
+                if misplaced_keys:
+                    # Misplaced members are voiced once and excluded
+                    # stably (Codex R50-4): re-listing them as torn
+                    # would rerun forever (their bytes never parse
+                    # under the lexical rule), while archiving them
+                    # would file healthy evidence as torn. The
+                    # operator fixes the link (or archives the
+                    # targets directly); the listed set archives
+                    # without them.
+                    misplaced = ", ".join(
+                        f"{key} (target "
+                        f"{os.path.basename(member_targets[os.fspath(root / key)] or '')})"
+                        for key in sorted(misplaced_keys)
+                    )
+                    warnings.warn(
+                        f"{display} excludes misplaced members whose names and "
+                        "targets disagree in kind (fix or remove the link, then "
+                        "rerun; archiving a target alone leaves a dangling alias "
+                        f"the census will flag): {misplaced}",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                if len(still_torn) + len(misplaced_keys) != len(own_torn):
                     member_verified = False
-                member_after = _dir_mtime_ns(root)
-                if member_before is None or member_after is None or member_before != member_after:
+                member_after = _bracket_sample([root / key for key in own_torn])
+                member_bracket_clean = (
+                    member_before is not None
+                    and member_after is not None
+                    and member_before == member_after
+                )
+                member_proven_drift = (
+                    member_before is not None
+                    and member_after is not None
+                    and member_before != member_after
+                ) or member_drifted
+                if not member_bracket_clean:
                     member_verified = False
-                if not member_names:
+                if not member_names and not misplaced_keys:
                     # Nothing archivable (members vanished mid-pass):
                     # re-observe next pass instead of printing an
-                    # empty list.
+                    # empty list. An all-misplaced family still
+                    # offers: the misplaced voice above names what
+                    # the list omits, so the pass converges instead
+                    # of rerunning on an empty list forever (Codex
+                    # R50-4).
                     member_verified = False
                 if member_verified:
                     named = ", ".join(sorted(member_names))
+                    # With misplaced members present, collecting stays
+                    # blocked until their aliases no longer degrade
+                    # (Codex R51-3): archiving the listed set alone
+                    # never unblocks it, so the offer names the
+                    # prerequisite first.
+                    prerequisite = (
+                        "resolve the misplaced aliases first (collecting stays "
+                        "blocked until they no longer degrade), then "
+                        if misplaced_keys
+                        else ""
+                    )
                     warnings.warn(
                         f"{display} shares its probe prefix with torn evidence while "
                         "probe or marker evidence exists under it; retained as ambiguity "
-                        f"evidence; exit: archive the listed members and their rewrite "
+                        f"evidence; exit: {prerequisite}archive the listed members and "
+                        "their rewrite "
                         "companions after writers and collectors are quiescent (stop all runs "
                         "and collects on this directory, re-read each listed member and verify "
                         "it is still torn, re-inventory companions, and move the verified fresh "
@@ -20157,12 +21308,25 @@ def sweep_orphans(
                         UserWarning,
                         stacklevel=3,
                     )
-                elif member_faulted:
+                elif member_faulted and not member_proven_drift:
+                    # Exit precedence (Codex R44-2, R45-4; sole arm
+                    # mirrors it): proven drift explains member
+                    # faults, so drift re-observes; a failed sample
+                    # is unknown, not drift, so the fault stands
+                    # unless two successful observations differ.
+                    # The fault exit names the unreadable members
+                    # (Claude Q3 M5) and speaks the shared fix-and-rerun
+                    # vocabulary; it stays arm-specific (not the shared
+                    # fault constant) because its action differs -- this
+                    # arm keeps the probe, never collects it.
+                    unreadable = (
+                        f" (unreadable: {', '.join(sorted(faulted_keys))})" if faulted_keys else ""
+                    )
                     warnings.warn(
                         f"{display} shares its probe prefix with torn evidence while "
                         "probe or marker evidence exists under it; retained as ambiguity "
-                        "evidence; exit: the member inventory could not be verified; keep "
-                        "the family in place until it can be listed",
+                        "evidence; exit: the member inventory could not be verified"
+                        f"{unreadable}; fix the unreadable evidence and rerun",
                         UserWarning,
                         stacklevel=3,
                     )
@@ -20248,15 +21412,242 @@ def sweep_orphans(
                 set(snapshot.pinned_by.get(uuid[:8], ()))
                 | set(snapshot.attributed_by.get(uuid, ()))
             )
+            try:
+                preview_root: str | None = os.path.realpath(root, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                preview_root = None
+            # Bracket before discovery (Codex R44-3): the assembly
+            # below discovers journals, links, and rewrites, so a
+            # sample taken after it cannot see swaps landing during
+            # it. The fixed early set anchors the assembly window;
+            # the full late set anchors the helper window.
+            early_before = _sample_dirs([root, root / REGISTRY_DIRNAME])
             # The preview names the family's own files too (Claude Q3
             # finding 6): the operator moves them with the dependents,
             # and "this family" alone does not enumerate the registry
             # in its subdirectory, the sidecar, or the journal.
-            move_bases: list[Path] = [root / dep for dep in dependents]
+            # Every candidate verifies at assembly (Codex R44-2):
+            # dependents must be regular files (their pinned identity
+            # is the scanned path's bytes -- a link target is
+            # unverified), and sidecars/journals verify the RESOLVED
+            # identity exactly like registry-field legs.
+            move_bases: list[Path] = []
             family_ok = True
+            family_faulted = False
+            for dep in dependents:
+                dep_path = root / dep
+                if _path_state(dep_path) == "missing":
+                    move_bases.append(dep_path)
+                    continue
+                try:
+                    dep_lstat = os.lstat(dep_path)
+                except OSError:
+                    family_ok = False
+                    family_faulted = True
+                    continue
+                if stat.S_ISLNK(dep_lstat.st_mode):
+                    warnings.warn(
+                        f"archival preview found dependent {dep} as a link "
+                        "(dependents must be regular files); archival inventory "
+                        "keeps the family in place; exit: investigate the directory "
+                        "layout before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    family_ok = False
+                    family_faulted = True
+                    continue
+                if not stat.S_ISREG(dep_lstat.st_mode):
+                    warnings.warn(
+                        f"archival preview found dependent {dep} not as a regular "
+                        "file (dependents must be regular files); archival inventory "
+                        "keeps the family in place; exit: investigate the directory "
+                        "layout before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    family_ok = False
+                    family_faulted = True
+                    continue
+                if not stat.S_ISDIR(dep_lstat.st_mode) and dep_lstat.st_nlink > 1:
+                    warnings.warn(
+                        f"archival preview found dependent {dep} with more than one "
+                        "link; archival inventory keeps the family in place; exit: "
+                        "investigate the directory layout before archiving",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    family_ok = False
+                    family_faulted = True
+                    continue
+                move_bases.append(dep_path)
             registry_base = root / REGISTRY_DIRNAME / f"{uuid}.json"
-            if _path_state(registry_base) != "missing":
-                move_bases.append(registry_base)
+            # Verified identities (Codex R45-2, R46-2/R46-3):
+            # lexical fspath to the adopted resolved target, None
+            # for recorded absences. The renderer renders the
+            # recorded targets; the post-bracket drift check
+            # re-resolves the lexical paths.
+            adopted_identities: dict[str, str | None] = {}
+            identity_conflicted = False
+
+            def _record_identity(lexical: str, value: str | None) -> bool:
+                """Record one adopted identity; True when it proves change.
+
+                The same file adopted twice with different values --
+                two targets, or a target and a recorded absence in
+                either order -- proves the filesystem changed between
+                the two observations (Codex R47-1/R47-2), so the pass
+                observed mixed state and must re-observe. Same-value
+                rewrites are quiet: several sites adopt the same file.
+                The freshest observation wins the record; renders only
+                survive when no conflict fired. A conflict is proven
+                drift (Codex R48-5): two successful observations
+                differ, so it outranks co-faults at the exit. Sameness
+                compares file identity, not strings (Codex R49-1):
+                equivalent spellings (relative vs absolute, ``..``
+                across links) meet as one record. Stored keys keep
+                original spellings so re-verification re-resolves
+                them. Never raises.
+                """
+                nonlocal identity_conflicted
+                if lexical not in adopted_identities:
+                    matched, previous = _match_identity(adopted_identities, lexical)
+                    if matched and previous != value:
+                        adopted_identities[lexical] = value
+                        identity_conflicted = True
+                        return True
+                    adopted_identities[lexical] = value
+                    return False
+                if adopted_identities[lexical] != value:
+                    adopted_identities[lexical] = value
+                    identity_conflicted = True
+                    return True
+                return False
+
+            registry_verdict, registry_resolved = _verify_singleton(registry_base, "body")
+            registry_body: dict[str, Any] | None = None
+            registry_body_raw: bytes | None = None
+            if registry_verdict == "join":
+                if (
+                    registry_resolved is not None
+                    and os.path.basename(registry_resolved) != registry_base.name
+                ):
+                    # A registry symlink to another registry (Codex
+                    # R44-2): registries carry no evidence suffix, so
+                    # only exact basename agreement verifies them.
+                    _voice_base_verdict("foreign", registry_base, registry_resolved, preview_root)
+                    family_ok = False
+                    family_faulted = True
+                else:
+                    move_bases.append(registry_base)
+                    # The registry joins identity tracking (Codex
+                    # R46-2): a retargeted intermediate link in an
+                    # unsampled directory moves no sampled clock,
+                    # so only a recorded target re-verified
+                    # post-bracket catches it -- and the renderer
+                    # renders the recorded target.
+                    if registry_resolved is not None:
+                        if _record_identity(os.fspath(registry_base), registry_resolved):
+                            family_ok = False
+
+                        # The body binds at assembly (Codex R48-3):
+                        # resolve, read through the recorded target,
+                        # then re-resolve, so a same-path byte
+                        # replacement between assembly and the link
+                        # adoption below can never contribute its
+                        # links. The stashed body -- not a later
+                        # re-read -- feeds adoption. The body must
+                        # validate against the schema and filename
+                        # uuid first (Codex R41-2): a contradictory
+                        # replacement names another producer's
+                        # journal, which must never join this
+                        # family's list. An unreadable registry fails
+                        # as a fault; an invalid one flips
+                        # transiently (it was valid when scanned, so
+                        # the next pass routes it to its own arm).
+                        def _body_reresolve_status() -> str:
+                            """Classify one registry re-resolution (Codex R50-3).
+
+                            "agree" (same target), "drift" (a
+                            different target or a proven
+                            disappearance: two observations
+                            differ), or "fault" (anything else:
+                            unknown, fail closed).
+                            """
+                            try:
+                                reresolved = os.path.realpath(registry_base, strict=True)
+                            except OSError as exc:
+                                if exc.errno in (errno.ENOENT, errno.ENOTDIR):
+                                    return "drift"
+                                return "fault"
+                            except (RuntimeError, ValueError):
+                                return "fault"
+                            return "agree" if reresolved == registry_resolved else "drift"
+
+                        # Interleaved double read (Codex R49-2): a
+                        # path re-resolve is blind to same-path byte
+                        # swaps, so the body reads twice with a
+                        # re-resolve between and after. All four
+                        # observations run, then adjudicate (Codex
+                        # R50-3): proven change drifts (a mismatching
+                        # or vanished re-resolve, or two successful
+                        # reads that differ); indeterminate
+                        # observations fail closed (an unreadable
+                        # read or re-resolve with no proof of
+                        # change). Drift outranks fault: mixed state
+                        # explains faults. Bytes stable across all
+                        # observations are millisecond-stale at worst
+                        # (accepted post-match staleness).
+                        body_raw = _read_regular_file_bytes(Path(registry_resolved))
+                        reresolve_1 = _body_reresolve_status()
+                        body_raw_2 = _read_regular_file_bytes(Path(registry_resolved))
+                        reresolve_2 = _body_reresolve_status()
+                        reads_differ = (
+                            body_raw is not None
+                            and body_raw_2 is not None
+                            and body_raw_2 != body_raw
+                        )
+                        drifted = reresolve_1 == "drift" or reresolve_2 == "drift" or reads_differ
+                        faulted = (
+                            reresolve_1 == "fault"
+                            or reresolve_2 == "fault"
+                            or (body_raw is None and reresolve_1 != "drift")
+                            or (body_raw_2 is None and reresolve_2 != "drift")
+                        )
+                        if drifted:
+                            family_ok = False
+                            identity_conflicted = True
+                        elif faulted:
+                            family_ok = False
+                            family_faulted = True
+                        else:
+                            # Both reads agreed bytes (a None read
+                            # would have faulted or drifted above).
+                            assert body_raw is not None
+                            try:
+                                registry_body = _parse_registry_content(
+                                    registry_base.name, body_raw.decode("utf-8")
+                                )
+                            except ValueError:
+                                registry_body = None
+                            if registry_body is None:
+                                family_ok = False
+                            else:
+                                registry_body_raw = body_raw
+            elif registry_verdict == "missing":
+                # Absent registries record like derived journals
+                # (Codex R47-4): a registry appearing mid-pass must
+                # re-observe, and the link adoption below skips
+                # registries absent at assembly. (The early bracket
+                # independently reruns this shape; the record keeps
+                # the rerun principled instead of clock-accidental.)
+                _record_identity(os.fspath(registry_base), None)
+            else:
+                _voice_base_verdict(
+                    registry_verdict, registry_base, registry_resolved, preview_root
+                )
+                family_ok = False
+                family_faulted = True
             # Body-linked sidecars (Codex R39-5): filename matching
             # misses sidecars the census attested by body (a valid
             # body with no contradictory filename claim attests its
@@ -20268,8 +21659,50 @@ def sweep_orphans(
                 if owner != uuid:
                     continue
                 basis_path = root / basis
-                if _path_state(basis_path) != "missing":
-                    move_bases.append(basis_path)
+                if basis_path == registry_base:
+                    continue  # Owned by the registry site above.
+                basis_verdict, basis_resolved = _verify_singleton(basis_path, "body")
+                if basis_verdict != "join":
+                    if basis_verdict == "missing":
+                        # Attested by the census but gone at verify
+                        # (Codex R49-4): an ancestor redirect can
+                        # hide even a root-level entry from this
+                        # check while every sample agrees, so record
+                        # the absence -- a present re-verify
+                        # re-observes instead of publishing without
+                        # it.
+                        if _record_identity(os.fspath(basis_path), None):
+                            family_ok = False
+                    else:
+                        _voice_base_verdict(basis_verdict, basis_path, basis_resolved, preview_root)
+                        family_ok = False
+                        family_faulted = True
+                    continue
+                if (
+                    basis_resolved is not None
+                    and _uuid_from_evidence_name(os.path.basename(basis_resolved)) is None
+                ):
+                    # Re-attest claimless trust at use (Codex R45-2):
+                    # the census attested the lexical path, so a
+                    # mid-pass retarget binds stale trust to new
+                    # bytes. The fresh body through the shared rule
+                    # decides; a foreign body voices, anything else
+                    # fails silently (the generic exit covers
+                    # unreadable/torn).
+                    if _consistent_sidecar_owner(Path(basis_resolved)) != uuid:
+                        _, peek_body = _read_json_evidence(Path(basis_resolved))
+                        peek_uuid = (
+                            peek_body.get("worker_uuid") if isinstance(peek_body, dict) else None
+                        )
+                        if is_worker_uuid(peek_uuid) and peek_uuid != uuid:
+                            _voice_base_verdict("foreign", basis_path, basis_resolved, preview_root)
+                        family_ok = False
+                        family_faulted = True
+                        continue
+                move_bases.append(basis_path)
+                if basis_resolved is not None:
+                    if _record_identity(os.fspath(basis_path), basis_resolved):
+                        family_ok = False
             # Journals, fault-aware (Codex R39-5): pathlib glob
             # swallows readdir faults, so a fault-aware listing
             # drives both the direct orphans (whose sidecar is
@@ -20277,14 +21710,131 @@ def sweep_orphans(
             journal_hits = _list_evidence_files(root, "", JOURNAL_SUFFIX)
             if journal_hits is None:
                 family_ok = False
+                family_faulted = True
             else:
                 for journal_path in journal_hits:
-                    if journal_path.name.startswith(f"{uuid}-"):
+                    if not journal_path.name.startswith(f"{uuid}-"):
+                        continue
+                    journal_verdict, journal_resolved = _verify_singleton(journal_path, "none")
+                    if journal_verdict == "join":
                         move_bases.append(journal_path)
+                        if journal_resolved is not None:
+                            if _record_identity(os.fspath(journal_path), journal_resolved):
+                                family_ok = False
+                    elif journal_verdict == "missing":
+                        # Listed but gone at verify (Codex R49-4):
+                        # an ancestor redirect can hide even a
+                        # root-level entry from this check while
+                        # every sample agrees, so record the
+                        # absence -- a present re-verify re-observes
+                        # instead of publishing without it.
+                        if _record_identity(os.fspath(journal_path), None):
+                            family_ok = False
+                    else:
+                        _voice_base_verdict(
+                            journal_verdict, journal_path, journal_resolved, preview_root
+                        )
+                        family_ok = False
+                        family_faulted = True
             for sidecar_base in [b for b in move_bases if b.name.endswith(SIDECAR_SUFFIX)]:
-                journal_base = _journal_for_sidecar(sidecar_base)
-                if _path_state(journal_base) != "missing":
-                    move_bases.append(journal_base)
+                derived_candidates = [_journal_for_sidecar(sidecar_base)]
+                # Derivation resolves through the adopted identity
+                # (Codex R46-1): a fresh resolution here can catch
+                # a transient target and admit its journal, so a
+                # sidecar verified at assembly derives beside its
+                # adopted target. Unrecorded bases (dependents) and
+                # recorded absences appearing mid-pass resolve
+                # fresh -- the drift check re-observes the churn.
+                sidecar_resolved = adopted_identities.get(os.fspath(sidecar_base))
+                if sidecar_resolved is None:
+                    try:
+                        sidecar_resolved = os.path.realpath(sidecar_base, strict=True)
+                    except (OSError, RuntimeError, ValueError):
+                        sidecar_resolved = None
+                if (
+                    sidecar_resolved is not None
+                    and os.path.abspath(sidecar_base) != sidecar_resolved
+                ):
+                    # A redirected sidecar's journal beside the
+                    # verified target (Codex R44-2): the lexical
+                    # derivation covers the link spelling only.
+                    derived_candidates.append(_journal_for_sidecar(Path(sidecar_resolved)))
+                for journal_base in derived_candidates:
+                    if _path_state(journal_base) == "missing":
+                        # Absence records like the link legs (Codex
+                        # R46-3): a derived journal appearing
+                        # mid-pass re-observes instead of being
+                        # silently omitted.
+                        if _record_identity(os.fspath(journal_base), None):
+                            family_ok = False
+                        continue
+                    derived_verdict, derived_resolved = _verify_singleton(journal_base, "name")
+                    if derived_verdict == "join":
+                        move_bases.append(journal_base)
+                        if derived_resolved is not None:
+                            if _record_identity(os.fspath(journal_base), derived_resolved):
+                                family_ok = False
+                    elif derived_verdict == "missing":
+                        # Present at the presence check but gone at
+                        # verify (Codex R48-6): record the absence so
+                        # a recreation before the late check
+                        # re-observes instead of slipping into the
+                        # preview unlisted.
+                        if _record_identity(os.fspath(journal_base), None):
+                            family_ok = False
+                    else:
+                        _voice_base_verdict(
+                            derived_verdict, journal_base, derived_resolved, preview_root
+                        )
+                        family_ok = False
+                        family_faulted = True
+            # Journals linked from the verified registry's sidecar
+            # field (Codex R40-3): the field still establishes the
+            # link when the sidecar itself is absent. Links join
+            # only from the body bound at assembly (Codex R48-3):
+            # absent, unreadable, invalid, and foreign registries
+            # stashed nothing (their flags are already set), so a
+            # replacement landing after assembly can never
+            # contribute its links here.
+            adopted_link: _AdoptedLink | None = None
+            if registry_body is not None:
+                linked_sidecar = registry_body.get("sidecar")
+                if isinstance(linked_sidecar, str) and linked_sidecar:
+                    # Contained link resolution (Codex R41-1):
+                    # the field takes the registry consumer's
+                    # path semantics (verbatim: absolute
+                    # as-is, relative CWD-anchored), then must
+                    # resolve inside the counters root --
+                    # absolute-outside, `..`, symlinked-parent,
+                    # and double-prefixed shapes all fail
+                    # loudly instead of aborting sweep or
+                    # previewing outside files.
+                    registry_key = f"{REGISTRY_DIRNAME}/{registry_base.name}"
+                    usable_sidecar = _usable_sidecar_field(linked_sidecar)
+                    if usable_sidecar is None:
+                        # Unusable field (Claude Q3 M2): empty
+                        # basename or null bytes -- no journal
+                        # derives. The body (one named file)
+                        # holds the suspect value for
+                        # investigation.
+                        warnings.warn(
+                            f"registry {registry_key} links an unusable "
+                            "sidecar path; archival inventory keeps the "
+                            "family in place; exit: investigate the "
+                            "registry body before archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        family_ok = False
+                        family_faulted = True
+                    else:
+                        adopted: list[_AdoptedLink] = []
+                        link_ok, link_faulted = _adopt_registry_link(
+                            registry_key, usable_sidecar, adopted
+                        )
+                        adopted_link = adopted[0] if adopted else None
+                        family_ok = family_ok and link_ok
+                        family_faulted = family_faulted or link_faulted
             move_bases = sorted(set(move_bases))
             # Archival inventories each base's rewrites via the
             # shared companion helper (#88R44-[A]r39): moving the
@@ -20293,12 +21843,62 @@ def sweep_orphans(
             # R33-1): the rewrite enumeration must see a quiescent
             # directory between the two samples, or a rewrite landing
             # mid-enumeration is silently omitted. Rewrite arrivals
-            # and departures always bump the directory clock, so the
-            # bracket owns the rewrite-membership domain fully.
-            move_before = _dir_mtime_ns(root)
-            move_names, move_verified, move_faulted = _move_rewrite_names(move_bases)
+            # and departures bump their own directory's clock, so the
+            # bracket samples root plus every enumerated parent
+            # (Claude Q3 L6) -- a root-only clock misses companions
+            # landing beside registry or subdirectory members.
+            move_before = _bracket_sample(move_bases)
+            # Rendered targets are the adopted ones (Codex R46-1,
+            # R46-2): the link legs ride with the recorded
+            # identities (absences stay unmapped -- a base
+            # appearing mid-pass renders fresh and the drift
+            # check re-observes it). Conflicting records prove
+            # mixed state (Codex R47-1): one file adopted twice
+            # with different values -- two targets, or a target
+            # and a recorded absence in either order --
+            # re-observes instead of rendering either, since two
+            # staggered re-checks could each pass on its own
+            # record. Sameness compares file identity, not
+            # strings (Codex R49-1). Legs keep original
+            # spellings so the late checks re-resolve them.
+            verified_targets = {
+                lexical: adopted
+                for lexical, adopted in adopted_identities.items()
+                if adopted is not None
+            }
+            # Absent legs ride with their adopted parent (Codex
+            # R48-1): a transient redirect during rendering must
+            # neither resolve the leg afresh nor enumerate
+            # companions beside a transient parent.
+            absent_legs: dict[str, str] = {}
+            if adopted_link is not None:
+                for leg_lexical, leg_adopted in (
+                    (adopted_link.sidecar_lexical, adopted_link.sidecar),
+                    (adopted_link.journal_lexical, adopted_link.journal),
+                ):
+                    matched, previous = _match_identity(adopted_identities, leg_lexical)
+                    if leg_adopted is None:
+                        if matched and previous is not None:
+                            family_ok = False
+                            identity_conflicted = True
+                        else:
+                            absent_legs[leg_lexical] = adopted_link.parent
+                        continue
+                    if matched and previous != leg_adopted:
+                        family_ok = False
+                        identity_conflicted = True
+                        continue
+                    # Agreeing legs pin their own spelling too (Codex
+                    # R51-1): rendering matches exact spellings, so a
+                    # leg left out of the map would resolve live and
+                    # could name a transient target under a redirect
+                    # that its twin record never sees.
+                    verified_targets[leg_lexical] = leg_adopted
+            move_names, move_verified, move_faulted, _ = _move_rewrite_names(
+                move_bases, frozenset(dependents), verified_targets, absent_legs
+            )
             move_verified = move_verified and family_ok
-            move_faulted = move_faulted or not family_ok
+            move_faulted = move_faulted or family_faulted
             # Fresh-classification compare (#88R44-[A]r36, Codex
             # R35-1): same-name content flips are invisible to the
             # directory clock, so the bracket cannot see them --
@@ -20315,21 +21915,159 @@ def sweep_orphans(
             # residual is narrower than the project's accepted
             # post-match window, and the collect-first primary never
             # depends on this list. A raced rescan is transient churn
-            # (rerun), only a listing fault is persistent.
-            fresh_inventory, fresh_raced = _probe_ambiguity_prefixes(root)
+            # (rerun), only a listing fault is persistent -- and the
+            # listing sets (not the raced flag) decide, so churn can
+            # never clear an established fault (Codex R40-2).
+            fresh_inventory, _fresh_raced = _probe_ambiguity_prefixes(root)
+            rescan_fault = False
             if not fresh_inventory.readable:
                 move_verified = False
-                move_faulted = move_faulted or not fresh_raced
+                # Listing failure is independent of churn (Codex
+                # R40-2): a raced rescan must not clear an
+                # established fault, and a faulted rescan listing
+                # fails as a fault even when raced.
+                # Unreadable means a listing failed (readable holds
+                # exactly when both name sets are present), so the
+                # explicit set checks said the same thing (Claude Q3
+                # nit): any unreadable rescan fails as a fault.
+                rescan_fault = True
             else:
                 dependents_now = set(fresh_inventory.pinned_by.get(uuid[:8], ())) | set(
                     fresh_inventory.attributed_by.get(uuid, ())
                 )
                 if set(dependents) != dependents_now:
                     move_verified = False
-            move_after = _dir_mtime_ns(root)
-            bracket_clean = (
-                move_before is not None and move_after is not None and move_before == move_after
+            # Post-bracket re-verification (Codex R44-3, R45-2,
+            # R46-4): adoption predates the late bracket, so a swap
+            # landing between discovery and the leading sample is
+            # invisible to the clocks -- only a fresh compare
+            # catches it. Mid-pass change re-observes (a persistent
+            # fault re-voices at the next adoption); only listing
+            # faults fail as faults (snapshot hostility faults at
+            # adoption). Unresolvable legs keep the fault bit as
+            # conservative dead-weight: helper and listing
+            # observations dominate every reachable path to it.
+            reverify_fault = False
+            if adopted_link is not None:
+                for leg_lexical, leg_adopted in (
+                    (adopted_link.sidecar_lexical, adopted_link.sidecar),
+                    (adopted_link.journal_lexical, adopted_link.journal),
+                ):
+                    if _path_state(leg_lexical) == "missing":
+                        if leg_adopted is not None:
+                            move_verified = False
+                        continue
+                    if leg_adopted is None:
+                        move_verified = False
+                        continue
+                    try:
+                        leg_fresh = os.path.realpath(leg_lexical, strict=True)
+                    except (OSError, RuntimeError, ValueError):
+                        move_verified = False
+                        reverify_fault = True
+                        continue
+                    if leg_fresh != leg_adopted:
+                        move_verified = False
+                        continue
+                    try:
+                        leg_mode = os.stat(leg_fresh)
+                    except OSError:
+                        # A fault appearing mid-pass re-observes
+                        # (Codex R46-4; a persistent one faults at
+                        # the next adoption).
+                        move_verified = False
+                        continue
+                    if not stat.S_ISDIR(leg_mode.st_mode) and leg_mode.st_nlink > 1:
+                        # Linkage appearing mid-pass re-observes (a
+                        # persistent one faults at the next adoption).
+                        move_verified = False
+                try:
+                    parent_fresh = os.path.realpath(adopted_link.parent_lexical, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    parent_fresh = None
+                if parent_fresh != adopted_link.parent:
+                    move_verified = False
+                else:
+                    assert parent_fresh is not None
+                    prefix_fresh = _list_evidence_files(Path(parent_fresh), f"{uuid}-", "")
+                    if prefix_fresh is None:
+                        move_verified = False
+                        reverify_fault = True
+                    else:
+                        fresh_hits: set[str] = set()
+                        for hit in prefix_fresh:
+                            if not _is_rewrite_hit(hit.name):
+                                continue
+                            hit_verdict, hit_resolved = _verify_rewrite_hit(hit)
+                            if hit_verdict == "join" and hit_resolved is not None:
+                                fresh_hits.add(hit_resolved)
+                            elif hit_verdict != "missing":
+                                move_verified = False
+                        if frozenset(fresh_hits) != adopted_link.prefix_hits:
+                            move_verified = False
+            # Adopted non-link identities re-resolve (Codex R45-2):
+            # the verified target travels with the lexical path and
+            # is rechecked before rendering. Any change re-observes
+            # (a persistent fault re-voices at the next adoption).
+            # (Root-level journal membership needs no re-scan: every
+            # arrival or departure bumps root, which the early
+            # sample anchors.)
+            for identity_lexical, identity_adopted in sorted(adopted_identities.items()):
+                if _path_state(identity_lexical) == "missing":
+                    if identity_adopted is not None:
+                        move_verified = False
+                    continue
+                if identity_adopted is None:
+                    move_verified = False
+                    continue
+                try:
+                    identity_fresh = os.path.realpath(identity_lexical, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    move_verified = False
+                    continue
+                if identity_fresh != identity_adopted:
+                    move_verified = False
+                    continue
+                try:
+                    identity_mode = os.stat(identity_fresh)
+                except OSError:
+                    move_verified = False
+                    continue
+                if not stat.S_ISDIR(identity_mode.st_mode) and identity_mode.st_nlink > 1:
+                    move_verified = False
+            recorded_registry = adopted_identities.get(os.fspath(registry_base))
+            if registry_body_raw is not None and isinstance(recorded_registry, str):
+                # Bytes stable at assembly can still be transient
+                # (Codex R50-2): a replacement spanning every
+                # assembly observation adopts consistently, so the
+                # recorded target re-reads here -- any difference
+                # (including unreadable) withholds the preview.
+                # Plain unverified like the path checks above (a
+                # co-fault still wins; the next pass converges).
+                if _read_regular_file_bytes(Path(recorded_registry)) != registry_body_raw:
+                    move_verified = False
+            move_faulted = move_faulted or reverify_fault
+            move_after = _bracket_sample(move_bases)
+            early_after = _sample_dirs([root, root / REGISTRY_DIRNAME])
+            samples_ok = (
+                move_before is not None
+                and move_after is not None
+                and early_before is not None
+                and early_after is not None
             )
+            # Proven drift (Codex R45-4): a failed sample is UNKNOWN,
+            # not drift -- the fault exit stands unless two successful
+            # observations actually differ.
+            proven_drift = (
+                (move_before is not None and move_after is not None and move_before != move_after)
+                or (
+                    early_before is not None
+                    and early_after is not None
+                    and early_before != early_after
+                )
+                or identity_conflicted
+            )
+            bracket_clean = samples_ok and not proven_drift
             move_verified = move_verified and bracket_clean
             if move_verified:
                 # Names are diagnostic preview, not the move list
@@ -20343,13 +22081,20 @@ def sweep_orphans(
                     "exit: collect the probe evidence, then rerun (or archive the family "
                     "after writers and collectors are quiescent: stop all runs and collects "
                     "on this directory, take a fresh inventory of this family's probe, marker, "
-                    "rewrite, and quarantine files, verifying each file's ownership at action "
+                    "rewrite, and quarantine files (the registry, sidecars, journals, and "
+                    "their rewrite companions), verifying each file's ownership at action "
                     "time, and move that fresh inventory together with this family outside the "
                     "counters directory; if ownership or completeness cannot be established, "
                     "keep the family in place; printed names are diagnostic "
                     f"only: {move})"
                 )
-            elif move_faulted:
+            elif rescan_fault or (move_faulted and not proven_drift):
+                # Exit precedence (Codex R44-2, R45-4): proven drift
+                # explains helper and assembly faults (they observed
+                # mixed state), so drift re-observes even when faults
+                # fired; only a fault without proven drift -- or an
+                # established rescan fault, which churn never clears --
+                # fails as a fault.
                 move_exit = _KEEP_IN_PLACE_FAULT_EXIT
             else:
                 move_exit = _KEEP_IN_PLACE_RERUN_EXIT
@@ -20405,6 +22150,14 @@ def sweep_orphans(
         uuid = content["worker_uuid"]
         if uuid in committed_uuids:
             veto_raw = str(content.get("sidecar", ""))
+            veto_unusable = bool(veto_raw) and _usable_sidecar_field(veto_raw) is None
+            if veto_unusable:
+                # Unusable field (Claude Q3 M2): the veto reads it as
+                # absent so the consult below still runs (its V0 voice
+                # withholds with a fault when the arm is taken) -- but
+                # absent must never authorize removal, so the gate
+                # before removal retains (Codex R44-1).
+                veto_raw = ""
             body_verdict, veto_digest = (
                 _registry_body_verdict(Path(veto_raw), uuid) if veto_raw else ("ok", None)
             )
@@ -20422,6 +22175,21 @@ def sweep_orphans(
                 retained += len([p for p in _producer_files(content, registry_path)])
                 continue
             if _defer_authority_removal(uuid, f"registry {registry_path.name}"):
+                retained += len([p for p in _producer_files(content, registry_path)])
+                continue
+            if veto_unusable:
+                # Removal gate (Codex R44-1): the consult above ran
+                # (and voiced when its arm was taken), but an
+                # unusable field never authorizes removal -- retain
+                # with a named fault; repairing the field lets
+                # collection publish. The value stays out of the
+                # voice (it may be unprintable); the named registry
+                # body holds it.
+                warnings.warn(
+                    f"registry {registry_path.name} links an unusable sidecar path; retained",
+                    UserWarning,
+                    stacklevel=2,
+                )
                 retained += len([p for p in _producer_files(content, registry_path)])
                 continue
             sidecar_p = Path(veto_raw) if veto_raw else None
@@ -20458,6 +22226,13 @@ def sweep_orphans(
                 retained += len([p for p in _producer_files(content, registry_path)])
             else:
                 veto_raw = str(content.get("sidecar", ""))
+                veto_unusable = bool(veto_raw) and _usable_sidecar_field(veto_raw) is None
+                if veto_unusable:
+                    # Unusable field (Claude Q3 M2): the veto reads it
+                    # as absent so the consult below still runs -- but
+                    # absent must never authorize removal, so the gate
+                    # below retains (Codex R44-1).
+                    veto_raw = ""
                 body_verdict, veto_digest = (
                     _registry_body_verdict(Path(veto_raw), uuid) if veto_raw else ("ok", None)
                 )
@@ -20474,6 +22249,16 @@ def sweep_orphans(
                     )
                     retained += len([p for p in _producer_files(content, registry_path)])
                 elif _defer_authority_removal(uuid, f"registry {registry_path.name}"):
+                    retained += len([p for p in _producer_files(content, registry_path)])
+                elif veto_unusable:
+                    # Removal gate (Codex R44-1): see the committed
+                    # route -- the consult above ran, but an unusable
+                    # field never authorizes removal.
+                    warnings.warn(
+                        f"registry {registry_path.name} links an unusable sidecar path; retained",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                     retained += len([p for p in _producer_files(content, registry_path)])
                 else:
                     sidecar_p = Path(veto_raw) if veto_raw else None
@@ -20507,6 +22292,11 @@ def sweep_orphans(
             continue
         retained += 1
         sidecar_raw = str(content.get("sidecar", ""))
+        if sidecar_raw and _usable_sidecar_field(sidecar_raw) is None:
+            # Unusable field (Claude Q3 M2): journal derivation
+            # would raise, and no such field names evidence --
+            # count the registry alone.
+            sidecar_raw = ""
         if sidecar_raw:
             sidecar_path = Path(sidecar_raw)
             _count_if_present(sidecar_path)
@@ -24485,8 +26275,13 @@ def prepare_resume(
                 # behind an unverified consume, holding its baseline
                 # loudly forever).
                 sidecar_raw = content.get("sidecar")
+                # Null bytes can never name a real file (Claude Q3
+                # M2): skip the tmp check exactly like an absent
+                # field (no sidecar exists to carry rewrites).
                 punched = _sidecar_has_unadjudicated_tmps(
-                    Path(sidecar_raw) if isinstance(sidecar_raw, str) and sidecar_raw else None,
+                    Path(sidecar_raw)
+                    if isinstance(sidecar_raw, str) and sidecar_raw and "\0" not in sidecar_raw
+                    else None,
                     staged_digest_by_path,
                 )
                 if uuid in validated_collected and not punched:
