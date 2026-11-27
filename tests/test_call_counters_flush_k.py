@@ -50,8 +50,12 @@ def _sidecar_or_none() -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_default_k_is_one(engaged: Path) -> None:
-    assert call_counters.effective_flush_k() == 1
+def test_default_k_is_twenty(engaged: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The default resolves with the variable genuinely absent (the
+    # conftest pin would otherwise mask it).
+    monkeypatch.delenv(durability.COUNTERS_FLUSH_K_ENV, raising=False)
+    call_counters.reset_for_tests()
+    assert call_counters.effective_flush_k() == 20
 
 
 def test_explicit_k_parses(engaged: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,7 +86,7 @@ def test_blank_k_is_silent_default(
     call_counters.reset_for_tests()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert call_counters.effective_flush_k() == 1
+        assert call_counters.effective_flush_k() == 20
 
 
 def test_garbage_k_under_warnings_error_never_phantoms(

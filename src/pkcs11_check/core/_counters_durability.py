@@ -95,23 +95,27 @@ PROBE_ROLE_ENV = "_P11CHECK_PROBE_ROLE"
 PROBE_ISOLATION_ENV = "_P11CHECK_PROBE_ISOLATION"
 
 #: Evidence units between automatic sidecar flushes (K bound, per producer).
-#: K=1 (rc3 Area A): every entry, every return, and every zero-call
-#: mutation (loss notes, receipt/loss-only ingests) persists immediately,
-#: so a crash loses at most the in-flight checkpoint itself. ``_pending_calls``
-#: still counts toward the window (entries, returns, and mutations each add
-#: one unit); with K=1 it returns to zero after every mark.
-#: This constant is the DEFAULT; ``PKCS11_CHECK_COUNTERS_FLUSH_K`` may raise
-#: it per run (see ``call_counters.effective_flush_k``).
-FLUSH_WINDOW_K = 1
-#: Opt-in sidecar flush cadence: persist every K evidence units instead of
-#: every unit. Unset (or garbage, with a loud one-per-process warning)
-#: means 1 (exact, the default). K counts evidence units -- entries,
-#: returns, and zero-call mutations each add one; ingests add their row
-#: counts -- not completed PKCS#11 calls: a crash can lose up to the last
-#: K-1 unflushed units of sidecar tail (counts and key detail alike),
-#: always flagged incomplete by the producer's death. Boundary, exit,
-#: probe flush-before-delete, and persistence-recovery flushes stay
-#: unconditional at any K. Read once per process; children inherit via env.
+#: K=20: a sidecar snapshot persists every 20 units (entries, returns,
+#: and zero-call mutations each add one; ingests add their row counts),
+#: so call-dense runs are not disk-bound. K=1 (rc3 Area A) persists
+#: every unit -- still available per run for crash forensics, where
+#: the last calls before death are themselves evidence. ``_pending_calls``
+#: still counts toward the window; it returns to zero after every mark
+#: only at K=1. This constant is the DEFAULT;
+#: ``PKCS11_CHECK_COUNTERS_FLUSH_K`` may raise it per run -- or lower it
+#: to 1 for exactness (see ``call_counters.effective_flush_k``).
+FLUSH_WINDOW_K = 20
+#: Sidecar flush cadence: persist every K evidence units instead of
+#: every unit. Unset means the default (20, batched); garbage warns
+#: loudly once per process and falls back to 1 (exact -- a knob typo
+#: must never silently reduce evidence). K counts evidence units --
+#: entries, returns, and zero-call mutations each add one; ingests add
+#: their row counts -- not completed PKCS#11 calls: a crash can lose
+#: up to the last K-1 unflushed units of sidecar tail (counts and key
+#: detail alike), always flagged incomplete by the producer's death.
+#: Boundary, exit, probe flush-before-delete, and persistence-recovery
+#: flushes stay unconditional at any K. Read once per process; children
+#: inherit via env.
 COUNTERS_FLUSH_K_ENV = "PKCS11_CHECK_COUNTERS_FLUSH_K"
 SEAL_FILENAME = "SEALED"
 #: Round stamp for corrupt sidecar runs: present-but-unusable (null,

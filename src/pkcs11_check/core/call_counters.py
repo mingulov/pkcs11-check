@@ -365,7 +365,9 @@ def _effective_flush_k_locked() -> int:
             UserWarning,
             stacklevel=2,
         )
-        _flush_k_cache = FLUSH_WINDOW_K
+        # Deliberately the literal 1, not the default: a typo must
+        # err toward more evidence, never less.
+        _flush_k_cache = 1
         return _flush_k_cache
     _flush_k_cache = parsed
     return _flush_k_cache
@@ -376,7 +378,7 @@ def effective_flush_k() -> int:
 
     ``PKCS11_CHECK_COUNTERS_FLUSH_K`` sets how many evidence units
     accumulate before the sidecar snapshot persists; unset means
-    ``FLUSH_WINDOW_K`` (1, exact). Garbage (non-int, < 1) warns loudly
+    ``FLUSH_WINDOW_K`` (20, batched). Garbage (non-int, < 1) warns loudly
     once per process and falls back to 1 -- the safe direction is
     exactness, and a perf-knob typo must not brick runs the way an
     identity typo must. Read once per process (children inherit via

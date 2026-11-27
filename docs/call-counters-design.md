@@ -599,25 +599,28 @@ recording call, blocking provider entry rather than undercounting.
 Evidence persists as two files per producer (identity + nonce names, one
 writer each, no locks): `<uuid>-<nonce>.partial.json` holds the
 in-progress snapshot (tmp + replace), and `<uuid>-<nonce>.windows.jsonl`
-appends one record per published test window. Flushes happen on every
-record (K=1 bound, per producer: every entry, every return, every
-zero-call mutation), at test-window boundaries, and at exit, under the
+appends one record per published test window. Flushes happen every K
+evidence units (default 20, per producer: entries, returns, and
+zero-call mutations each add one; ingests add their row counts),
+at test-window boundaries, and at exit, under the
 counters lock with a dirty flag covering every evidence mutation; a pid
 guard keeps a forked child from touching its parent's files (it
 re-registers with a fresh identity).
 
-Speed-sensitive runs may raise the sidecar cadence with
-`PKCS11_CHECK_COUNTERS_FLUSH_K=N` (persist every N evidence units
-instead of every unit; unset or garbage, with a loud one-per-process
-warning, means 1). K counts evidence units -- entries, returns, and
-zero-call mutations each add one; ingests add their row counts -- not
-completed calls: a crash can lose up to the last K-1 unflushed units
-of sidecar tail (counts and key detail alike), always flagged
-incomplete by the producer's death. Boundary, exit, probe
-flush-before-delete, and persistence-recovery flushes stay
-unconditional at any K, and the journal still bounds recovery at test
-windows. The cadence is read once per process (children inherit via
-env). Reports need no K annotation: `complete` implies exact at any
+Crash forensics may lower the sidecar cadence with
+`PKCS11_CHECK_COUNTERS_FLUSH_K=1` (persist every unit: K=1
+from the rc3 line, kept for runs where the last calls before
+death are themselves evidence). Unset means the default (20);
+garbage, with a loud one-per-process warning, falls back to 1
+(exact -- a knob typo must never silently reduce evidence).
+K counts evidence units, not completed calls: a crash can lose
+up to the last K-1 unflushed units of sidecar tail (counts and
+key detail alike), always flagged incomplete by the producer's
+death. Boundary, exit, probe flush-before-delete, and
+persistence-recovery flushes stay unconditional at any K, and
+the journal still bounds recovery at test windows. The cadence
+is read once per process (children inherit via env). Reports
+need no K annotation: `complete` implies exact at any
 cadence, since only a death can lose tail and death always forces
 incomplete -- K changes performance characteristics, never how a
 report is read. The journal appends first, the
@@ -690,7 +693,7 @@ suppressed when the parent's durable receipts already cover the
 probe, otherwise folded into the parent's partial with the receipt
 claimed -- so below-K ingests survive a worker death. Probe children
 additionally persist their flattened counters to the assigned sidecar
-slot on the record path at the run's K cadence (default every unit),
+slot on the record path at the run's K cadence (default every 20 units),
 so a mid-run kill leaves a foldable prefix that the partial-fold
 and orphan-adoption paths pick up; a `finalized: false` flag on
 mid-run snapshots gates healing (a prefix folds its counts but never
@@ -1079,7 +1082,8 @@ Receipts: bounded to un-retired probes on session records and per-test
 entries; superseding records union superseded receipts, recursively to
 grandchildren. Handoff: no eager clear -- an in-progress window is
 overwritten only by the next window's first snapshot -- with at most
-K=1 unflushed windows per producer.
+one unflushed window per producer at K=1 (up to K-1 trailing units
+otherwise).
 
 ### Receipts, registry files, birth tokens, scope index
 
