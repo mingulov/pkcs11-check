@@ -50,6 +50,15 @@ name: PyPI gate
 # (wheel and sdist legs differ by file, not by pip flags). Dependencies
 # resolve from production PyPI only, with ambient extra indexes emptied.
 #
+# Known limitations (Q2-M5): the binding record's `sha` is forensic context
+# only (which commit a run validated -- the gate binds by version). And
+# `validate` checks out the default-branch HEAD, so the harness (committed
+# meta-tests, token scripts) can be newer than the release under validation;
+# a leg that goes red for harness-vs-release skew (likeliest right after a
+# rehearsal re-validates the previous prod release) is gate noise, not a
+# verdict on the bytes -- re-run after the skewing harness change with an
+# explicit version to confirm.
+#
 # This workflow never publishes, tags, or releases anything: it is read-only
 # (contents: read for the checkout) plus installs from the gate index.
 
