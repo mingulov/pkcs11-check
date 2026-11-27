@@ -1060,7 +1060,9 @@ def test_resume_hydrates_incomplete_process_history_before_outer_run(
     old_zero = build_process_observation("old.py", "unit", 0, 0)
     old_one = dict(old_zero, attempt=1, termination={**old_zero["termination"], "raw_code": -11})
     units = ["old.py", "new.py"]
-    pytest_args = ["--p11-module", "/tmp/module.so"]
+    module = tmp_path / "module.so"
+    module.write_bytes(b"provider-bytes")
+    pytest_args = ["--p11-module", str(module)]
     state_file = tmp_path / "state.json"
     report_path = tmp_path / "report.jsonl"
     fingerprint = build_state_fingerprint(units, pytest_args, os.environ.copy())
@@ -1130,6 +1132,10 @@ def test_resume_hydrates_incomplete_process_history_before_outer_run(
     assert saved is not None
     assert observed_complete == [True]
     assert saved.process_observations_complete is True
+    # B1/C11: the accepted resume backfills the module snapshot onto the
+    # legacy state (which was planted without one), so the next early
+    # failure can verify instead of merging blind.
+    assert saved.module_snapshot == file_runner_mod._path_snapshot(str(module))
     assert [(item["target"], item["attempt"]) for item in saved.process_observations] == [
         ("old.py", 0),
         ("old.py", 1),
