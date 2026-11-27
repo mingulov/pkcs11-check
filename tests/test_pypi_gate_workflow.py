@@ -735,6 +735,21 @@ def test_prepare_rejects_non_boolean_rehearsal_bit(
     assert result.outputs == {}
 
 
+def test_prepare_rejects_missing_rehearsal_bit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R7: an absent dry_run must not default to a publish binding."""
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env=_RELEASE_BASE,
+        artifacts=[_live_binding_artifact()],
+        download=_binding_zip({"version": "9.9.9"}),
+    )
+    assert result.raised is not None and "not a boolean" in result.raised
+    assert result.outputs == {}
+
+
 def test_prepare_redirect_handler_strips_bearer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
