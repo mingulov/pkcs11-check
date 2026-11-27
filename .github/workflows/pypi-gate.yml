@@ -235,18 +235,17 @@ jobs:
                   blob = api_read(matches[0]["archive_download_url"])
                   binding = json.loads(zipfile.ZipFile(io.BytesIO(blob)).read("gate-binding.json"))
                   version_text = binding.get("version", "")
-                  dry_run = binding.get("dry_run", False)
                   if not isinstance(version_text, str) or not version_text.strip():
                       raise SystemExit(
                           "cannot bind gate version: binding has no version; "
                           "re-dispatch with an explicit version"
                       )
-                  if not isinstance(dry_run, bool):
+                  if "dry_run" not in binding or not isinstance(binding["dry_run"], bool):
                       raise SystemExit(
                           "cannot bind gate version: binding dry_run is not a boolean; "
                           "re-dispatch with an explicit version"
                       )
-                  return {"version": version_text.strip(), "dry_run": dry_run}
+                  return {"version": version_text.strip(), "dry_run": binding["dry_run"]}
               except SystemExit:
                   raise
               except Exception as exc:
