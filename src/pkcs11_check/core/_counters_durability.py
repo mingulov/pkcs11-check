@@ -22259,8 +22259,10 @@ def sweep_orphans(
             # against a stale twin) would otherwise render
             # unmapped -- and trip the nested-unmapped guard for
             # nested spellings -- on a pass that must re-observe
-            # anyway. Fuzzy conflicts keep mapped-fresh handling
-            # (their exit already reruns; no unmapped residue).
+            # anyway. Fuzzy conflicts inside _record_identity keep
+            # mapped-fresh handling (their exit already reruns; no
+            # unmapped residue); the leg-merge arms below withhold
+            # on any match, exact or equivalent-spelling.
             conflicted_spellings: set[str] = set()
 
             def _record_identity(lexical: str, value: str | None) -> bool:
