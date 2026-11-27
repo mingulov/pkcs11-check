@@ -608,7 +608,12 @@ def _persist_collection_failure(
     """Persist collection failure evidence before the isolated runner can start."""
     target = "<collection>"
     if not resume:
-        _reset_fresh_run_artifacts(state_file, report_config)
+        if not _reset_fresh_run_artifacts(state_file, report_config):
+            # Reset refused: persist nothing, so the old run's retry
+            # inputs survive (#88R44-[C]r6). The helper already
+            # voiced the refusal; the caller still prints the
+            # collection diagnostic and exits 2.
+            return
         prior_state = None
     else:
         prior_state = load_run_state(state_file)
@@ -1361,9 +1366,12 @@ def test_command(
 
         if isolation in {"auto", "file", "test"}:
             preflight_evidence_path = preflight_evidence_path_for_state(state_file)
-            if not resume or not state_file.exists():
-                # Fresh start (including resume-without-state): stale rounds
-                # from an unrelated run must not fold into this one.
+            if resume and not state_file.exists():
+                # Resume-without-state only: stale rounds from an
+                # unrelated run must not fold into this one. Fresh
+                # runs delete after reset admission below
+                # (#88R44-[C]r6), so a refused reset keeps its retry
+                # inputs.
                 preflight_evidence_path.unlink(missing_ok=True)
         else:
             evidence_fd, evidence_raw_path = tempfile.mkstemp(
@@ -1377,8 +1385,17 @@ def test_command(
             # fail (now also the counters dir + supplements, so a fresh
             # series cannot absorb a dead one's evidence). The isolated
             # runner repeats this reset when execution starts; keeping it
-            # here closes the pre-run collection gap.
-            _reset_fresh_run_artifacts(state_file, report_config)
+            # here closes the pre-run collection gap. On refusal the
+            # run stops here (#88R44-[C]r6): the stale preflight
+            # evidence below deletes only after reset admission, so a
+            # refused reset keeps every retry input.
+            if not _reset_fresh_run_artifacts(state_file, report_config):
+                console.print(
+                    "[red]Error:[/red] fresh-run reset refused (see the warning "
+                    "above for the cause); state and reports left in place"
+                )
+                raise typer.Exit(code=2)
+            preflight_evidence_path.unlink(missing_ok=True)
 
         assert manifest_path is not None
         assert preflight_evidence_path is not None

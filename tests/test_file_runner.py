@@ -807,6 +807,86 @@ def test_legacy_state_harness_exit_is_unverified_without_field(
     assert loaded.results[0].completion_verified is False
 
 
+def test_r44_c6r6_runner_stops_when_fresh_reset_refuses(
+    tmp_path: Path,
+) -> None:
+    """#88R44-[C]r6: the runner fails fast when reset refuses, state intact.
+
+    Codex R6: the reset helper returned the same None on refusal
+    and success, so the runner overwrote the state file even with
+    zero units. Refusal must propagate: exit 2, nothing runs,
+    the state file keeps its bytes.
+    """
+    import warnings
+
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"old": true}', encoding="utf-8")
+    candidate = tmp_path / "state.json.counters.aaaaaaaa"
+    (candidate / "registrations").mkdir(parents=True)
+    token = file_runner_mod.try_acquire_barrier_lock(candidate)
+    assert token is not None, "the test holds the rival lock (premise)"
+    try:
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            code = run_isolated_pytest_units(
+                [],
+                [],
+                timeout=12,
+                state_file=state_file,
+                policy_file=None,
+                report_config=None,
+                resume=False,
+                stop_on_failure=False,
+                console=Console(file=StringIO(), force_terminal=False),
+            )
+    finally:
+        file_runner_mod.release_barrier_lock(token)
+    assert code == 2, "refusal is a setup error"
+    assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state untouched"
+    texts = [str(found.message) for found in seen]
+    assert any("fresh reset refused" in text for text in texts), texts
+
+
+def test_r44_c6r6_runner_fault_refusal_verdict_is_cause_neutral(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-[C]r6 (Claude-1): the refusal verdict never blames a phantom barrier.
+
+    A lock fault refuses exactly like contention, so the runner's
+    verdict must not claim a live barrier holds the root: it points
+    at the warning (which names the cause + exit) and reports the
+    setup error with the state intact.
+    """
+    import warnings
+
+    def _faulted_acquire(candidate: Any) -> Any:
+        raise OSError("EACCES: permission denied")
+
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"old": true}', encoding="utf-8")
+    candidate = tmp_path / "state.json.counters.aaaaaaaa"
+    (candidate / "registrations").mkdir(parents=True)
+    monkeypatch.setattr(file_runner_mod, "try_acquire_barrier_lock", _faulted_acquire)
+    stream = StringIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        code = run_isolated_pytest_units(
+            [],
+            [],
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=False,
+            stop_on_failure=False,
+            console=Console(file=stream, force_terminal=False),
+        )
+    assert code == 2, "refusal is a setup error"
+    assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state untouched"
+    assert "see the warning above" in stream.getvalue(), "verdict points at the cause"
+    assert "live barrier" not in stream.getvalue(), "no phantom barrier blamed"
+
+
 def test_process_observations_survive_replacement_and_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

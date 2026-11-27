@@ -1871,6 +1871,14 @@ def _reset_fresh_run_artifacts(
     the state file, which keeps the resume option alive) while the
     barrier is live. All candidate locks hold across the mutation
     phase, so no barrier can start mid-reset either.
+
+    Returns True when the reset completed, False when it refused
+    (#88R44-[C]r6): the refusal warning names the exit, and the
+    caller must stop before writing state or reports. Each
+    canonical root is acquired once (#88R44-[C]r6): two allocated
+    aliases of one directory share one lock key, so per-alias
+    acquisition would contend with itself -- while every eligible
+    alias is still removed.
     """
     # Phase 1: enumerate (side-effect-free apart from warnings).
     # Counter dirs (rc2 N-C3): each fresh series allocates its own dir, so
@@ -1906,20 +1914,34 @@ def _reset_fresh_run_artifacts(
             )
             continue
         candidates.append(candidate)
+    # Each canonical root acquires once (#88R44-[C]r6): aliases share
+    # the lock's canonical key, so acquiring per-alias would refuse
+    # on the second as though a live barrier held it. Mutation below
+    # still visits every alias. The key derivation matches
+    # try_acquire_barrier_lock exactly (resolve, non-strict), and the
+    # resolution itself sits inside the handler (#88R44-[C]r7): a
+    # resolution fault refuses exactly like an acquisition fault
+    # instead of escaping the verdict.
+    seen_roots: set[str] = set()
     tokens: list[str] = []
     try:
         for candidate in candidates:
             try:
+                canonical = str(candidate.resolve(strict=False))
+                if canonical in seen_roots:
+                    continue
+                seen_roots.add(canonical)
                 token = try_acquire_barrier_lock(candidate)
             except OSError as exc:
                 warnings.warn(
                     f"fresh reset refused: retired counters dir {candidate} cannot "
                     f"establish the barrier lock ({exc}); all reset inputs left in "
-                    "place",
+                    "place; exit: fix the filesystem fault and rerun, or remove "
+                    "the retired dir by hand once certain no barrier is live",
                     UserWarning,
                     stacklevel=2,
                 )
-                return
+                return False
             if token is None:
                 warnings.warn(
                     f"fresh reset refused: retired counters dir {candidate} is held "
@@ -1928,7 +1950,7 @@ def _reset_fresh_run_artifacts(
                     UserWarning,
                     stacklevel=2,
                 )
-                return
+                return False
             tokens.append(token)
         # Phase 2: mutate (all contention settled, all locks held).
         state_file.unlink(missing_ok=True)
@@ -1952,7 +1974,7 @@ def _reset_fresh_run_artifacts(
         elif report_cache_dir.exists():
             shutil.rmtree(report_cache_dir)
         if report_config is None:
-            return
+            return True
         sidecar_paths = {report_config.output_path.parent / name for name in _OUTPUT_SIDECAR_NAMES}
         if report_config.jsonl_path is not None:
             report_config.jsonl_path.unlink(missing_ok=True)
@@ -1962,6 +1984,7 @@ def _reset_fresh_run_artifacts(
         report_config.output_path.unlink(missing_ok=True)
         for sidecar_path in sidecar_paths:
             sidecar_path.unlink(missing_ok=True)
+        return True
     finally:
         for token in reversed(tokens):
             release_barrier_lock(token)
@@ -2663,7 +2686,19 @@ def run_isolated_pytest_units(
         else ""
     )
     if not resume:
-        _reset_fresh_run_artifacts(state_file, report_config)
+        if not _reset_fresh_run_artifacts(state_file, report_config):
+            # Reset refused (a live barrier holds a retired root, or
+            # a lock faulted): fail fast without touching the state
+            # file or running anything (#88R44-[C]r6). The helper
+            # already voiced the refusal with its cause + exit; the
+            # cause-neutral verdict below reports it as the run's
+            # verdict so no partial outputs suggest a fresh series
+            # started.
+            console.print(
+                "[red]ERROR:[/red] fresh-run reset refused (see the warning above "
+                "for the cause); state and reports left in place"
+            )
+            return 2
     previous_state = load_run_state(state_file) if resume else None
     collection_failure_records = _collection_failure_records(state_file)
     collection_failure_present = bool(collection_failure_records)

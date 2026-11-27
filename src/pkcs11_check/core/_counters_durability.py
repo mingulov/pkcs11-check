@@ -56,7 +56,7 @@ import warnings
 from collections.abc import Callable, Collection, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, NamedTuple
+from typing import Any, BinaryIO, Literal, NamedTuple, TypeGuard
 from uuid import uuid4
 
 from pkcs11_check.core._run_guard import guard_path_for, try_lock_file, unlock_file
@@ -9099,6 +9099,12 @@ def collect_unit(
     sessions, entries, lenient_sessions = _committed_from_jsonl_lines(child_lines)
     claims = _claimed_receipts_from_jsonl_lines(child_lines)
     session_claims = _session_claimed_receipts_from_jsonl_lines(child_lines)
+    # Prior publication by (run, uuid) (#88R44-[A]r6, run-bound
+    # #88R44-[A]r7): the pinned-loss decision suppresses only with
+    # proof, and a plain counts partial publishes without claiming
+    # any receipt. Pre-append snapshot: child_lines predates this
+    # pass's appends, so a producer never proves itself.
+    published_keys = _published_producer_keys(child_lines)
     session_lost = _claimed_loss_from_jsonl_lines(child_lines)
     session_scopes = _session_scopes_from_jsonl_lines(child_lines)
     winner_covers = _winner_count_cover_from_jsonl_lines(child_lines)
@@ -9349,6 +9355,7 @@ def collect_unit(
                     ),
                     quarantined_out=quarantined_now,
                     ambiguity_pinned_out=ambiguity_pinned_now,
+                    published_keys=published_keys,
                 )
             )
         except _DeferProducerError as exc:
@@ -16654,6 +16661,7 @@ def _collect_dead_producer(
     probe_attribution_out: dict[str, str] | None = None,
     quarantined_out: set[tuple[str, str]] | None = None,
     ambiguity_pinned_out: set[str] | None = None,
+    published_keys: Container[tuple[str, str]] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[Path],
@@ -17018,21 +17026,52 @@ def _collect_dead_producer(
     if lost is not None:
         sidecar_missing = not sidecar_raw or _path_state(Path(sidecar_raw)) == "missing"
         if sidecar_missing and uuid in (ambiguity_pinned_out or ()):
-            # Pinned registry-only producer (#88R44-[A]r5): its
-            # sidecar published (consumed) and only the registry
-            # remains as ambiguity evidence -- a loss record here
-            # would phantom-report already-published evidence on a
-            # fresh child. An unreported (never-published,
-            # unpinned) dead producer still emits below. Loud, so a
-            # mid-pass external deletion hiding behind a pin stays
-            # visible instead of silencing real loss.
-            warnings.warn(
-                f"producer {uuid} is registry-only and ambiguity-pinned; loss "
-                "withheld (its evidence already published; the registry stays "
-                "as owner evidence)",
-                UserWarning,
-                stacklevel=2,
-            )
+            # Proof binds (run, uuid) (#88R44-[A]r7): a foreign run's
+            # records never prove this producer's publication. The
+            # receipt map stays out (run-global by design for dedup;
+            # sessions stay covered through record keys), as does
+            # bare collection membership (the collected set carries
+            # no run) -- staged records name the run instead.
+            identity = (content.get("run_id"), uuid)
+            if identity in (published_keys or ()):
+                proof = "the child report holds its records"
+            elif identity in _staged_producer_keys(staged_records):
+                proof = "the barrier staged its records"
+            else:
+                proof = ""
+            if proof:
+                # Pinned registry-only producer with publication proof
+                # (#88R44-[A]r6): its evidence published and only the
+                # registry remains as ambiguity evidence -- a loss
+                # record here would phantom-report published evidence.
+                # An unreported (never-published, unpinned) dead
+                # producer still emits below. Loud, so a mid-pass
+                # external deletion hiding behind a pin stays visible
+                # instead of silencing real loss.
+                warnings.warn(
+                    f"producer {uuid} is registry-only and ambiguity-pinned; loss "
+                    f"withheld (its evidence already published: {proof}; the registry "
+                    "stays as owner evidence)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                # Pinned registry-only producer WITHOUT proof
+                # (#88R44-[A]r6): ambiguity alone never proves
+                # publication -- claiming it would authorize an
+                # operator to discard unpublished evidence. The owner
+                # evidence is preserved (no loss emitted, no
+                # publication claimed) until attribution or archival
+                # resolves it.
+                warnings.warn(
+                    f"producer {uuid} is registry-only and ambiguity-pinned; loss "
+                    "withheld (ownership unresolved: no publication proof; the "
+                    "registry stays as owner evidence); exit: establish the held "
+                    "probe's owner from independent evidence or archive it outside "
+                    "the counters directory",
+                    UserWarning,
+                    stacklevel=2,
+                )
         else:
             records.append(lost)
     checkpoint: tuple[str, str] | None = None
@@ -17386,7 +17425,9 @@ def _collect_committed_producer(
     )
 
 
-def _child_report_framing(child_path: Path) -> tuple[set[str] | None, str]:
+def _child_report_framing(
+    child_path: Path, _content_out: list[bytes] | None = None
+) -> tuple[set[str] | None, str]:
     """Byte-framed publication scan of a child JSONL (production-reader agreement).
 
     Returns ``(present, tail)``: ``present`` is the set of content
@@ -17404,14 +17445,22 @@ def _child_report_framing(child_path: Path) -> tuple[set[str] | None, str]:
     decodable rest (#88R44-F3r2). Glue risk is structural, not
     syntactic: parseability of the tail never clears it, and a
     malformed-but-terminated line is inert (the extractor skips it).
-    Never raises.
+    ``_content_out`` collects the exact framed bytes when given
+    (#88R44-F3r6: the reconciler binds presence + first-winner
+    selection to this one generation instead of re-reading): the
+    read bytes on success, ``b""`` for a missing file (the empty
+    generation, explicitly), nothing when unreadable. Never raises.
     """
     try:
         raw = child_path.read_bytes()
     except FileNotFoundError:
+        if _content_out is not None:
+            _content_out.append(b"")
         return set(), "clean"
     except OSError:
         return None, "unreadable"
+    if _content_out is not None:
+        _content_out.append(raw)
     present: set[str] = set()
     for segment in raw.split(b"\n"):
         parsed = parse_report_log_line(segment)
@@ -17488,7 +17537,57 @@ def _record_scope_key(record: Any) -> tuple[str, str, str] | None:
     return (run, uuid, kind)
 
 
-def _child_scope_conflicts(child_path: Path, records: list[dict[str, Any]]) -> list[str] | None:
+def _published_producer_keys(lines: Iterable[bytes]) -> set[tuple[str, str]]:
+    """``(run, uuid)`` identities published in already-read lines (#88R44-[A]r6).
+
+    Publication proof for the pinned-loss decision: a producer
+    whose session or partial records the extractor would fold has
+    published, whether or not any receipt claims name it (a plain
+    counts partial claims no receipts but still publishes). Keys
+    through :func:`_record_scope_key`, so malformed or
+    extractor-invisible lines prove nothing. Bound to (run, uuid)
+    (#88R44-[A]r7): a foreign run's records never prove this
+    producer's publication. Never raises.
+    """
+    published: set[tuple[str, str]] = set()
+    for line in lines:
+        parsed = parse_report_log_line(line)
+        if parsed is None:
+            continue
+        key = _record_scope_key(parsed)
+        if key is not None:
+            published.add((key[0], key[1]))
+    return published
+
+
+def _staged_producer_keys(staged_records: dict[str, Any] | None) -> set[tuple[str, str]]:
+    """``(run, uuid)`` identities with staged records (#88R44-[A]r7).
+
+    The barrier-side publication proof: staged records naming this
+    producer's (run, uuid) establish its staged collection (the
+    barrier's collected set carries no run, so membership alone
+    proves nothing). Keys through :func:`_record_scope_key` like
+    the child-side proof. None (collect path stages nothing)
+    proves nothing. Never raises.
+    """
+    keys: set[tuple[str, str]] = set()
+    if not isinstance(staged_records, dict):
+        return keys
+    for per_unit in staged_records.values():
+        if not isinstance(per_unit, list):
+            continue
+        for record in per_unit:
+            if not isinstance(record, dict):
+                continue
+            scope = _record_scope_key(record)
+            if scope is not None:
+                keys.add((scope[0], scope[1]))
+    return keys
+
+
+def _child_scope_conflicts(
+    child_path: Path, records: list[dict[str, Any]], *, _content: bytes | None = None
+) -> list[str] | None:
     """Scopes where an earlier landed version shadows the batch (#88R44-F3r4).
 
     Returns descriptions of every scope whose already-published
@@ -17506,14 +17605,24 @@ def _child_scope_conflicts(child_path: Path, records: list[dict[str, Any]]) -> l
     landed). Reads through the shared production reader with the
     same content digest as the presence check, and keys through
     extractor acceptance, so reconciliation always agrees with
-    extraction on which records exist and compete. Never raises.
+    extraction on which records exist and compete. ``_content``
+    pins the decision to one generation (#88R44-F3r6): when given,
+    selection runs on those bytes instead of re-reading (the
+    reconciler passes its framing read, so presence + selection
+    share one generation); the pre-append gate re-frames fresh,
+    then pins (#88R44-F3r7: framing + presence + scope all decide
+    on the latest bytes before writing).
+    Never raises.
     """
-    try:
-        raw = child_path.read_bytes()
-    except FileNotFoundError:
-        return []
-    except OSError:
-        return None
+    if _content is not None:
+        raw = _content
+    else:
+        try:
+            raw = child_path.read_bytes()
+        except FileNotFoundError:
+            return []
+        except OSError:
+            return None
     segments = raw.split(b"\n")
     published: dict[tuple[str, str, str], dict[str, int]] = {}
     for offset, segment in enumerate(segments):
@@ -17587,7 +17696,8 @@ def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool |
     """
     if not records:
         return True
-    present, tail = _child_report_framing(child_path)
+    framing_content: list[bytes] = []
+    present, tail = _child_report_framing(child_path, _content_out=framing_content)
     if tail != "clean" or (present is not None and _any_wanted_present(records, present)):
         # Never append onto uncertainty -- and never re-append onto
         # presence (#88R44-F3r3): a clean tail with landed records
@@ -17596,9 +17706,25 @@ def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool |
         # it could scramble emission order when the landed set is not
         # a prefix). The write below runs only for clean,
         # nothing-landed tails.
-        return _reconcile_child_report(child_path, records, present, tail, failed=None)
-    conflicts = _child_scope_conflicts(child_path, records)
-    if conflicts is None:
+        return _reconcile_child_report(
+            child_path,
+            records,
+            present,
+            tail,
+            failed=None,
+            _framing_content=framing_content[0] if framing_content else None,
+        )
+    # Re-gate on a fresh read (#88R44-F3r7): the pass's framing saw
+    # a clean tail with nothing wanted, but anything may have landed
+    # since -- a torn tail would glue the append (checkpoint consumed,
+    # extractor recovering nothing), and landed wanted records would
+    # duplicate. The gate rechecks framing AND presence alongside
+    # scope on one fresh generation instead of trusting the stale
+    # framing; a foreign clean append with no conflicts still
+    # proceeds (normal accumulation).
+    gate_content: list[bytes] = []
+    gate_present, gate_tail = _child_report_framing(child_path, _content_out=gate_content)
+    if gate_present is None:
         # The framing read just succeeded: a fault now is a mid-pass
         # race, and unknown bytes are not a clean slate.
         warnings.warn(
@@ -17608,6 +17734,26 @@ def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool |
             stacklevel=2,
         )
         return None
+    if gate_tail != "clean":
+        warnings.warn(
+            f"counter collection for {child_path}: child report tail is {gate_tail} "
+            "on re-read -- appending would glue to it and vanish; ALL consumption "
+            "held this pass; remove the torn tail line(s), then rerun",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    if _any_wanted_present(records, gate_present):
+        warnings.warn(
+            f"counter collection for {child_path}: wanted records landed before "
+            "appending -- retrying would duplicate them; ALL consumption held "
+            "this pass; rerun (the reconciler decides from the fresh report)",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    # Pinned bytes never fault, so no None arm: conflicts decides.
+    conflicts = _child_scope_conflicts(child_path, records, _content=gate_content[0])
     if conflicts:
         # Evolved batch beside a stale same-scope version (#88R44-F3r4):
         # nothing wanted is present (else the reconciler above
@@ -17633,8 +17779,16 @@ def _append_collected(child_path: Path, records: list[dict[str, Any]]) -> bool |
             for record in records:
                 fh.write(json.dumps(record) + "\n")
     except OSError as exc:
-        present, tail = _child_report_framing(child_path)
-        return _reconcile_child_report(child_path, records, present, tail, failed=exc)
+        framing_content = []
+        present, tail = _child_report_framing(child_path, _content_out=framing_content)
+        return _reconcile_child_report(
+            child_path,
+            records,
+            present,
+            tail,
+            failed=exc,
+            _framing_content=framing_content[0] if framing_content else None,
+        )
     return True
 
 
@@ -17645,6 +17799,7 @@ def _reconcile_child_report(
     tail: str,
     *,
     failed: OSError | None,
+    _framing_content: bytes | None = None,
 ) -> bool | None:
     """Decide a child-report append from the report's byte framing.
 
@@ -17657,7 +17812,14 @@ def _reconcile_child_report(
     publication; False (clean retain) only when nothing landed behind
     a clean tail; None (hold ALL consumption this pass) for a torn or
     unterminated tail, a partial append, an unreadable report, or an
-    identity-less record. Never raises.
+    identity-less record. ``_framing_content`` is the exact bytes
+    ``present`` was established on (#88R44-F3r6): first-winner
+    selection runs on this one generation (never a re-read), and a
+    disappearance or change before acknowledgment withholds -- True
+    authorizes consume only against bytes that still read back.
+    None withholds (fail closed: no generation to bind;
+    unreachable in production -- unreadable framing returns before
+    selection). Never raises.
     """
     context = f"failed ({failed})" if failed is not None else "re-verified framing"
     if present is None:
@@ -17684,15 +17846,22 @@ def _reconcile_child_report(
             return None
         wanted.append(digest)
     if all(digest in present for digest in wanted):
-        shadowed = _child_scope_conflicts(child_path, records)
-        if shadowed is None:
+        if _framing_content is None:
+            # No generation to bind (#88R44-F3r6, Claude-2): exact
+            # presence without the bytes it was established on
+            # withholds (fail closed) instead of falling back to a
+            # re-read that could authorize consume on a moved
+            # generation. Unreachable in production (both callers
+            # pass their framing bytes; unreadable framing returns
+            # before selection).
             warnings.warn(
-                f"counter collection for {child_path} {context}; child unreadable "
-                "on re-read -- ALL consumption held this pass; rerun",
+                f"counter collection for {child_path} {context}; no framing "
+                "generation to bind -- ALL consumption held this pass; rerun",
                 UserWarning,
                 stacklevel=4,
             )
             return None
+        shadowed = _child_scope_conflicts(child_path, records, _content=_framing_content)
         if shadowed:
             # An earlier same-scope version already won (#88R44-F3r5):
             # exact presence alone must not authorize consuming
@@ -17706,6 +17875,25 @@ def _reconcile_child_report(
                 "version folds first-wins) -- ALL consumption held this pass; "
                 "remove the stale version from the child report and rerun clean, "
                 "or verify publication and delete the retained evidence",
+                UserWarning,
+                stacklevel=4,
+            )
+            return None
+        # Generation still admitted? (#88R44-F3r6): presence +
+        # selection bound to the framing read above (None returned
+        # already); a disappearance or change since then withholds
+        # (True must authorize consume only against bytes that still
+        # read back -- never a generation that moved).
+        try:
+            ack = child_path.read_bytes()
+        except OSError:
+            ack = None
+        if ack is None or ack != _framing_content:
+            warnings.warn(
+                f"counter collection for {child_path} {context}; child report "
+                "disappeared or changed before acknowledgment -- ALL consumption "
+                "held this pass; reconcile the child report from the preserved "
+                "evidence, then rerun",
                 UserWarning,
                 stacklevel=4,
             )
@@ -17907,6 +18095,84 @@ def _sweep_verified_debris(sidecar_path: Path) -> dict[str, str] | None:
     return inspected
 
 
+def _sweep_prefix_collision(
+    uuid: str, prefix_counts: Mapping[str, int], probe_prefixes: Container[str]
+) -> bool:
+    """Whether a registry sits in a live probe-prefix collision (#88R44-[A]r6).
+
+    True when another listed registry shares the uuid's 8-char probe
+    prefix AND probe orphans exist under it: the orphan could belong
+    to either producer, so the registry is ambiguity evidence whose
+    removal would dissolve the collision the pins preserve (the next
+    collect would fold the orphan into the survivor). The rule
+    releases when the probe or the rival goes (attribution or
+    archival). Bare prefix sharing without a probe proves no live
+    ambiguity. Never raises.
+    """
+    prefix = uuid[:8]
+    return prefix_counts.get(prefix, 0) > 1 and prefix in probe_prefixes
+
+
+def _sweep_ambiguity_snapshot(root: Path) -> tuple[str | None, frozenset[str]]:
+    """Blind reason + collision-held uuids for one sweep (#88R44-[A]r7).
+
+    Owners come from the SAME census collect uses (registries plus
+    sidecar-only owners); a probe counts only when it could pin in
+    collect -- parsed, legacy (no explicit parent), or unreadable
+    (unknown: fail closed). Explicitly attributed probes resolve
+    (collect routes them content-exactly, never pins them);
+    torn/unparseable probes are debris for the existing cleanup
+    path. Returns ``(blind_reason, held)``: a reason whenever the
+    census is incomplete or the probe inventory unreadable (no
+    removal can prove non-collision then), else None plus the uuids
+    sitting in a live collision. Warns loudly on each degraded
+    input. Never raises.
+    """
+    known_uuids, known_complete = _known_producer_uuids(root)
+    prefix_counts: dict[str, int] = {}
+    for known in known_uuids:
+        prefix_counts[known[:8]] = prefix_counts.get(known[:8], 0) + 1
+    probe_prefixes: set[str] = set()
+    probe_files = _list_evidence_files(root, PROBE_FILE_PREFIX, PROBE_FILE_SUFFIX)
+    probes_readable = probe_files is not None
+    if probe_files is None:
+        warnings.warn(
+            f"sweep probe listing under {root.name} unlistable (I/O fault); skipped",
+            UserWarning,
+            stacklevel=2,
+        )
+    else:
+        for probe_path in probe_files:
+            parsed_probe = _parse_probe_filename(probe_path.name)
+            if parsed_probe is None:
+                continue
+            probe_status, probe_raw = _read_json_evidence(probe_path)
+            if probe_status == "gone":
+                continue
+            if probe_status == "unreadable":
+                probe_prefixes.add(parsed_probe[0])
+                continue
+            if probe_status == "torn":
+                continue
+            orphan = _parse_probe_orphan_payload(probe_raw)
+            if orphan is None:
+                continue
+            identity = orphan[4]  # F2 block per _parse_probe_orphan_payload
+            if identity.get("parent_uuid") is not None:
+                continue
+            probe_prefixes.add(parsed_probe[0])
+    blind_reasons: list[str] = []
+    if not known_complete:
+        blind_reasons.append("identity scan degraded")
+    if not probes_readable:
+        blind_reasons.append("probe inventory unreadable")
+    blind_reason = "; ".join(blind_reasons) or None
+    held = frozenset(
+        uuid for uuid in known_uuids if _sweep_prefix_collision(uuid, prefix_counts, probe_prefixes)
+    )
+    return blind_reason, held
+
+
 def sweep_orphans(
     counters_dir: Path | str,
     *,
@@ -17936,8 +18202,12 @@ def sweep_orphans(
     content-verdict primary re-verifies byte-identical after tmp
     cleanup and again at its unlink boundary (registries last); any
     mismatch holds the family loudly for the next pass (#88R39-4).
-    Idempotent: a second sweep removes nothing further (mutual debris
-    converges in two passes). Never raises.
+    Registries in a live probe-prefix collision retain as ambiguity
+    evidence on the committed/run-credit paths too (#88R44-[A]r6):
+    the sweep re-derives the ambiguity itself (shared prefix plus a
+    probe orphan beneath it) instead of trusting the caller to pass
+    the pins. Idempotent: a second sweep removes nothing further
+    (mutual debris converges in two passes). Never raises.
     """
     root = Path(counters_dir)
     removed = 0
@@ -18186,6 +18456,38 @@ def sweep_orphans(
             stacklevel=2,
         )
         sweep_registries = []
+    # Lazily built on first authority-removal evaluation (a sweep
+    # that only shields or reaps debris must not pay for body reads
+    # it never consults).
+    _ambiguity_memo: list[tuple[str | None, frozenset[str]] | None] = [None]
+
+    def _defer_authority_removal(uuid: str, display: str) -> bool:
+        """Whether authority-based removal of one family defers (#88R44-[A]r7)."""
+        memo = _ambiguity_memo[0]
+        if memo is None:
+            memo = _sweep_ambiguity_snapshot(root)
+            _ambiguity_memo[0] = memo
+        blind_reason, collision_held = memo
+        if blind_reason is not None:
+            warnings.warn(
+                f"{display} cannot prove non-collision "
+                f"({blind_reason}); authority-based removal deferred; exit: fix "
+                "the unreadable evidence and rerun",
+                UserWarning,
+                stacklevel=3,
+            )
+            return True
+        if uuid in collision_held:
+            warnings.warn(
+                f"{display} shares its probe prefix with a listed sibling while "
+                "probe orphans exist under it; retained as ambiguity evidence; "
+                "exit: attribute the probe's owner or archive the collision, then rerun",
+                UserWarning,
+                stacklevel=3,
+            )
+            return True
+        return False
+
     for registry_path in sweep_registries:
         claimed = parse_registry_filename(registry_path.name)
         if claimed is not None and claimed in retain_uuids:
@@ -18216,6 +18518,9 @@ def sweep_orphans(
                     UserWarning,
                     stacklevel=2,
                 )
+                retained += len([p for p in _producer_files(content, registry_path)])
+                continue
+            if _defer_authority_removal(uuid, f"registry {registry_path.name}"):
                 retained += len([p for p in _producer_files(content, registry_path)])
                 continue
             sidecar_p = Path(veto_raw) if veto_raw else None
@@ -18265,6 +18570,8 @@ def sweep_orphans(
                         UserWarning,
                         stacklevel=2,
                     )
+                    retained += len([p for p in _producer_files(content, registry_path)])
+                elif _defer_authority_removal(uuid, f"registry {registry_path.name}"):
                     retained += len([p for p in _producer_files(content, registry_path)])
                 else:
                     sidecar_p = Path(veto_raw) if veto_raw else None
@@ -18354,6 +18661,18 @@ def sweep_orphans(
                     UserWarning,
                     stacklevel=2,
                 )
+                retained += 1
+                _count_if_present(journal_path)
+                continue
+            if isinstance(sidecar, dict) and _defer_authority_removal(
+                uuid, f"sidecar {sidecar_path.name}"
+            ):
+                # Same collision guard as the registry loop
+                # (#88R44-[A]r7): removing a sidecar-only collider's
+                # sidecar would dissolve the ambiguity identically.
+                # Torn bodies bypass (proven debris needs no census;
+                # gating them would stall: their own unreadability
+                # degrades the census that would defer them).
                 retained += 1
                 _count_if_present(journal_path)
                 continue
@@ -19108,6 +19427,24 @@ def _staging_generation_changed(root: Path, gen: tuple[int, int, int, int] | Non
     return (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) != gen
 
 
+def _records_metadata_valid(records: Any, consumed: Any) -> TypeGuard[dict[Any, Any]]:
+    """Whether staging carries well-formed records metadata (#88R44-F8r6).
+
+    Shared by the staging loader (refuse-vs-load) and the
+    heal-ledger view (poison-vs-budget), so the barrier and collect
+    always agree on what counts as damaged staging: ``cache_records``
+    must be a dict of per-unit lists and ``consumed`` an int. Absent
+    fields read malformed (every writer stages both; only the
+    heal-ledger field itself is validly absent on legacy staging).
+    Narrows ``records`` to a dict (validity implies dict-ness).
+    """
+    return (
+        isinstance(records, dict)
+        and all(isinstance(per_unit, list) for per_unit in records.values())
+        and isinstance(consumed, int)
+    )
+
+
 def _load_barrier_staging(
     root: Path,
     *,
@@ -19186,11 +19523,7 @@ def _load_barrier_staging(
         raw = None
     records = raw.get("cache_records") if isinstance(raw, dict) else None
     consumed = raw.get("consumed") if isinstance(raw, dict) else 0
-    if (
-        not isinstance(records, dict)
-        or not all(isinstance(per_unit, list) for per_unit in records.values())
-        or not isinstance(consumed, int)
-    ):
+    if not _records_metadata_valid(records, consumed):
         # Damaged staging is preserved, never unlinked (#88R44-F8r5):
         # the file may hold the only copy of staged evidence, and
         # its death would prove no spend vanished. The empty return
@@ -20059,9 +20392,12 @@ def _load_barrier_heal_ledger(
     independently while retaining staging, so the torn bytes' death
     proves no spend vanished); a present-but-non-object file warns
     loudly and poisons the same way (#88R44-F8r5: unshaped bytes are
-    corruption, not an empty budget); unreadable warns loudly and
-    poisons (fail closed -- the staging loader refuses first, so
-    this is race-only). A
+    corruption, not an empty budget); present-but-malformed records
+    metadata poisons too (#88R44-F8r6: a missing ledger field on
+    misshapen staging is corruption, not a valid legacy absence --
+    same shared rule the barrier refuses by); unreadable warns
+    loudly and poisons (fail closed -- the staging loader refuses
+    first, so this is race-only). A
     malformed field or entry warns loudly, drops the malformed
     entries, keeps the valid spends, and POISONS the pass (fail
     closed: unlike proof material, a spend record's absence permits,
@@ -20126,6 +20462,22 @@ def _load_barrier_heal_ledger(
         # must deny explicitly) -- the same treatment as torn bytes.
         warnings.warn(
             f"counter barrier staging {path} is not an object; "
+            "ledger-gated heals hold without a budget for this pass; exit: restore "
+            "the verified spends from the preserved evidence, or delete the damaged "
+            "file once its loss is adjudicated (starting a fresh budget)",
+            UserWarning,
+            stacklevel=2,
+        )
+        return {}, True, None
+    if not _records_metadata_valid(raw.get("cache_records"), raw.get("consumed")):
+        # Present-but-malformed enclosing metadata (#88R44-F8r6): a
+        # missing ledger field on misshapen staging is corruption,
+        # not a valid legacy absence -- the barrier refuses these
+        # bytes (same shared rule), so collect must not spend an
+        # empty budget against them. Only well-formed staging
+        # without the field reads legacy-empty below.
+        warnings.warn(
+            f"counter barrier staging {path} has malformed staged records; "
             "ledger-gated heals hold without a budget for this pass; exit: restore "
             "the verified spends from the preserved evidence, or delete the damaged "
             "file once its loss is adjudicated (starting a fresh budget)",

@@ -98,6 +98,37 @@ def _persist_failure(
     )
 
 
+def test_r44_c6r6_persist_collection_failure_reset_refusal_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """#88R44-[C]r6: collection-failure persist stops when reset refuses.
+
+    Codex R6: the persist helper called reset fire-and-forget, so a
+    refused reset still ended with fresh state + reports over the
+    old run's retry inputs. On refusal it must write nothing --
+    the state file keeps its bytes and no failure sidecar lands
+    (the caller still prints the diagnostic and exits 2).
+    """
+    from pkcs11_check.core._counters_durability import (
+        release_barrier_lock,
+        try_acquire_barrier_lock,
+    )
+    from pkcs11_check.core.file_runner import collection_failure_sidecar_path
+
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"old": true}', encoding="utf-8")
+    candidate = tmp_path / "state.json.counters.aaaaaaaa"
+    (candidate / "registrations").mkdir(parents=True)
+    token = try_acquire_barrier_lock(candidate)
+    assert token is not None, "the test holds the rival lock (premise)"
+    try:
+        _persist_failure(state_file, "boom", report_config=None, resume=False)
+    finally:
+        release_barrier_lock(token)
+    assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state untouched"
+    assert not collection_failure_sidecar_path(state_file).exists(), "no sidecar lands"
+
+
 class TestVersionCommand:
     def test_version_output(self) -> None:
         result = runner.invoke(app, ["version"])
@@ -511,6 +542,160 @@ class TestTestCommand:
         assert result.output.count("PIN incorrect for slot 0") == 1, result.output
         assert "pkcs11-check doctor" in result.output
         assert called == []
+
+    def test_r44_c6r6_fresh_reset_refusal_exits_2_everything_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r6: fresh CLI stops on reset refusal; state+evidence intact.
+
+        Codex R6: the CLI called reset fire-and-forget, then ran
+        the world over the refused inputs -- and it deleted the
+        stale preflight evidence BEFORE reset, so even the retry
+        inputs were gone. On refusal: exit 2, the runner never
+        runs, the state file keeps its bytes, and the preflight
+        evidence stays (its deletion moves after reset admission).
+        """
+        from pkcs11_check.core._counters_durability import (
+            release_barrier_lock,
+            try_acquire_barrier_lock,
+        )
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        state_file.write_text('{"old": true}', encoding="utf-8")
+        candidate = tmp_path / "state.json.counters.aaaaaaaa"
+        (candidate / "registrations").mkdir(parents=True)
+        evidence = preflight_evidence_path_for_state(state_file)
+        evidence.write_text("stale-round", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def good_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("ok")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", good_pin_probe)
+        token = try_acquire_barrier_lock(candidate)
+        assert token is not None, "the test holds the rival lock (premise)"
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "test",
+                    "--module",
+                    str(module),
+                    "--isolation",
+                    "file",
+                    "--state-file",
+                    str(state_file),
+                ],
+            )
+        finally:
+            release_barrier_lock(token)
+        assert result.exit_code == 2, result.output
+        assert called == [], "the runner never runs"
+        assert state_file.read_text(encoding="utf-8") == '{"old": true}', "state intact"
+        assert evidence.read_text(encoding="utf-8") == "stale-round", "evidence intact"
+
+    def test_r44_c6r6_fresh_reset_admission_clears_preflight_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r6 control: admitted reset still clears stale evidence.
+
+        The preflight-evidence deletion moved after reset admission;
+        a fresh run with no contention still deletes the stale
+        evidence and proceeds to the runner.
+        """
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        state_file.write_text('{"old": true}', encoding="utf-8")
+        evidence = preflight_evidence_path_for_state(state_file)
+        evidence.write_text("stale-round", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def good_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("ok")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", good_pin_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert called == ["run"], "the runner proceeds"
+        assert not evidence.exists(), "stale evidence cleared after admission"
+
+    def test_r44_c6r6_resume_without_state_still_clears_preflight_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R44-[C]r6: resume-without-state keeps its evidence clearing.
+
+        The early deletion now covers only resume-without-state
+        (fresh runs delete after reset admission instead); a resume
+        with no state file still drops the stale evidence and
+        proceeds.
+        """
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        evidence = preflight_evidence_path_for_state(state_file)
+        evidence.write_text("stale-round", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+                "--resume",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert called == ["run"], "the runner proceeds"
+        assert not evidence.exists(), "stale evidence cleared without state"
 
     def test_test_good_pin_runs_units(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2235,7 +2420,8 @@ class TestTestCommand:
             )
             return 0, "", ""
 
-        monkeypatch.setattr(test_cmd, "_reset_fresh_run_artifacts", lambda *_: None)
+        # Admit (the helper returns bool since R44-[C]r6; None would refuse).
+        monkeypatch.setattr(test_cmd, "_reset_fresh_run_artifacts", lambda *_: True)
         monkeypatch.setattr("pkcs11_check.core.file_runner._run_subprocess_tee", fake_run)
         run_isolated_pytest_units(
             [str(target)],
