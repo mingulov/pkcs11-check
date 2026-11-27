@@ -1,22 +1,13 @@
 """CKR error coverage test configuration.
 
-Registers --ckr-strict flag for strict PKCS#11 spec CKR compliance mode.
+The --ckr-strict flag itself is registered by the always-loaded
+pkcs11-check pytest plugin (so CLI runs may pass it for any
+selection); this module only exposes it as a fixture.
 """
 
 from __future__ import annotations
 
 import pytest
-
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register CKR-specific command-line options."""
-    group = parser.getgroup("ckr", "CKR spec compliance options")
-    group.addoption(
-        "--ckr-strict",
-        action="store_true",
-        default=False,
-        help="Strict CKR compliance: spec deviations are test failures, not notes",
-    )
 
 
 @pytest.fixture

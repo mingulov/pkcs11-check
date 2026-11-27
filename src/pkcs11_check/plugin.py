@@ -438,6 +438,13 @@ def pytest_addoption(parser: Any) -> None:
         help="Path to a precomputed PKCS#11 capability manifest",
     )
     group.addoption(
+        "--ckr-strict",
+        dest="ckr_strict",
+        action="store_true",
+        default=False,
+        help="Strict CKR compliance: spec deviations are test failures, not notes",
+    )
+    group.addoption(
         "--p11-rv-trace",
         dest="p11_rv_trace",
         action="store_true",
