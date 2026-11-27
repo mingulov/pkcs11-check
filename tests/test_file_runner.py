@@ -747,6 +747,8 @@ def test_state_round_trip(tmp_path: Path) -> None:
         units=["test_a.py", "test_b.py"],
         fingerprint="abc123",
         results=[FileRunResult("test_a.py", "passed", 0, 1.2)],
+        counters_dir=str(tmp_path / "counters"),
+        module_snapshot={"path": str(tmp_path / "module.so"), "sha256": "ab" * 32},
     )
 
     save_run_state(state_file, state)
