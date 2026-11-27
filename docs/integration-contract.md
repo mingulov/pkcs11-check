@@ -137,8 +137,10 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
 - Known limitation: if a resumed run fails its startup checks, it can overwrite the previous
   report files. Keep a copy of any report you need before resuming; a code fix is deferred
   follow-up work. Exception: a resume refused as cross-provider (state file belongs to a
-  different module run) never touches the prior summary -- its separate failure report lands
-  beside the requested path as `<stem>.refused<suffix>`.
+  different module run) never touches the prior summary -- its separate crash/timeout or
+  collection failure report lands beside the requested path as `<stem>.refused<suffix>`.
+  Refused plain errors and downstream fingerprint refusals (which can also be a same-module
+  argument change, not a provider swap) write no summary at all.
 - Daemon recovery can replace a dying provider's result only as the current aggregate verdict.
   The superseded attempt (including report records, output, and process observations) remains in
   `attempt_history`; every confirmed daemon death remains in `recovery_events` and contributes a

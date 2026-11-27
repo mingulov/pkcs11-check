@@ -5446,7 +5446,7 @@ class TestTestCommand:
     def test_test_resume_early_failure_appends_jsonl_and_folds_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1/C10: only the new tail appends; counters fold old + new, no dups."""
+        """B1/C10/R5-F1: the tail plus repeatable earlier scopes append; fold once."""
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
 
         module = tmp_path / "dummy.so"
@@ -5464,8 +5464,10 @@ class TestTestCommand:
         prior_jsonl = tmp_path / "report.jsonl"
         round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
         prior_jsonl.write_text(round_one, encoding="utf-8")
-        # The evidence file accumulates every round; only this run's scope
-        # (appended by the mock during the run) may land in the JSONL.
+        # The evidence file accumulates every round; this run's scope is
+        # appended by the mock during the run. The append re-carries the
+        # uuid-bearing earlier scope too (it may never have been retained),
+        # and first-wins keeps the fold exact.
         evidence_path = preflight_evidence_path_for_state(state_file)
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(round_one, encoding="utf-8")
@@ -5495,8 +5497,8 @@ class TestTestCommand:
         )
         assert result.exit_code == 1, result.output
         lines = prior_jsonl.read_text(encoding="utf-8").splitlines()
-        assert len(lines) == 2, lines
-        assert '"pid": 111' in lines[0] and '"pid": 222' in lines[1]
+        assert len(lines) == 3, lines
+        assert '"pid": 111' in lines[0] and '"pid": 111' in lines[1] and '"pid": 222' in lines[2]
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["call_counters"]["total_calls"] == 15
 
@@ -5557,7 +5559,7 @@ class TestTestCommand:
         )
         assert result.exit_code == 1, result.output
         lines = prior_jsonl.read_text(encoding="utf-8").splitlines()
-        assert len(lines) == 2, lines
+        assert len(lines) == 3, lines
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["call_counters"]["total_calls"] == 15
 
@@ -5614,12 +5616,14 @@ class TestTestCommand:
         first = runner.invoke(app, argv)
         assert first.exit_code == 1, first.output
         payload_one = json.loads(results_path.read_text(encoding="utf-8"))
-        # Retry: the mock appends the same scope again (same run identity),
-        # so the tail duplicates in both files; the fold must not move.
+        # Retry: the mock appends the same scope again (same run identity).
+        # Each attempt re-carries the uuid-bearing earlier scopes plus its
+        # tail ([r1]+[r2], then [r1,r2]+[r2]); the bytes grow 1-3-6 while
+        # the first-wins fold must not move.
         second = runner.invoke(app, argv)
         assert second.exit_code == 1, second.output
         payload_two = json.loads(results_path.read_text(encoding="utf-8"))
-        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 3
+        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 6
         assert payload_one["call_counters"]["total_calls"] == 15
         assert payload_two["call_counters"] == payload_one["call_counters"]
         assert payload_two["units"] == payload_one["units"]
@@ -6500,6 +6504,7 @@ class TestTestCommand:
             self._b1_appending_preflight(evidence_path, current_line, ok=True),
         )
 
+        results_path = tmp_path / "results.json"
         result = runner.invoke(
             app,
             [
@@ -6508,6 +6513,10 @@ class TestTestCommand:
                 str(module),
                 "--isolation",
                 "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
                 "--resume",
                 "--state-file",
                 str(state_file),
@@ -6518,9 +6527,11 @@ class TestTestCommand:
         assert result.exit_code == 2
         assert "belongs to a different isolated run" in " ".join(result.output.split())
         # The refused scope is out of the shared file (a later valid resume
-        # never folds it), and the foreign failed row did not upgrade the
-        # exit code to 1.
+        # never folds it), the foreign failed row did not upgrade the exit
+        # code to 1, and a pure refusal writes no summary anywhere.
         assert evidence_path.read_text(encoding="utf-8") == prior_line
+        assert not results_path.exists()
+        assert not (tmp_path / "results.refused.json").exists()
 
     def test_test_fresh_none_run_ignores_stale_collection_sidecar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6640,6 +6651,7 @@ class TestTestCommand:
 
         from rich.console import Console
 
+        from pkcs11_check.core._report_records import _report_record_cache_path
         from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
         from pkcs11_check.core.file_runner import _path_snapshot
 
@@ -6663,6 +6675,18 @@ class TestTestCommand:
         report_config = IsolatedReportConfig(
             "json", results_path, jsonl_path=tmp_path / "report.jsonl"
         )
+        _write_unit_report_record_cache(
+            state_file,
+            "<collection>",
+            [
+                {
+                    "$report_type": "CollectReport",
+                    "outcome": "failed",
+                    "nodeid": "<collection>",
+                    "longrepr": "FOREIGN-STALE-DIAGNOSTIC",
+                }
+            ],
+        )
         refused = test_cmd._persist_collection_failure(
             diagnostic="import boom",
             state_file=state_file,
@@ -6674,7 +6698,9 @@ class TestTestCommand:
         )
         assert refused is True
         # No sidecar/JSONL persists, no quality.json, the prior summary
-        # stands; the separate report carries this run's own row.
+        # stands; the separate report carries this run's own row, rendered
+        # from the inline record -- the foreign cache shard is neither read
+        # nor deleted.
         assert not collection_failure_sidecar_path(state_file).exists()
         assert not (tmp_path / "report.jsonl").exists()
         assert not (tmp_path / "quality.json").exists()
@@ -6682,7 +6708,10 @@ class TestTestCommand:
         payload = json.loads((tmp_path / "results.refused.json").read_text(encoding="utf-8"))
         rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
         assert rows == [("<collection>", "failed")]
-        assert "import boom" in json.dumps(payload["units"][0])
+        unit_text = json.dumps(payload["units"][0])
+        assert "import boom" in unit_text
+        assert "FOREIGN-STALE-DIAGNOSTIC" not in unit_text
+        assert _report_record_cache_path(state_file, "<collection>").exists()
 
     def test_test_resume_plain_error_cross_module_keeps_exit_2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6806,6 +6835,142 @@ class TestTestCommand:
         assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 2
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["call_counters"]["total_calls"] == 15
+
+    def test_test_resume_early_failure_recovers_unspliced_middle_round(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R5-F1: an unspliced middle round still folds via uuid re-carry."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        prior_jsonl.write_text(round_one, encoding="utf-8")
+        # Round 2's scope sits in the accumulated evidence but never reached
+        # the JSONL (its exit never spliced); round 3's scope is appended by
+        # the mock during this run.
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        round_two = self._b1_counter_line(333, 7, run_id="run-2", worker_uuid="cc" * 16) + "\n"
+        evidence_path.write_text(round_one + round_two, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-3", worker_uuid="bb" * 16) + "\n"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            self._b1_appending_preflight(evidence_path, current_line),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        # The append re-carries [r1, r2] plus the tail [r3]; the fold counts
+        # all three rounds exactly once (a tail-only append would miss r2
+        # at 15 while still claiming complete).
+        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 4
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 22
+        assert payload["call_counters"]["complete"] is True
+
+    def test_test_resume_collection_failure_cross_module_reports_separately(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/C3: refused collection wiring end to end (quarantine, no consult)."""
+        from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
+        from pkcs11_check.core.file_runner import _path_snapshot
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module_a = tmp_path / "a.so"
+        module_a.write_bytes(b"provider-a-bytes")
+        module_b = tmp_path / "b.so"
+        module_b.write_bytes(b"provider-b-bytes")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "failed", 1, 0.2)],
+                module_snapshot=_path_snapshot(str(module_a)),
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_summary = '{"summary": "provider-a"}\n'
+        results_path.write_text(prior_summary, encoding="utf-8")
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        evidence_path.write_text(prior_line, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            self._b1_appending_preflight(evidence_path, current_line, ok=True),
+        )
+
+        def boom_collection(*args: object, **kwargs: object) -> object:
+            raise ValueError("collection exploded")
+
+        # File isolation collects via discover_pytest_units (the items
+        # collector only runs for auto mode and disabled-nodeid plans).
+        monkeypatch.setattr(test_cmd, "discover_pytest_units", boom_collection)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module_b),
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+        # Base 2 stands (A's failed row must not consult-upgrade a refusal);
+        # the separate report carries this run's row; A's summary, sidecar,
+        # and evidence bytes are intact.
+        assert result.exit_code == 2, result.output
+        assert "different module" in result.output
+        assert "Separate failure report" in result.output
+        separate_path = tmp_path / "results.refused.json"
+        payload = json.loads(separate_path.read_text(encoding="utf-8"))
+        rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
+        assert rows == [("<collection>", "failed")]
+        assert "collection exploded" in json.dumps(payload["units"][0])
+        assert results_path.read_text(encoding="utf-8") == prior_summary
+        assert not collection_failure_sidecar_path(state_file).exists()
+        assert evidence_path.read_text(encoding="utf-8") == prior_line
 
     def test_fold_preflight_evidence_collision_skips_splice(self, tmp_path: Path) -> None:
         """B1/R3-5: the normal-path splice skips a collided summary file."""

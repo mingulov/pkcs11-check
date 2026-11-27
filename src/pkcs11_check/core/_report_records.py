@@ -439,16 +439,19 @@ def _iter_unit_report_record_source(
     state_file: Path,
     unit: str,
     inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    consult_cache: bool = True,
 ) -> Iterable[Mapping[str, Any]]:
     """Yield one unit's report records from its cache shard or inline fallback."""
-    cache_path = _report_record_cache_path(state_file, unit)
-    yielded_cache_record = False
-    if cache_path.exists():
-        for record in _iter_report_log_records(cache_path):
-            yielded_cache_record = True
-            yield record
-        if yielded_cache_record:
-            return
+    if consult_cache:
+        cache_path = _report_record_cache_path(state_file, unit)
+        yielded_cache_record = False
+        if cache_path.exists():
+            for record in _iter_report_log_records(cache_path):
+                yielded_cache_record = True
+                yield record
+            if yielded_cache_record:
+                return
 
     for inline_record in inline_records_by_unit.get(unit, []):
         if isinstance(inline_record, Mapping):
@@ -718,11 +721,20 @@ def _build_per_unit_details_from_record_sources(
     *,
     units: Sequence[str],
     inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
+    consult_cache: bool = True,
 ) -> dict[str, dict[str, Any]]:
+    """Build per-unit detail blocks from cache shards with inline fallback.
+
+    ``consult_cache=False`` draws from the inline records only (B1/R5-F5):
+    a refused separate report must never render the other run's cached
+    records, and must not delete them either.
+    """
     details: dict[str, dict[str, Any]] = {}
     for unit in _ordered_report_record_units(units, inline_records_by_unit):
         detail = _build_detail_from_report_records(
-            _iter_unit_report_record_source(state_file, unit, inline_records_by_unit)
+            _iter_unit_report_record_source(
+                state_file, unit, inline_records_by_unit, consult_cache=consult_cache
+            )
         )
         if detail is not None:
             details[unit] = detail
