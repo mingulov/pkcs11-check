@@ -75442,3 +75442,169 @@ def test_r44_ar65_member_capture_failure_reread_torn_reruns(tmp_path: Path) -> N
     assert not any("could not be verified" in text for text in texts), texts
     assert not any("archive the listed members" in text for text in texts), texts
     assert not any("together with this family" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX double-slash semantics")
+def test_r44_ar66_lexical_anchor_collapses_doubleslash() -> None:
+    """#88R44-[A]r66: the guard anchor collapses a leading // on POSIX.
+
+    Codex R65-2: / and // resolve identically on Linux while
+    abspath preserves distinct anchors, so a // alias of the
+    root would raise out of the depth check into the outside
+    exemption. Exactly-two leading slashes collapse;
+    single, triple (normpath), relative, and plain absolute
+    spellings pass through. Windows UNC keeps its anchor by
+    the os.name gate (untestable here; that arm returns its
+    input unchanged).
+    """
+    import os
+
+    assert durability._lexical_anchor("//srv/counters") == "/srv/counters"
+    assert durability._lexical_anchor("/srv/counters") == "/srv/counters"
+    assert durability._lexical_anchor("///srv/counters") == "/srv/counters"
+    assert durability._lexical_anchor("counters") == os.path.abspath("counters")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar66_conflicted_nested_journal_withholds_from_render(tmp_path: Path) -> None:
+    """#88R44-[A]r66: a conflicted nested journal withholds from rendering.
+
+    Codex R65-1: a derived journal recorded absent, then
+    arriving before link adoption merges it, conflicts --
+    its spelling stays out of both render maps. Rendering
+    it unmapped would trip the nested-unmapped guard
+    spuriously on a pass that must re-observe anyway, so
+    conflicted spellings withhold from the render set
+    (the bracket keeps the full set; the conflict
+    suppresses the offer). The journal arrives between the
+    derived lookup (which reports missing) and adoption
+    (which merges it present).
+    """
+    import json
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    sidecar_bytes = sidecar.read_bytes()
+    sidecar.unlink()
+    deep = root / "sub" / "deep"
+    deep.mkdir(parents=True)
+    disk_name = f"{solo}-n.partial.json"
+    target = deep / disk_name
+    target.write_bytes(sidecar_bytes)
+    alias = root / disk_name
+    os.symlink(target, alias)
+    journal_name = f"{solo}-n.windows.jsonl"
+    nested_journal = deep / journal_name
+    registry_payload = json.loads(registry.read_bytes().decode("utf-8"))
+    registry_payload["sidecar"] = os.fspath(target)
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_state = durability._path_state
+    journal_key = os.fspath(nested_journal)
+    planted_flag: list[bool] = []
+
+    def _state_then_plant(path: Any) -> Any:
+        if os.fspath(path) == journal_key and not planted_flag:
+            planted_flag.append(True)
+            nested_journal.write_text("{}\n", encoding="utf-8")
+            return "missing"
+        return real_state(path)
+
+    with mock.patch.object(durability, "_path_state", _state_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_flag, "the journal arrived after the derived lookup (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert not any("nested without a map entry" in text for text in texts), texts
+    assert any("the archival inventory changed during verification" in text for text in texts), (
+        texts
+    )
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar66_member_capture_indeterminate_faults_loudly(tmp_path: Path) -> None:
+    """#88R44-[A]r66: an indeterminate capture fault fails, never drifts.
+
+    Codex R65-1: only absence-then-presence proves drift. A
+    capture fault that is neither ENOENT nor ENOTDIR (here
+    an injected EACCES) followed by torn reread bytes is a
+    failed observation -- unknown, not drift -- so the
+    member fails loudly with its name in the fault exit
+    instead of rerunning a persistent fault forever. Like
+    the drift sibling, it never renders unmapped.
+    """
+    import errno
+    import inspect
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_realpath = os.path.realpath
+    member_key = os.fspath(root / "registrations" / registry.name)
+    fired: list[bool] = []
+
+    def _realpath_then_deny(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == member_key and not fired:
+            caller = inspect.currentframe()
+            caller = caller.f_back if caller is not None else None
+            if caller is not None and caller.f_code.co_name == "_authority_verdict_on":
+                fired.append(True)
+                raise OSError(errno.EACCES, "injected capture denial")
+        return real_realpath(path, *args, **kwargs)
+
+    with mock.patch.object(os.path, "realpath", _realpath_then_deny):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert fired, "the capture denied the member (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("the member inventory could not be verified" in text for text in texts), texts
+    assert any("registrations/" in text and ".json" in text for text in texts), texts
+    assert not any("changed during verification" in text for text in texts), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
