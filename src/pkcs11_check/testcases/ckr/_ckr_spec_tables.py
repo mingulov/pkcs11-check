@@ -178,6 +178,14 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         priority_note="Higher priority than CKR_DATA_INVALID",
         mechanisms=["AES_ECB"],
     ),
+    "ctr_counter_overflow": CkrExpectation(
+        function="C_Encrypt",
+        condition="counter_would_wrap",
+        spec_ckr=CKR_DATA_LEN_RANGE,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.2",
+        mechanisms=["AES_CTR"],
+    ),
     # H-2: no "data_empty" entry -- empty plaintext is VALID input (0 is
     # block-aligned; CKR_OK with empty ciphertext is spec-correct), so a
     # must-reject oracle entry here blessed rejection of valid input as a
