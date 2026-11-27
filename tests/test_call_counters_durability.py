@@ -3337,6 +3337,51 @@ class TestKBoundaryRollback:
         assert _rv_total(flat, 0) == 11
         assert sum(int(row[3]) for row in flat if row[1] == "C_Done") == 1
 
+    def test_record_entry_retry_failure_marks_pending_over_open_window(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # K>1: two units admitted without flushing (window open),
+        # then the writer breaks and the next entry hits the K
+        # boundary. The entry rolls back (provider never ran) AND
+        # the failure marks persistence pending over the retained
+        # earlier window: the sidecar lacks real admitted traffic,
+        # so the status must say so, and the following entries
+        # block up front in recovery instead of churning
+        # admit-fail-rollback per boundary.
+        monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "3")
+        call_counters.reset_for_tests()
+        call_counters.record_call("C_Login")
+        call_counters.record_return("C_Login", 0)
+        assert call_counters.persistence_pending() is False
+        provider_calls = 0
+
+        def provider() -> int:
+            nonlocal provider_calls
+            provider_calls += 1
+            return 0
+
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_call("C_Done")
+            provider()  # Unreachable: the record raises first.
+        assert provider_calls == 0, "the boundary call never reached the provider"
+        assert call_counters.persistence_pending() is True, "retained window marked"
+        assert call_counters.serialize_current()["total_calls"] == 1, "entry rolled back"
+        with pytest.raises(durability.CounterPersistenceError, match="provider entry blocked"):
+            call_counters.record_call("C_Blocked")
+            provider()  # Unreachable: recovery blocks up front.
+        assert provider_calls == 0, "still blocked, nothing admitted"
+        assert call_counters.serialize_current()["total_calls"] == 1
+        # Repair: recovery covers the retained window, the marker
+        # clears, and the window lands exactly once.
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+        call_counters.record_call("C_Healed")
+        provider()
+        assert provider_calls == 1
+        assert call_counters.persistence_pending() is False
+        assert call_counters.serialize_current()["total_calls"] == 2
+
 
 # --------------------------------------------------------------------------
 # I1 (live half): probe ingest flushes the parent before deleting the sidecar
