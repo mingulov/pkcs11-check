@@ -729,16 +729,16 @@ def _barrier_gate(root: Path | str) -> Iterator[bool]:
     lock file faults. Never raises.
     """
     try:
-        held = try_acquire_barrier_lock(root)
+        token = try_acquire_barrier_lock(root)
     except OSError:
-        held = False
-    if not held:
+        token = None
+    if token is None:
         yield False
         return
     try:
         yield True
     finally:
-        release_barrier_lock(root)
+        release_barrier_lock(token)
 
 
 def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, Any]) -> None:
@@ -749,9 +749,10 @@ def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, A
     the next barrier instead of losing its generation. The check
     holds the barrier gate (a gen check alone cannot close the
     check-then-unlink window); contention keeps the staging. Plans
-    without ``staging_gen`` (hand-made, tests only) keep the legacy
-    unconditional discard under the same gate. Voices a keep
-    loudly; never raises.
+    without ``staging_gen`` keep staging unconditionally: no
+    generation proof means no retire authority, even for hand-made
+    plans (#88R44-[C]r4-directive). Voices a keep loudly; never
+    raises.
     """
     with _barrier_gate(staged_root) as gated:
         if not gated:
@@ -762,10 +763,15 @@ def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, A
                 stacklevel=2,
             )
             return
-        if "staging_gen" in plan:
-            retired = discard_barrier_staging_if(staged_root, plan["staging_gen"])
-        else:
-            retired = discard_barrier_staging(staged_root)
+        if "staging_gen" not in plan:
+            warnings.warn(
+                f"counter barrier staging in {staged_root} has no generation proof "
+                "in this plan; kept for the next barrier (no lost update)",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        retired = discard_barrier_staging_if(staged_root, plan["staging_gen"])
         if not retired:
             warnings.warn(
                 f"counter barrier staging in {staged_root} is newer than this plan's "
@@ -1823,8 +1829,15 @@ def _is_owned_counters_dir(state_name: str, candidate_name: str) -> bool:
     return len(nonce) == 8 and all(char in "0123456789abcdef" for char in nonce)
 
 
-def _remove_retired_counters_dir(path: Path) -> None:
-    """Remove one retired counters dir (symlink-safe; warns on leftovers)."""
+def _remove_retired_counters_dir_locked(path: Path) -> None:
+    """Remove one retired counters dir assuming its lock is held (#88R44-[C]r5).
+
+    The whole-reset path holds every candidate's lock across its
+    mutation phase, so no barrier can start mid-reset.
+    Symlink-safe; warns on leftovers. Never raises.
+    """
+    if not path.exists() and not path.is_symlink():
+        return
     try:
         if path.is_symlink() or (path.exists() and not path.is_dir()):
             # A relocated link (drop the link only, never delete through
@@ -1848,18 +1861,18 @@ def _remove_retired_counters_dir(path: Path) -> None:
 def _reset_fresh_run_artifacts(
     state_file: Path,
     report_config: IsolatedReportConfig | None,
-) -> None:
-    """Remove durable artifacts that must not survive a fresh run."""
-    state_file.unlink(missing_ok=True)
-    collection_failure_sidecar_path(state_file).unlink(missing_ok=True)
-    _recovery_attempts_path(state_file).unlink(missing_ok=True)
-    # Counter evidence siblings (rc2 C2): stale recovery supplements would
-    # prepend into the new run's caches -- they must go, or a fresh series
-    # silently absorbs a dead one's evidence.
-    for stale_supplements in state_file.parent.glob(
-        f"{state_file.name}.*{RECOVERY_SUPPLEMENTS_SUFFIX}"
-    ):
-        stale_supplements.unlink(missing_ok=True)
+) -> bool:
+    """Remove durable artifacts that must not survive a fresh run.
+
+    Contention is checked BEFORE any mutation (#88R44-[C]r5): if any
+    retired root is held by a live barrier (or its lock faults),
+    the WHOLE reset refuses loudly with everything intact -- a
+    partial reset would destroy the operator's retry inputs (notably
+    the state file, which keeps the resume option alive) while the
+    barrier is live. All candidate locks hold across the mutation
+    phase, so no barrier can start mid-reset either.
+    """
+    # Phase 1: enumerate (side-effect-free apart from warnings).
     # Counter dirs (rc2 N-C3): each fresh series allocates its own dir, so
     # every retired sibling goes with the abandoned state instead of being
     # emptied in place (emptying a reused dir deletes live producers'
@@ -1870,8 +1883,19 @@ def _reset_fresh_run_artifacts(
     # removed: hostile lookalikes are retained with a loud warning.
     current = os.environ.get(COUNTERS_DIR_ENV, "").strip() or None
     prefix = f"{state_file.name}.counters"
+    candidates: list[Path] = []
     for candidate in sorted(state_file.parent.glob(f"{prefix}*")):
         if current is not None and candidate == Path(current):
+            continue
+        if candidate.name.endswith(".lock") and _is_owned_counters_dir(
+            state_file.name, candidate.name[: -len(".lock")]
+        ):
+            # A barrier-lock guard file for an owned root
+            # (#88R44-[C]r5-minor): the lock lives beside the root by
+            # design, so its name matches the scan glob. It is
+            # neither a counters dir nor a hostile lookalike -- its
+            # inode may serialize a live barrier, so it stays
+            # silently in place.
             continue
         if not _is_owned_counters_dir(state_file.name, candidate.name):
             warnings.warn(
@@ -1881,26 +1905,66 @@ def _reset_fresh_run_artifacts(
                 stacklevel=2,
             )
             continue
-        _remove_retired_counters_dir(candidate)
-    report_cache_dir = _report_record_cache_dir(state_file)
-    if report_cache_dir.is_symlink():
-        # A relocated cache dir: drop the link only. rmtree would raise on a
-        # link, and deleting through it could wipe an unrelated tree; the cache
-        # is recreated fresh at its canonical path on demand.
-        report_cache_dir.unlink()
-    elif report_cache_dir.exists():
-        shutil.rmtree(report_cache_dir)
-    if report_config is None:
-        return
-    sidecar_paths = {report_config.output_path.parent / name for name in _OUTPUT_SIDECAR_NAMES}
-    if report_config.jsonl_path is not None:
-        report_config.jsonl_path.unlink(missing_ok=True)
-        sidecar_paths.update(
-            {report_config.jsonl_path.parent / name for name in _JSONL_SIDECAR_NAMES}
-        )
-    report_config.output_path.unlink(missing_ok=True)
-    for sidecar_path in sidecar_paths:
-        sidecar_path.unlink(missing_ok=True)
+        candidates.append(candidate)
+    tokens: list[str] = []
+    try:
+        for candidate in candidates:
+            try:
+                token = try_acquire_barrier_lock(candidate)
+            except OSError as exc:
+                warnings.warn(
+                    f"fresh reset refused: retired counters dir {candidate} cannot "
+                    f"establish the barrier lock ({exc}); all reset inputs left in "
+                    "place",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return
+            if token is None:
+                warnings.warn(
+                    f"fresh reset refused: retired counters dir {candidate} is held "
+                    "by a live barrier; all reset inputs left in place; retry after "
+                    "the barrier finishes",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return
+            tokens.append(token)
+        # Phase 2: mutate (all contention settled, all locks held).
+        state_file.unlink(missing_ok=True)
+        collection_failure_sidecar_path(state_file).unlink(missing_ok=True)
+        _recovery_attempts_path(state_file).unlink(missing_ok=True)
+        # Counter evidence siblings (rc2 C2): stale recovery supplements would
+        # prepend into the new run's caches -- they must go, or a fresh series
+        # silently absorbs a dead one's evidence.
+        for stale_supplements in state_file.parent.glob(
+            f"{state_file.name}.*{RECOVERY_SUPPLEMENTS_SUFFIX}"
+        ):
+            stale_supplements.unlink(missing_ok=True)
+        for candidate in candidates:
+            _remove_retired_counters_dir_locked(candidate)
+        report_cache_dir = _report_record_cache_dir(state_file)
+        if report_cache_dir.is_symlink():
+            # A relocated cache dir: drop the link only. rmtree would raise on a
+            # link, and deleting through it could wipe an unrelated tree; the cache
+            # is recreated fresh at its canonical path on demand.
+            report_cache_dir.unlink()
+        elif report_cache_dir.exists():
+            shutil.rmtree(report_cache_dir)
+        if report_config is None:
+            return
+        sidecar_paths = {report_config.output_path.parent / name for name in _OUTPUT_SIDECAR_NAMES}
+        if report_config.jsonl_path is not None:
+            report_config.jsonl_path.unlink(missing_ok=True)
+            sidecar_paths.update(
+                {report_config.jsonl_path.parent / name for name in _JSONL_SIDECAR_NAMES}
+            )
+        report_config.output_path.unlink(missing_ok=True)
+        for sidecar_path in sidecar_paths:
+            sidecar_path.unlink(missing_ok=True)
+    finally:
+        for token in reversed(tokens):
+            release_barrier_lock(token)
 
 
 def _collection_failure_reporting_copy(
