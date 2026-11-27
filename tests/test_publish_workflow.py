@@ -268,6 +268,13 @@ def test_expected_sha_gate_arms(
         DRY_RUN=dry_run,
         GITHUB_SHA=github_sha,
     )
-    proc = subprocess.run([shell, "-c", body], capture_output=True, text=True, check=False, env=env)
+    proc = subprocess.run(
+        [shell, "-c", body],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        env=env,
+    )
     assert proc.returncode == want_rc, proc.stdout + proc.stderr
     assert want_out in proc.stdout + proc.stderr
