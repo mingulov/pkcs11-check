@@ -182,13 +182,63 @@ def _is_decimal_rv_key(value: object) -> bool:
     return rv >= 0 and str(rv) == value
 
 
+def _is_hex_mech_key(value: object) -> bool:
+    """Whether ``value`` is a ``0x``-prefixed 1-8 digit hex mechanism key."""
+    if not isinstance(value, str) or len(value) < 3 or len(value) > 10:
+        return False
+    if not value.startswith(("0x", "0X")):
+        return False
+    return all(char in "0123456789abcdefABCDEF" for char in value[2:])
+
+
+def _by_mechanism_valid(by_mech: object, fn_calls: int) -> bool:
+    """Whether a ``by_mechanism`` block is well-formed (0.3.2, #87 item 1).
+
+    Hex mechanism keys map to ``{name, calls, by_rv}`` mirroring the fn
+    block; mech calls sum at or below the fn calls (unattributed calls are
+    simply absent) and each mech ``by_rv`` obeys the same never-above rule.
+    """
+    if not isinstance(by_mech, dict):
+        return False
+    mech_total = 0
+    for mech_key, mech_block in by_mech.items():
+        if not _is_hex_mech_key(mech_key) or not isinstance(mech_block, dict):
+            return False
+        if not isinstance(mech_block.get("name"), str):
+            return False
+        mech_calls = mech_block.get("calls")
+        if not _is_nonneg_int(mech_calls):
+            return False
+        assert isinstance(mech_calls, int)
+        mech_by_rv = mech_block.get("by_rv")
+        if not isinstance(mech_by_rv, dict):
+            return False
+        mech_rv_total = 0
+        for rv_key, rv_block in mech_by_rv.items():
+            if not _is_decimal_rv_key(rv_key) or not isinstance(rv_block, dict):
+                return False
+            if not isinstance(rv_block.get("name"), str):
+                return False
+            count = rv_block.get("count")
+            if not _is_nonneg_int(count):
+                return False
+            assert isinstance(count, int)
+            mech_rv_total += count
+        if mech_rv_total > mech_calls:
+            return False
+        mech_total += mech_calls
+    return mech_total <= fn_calls
+
+
 def _buckets_valid(buckets: object, *, allowed: frozenset[str]) -> bool:
     """Whether ``buckets`` satisfies the serialized-buckets contract.
 
     Mirrors the rc1 extractor rules: known bucket names only, non-negative
     int scalars (bools rejected), non-empty function names, decimal RV keys,
     ``bucket.calls`` exactly the sum of its functions, and ``sum(by_rv)``
-    never above the function calls (crash windows make it smaller).
+    never above the function calls (crash windows make it smaller). A
+    present ``by_mechanism`` block must itself be well-formed (#87 item 1);
+    its absence stays valid so older artifacts keep passing.
     """
     if not isinstance(buckets, dict):
         return False
@@ -229,6 +279,10 @@ def _buckets_valid(buckets: object, *, allowed: frozenset[str]) -> bool:
                 assert isinstance(count, int)
                 rv_total += count
             if rv_total > fn_calls:
+                return False
+            if "by_mechanism" in fn_block and not _by_mechanism_valid(
+                fn_block["by_mechanism"], fn_calls
+            ):
                 return False
             fn_total += fn_calls
         if fn_total != bucket_calls:
@@ -897,9 +951,9 @@ def wrap_module_first(modules: Mapping[str, Mapping[str, Any]]) -> dict[str, Any
 def canonicalize_module_first(block: Mapping[str, Any]) -> dict[str, Any]:
     """Return a key-sorted copy of a module-first block (input never mutated).
 
-    Modules, buckets, functions, and RV keys sort ascending (RV keys as
-    strings, mirroring the rc1 canonicalizer), so plain ``json.dumps``
-    output is byte-identical across input orders.
+    Modules, buckets, functions, mechanisms, and RV keys sort ascending
+    (RV keys as strings, mirroring the rc1 canonicalizer), so plain
+    ``json.dumps`` output is byte-identical across input orders.
     """
     if not is_module_first_block(block):
         raise ValueError("not a module-first block")
@@ -913,7 +967,22 @@ def canonicalize_module_first(block: Mapping[str, Any]) -> dict[str, Any]:
             for fn in sorted(bucket["by_fn"]):
                 fn_block = bucket["by_fn"][fn]
                 by_rv = {rv: dict(fn_block["by_rv"][rv]) for rv in sorted(fn_block["by_rv"])}
-                by_fn[fn] = {"calls": fn_block["calls"], "by_rv": by_rv}
+                canon_fn: dict[str, Any] = {"calls": fn_block["calls"], "by_rv": by_rv}
+                by_mech = fn_block.get("by_mechanism")
+                if isinstance(by_mech, dict):
+                    canon_fn["by_mechanism"] = {
+                        mech: {
+                            "name": mech_block["name"],
+                            "calls": mech_block["calls"],
+                            "by_rv": {
+                                rv: dict(mech_block["by_rv"][rv])
+                                for rv in sorted(mech_block["by_rv"])
+                            },
+                        }
+                        for mech in sorted(by_mech)
+                        for mech_block in [by_mech[mech]]
+                    }
+                by_fn[fn] = canon_fn
             buckets[bucket_name] = {"calls": bucket["calls"], "by_fn": by_fn}
         canonical["by_module"][module] = {"calls": source["calls"], "buckets": buckets}
     return canonical
@@ -937,12 +1006,49 @@ def _resolve_rv_name(first: str, second: str) -> str:
     return min(first, second)
 
 
+def _resolve_mech_name(first: str, second: str) -> str:
+    """Deterministically resolve conflicting observed mechanism leaf names.
+
+    Same rule as :func:`_resolve_rv_name`: prefers the symbolic (non-hex)
+    name; ties resolve to the lexicographically smallest, so both merge
+    orders yield the identical leaf.
+    """
+    return _resolve_rv_name(first, second)
+
+
+def _merge_by_mechanism(target_fn: dict[str, Any], fn_block: Mapping[str, Any]) -> None:
+    """Union one fn block's ``by_mechanism`` into its target in place."""
+    incoming = fn_block.get("by_mechanism")
+    if not isinstance(incoming, dict):
+        return
+    target_by_mech = target_fn.setdefault("by_mechanism", {})
+    for mech_key, mech_block in incoming.items():
+        existing = target_by_mech.get(mech_key)
+        if existing is None:
+            target_by_mech[mech_key] = copy.deepcopy(dict(mech_block))
+            continue
+        existing["calls"] += mech_block["calls"]
+        existing["name"] = _resolve_mech_name(existing["name"], mech_block["name"])
+        target_mech_rv = existing["by_rv"]
+        for rv_key, rv_block in mech_block["by_rv"].items():
+            rv_existing = target_mech_rv.get(rv_key)
+            if rv_existing is None:
+                target_mech_rv[rv_key] = {
+                    "name": rv_block["name"],
+                    "count": rv_block["count"],
+                }
+            else:
+                rv_existing["count"] += rv_block["count"]
+                rv_existing["name"] = _resolve_rv_name(rv_existing["name"], rv_block["name"])
+
+
 def merge_module_first(target: dict[str, Any], incoming: Mapping[str, Any]) -> dict[str, Any]:
     """Add ``incoming`` module-first counts into ``target`` in place (both validated).
 
     Mirrors the rc1 serialized merge one level down: missing modules,
-    buckets, functions, or RVs are created (leaves copied, never aliased)
-    and conflicting RV leaf names resolve deterministically.
+    buckets, functions, RVs, or mechanisms are created (leaves copied, never
+    aliased) and conflicting RV/mechanism leaf names resolve
+    deterministically.
     """
     if not is_module_first_block(target) or not is_module_first_block(incoming):
         raise ValueError("merge requires module-first blocks")
@@ -979,6 +1085,7 @@ def merge_module_first(target: dict[str, Any], incoming: Mapping[str, Any]) -> d
                     else:
                         existing["count"] += rv_block["count"]
                         existing["name"] = _resolve_rv_name(existing["name"], rv_block["name"])
+                _merge_by_mechanism(target_fn, fn_block)
     return target
 
 
