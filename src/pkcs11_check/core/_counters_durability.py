@@ -21655,7 +21655,6 @@ def sweep_orphans(
                     # target before the late bracket must re-observe
                     # instead of being silently omitted.
                     if _record_identity(os.fspath(target_journal), None):
-                        conflicted_spellings.add(os.fspath(target_journal))
                         return False, False
                 else:
                     target_verdict, target_resolved = _verify_singleton(target_journal, "name")
@@ -21663,7 +21662,6 @@ def sweep_orphans(
                         link_bases.append(target_journal)
                         if target_resolved is not None:
                             if _record_identity(os.fspath(target_journal), target_resolved):
-                                conflicted_spellings.add(os.fspath(target_journal))
                                 return False, False
                     elif target_verdict == "missing":
                         # Vanished between the presence check and the
@@ -21672,7 +21670,6 @@ def sweep_orphans(
                         # re-observes instead of slipping into the
                         # preview unlisted.
                         if _record_identity(os.fspath(target_journal), None):
-                            conflicted_spellings.add(os.fspath(target_journal))
                             return False, False
                     else:
                         _voice_base_verdict(
@@ -22256,14 +22253,14 @@ def sweep_orphans(
             # re-resolves the lexical paths.
             adopted_identities: dict[str, str | None] = {}
             identity_conflicted = False
-            # Exact-spelling conflicts withhold from rendering
-            # (Codex R65-1): a base appended before its record
-            # flipped (or a leg merged against a stale twin)
-            # would otherwise render unmapped -- and trip the
-            # nested-unmapped guard for nested spellings -- on
-            # a pass that must re-observe anyway. Fuzzy
-            # conflicts keep mapped-fresh handling (their exit
-            # already reruns; no unmapped residue).
+            # Conflicts that can leave a base unmapped withhold
+            # from rendering (Codex R65-1, Claude Q3 N2): a base
+            # appended before its record flipped (or a leg merged
+            # against a stale twin) would otherwise render
+            # unmapped -- and trip the nested-unmapped guard for
+            # nested spellings -- on a pass that must re-observe
+            # anyway. Fuzzy conflicts keep mapped-fresh handling
+            # (their exit already reruns; no unmapped residue).
             conflicted_spellings: set[str] = set()
 
             def _record_identity(lexical: str, value: str | None) -> bool:
