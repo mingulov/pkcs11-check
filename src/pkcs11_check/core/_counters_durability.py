@@ -19669,6 +19669,25 @@ class _AdoptedLink:
     prefix_hits: frozenset[str]
 
 
+def _lexical_anchor(path: Path | str) -> str:
+    """Absolute lexical spelling for guard depth compares (Codex R65-2).
+
+    ``abspath`` joins relative spellings against the working
+    directory without resolving links, so a relative root and
+    an absolute base compare under one anchor. A leading
+    exactly-``//`` collapses to ``/`` on POSIX (same directory,
+    distinct anchors -- Linux preserves the double slash while
+    resolving it identically); Windows UNC anchors stay intact
+    (``//server/share`` names another host). Raises ValueError
+    on null bytes like the path it anchors (the guard routes
+    those to the outside exemption).
+    """
+    anchored = os.path.abspath(os.fspath(path))
+    if os.name == "posix" and anchored.startswith("//") and not anchored.startswith("///"):
+        anchored = anchored[1:]
+    return anchored
+
+
 def sweep_orphans(
     counters_dir: Path | str,
     *,
@@ -20820,14 +20839,14 @@ def sweep_orphans(
                     # loudly rather than resolve through unsampled
                     # links. Outside-root spellings keep their
                     # downstream voices. Both sides anchor
-                    # lexically first (Codex R64-2): a relative
-                    # root with an absolute base would raise out
-                    # of the depth check into the outside
-                    # exemption -- abspath compares them under one
-                    # anchor without resolving links.
+                    # lexically first (Codex R64-2, R65-2): a
+                    # relative root with an absolute base -- or a
+                    # Linux // alias of the root -- would raise
+                    # out of the depth check into the outside
+                    # exemption.
                     try:
                         unmapped_depth = len(
-                            Path(os.path.abspath(base)).relative_to(os.path.abspath(root)).parts
+                            Path(_lexical_anchor(base)).relative_to(_lexical_anchor(root)).parts
                         )
                     except ValueError:
                         unmapped_depth = 0
@@ -21607,6 +21626,7 @@ def sweep_orphans(
                     # target before the late bracket must re-observe
                     # instead of being silently omitted.
                     if _record_identity(os.fspath(target_journal), None):
+                        conflicted_spellings.add(os.fspath(target_journal))
                         return False, False
                 else:
                     target_verdict, target_resolved = _verify_singleton(target_journal, "name")
@@ -21614,6 +21634,7 @@ def sweep_orphans(
                         link_bases.append(target_journal)
                         if target_resolved is not None:
                             if _record_identity(os.fspath(target_journal), target_resolved):
+                                conflicted_spellings.add(os.fspath(target_journal))
                                 return False, False
                     elif target_verdict == "missing":
                         # Vanished between the presence check and the
@@ -21622,6 +21643,7 @@ def sweep_orphans(
                         # re-observes instead of slipping into the
                         # preview unlisted.
                         if _record_identity(os.fspath(target_journal), None):
+                            conflicted_spellings.add(os.fspath(target_journal))
                             return False, False
                     else:
                         _voice_base_verdict(
@@ -21757,6 +21779,7 @@ def sweep_orphans(
                 member_drifted = False
                 faulted_keys: set[str] = set()
                 member_targets: dict[str, str | None] = {}
+                member_capture_errnos: dict[str, int | None] = {}
                 for key in own_torn:
                     member_path = root / key
                     # Members record their verified target at reread
@@ -21768,7 +21791,10 @@ def sweep_orphans(
                     member_key = os.fspath(member_path)
                     try:
                         member_targets[member_key] = os.path.realpath(member_path, strict=True)
-                    except (OSError, RuntimeError, ValueError):
+                    except OSError as exc:
+                        member_targets[member_key] = None
+                        member_capture_errnos[member_key] = exc.errno
+                    except (RuntimeError, ValueError):
                         member_targets[member_key] = None
                     member_status = _member_reread_status(member_path, member_targets[member_key])
                     if member_status == "misplaced":
@@ -21800,15 +21826,23 @@ def sweep_orphans(
                     if member_status == "torn":
                         if member_targets[member_key] is None:
                             # Unresolvable at capture but torn at
-                            # reread (Codex R64-1): two observations
-                            # differ (absent-then-present), so drift
-                            # is proven -- and rendering would
-                            # resolve live through unverified links
-                            # (a redirect under a system dir could
-                            # substitute the target mid-render while
-                            # every sampled clock agrees). Re-observe
-                            # instead of rendering unmapped.
-                            member_drifted = True
+                            # reread (Codex R64-1, R65-1): absence
+                            # followed by presence proves drift
+                            # (two observations differ) -- but only
+                            # absence does. An indeterminate capture
+                            # fault (EACCES/EIO, non-OS errors) is
+                            # unknown, not drift (Codex R45-4): fail
+                            # it loudly instead of rerunning a
+                            # persistent fault forever. Either way
+                            # the member never renders unmapped.
+                            if member_capture_errnos.get(member_key) in (
+                                errno.ENOENT,
+                                errno.ENOTDIR,
+                            ):
+                                member_drifted = True
+                            else:
+                                member_faulted = True
+                                faulted_keys.add(key)
                             continue
                         # Links verify at use (Codex R44-2): a member
                         # symlink to another file would archive under
@@ -22193,6 +22227,15 @@ def sweep_orphans(
             # re-resolves the lexical paths.
             adopted_identities: dict[str, str | None] = {}
             identity_conflicted = False
+            # Exact-spelling conflicts withhold from rendering
+            # (Codex R65-1): a base appended before its record
+            # flipped (or a leg merged against a stale twin)
+            # would otherwise render unmapped -- and trip the
+            # nested-unmapped guard for nested spellings -- on
+            # a pass that must re-observe anyway. Fuzzy
+            # conflicts keep mapped-fresh handling (their exit
+            # already reruns; no unmapped residue).
+            conflicted_spellings: set[str] = set()
 
             def _record_identity(lexical: str, value: str | None) -> bool:
                 """Record one adopted identity; True when it proves change.
@@ -22225,6 +22268,7 @@ def sweep_orphans(
                 if adopted_identities[lexical] != value:
                     adopted_identities[lexical] = value
                     identity_conflicted = True
+                    conflicted_spellings.add(lexical)
                     return True
                 return False
 
@@ -22610,12 +22654,14 @@ def sweep_orphans(
                         if matched and previous is not None:
                             family_ok = False
                             identity_conflicted = True
+                            conflicted_spellings.add(leg_lexical)
                         else:
                             absent_legs[leg_lexical] = adopted_link.parent
                         continue
                     if matched and previous != leg_adopted:
                         family_ok = False
                         identity_conflicted = True
+                        conflicted_spellings.add(leg_lexical)
                         continue
                     # Agreeing legs pin their own spelling too (Codex
                     # R51-1): rendering matches exact spellings, so a
@@ -22624,8 +22670,18 @@ def sweep_orphans(
                     # that its twin record never sees.
                     verified_targets[leg_lexical] = leg_adopted
             move_drift_marks: list[bool] = []
+            # Conflicted spellings withhold from rendering (Codex
+            # R65-1): their records flipped mid-assembly, so no map
+            # entry can be trusted for them (an unmapped nested
+            # one would trip the guard spuriously). The bracket
+            # keeps the full set (open and close must match);
+            # conflict already suppresses the offer, so the
+            # filtered render loses nothing.
+            render_bases = [
+                base for base in move_bases if os.fspath(base) not in conflicted_spellings
+            ]
             move_names, move_verified, move_faulted, _ = _move_rewrite_names(
-                move_bases,
+                render_bases,
                 frozenset(dependents),
                 verified_targets,
                 absent_legs,
