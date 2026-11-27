@@ -481,7 +481,13 @@ def _rollback_admission(
     ``CounterPersistenceError`` from the K-boundary flush decrements exactly
     the just-admitted counts (global and in-progress alike) and restores the
     pending window, while ``_dirty`` stays set so the earlier evidence is
-    retried by the next flush. The error re-raises: the provider call never
+    retried by the next flush. When earlier units were already pending
+    (only at K>1 -- K=1 returns the window to zero after every mark),
+    the failure additionally marks persistence pending: the retained
+    window is real admitted traffic the sidecar lacks, so the
+    status must say so, and later entries block up front in
+    recovery instead of admitting, failing, and rolling back per
+    boundary. The error re-raises: the provider call never
     ran (the record precedes it), so the session must not show it either.
     Anything other than the persistence error propagates with the admission
     kept. Read under the same lock hold as the admission, so no other thread
@@ -502,6 +508,8 @@ def _rollback_admission(
             _unadmit(_exit_counts, exit_key)
             if admitted_inprog:
                 _unadmit(_inprog_exit, exit_key)
+        if pending_before > 0:
+            _set_pending_locked("entry")
         raise
 
 
@@ -509,9 +517,12 @@ def _set_pending_locked(checkpoint: str) -> None:
     """Mark admitted evidence undurable after a failed checkpoint. Holds ``_lock``.
 
     ``checkpoint`` is the failed kind (``"return"``, ``"direct"``,
-    ``"ingest"``, ``"note"``). Entries never call this (they roll back, so
-    nothing is retained); every other record path calls it when its flush
-    fails, keeping the real traffic admitted. No-op when unregistered (an
+    ``"ingest"``, ``"note"``, ``"entry"``). Entries call this only when
+    earlier units were already pending (K>1): the just-admitted entry
+    rolls back (the provider never ran), but the retained earlier
+    window must still block the provider until the writer heals.
+    Every other record path calls it when its flush fails, keeping
+    the real traffic admitted. No-op when unregistered (an
     unregistered mark never attempts a flush, so nothing failed).
     """
     global _persistence_pending
