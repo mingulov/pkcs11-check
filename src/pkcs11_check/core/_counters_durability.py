@@ -3659,6 +3659,20 @@ _UNBOUND_STALL_EXIT = (
 )
 
 
+_KEEP_IN_PLACE_FAULT_EXIT = (
+    "exit: collect the probe evidence, then rerun (the archival "
+    "inventory could not be verified; keep the family in place until "
+    "it can be listed)"
+)
+
+
+_KEEP_IN_PLACE_RERUN_EXIT = (
+    "exit: collect the probe evidence, then rerun (the archival "
+    "inventory changed during verification; keep the family in place "
+    "and rerun to re-list)"
+)
+
+
 def _warn_sidecar_contradiction(name: str, claimed: str, body: object) -> None:
     """Voice a sidecar filename/body contradiction (#88R44-[A]r22).
 
@@ -8993,8 +9007,13 @@ def _prune_sidecar_tmps(
     # hashing is slow enough to admit arrivals, so a mid-hash
     # arrival retries like a mid-listing one. The bracket narrows
     # the race to the accepted post-match window (Claude Q3): an
-    # arrival after the final after-sample waits for the next
-    # pass, like every other verify-to-unlink window.
+    # arrival after the final after-sample misses this pass, and a
+    # late arrival may require manual recovery (Codex R30-3/R31-2:
+    # the next collect does not rediscover baseline-less rewrites,
+    # and the ghost diagnostic only covers cleanup paths that still
+    # track the baseline -- a baseline removed around a late arrival
+    # leaves no warning on the sweep path. The accepted post-check
+    # race itself remains unchanged.)
     prefixes = [f"{path.name}.tmp-"]
     if slot_name is not None:
         prefixes.append(f"{slot_name}.tmp-")
@@ -18961,6 +18980,7 @@ class _AmbiguitySnapshot(NamedTuple):
     pinned_by: dict[str, frozenset[str]]
     generations: dict[str, tuple[int, int, int]]
     names_by_prefix: dict[str, frozenset[str]]
+    attributed_by: dict[str, frozenset[str]]
 
 
 class _ProbeInventory(NamedTuple):
@@ -18974,8 +18994,11 @@ class _ProbeInventory(NamedTuple):
     ``(inode, mtime_ns, size)`` at classification time;
     ``names_by_prefix`` indexes every listed name by its probe
     prefix once, so reap-path queries never re-scan the inventory
-    (#88R44-[A]r21). Memo holders re-verify cheaply before reuse
-    and rescan only on change (#88R44-[A]r19).
+    (#88R44-[A]r21). ``attributed_by`` maps each explicitly
+    attributed parent uuid to its probe/marker names, recorded for
+    archival completeness (#88R44-[A]r32, Codex R31-1). Memo holders
+    re-verify cheaply before reuse and rescan only on change
+    (#88R44-[A]r19).
     """
 
     prefixes: frozenset[str]
@@ -18986,6 +19009,7 @@ class _ProbeInventory(NamedTuple):
     pinned_by: dict[str, frozenset[str]]
     generations: dict[str, tuple[int, int, int]]
     names_by_prefix: dict[str, frozenset[str]]
+    attributed_by: dict[str, frozenset[str]]
 
 
 def _dir_mtime_ns(path: Path) -> int | None:
@@ -19039,6 +19063,7 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
     pinned_by: dict[str, set[str]] = {}
     generations: dict[str, tuple[int, int, int]] = {}
     names_by_prefix: dict[str, set[str]] = {}
+    attributed_by: dict[str, set[str]] = {}
 
     def _note_pin(prefix: str, name: str) -> None:
         probe_prefixes.add(prefix)
@@ -19084,6 +19109,11 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
                 continue
             identity = orphan[4]  # F2 block per _parse_probe_orphan_payload
             if identity.get("parent_uuid") is not None:
+                # Attributed probes resolve content-exactly (never
+                # pin), but still depend on their parent: record
+                # them for archival completeness (#88R44-[A]r32,
+                # Codex R31-1).
+                attributed_by.setdefault(identity["parent_uuid"], set()).add(probe_path.name)
                 continue
             _note_pin(parsed_probe[0], probe_path.name)
     if marker_files is None:
@@ -19101,6 +19131,7 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
             owner = parsed_marker[0]
             if len(owner) == 32:
                 # Full-uuid markers route by owner even when unreadable.
+                attributed_by.setdefault(owner, set()).add(marker_path.name)
                 continue
             marker_status, marker_raw = _read_json_evidence(marker_path)
             if marker_status == "gone":
@@ -19115,6 +19146,8 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
                 continue
             identity = orphan[4]  # F2 block per _parse_probe_orphan_payload
             if identity.get("parent_uuid") is not None:
+                # Same archival recording as attributed probes.
+                attributed_by.setdefault(identity["parent_uuid"], set()).add(marker_path.name)
                 continue
             _note_pin(owner, marker_path.name)
     mtime_after = _dir_mtime_ns(root)
@@ -19127,6 +19160,7 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
         {prefix: frozenset(names) for prefix, names in pinned_by.items()},
         dict(generations),
         {prefix: frozenset(names) for prefix, names in names_by_prefix.items()},
+        {uuid: frozenset(names) for uuid, names in attributed_by.items()},
     )
     raced = mtime_before is None or mtime_after is None or mtime_before != mtime_after
     return inventory, raced
@@ -19175,6 +19209,8 @@ def _subtract_departures(
     generations = {name: gen for name, gen in snap.generations.items() if name not in departed}
     names_by_prefix = {prefix: names - departed for prefix, names in snap.names_by_prefix.items()}
     names_by_prefix = {prefix: names for prefix, names in names_by_prefix.items() if names}
+    attributed_by = {uuid: names - departed for uuid, names in snap.attributed_by.items()}
+    attributed_by = {uuid: names for uuid, names in attributed_by.items() if names}
     probe_names = snap.probe_names if current_probes is None else current_probes
     marker_names = snap.marker_names if current_markers is None else current_markers
     prefixes = frozenset(pinned_by)
@@ -19197,6 +19233,7 @@ def _subtract_departures(
         pinned_by=pinned_by,
         generations=generations,
         names_by_prefix=names_by_prefix,
+        attributed_by=attributed_by,
         collision_held=held,
     )
 
@@ -19374,6 +19411,7 @@ def _ambiguity_snapshot(root: Path, census: _OwnerCensus | None = None) -> _Ambi
         pinned_by=inventory.pinned_by,
         generations=inventory.generations,
         names_by_prefix=inventory.names_by_prefix,
+        attributed_by=inventory.attributed_by,
     )
 
 
@@ -19925,6 +19963,84 @@ def sweep_orphans(
         generation proof. Voices the cause.
         """
         blind_reason, collision_held = snapshot.blind_reason, snapshot.collision_held
+
+        def _member_reread_status(path: Path) -> str:
+            """Re-verify one torn member: torn, ok, fault, or gone (#88R44-[A]r40).
+
+            Nonblocking single-generation read (a FIFO swapped in
+            reads fault, never hangs (Codex R39-2)), classified by
+            the census's own per-kind rules (Codex R39-3): registry
+            validity is schema-deep (a parseable `{}` is still
+            torn), sidecar tornness is undecodability. "ok" means
+            re-observed-different (healed, valid, contradictory, or
+            unplaceable: the next pass routes it to its own arm);
+            "fault" means unverifiable (retry only after restoring
+            access); "gone" means vanished (simply dropped).
+            """
+            raw = _read_regular_file_bytes(path)
+            if raw is None:
+                if _path_state(path) == "missing":
+                    return "gone"
+                return "fault"
+            try:
+                text = raw.decode("utf-8")
+            except ValueError:
+                return "torn"
+            if path.parent.name == REGISTRY_DIRNAME:
+                if _parse_registry_content(path.name, text) is not None:
+                    return "ok"
+                try:
+                    payload = _json_loads_evidence(text)
+                except ValueError:
+                    return "torn"
+                body_uuid = payload.get("worker_uuid") if isinstance(payload, dict) else None
+                claim = parse_registry_filename(path.name)
+                if claim is None:
+                    return "ok"
+                if is_worker_uuid(body_uuid) and body_uuid != claim:
+                    return "ok"
+                return "torn"
+            if path.name.endswith(SIDECAR_SUFFIX):
+                try:
+                    _json_loads_evidence(text)
+                except ValueError:
+                    return "torn"
+                return "ok"
+            return "fault"
+
+        def _move_rewrite_names(bases: Collection[Path]) -> tuple[set[str], bool, bool]:
+            """Rewrite/quarantine companions for archival preview (#88R44-[A]r39).
+
+            Returns (relkeys, verified, faulted): each base plus
+            every present `.tmp-*` and `.quarantined-*` rewrite
+            beside it (plus each marker's original slot). Any
+            listing fault, or an undeterminable marker slot, fails
+            verification as a fault (persistent: restore access);
+            the caller distinguishes it from transient churn
+            (bracket/rescan drift: rerun). Advisory only -- hold
+            decisions never depend on it. Names return as
+            root-relative keys so subdirectory members read
+            unambiguously.
+            """
+            names: set[str] = set()
+            for base in bases:
+                names.add(base.relative_to(root).as_posix())
+                for glob in (f"{base.name}.tmp-", f"{base.name}.quarantined-"):
+                    found = _list_tmp_paths(base.parent, glob)
+                    if found is None:
+                        return set(), False, True
+                    names.update(entry.relative_to(root).as_posix() for entry in found)
+                if base.name.startswith(PROBE_CONSUMED_PREFIX):
+                    slot = _marker_slot_name(base.name)
+                    if slot is None:
+                        return set(), False, True
+                    for glob in (f"{slot}.tmp-", f"{slot}.quarantined-"):
+                        found = _list_tmp_paths(root, glob)
+                        if found is None:
+                            return set(), False, True
+                        names.update(entry.relative_to(root).as_posix() for entry in found)
+            return names, True, False
+
         if blind_reason is not None:
             # A raced scan reruns first (#88R44-[A]r22, Claude Q3):
             # nothing is unreadable, and any co-occurring fault
@@ -19992,16 +20108,73 @@ def sweep_orphans(
                     for key, claimed, kind in snapshot.census.degraded.get(uuid[:8], ())
                     if kind == "torn" and claimed == uuid and _path_state(root / key) != "missing"
                 )
-                named = _format_unbound_blockers(own_torn) or "its torn members"
-                warnings.warn(
-                    f"{display} shares its probe prefix with torn evidence while "
-                    "probe or marker evidence exists under it; retained as ambiguity "
-                    f"evidence; exit: archive {named} outside the counters directory, "
-                    "then collect the probe evidence and rerun (keep the probe: it "
-                    "carries recoverable calls)",
-                    UserWarning,
-                    stacklevel=3,
+                # Member rewrite inventory (Claude Q3 finding 1, r39):
+                # the members' `.tmp-*`/`.quarantined-*` companions
+                # travel with them (leaving a baseline-less rewrite
+                # strands its returns), joined uncapped. Each member
+                # re-reads still-torn first (healed members collect
+                # in place instead); the enumeration is bracketed;
+                # any fault or drift keeps the family in place. A
+                # torn member arriving between the scan and this
+                # voice is not listed (no census rescan on this
+                # path); the next pass re-observes it -- same
+                # accepted class as the r36 sub-read residual.
+                member_before = _dir_mtime_ns(root)
+                still_torn: list[str] = []
+                member_faulted = False
+                for key in own_torn:
+                    member_status = _member_reread_status(root / key)
+                    if member_status == "torn":
+                        still_torn.append(key)
+                    elif member_status == "fault":
+                        member_faulted = True
+                member_names, member_verified, member_helper_faulted = _move_rewrite_names(
+                    [root / key for key in still_torn]
                 )
+                member_faulted = member_faulted or member_helper_faulted
+                if len(still_torn) != len(own_torn):
+                    member_verified = False
+                member_after = _dir_mtime_ns(root)
+                if member_before is None or member_after is None or member_before != member_after:
+                    member_verified = False
+                if not member_names:
+                    # Nothing archivable (members vanished mid-pass):
+                    # re-observe next pass instead of printing an
+                    # empty list.
+                    member_verified = False
+                if member_verified:
+                    named = ", ".join(sorted(member_names))
+                    warnings.warn(
+                        f"{display} shares its probe prefix with torn evidence while "
+                        "probe or marker evidence exists under it; retained as ambiguity "
+                        f"evidence; exit: archive the listed members and their rewrite "
+                        "companions after writers and collectors are quiescent (stop all runs "
+                        "and collects on this directory, re-read each listed member and verify "
+                        "it is still torn, re-inventory companions, and move the verified fresh "
+                        "set; listed names are diagnostic only), then collect the probe evidence "
+                        "and rerun (keep the probe: it carries recoverable calls; collect "
+                        f"healed members in place): {named}",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                elif member_faulted:
+                    warnings.warn(
+                        f"{display} shares its probe prefix with torn evidence while "
+                        "probe or marker evidence exists under it; retained as ambiguity "
+                        "evidence; exit: the member inventory could not be verified; keep "
+                        "the family in place until it can be listed",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                else:
+                    warnings.warn(
+                        f"{display} shares its probe prefix with torn evidence while "
+                        "probe or marker evidence exists under it; retained as ambiguity "
+                        "evidence; exit: the member inventory changed during verification; "
+                        "keep the family in place and rerun to re-list",
+                        UserWarning,
+                        stacklevel=3,
+                    )
                 return True
             if foreign:
                 # Torn-only blindness voices the collision (or a plain
@@ -20061,11 +20234,130 @@ def sweep_orphans(
         if uuid[:8] in snapshot.probe_prefixes and not any(
             other != uuid and other.startswith(uuid[:8]) for other in snapshot.census.uuids
         ):
+            blockers = (
+                _format_unbound_blockers(sorted(snapshot.pinned_by.get(uuid[:8], ())))
+                or "the probe evidence"
+            )
+            # Archival names EVERY dependent, uncapped (#88R44-[A]r32,
+            # Codex R31-1): attributed probes and markers resolve
+            # content-exactly (never pin), so the blocker list omits
+            # them -- but moving the family without them strands
+            # their calls. The capped formatter stays for diagnosis
+            # only; the action list joins all names.
+            dependents = sorted(
+                set(snapshot.pinned_by.get(uuid[:8], ()))
+                | set(snapshot.attributed_by.get(uuid, ()))
+            )
+            # The preview names the family's own files too (Claude Q3
+            # finding 6): the operator moves them with the dependents,
+            # and "this family" alone does not enumerate the registry
+            # in its subdirectory, the sidecar, or the journal.
+            move_bases: list[Path] = [root / dep for dep in dependents]
+            family_ok = True
+            registry_base = root / REGISTRY_DIRNAME / f"{uuid}.json"
+            if _path_state(registry_base) != "missing":
+                move_bases.append(registry_base)
+            # Body-linked sidecars (Codex R39-5): filename matching
+            # misses sidecars the census attested by body (a valid
+            # body with no contradictory filename claim attests its
+            # owner, uuidless name or not). Trusted bases cover them;
+            # unattributable strays (torn bytes, uuidless names) stay
+            # invisible here -- the action-time inventory sees them
+            # as plain files.
+            for owner, basis in snapshot.census.trusted_by:
+                if owner != uuid:
+                    continue
+                basis_path = root / basis
+                if _path_state(basis_path) != "missing":
+                    move_bases.append(basis_path)
+            # Journals, fault-aware (Codex R39-5): pathlib glob
+            # swallows readdir faults, so a fault-aware listing
+            # drives both the direct orphans (whose sidecar is
+            # absent) and the per-sidecar derivations below.
+            journal_hits = _list_evidence_files(root, "", JOURNAL_SUFFIX)
+            if journal_hits is None:
+                family_ok = False
+            else:
+                for journal_path in journal_hits:
+                    if journal_path.name.startswith(f"{uuid}-"):
+                        move_bases.append(journal_path)
+            for sidecar_base in [b for b in move_bases if b.name.endswith(SIDECAR_SUFFIX)]:
+                journal_base = _journal_for_sidecar(sidecar_base)
+                if _path_state(journal_base) != "missing":
+                    move_bases.append(journal_base)
+            move_bases = sorted(set(move_bases))
+            # Archival inventories each base's rewrites via the
+            # shared companion helper (#88R44-[A]r39): moving the
+            # family without a probe's in-flight rewrite strands its
+            # returns. One bracketed observation (#88R44-[A]r34, Codex
+            # R33-1): the rewrite enumeration must see a quiescent
+            # directory between the two samples, or a rewrite landing
+            # mid-enumeration is silently omitted. Rewrite arrivals
+            # and departures always bump the directory clock, so the
+            # bracket owns the rewrite-membership domain fully.
+            move_before = _dir_mtime_ns(root)
+            move_names, move_verified, move_faulted = _move_rewrite_names(move_bases)
+            move_verified = move_verified and family_ok
+            move_faulted = move_faulted or not family_ok
+            # Fresh-classification compare (#88R44-[A]r36, Codex
+            # R35-1): same-name content flips are invisible to the
+            # directory clock, so the bracket cannot see them --
+            # re-run the probe/marker classification outright
+            # (bypassing the memo, which is exactly what can serve
+            # the stale view) and require the same dependent union.
+            # Membership-stable flips move the same files (bytes
+            # travel with the name), so only drift -- or an
+            # unreadable rescan -- degrades to keep-in-place. A flip
+            # landing after the rescan has read a given file stays
+            # invisible through the rest of the rescan, the bracket
+            # close, and formatting (Claude Q3 finding 4: the blind
+            # window starts at each file's read, not at print); that
+            # residual is narrower than the project's accepted
+            # post-match window, and the collect-first primary never
+            # depends on this list. A raced rescan is transient churn
+            # (rerun), only a listing fault is persistent.
+            fresh_inventory, fresh_raced = _probe_ambiguity_prefixes(root)
+            if not fresh_inventory.readable:
+                move_verified = False
+                move_faulted = move_faulted or not fresh_raced
+            else:
+                dependents_now = set(fresh_inventory.pinned_by.get(uuid[:8], ())) | set(
+                    fresh_inventory.attributed_by.get(uuid, ())
+                )
+                if set(dependents) != dependents_now:
+                    move_verified = False
+            move_after = _dir_mtime_ns(root)
+            bracket_clean = (
+                move_before is not None and move_after is not None and move_before == move_after
+            )
+            move_verified = move_verified and bracket_clean
+            if move_verified:
+                # Names are diagnostic preview, not the move list
+                # (#88R44-[A]r37, Codex R36-1): no finite observation
+                # closes interleaved-write races, so archival requires
+                # writers and collectors quiescent plus a fresh
+                # action-time inventory -- quiescence makes that
+                # inventory complete by construction.
+                move = ", ".join(sorted(move_names)) if move_names else "the probe evidence"
+                move_exit = (
+                    "exit: collect the probe evidence, then rerun (or archive the family "
+                    "after writers and collectors are quiescent: stop all runs and collects "
+                    "on this directory, take a fresh inventory of this family's probe, marker, "
+                    "rewrite, and quarantine files, verifying each file's ownership at action "
+                    "time, and move that fresh inventory together with this family outside the "
+                    "counters directory; if ownership or completeness cannot be established, "
+                    "keep the family in place; printed names are diagnostic "
+                    f"only: {move})"
+                )
+            elif move_faulted:
+                move_exit = _KEEP_IN_PLACE_FAULT_EXIT
+            else:
+                move_exit = _KEEP_IN_PLACE_RERUN_EXIT
             warnings.warn(
-                f"{display} is the last usable binding under its probe prefix while "
-                "probe or marker evidence exists under it; retained as ambiguity "
-                "evidence; exit: collect the probe evidence, then rerun (or archive "
-                "the probe together with this family outside the counters directory)",
+                f"{display} is the only usable binding the scan could establish "
+                "under its probe prefix while probe or marker evidence exists under it "
+                f"(blocking: {blockers}); retained as ambiguity evidence; "
+                f"{move_exit}",
                 UserWarning,
                 stacklevel=3,
             )
