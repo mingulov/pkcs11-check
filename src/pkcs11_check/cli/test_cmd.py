@@ -308,6 +308,16 @@ def _early_jsonl_path(output_file: str | None) -> Path:
     return Path(output_file or "pkcs11-check-results.json").parent / "report.jsonl"
 
 
+def _same_file(first: Path, second: Path) -> bool:
+    """True when two paths name the same file (aliases and hard links included)."""
+    if first.resolve() == second.resolve():
+        return True
+    try:
+        return first.exists() and second.exists() and os.path.samefile(first, second)
+    except OSError:
+        return False
+
+
 def _early_jsonl_collides(output_file: str | None) -> bool:
     """True when the retained JSONL and the results file are the same file.
 
@@ -318,7 +328,99 @@ def _early_jsonl_collides(output_file: str | None) -> bool:
     back to the preflight sidecar, and nothing is silently eaten.
     """
     results_path = Path(output_file or "pkcs11-check-results.json")
-    return _early_jsonl_path(output_file).resolve() == results_path.resolve()
+    return _same_file(_early_jsonl_path(output_file), results_path)
+
+
+def _extract_counters_from_blob(blob: bytes, *, dir: Path) -> dict[str, Any] | None:
+    """Fold counter records from in-memory bytes via the stock extractor.
+
+    B1/R3: both the refused-run tail and the failed-append union need exact
+    extractor semantics (first-wins, torn-tail tolerance) without a durable
+    file. The bytes ride a temp file in ``dir`` (created as needed) so the
+    path-based extractor runs unmodified; any IO failure yields None and the
+    caller falls back. The temp file is always removed best-effort.
+    """
+    if not blob.strip():
+        return None
+    try:
+        dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    tmp_path = dir / f".report-counters-{os.getpid()}.tmp"
+    try:
+        tmp_path.write_bytes(blob)
+    except OSError:
+        return None
+    try:
+        return extract_call_counters_from_jsonl(tmp_path)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _quarantine_refused_evidence(
+    evidence_path: Path | None,
+    pre_size: int | None,
+    console: Console,
+) -> bytes:
+    """Remove the refused run's appended scope; return it for the separate report.
+
+    B1/R3-1: the preflight evidence file is append-mode and shared by state
+    path, so a refused provider B's scope would otherwise linger beside
+    provider A's scopes and fold into A's later valid resume. ``pre_size``
+    is the file size snapshotted before this run's preflight: the tail past
+    it is exactly this run's append. A file absent pre-run is wholly ours
+    and unlinked. Every IO failure warns loudly (leftover bytes are a
+    future contamination vector) and yields the tail read, possibly empty.
+    """
+    if evidence_path is None:
+        return b""
+    try:
+        data = evidence_path.read_bytes()
+    except OSError as exc:
+        console.print(
+            "[yellow]Warning:[/yellow] refused-run evidence could not be read "
+            f"({evidence_path}: {exc}); a later resume may fold its counters"
+        )
+        return b""
+    if pre_size is None:
+        try:
+            evidence_path.unlink(missing_ok=True)
+        except OSError as exc:
+            console.print(
+                "[yellow]Warning:[/yellow] refused-run evidence could not be removed "
+                f"({evidence_path}: {exc}); a later resume may fold its counters"
+            )
+        return data
+    if pre_size > len(data):
+        console.print(
+            "[yellow]Warning:[/yellow] refused-run evidence changed under the run "
+            f"({evidence_path}); leaving it in place, current counters unknown"
+        )
+        return b""
+    tail = data[pre_size:]
+    try:
+        with open(evidence_path, "r+b") as handle:
+            handle.truncate(pre_size)
+    except OSError as exc:
+        console.print(
+            "[yellow]Warning:[/yellow] refused-run evidence could not be quarantined "
+            f"({evidence_path}: {exc}); a later resume may fold its counters"
+        )
+    return tail
+
+
+def _extract_union_counters(jsonl_path: Path, blob: bytes) -> dict[str, Any] | None:
+    """Fold surviving JSONL bytes plus an unretained blob as one stream (R3-3)."""
+    try:
+        old = jsonl_path.read_bytes()
+    except OSError:
+        old = b""
+    if old and not old.endswith(b"\n"):
+        old += b"\n"
+    return _extract_counters_from_blob(old + blob, dir=jsonl_path.parent)
 
 
 def _prior_state_for_early_failure(
@@ -335,11 +437,16 @@ def _prior_state_for_early_failure(
     still catches the cross-provider accident (provider B pointed at
     provider A's state). Returns (admitted state, refused): on a proven
     mismatch the state is refused, the prior artifacts are left untouched
-    (callers must skip the retain — a fresh-shape overwrite would eat them),
-    and the current failure reports separately, so a later valid resume of
+    (callers must skip the retain — a fresh-shape overwrite would eat them —
+    and quarantine the refused scope out of the shared evidence file), and
+    the current failure reports separately, so a later valid resume of
     A never folds B's counts. Legacy states without a snapshot, and runs
-    whose own module file cannot be snapshotted, stay unverifiable and
-    merge as before: the gate fires only on a proven difference.
+    whose own module file is MISSING, stay unverifiable and merge as
+    before. An existing-but-unreadable module fails closed (refuse),
+    matching the fingerprint gate, which likewise invalidates a resume on
+    unreadable bytes; a same-path rebuild (new mtime/size/digest) refuses
+    for the same reason, exactly as a resumed run would downstream. The
+    gate fires only on a proven difference.
     """
     if prior_state is None or prior_state.module_snapshot is None:
         return prior_state, False
@@ -369,6 +476,8 @@ def _write_early_failure_results(
     state_file: Path,
     prior_state: FileRunState | None,
     provenance: dict[str, Any] | None,
+    retain: tuple[bool, bytes],
+    refused_tail: bytes | None,
 ) -> None:
     """Write results.json for a JSON run dead on arrival (exit 1), else nothing.
 
@@ -383,13 +492,20 @@ def _write_early_failure_results(
     rejoins via the reporting copy, per-unit details rebuild from the prior
     record caches (so test counts survive), and counters fold from the
     report JSONL -- which is why both call sites retain evidence BEFORE
-    writing. Without a prior state the exact old shape is kept. Trust rule
-    (R2-F2): the admitted prior state already passed the module-identity
-    gate at the call sites (a proven cross-provider mismatch reports
-    separately and never reaches the merge); legacy states without a module
-    snapshot stay unverifiable and merge as before, the crash row carries
-    the current module target so a mixed report still self-attributes, and
-    unit execution stays fingerprint-gated downstream.
+    writing. Without a prior state the exact old shape is kept, except a
+    state-adjacent collection row still rejoins (R3-4: a collection failure
+    on a stateless run leaves a durable sidecar the next attempt must not
+    drop). Trust rule (R2-F2): the admitted prior state already passed the
+    module-identity gate at the call sites (a proven cross-provider
+    mismatch reports separately and never reaches the merge); legacy states
+    without a module snapshot stay unverifiable and merge as before, the
+    crash row carries the current module target so a mixed report still
+    self-attributes, and unit execution stays fingerprint-gated downstream.
+    ``retain`` is the retain outcome (ok, blob): on ok=False the counters
+    fold the union of the surviving JSONL and the unretained blob (R3-3).
+    ``refused_tail`` is not None exactly on the refused path, and then the
+    counters come from those quarantined bytes alone -- never from the
+    shared evidence file, which holds the other provider's scopes again.
     """
     if output != "json":
         return
@@ -407,10 +523,27 @@ def _write_early_failure_results(
             results=[result],
             process_observations=[observation] if isinstance(observation, dict) else [],
         )
-        counters = _evidence_counters(preflight_evidence_path)
-        details: dict[str, dict[str, Any]] | None = None
-        report_provenance = None
-        report_state = state
+        if refused_tail is not None:
+            # Refused (R2-F2/R3-1): no collection rejoin (that row would be
+            # the other provider's), counters from the quarantined tail.
+            report_state = state
+            details: dict[str, dict[str, Any]] | None = None
+            counters = _extract_counters_from_blob(refused_tail, dir=results_path.parent)
+            report_provenance = None
+        else:
+            report_state, collection_inline = _collection_failure_reporting_copy(
+                state_file, state, {}
+            )
+            if collection_inline:
+                details = _build_per_unit_details_from_record_sources(
+                    state_file,
+                    units=list(report_state.units),
+                    inline_records_by_unit=collection_inline,
+                )
+            else:
+                details = None
+            counters = _evidence_counters(preflight_evidence_path)
+            report_provenance = None
     else:
         units = list(prior_state.units)
         if str(module) not in units:
@@ -457,11 +590,18 @@ def _write_early_failure_results(
             units=list(report_state.units),
             inline_records_by_unit=inline_records_by_unit,
         )
+        retain_ok, retain_blob = retain
         if _early_jsonl_collides(output_file):
             # R2-F5: the summary owns this file; a same-path read would fold
             # whatever stale bytes it holds. Counters come from the current
             # preflight sidecar only.
             counters = None
+        elif not retain_ok:
+            # R3-3: the append failed but the old JSONL survived: fold the
+            # union (surviving bytes + unretained blob) exactly as a
+            # successful append would have landed, so the current round
+            # never hides behind a complete-looking history.
+            counters = _extract_union_counters(_early_jsonl_path(output_file), retain_blob)
         else:
             counters = extract_call_counters_from_jsonl(_early_jsonl_path(output_file))
         if counters is None:
@@ -488,8 +628,8 @@ def _retain_early_failure_evidence(
     preflight_evidence_path: Path | None,
     console: Console,
     prior_state: FileRunState | None,
-) -> None:
-    """Retain counter-only JSONL evidence next to the results, else nothing.
+) -> tuple[bool, bytes]:
+    """Retain counter-only JSONL evidence next to the results; report (ok, blob).
 
     A dead-on-arrival JSON run keeps its counts-or-loss evidence even when
     no results file is written (plain error manifests); text mode and usage
@@ -498,29 +638,35 @@ def _retain_early_failure_evidence(
     survive; without one the overwriting write is kept. Re-appends are safe:
     the extractor folds uuid-bearing repeats first-wins, so a retried round
     never double-counts. Under a results/JSONL path collision nothing is
-    retained (R2-F5): the summary owns that file.
+    retained (R2-F5): the summary owns that file. B1/R3-3: a failed write
+    reports ok=False with the blob, so the report can still fold the union
+    of the surviving JSONL and the unretained round instead of silently
+    dropping the current counts; a torn partial tail is truncated back
+    best-effort so the next resume appends to clean bytes.
     """
     if output != "json" or preflight_evidence_path is None:
-        return
+        return True, b""
     if _early_jsonl_collides(output_file):
         console.print(
             "[yellow]Warning:[/yellow] output file collides with the retained "
             "report JSONL path; preflight counter evidence not retained"
         )
-        return
+        return True, b""
     try:
         blob = preflight_evidence_path.read_bytes()
     except OSError:
         blob = b""
     if not blob.strip():
-        return
+        return True, b""
     jsonl_path = _early_jsonl_path(output_file)
-    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    pre_size = -1
     try:
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         if prior_state is not None and jsonl_path.exists():
             with open(jsonl_path, "rb+") as handle:
                 handle.seek(0, 2)
-                if handle.tell() > 0:
+                pre_size = handle.tell()
+                if pre_size > 0:
                     handle.seek(-1, 2)
                     if handle.read(1) != b"\n":
                         handle.seek(0, 2)
@@ -531,6 +677,14 @@ def _retain_early_failure_evidence(
             jsonl_path.write_bytes(blob)
     except OSError as exc:
         console.print(f"[yellow]Warning:[/yellow] preflight counter evidence not retained: {exc}")
+        if pre_size >= 0:
+            try:
+                with open(jsonl_path, "r+b") as handle:
+                    handle.truncate(pre_size)
+            except OSError:
+                pass
+        return False, blob
+    return True, blob
 
 
 def _fold_preflight_evidence(
@@ -544,9 +698,17 @@ def _fold_preflight_evidence(
     Appends every accumulated round's evidence to the merged ``report.jsonl``
     and, for JSON output, refreshes the ``call_counters`` block the runner
     extracted before the splice. Warns and continues on any failure: counter
-    plumbing never fails a run.
+    plumbing never fails a run. Under a results/JSONL path collision the
+    splice is skipped (R3-5): appending raw records to the summary file
+    would corrupt its JSON; the runner-extracted counters stand.
     """
     if report_config is None or report_config.jsonl_path is None or evidence_path is None:
+        return
+    if _same_file(report_config.jsonl_path, report_config.output_path):
+        console.print(
+            "[yellow]Warning:[/yellow] output file collides with the report "
+            "JSONL path; preflight counter evidence not folded"
+        )
         return
     try:
         spliced = splice_preflight_evidence(report_config.jsonl_path, evidence_path)
@@ -1598,6 +1760,18 @@ def test_command(
         )
         # Recovery probes resolve the same file from the environment.
         os.environ[PREFLIGHT_EVIDENCE_ENV] = str(preflight_evidence_path)
+        # B1/R3-1: snapshot the evidence size before this run appends. On a
+        # refused cross-provider merge the tail past this size is exactly
+        # this run's scope: it is quarantined out of the shared file (so a
+        # later valid resume never folds it) and reported separately.
+        try:
+            preflight_evidence_pre_size: int | None = (
+                preflight_evidence_path.stat().st_size
+                if preflight_evidence_path is not None
+                else None
+            )
+        except OSError:
+            preflight_evidence_pre_size = None
         try:
             manifest = run_preflight_subprocess(
                 module,
@@ -1621,13 +1795,19 @@ def test_command(
             # a cross-provider merge (R2-F2): a proven mismatch reports the
             # current failure separately and leaves prior artifacts alone
             # (the retain is skipped — even the fresh-shape overwrite would
-            # eat them).
+            # eat them — and the refused scope is quarantined out of the
+            # shared evidence file, R3-1).
             prior_state, prior_refused = _prior_state_for_early_failure(
                 prior_state=load_run_state(state_file) if resume else None,
                 module=module,
                 state_file=state_file,
                 console=console,
             )
+            refused_tail: bytes | None = None
+            if prior_refused:
+                refused_tail = _quarantine_refused_evidence(
+                    preflight_evidence_path, preflight_evidence_pre_size, console
+                )
             if manifest.status in {"crashed", "timeout"}:
                 observation = manifest.process_observation
                 raw_code = (
@@ -1643,8 +1823,9 @@ def test_command(
                 )
                 # B1: retain before writing: the merged report folds counters
                 # from the appended JSONL.
+                retain_outcome: tuple[bool, bytes] = (True, b"")
                 if not prior_refused:
-                    _retain_early_failure_evidence(
+                    retain_outcome = _retain_early_failure_evidence(
                         output=output,
                         output_file=output_file,
                         preflight_evidence_path=preflight_evidence_path,
@@ -1663,6 +1844,8 @@ def test_command(
                     state_file=state_file,
                     prior_state=prior_state,
                     provenance=_build_run_provenance(manifest, resolve_data_dir()),
+                    retain=retain_outcome,
+                    refused_tail=refused_tail,
                 )
             else:
                 if not prior_refused:
@@ -1735,15 +1918,22 @@ def test_command(
                 # B1: one prior-state load feeds both writers (same agreed
                 # merge-vs-fresh rule as the manifest path above, including
                 # the R2-F2 cross-provider refusal, which also skips the
-                # retain so prior artifacts stay untouched).
+                # retain and quarantines the refused scope (R3-1) so prior
+                # artifacts stay untouched).
                 prior_state, prior_refused = _prior_state_for_early_failure(
                     prior_state=load_run_state(state_file) if resume else None,
                     module=module,
                     state_file=state_file,
                     console=console,
                 )
-                if not prior_refused:
-                    _retain_early_failure_evidence(
+                login_refused_tail: bytes | None = None
+                login_retain_outcome: tuple[bool, bytes] = (True, b"")
+                if prior_refused:
+                    login_refused_tail = _quarantine_refused_evidence(
+                        preflight_evidence_path, preflight_evidence_pre_size, console
+                    )
+                else:
+                    login_retain_outcome = _retain_early_failure_evidence(
                         output=output,
                         output_file=output_file,
                         preflight_evidence_path=preflight_evidence_path,
@@ -1762,6 +1952,8 @@ def test_command(
                     state_file=state_file,
                     prior_state=prior_state,
                     provenance=_build_run_provenance(manifest, resolve_data_dir()),
+                    retain=login_retain_outcome,
+                    refused_tail=login_refused_tail,
                 )
                 raise typer.Exit(code=_resume_exit_code(state_file, 1) if resume else 1)
             if login_probe.status == "error":

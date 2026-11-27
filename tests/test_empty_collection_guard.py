@@ -25,6 +25,7 @@ from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
+    _path_snapshot,
     _write_unit_report_record_cache,
     load_run_state,
     run_isolated_pytest_units,
@@ -69,9 +70,11 @@ def _report_config(tmp_path: Path, output_format: str | None) -> IsolatedReportC
 
 
 def test_empty_units_returns_couldnt_run_code(tmp_path: Path) -> None:
+    module = tmp_path / "module.so"
+    module.write_bytes(b"provider-bytes")
     exit_code = run_isolated_pytest_units(
         [],  # nothing collected
-        ["--p11-module", "/tmp/module.so"],
+        ["--p11-module", str(module)],
         timeout=12,
         state_file=tmp_path / "state.json",
         policy_file=None,
@@ -83,6 +86,11 @@ def test_empty_units_returns_couldnt_run_code(tmp_path: Path) -> None:
     )
     assert exit_code == _NO_TESTS_COLLECTED_EXIT
     assert exit_code >= 2  # contract: rc>=2 == "couldn't run" -> CI fails the job
+    # B1/R3-2: even the fresh empty state stamps the module snapshot the
+    # early-failure gate reads back.
+    loaded = load_run_state(tmp_path / "state.json")
+    assert loaded is not None
+    assert loaded.module_snapshot == _path_snapshot(str(module))
 
 
 @pytest.mark.parametrize("output_format", [None, "json", "junit"])

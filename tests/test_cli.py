@@ -5880,7 +5880,7 @@ class TestTestCommand:
     def test_test_resume_manifest_crash_cross_module_reports_separately(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1/R2-F2: a proven cross-provider state reports separately, artifacts kept."""
+        """B1/R2-F2/R3-1: a proven cross-provider state reports separately, artifacts kept."""
         from pkcs11_check.core.file_runner import _path_snapshot
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
 
@@ -5902,15 +5902,19 @@ class TestTestCommand:
         prior_jsonl = tmp_path / "report.jsonl"
         prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
         prior_jsonl.write_text(prior_line, encoding="utf-8")
-        preflight_evidence_path_for_state(state_file).write_text(
-            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setattr(
-            test_cmd,
-            "run_preflight_subprocess",
-            lambda module, **kwargs: self._b1_crashed_manifest(module),
-        )
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(prior_line, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+
+        def appending_crashed_preflight(module: object, **kwargs: object) -> CapabilityManifest:
+            # The real preflight appends its scope to the shared evidence
+            # file before crashing; the mock must do the same.
+            with open(evidence_path, "a", encoding="utf-8") as handle:
+                handle.write(current_line)
+            return self._b1_crashed_manifest(module)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", appending_crashed_preflight)
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
         )
@@ -5932,12 +5936,15 @@ class TestTestCommand:
         assert result.exit_code == 1, result.output
         assert "different module" in result.output
         # Fresh shape: only the current crash row; the prior JSONL keeps
-        # provider A's bytes exactly, so a later valid resume never folds
-        # provider B's counts; the counters come from B's own sidecar.
+        # provider A's bytes exactly and the refused scope is quarantined
+        # out of the shared evidence file, so a later valid resume never
+        # folds provider B's counts; the separate summary still counts B's
+        # own round from the quarantined tail.
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
         assert rows == [(str(module_b), "crashed")]
         assert prior_jsonl.read_text(encoding="utf-8") == prior_line
+        assert evidence_path.read_text(encoding="utf-8") == prior_line
         assert payload["call_counters"]["total_calls"] == 5
 
     def test_test_resume_manifest_crash_same_module_snapshot_merges(
@@ -6048,7 +6055,7 @@ class TestTestCommand:
     def test_test_resume_manifest_crash_colliding_output_keeps_valid_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1/R2-F5: under a results/JSONL collision the summary wins, counters stay honest."""
+        """B1/R2-F5/R3-5: under a results/JSONL collision the summary wins, counters stay honest."""
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
 
         module = tmp_path / "dummy.so"
@@ -6063,7 +6070,12 @@ class TestTestCommand:
             ),
         )
         collided = tmp_path / "report.jsonl"
-        collided.write_text("stale-unattributable-bytes\n", encoding="utf-8")
+        # Parseable stale counters: 5 in the summary proves the writers
+        # skipped the collided path (an append-then-overwrite would fold 15).
+        collided.write_text(
+            self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n",
+            encoding="utf-8",
+        )
         preflight_evidence_path_for_state(state_file).write_text(
             self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
             encoding="utf-8",
@@ -6100,6 +6112,258 @@ class TestTestCommand:
         assert rows == sorted([("a.py", "passed"), (str(module), "crashed")])
         assert payload["call_counters"]["total_calls"] == 5
 
+    def test_quarantine_refused_evidence_branches(self, tmp_path: Path) -> None:
+        """B1/R3-1: quarantine returns the tail and restores the shared file."""
+        import io
+
+        from rich.console import Console
+
+        console = Console(file=io.StringIO(), width=100)
+
+        assert test_cmd._quarantine_refused_evidence(None, None, console) == b""
+        assert test_cmd._quarantine_refused_evidence(tmp_path / "gone.jsonl", None, console) == b""
+
+        evidence = tmp_path / "evidence.jsonl"
+        evidence.write_bytes(b"AAAABBBB")
+        assert test_cmd._quarantine_refused_evidence(evidence, 4, console) == b"BBBB"
+        assert evidence.read_bytes() == b"AAAA"
+
+        evidence.write_bytes(b"AAAABBBB")
+        assert test_cmd._quarantine_refused_evidence(evidence, None, console) == (b"AAAABBBB")
+        assert not evidence.exists()
+
+        evidence.write_bytes(b"AAAA")
+        assert test_cmd._quarantine_refused_evidence(evidence, 99, console) == b""
+        assert evidence.read_bytes() == b"AAAA"
+
+    def test_prior_state_gate_strictness(self, tmp_path: Path) -> None:
+        """B1/R3-2: mtime/digest changes refuse; path aliases still admit."""
+        import io
+
+        from rich.console import Console
+
+        from pkcs11_check.core.file_runner import _path_snapshot
+
+        module = tmp_path / "a.so"
+        module.write_bytes(b"provider-a-bytes")
+        stored = _path_snapshot(str(module))
+        assert stored is not None
+        console = Console(file=io.StringIO(), width=100)
+        state_file = tmp_path / "state.json"
+
+        aliased = tmp_path / "sub" / ".." / "a.so"
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=FileRunState(
+                units=[], fingerprint="", results=[], module_snapshot=dict(stored)
+            ),
+            module=aliased,
+            state_file=state_file,
+            console=console,
+        )
+        assert refused is False and admitted is not None
+
+        changed = dict(stored)
+        changed["sha256"] = "0" * 64
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=FileRunState(units=[], fingerprint="", results=[], module_snapshot=changed),
+            module=module,
+            state_file=state_file,
+            console=console,
+        )
+        assert (admitted, refused) == (None, True)
+
+        old_snapshot = _path_snapshot(str(module))
+        assert old_snapshot is not None
+        stat = module.stat()
+        os.utime(module, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=FileRunState(
+                units=[], fingerprint="", results=[], module_snapshot=old_snapshot
+            ),
+            module=module,
+            state_file=state_file,
+            console=console,
+        )
+        assert (admitted, refused) == (None, True)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics")
+    def test_content_digest_unreadable_fails_closed(self, tmp_path: Path) -> None:
+        """B1/R3-2: an unreadable module file fails the gate closed (refuse)."""
+        import io
+
+        from rich.console import Console
+
+        from pkcs11_check.core._run_state import _content_digest, _path_snapshot
+
+        module = tmp_path / "a.so"
+        module.write_bytes(b"provider-a-bytes")
+        stored = _path_snapshot(str(module))
+        assert stored is not None
+        module.chmod(0o000)
+        try:
+            if os.access(module, os.R_OK):
+                pytest.skip("file still readable despite chmod (root?)")
+            assert _content_digest(module) == "unreadable"
+            console = Console(file=io.StringIO(), width=100)
+            admitted, refused = test_cmd._prior_state_for_early_failure(
+                prior_state=FileRunState(
+                    units=[], fingerprint="", results=[], module_snapshot=stored
+                ),
+                module=module,
+                state_file=tmp_path / "state.json",
+                console=console,
+            )
+            assert (admitted, refused) == (None, True)
+        finally:
+            module.chmod(0o644)
+
+    def test_test_resume_early_failure_failed_append_folds_union(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R3-3: a failed append still folds history plus the current round."""
+        import builtins
+
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
+        prior_jsonl.write_text(prior_line + "\n", encoding="utf-8")
+        preflight_evidence_path_for_state(state_file).write_text(
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
+        )
+
+        real_open = builtins.open
+
+        def fail_read_write_bytes(
+            file: object, mode: str = "r", *args: object, **kwargs: object
+        ) -> object:
+            if "b" in mode and "+" in mode:
+                raise OSError("forced append failure")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", fail_read_write_bytes)
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        # The JSONL keeps its old bytes (nothing retained, torn tail
+        # impossible since the open itself failed); the summary folds the
+        # union, so the current round never hides behind the history.
+        assert prior_jsonl.read_text(encoding="utf-8") == prior_line + "\n"
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 15
+
+    def test_test_resume_without_state_rejoins_collection_sidecar(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R3-4: a stateless resume still rejoins a saved collection row."""
+        from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "missing-state.json"
+        sidecar = collection_failure_sidecar_path(state_file)
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "$report_type": "CollectReport",
+                    "outcome": "failed",
+                    "nodeid": "b.py",
+                    "longrepr": "import boom",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        results_path = tmp_path / "results.json"
+        stale_jsonl = tmp_path / "report.jsonl"
+        stale_jsonl.write_text("stale-unattributable-bytes\n", encoding="utf-8")
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted([("<collection>", "failed"), (str(module), "crashed")])
+        by_target = {unit["target"]: unit for unit in payload["units"]}
+        assert "import boom" in json.dumps(by_target["<collection>"])
+        # The stale JSONL is still left untouched: no seeding on the
+        # stateless path, the row rides the sidecar alone.
+        assert stale_jsonl.read_text(encoding="utf-8") == "stale-unattributable-bytes\n"
+
+    def test_fold_preflight_evidence_collision_skips_splice(self, tmp_path: Path) -> None:
+        """B1/R3-5: the normal-path splice skips a collided summary file."""
+        import io
+
+        from rich.console import Console
+
+        collided = tmp_path / "report.jsonl"
+        collided.write_text('{"summary": true}\n', encoding="utf-8")
+        evidence = tmp_path / "evidence.jsonl"
+        evidence.write_text(
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
+        )
+        config = IsolatedReportConfig("json", collided, jsonl_path=collided)
+        test_cmd._fold_preflight_evidence(
+            config, evidence, "json", Console(file=io.StringIO(), width=100)
+        )
+        assert collided.read_text(encoding="utf-8") == '{"summary": true}\n'
+
     def test_retain_without_prior_state_overwrites(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -6121,7 +6385,7 @@ class TestTestCommand:
             console=Console(file=io.StringIO(), width=100),
             prior_state=None,
         )
-        assert result is None
+        assert result == (True, blob.encode("utf-8"))
         assert stale_jsonl.read_text(encoding="utf-8") == blob
 
     def test_test_preflight_timeout_default_json_artifact(
