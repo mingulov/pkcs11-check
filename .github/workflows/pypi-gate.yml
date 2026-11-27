@@ -340,15 +340,27 @@ jobs:
           # or valid single-quoted links, broke the leg after the wait passed.
           # The loop resolves both hrefs with one tolerant expression and
           # retains this leg's URL as a step output; install consumes it blind.
-          LINK_RE = re.compile(r"""href=(["'])([^"']+)\1[^>]*>([^<>]+)<""")
+          # R4-3: whitespace around `=` is valid HTML (a strict match would
+          # time out on it), and a resolved URL only counts when it is HTTPS
+          # and its filename is exactly the wanted file -- otherwise a
+          # whitespace-href decoy with the right link text would pass the
+          # wait and hand pip the index page itself.
+          LINK_RE = re.compile(r"""href\s*=\s*(["'])([^"']+)\1[^>]*>([^<>]+)<""")
 
 
           def page_hrefs(page: str) -> dict[str, str]:
-              return {
-                  name: urllib.parse.urljoin(SIMPLE_URL, href)
-                  for _quote, href, name in LINK_RE.findall(page)
-                  if name in (wheel_name, sdist_name)
-              }
+              found: dict[str, str] = {}
+              for _quote, href, name in LINK_RE.findall(page):
+                  if name not in (wheel_name, sdist_name):
+                      continue
+                  resolved = urllib.parse.urljoin(SIMPLE_URL, href)
+                  parts = urllib.parse.urlparse(resolved)
+                  if parts.scheme != "https":
+                      continue
+                  if parts.path.rsplit("/", 1)[-1] != name:
+                      continue
+                  found[name] = resolved
+              return found
 
 
           # Prepare's wait ran on another runner's CDN edge: this leg must see
@@ -387,8 +399,11 @@ jobs:
           # The URL was resolved from the pinned simple page inside the await
           # loop (single read, single parser): no second index read here
           # means no second failure point. The artifact legs differ by file
-          # (wheel vs sdist URL), never by pip flags.
-          python -m pip install \
+          # (wheel vs sdist URL), never by pip flags. R4-2: point pip at an
+          # empty config so a pip.conf extra index cannot join either (the
+          # null device is spelled per-OS; --isolated does not cover files).
+          PIP_CONFIG_FILE="$(python -c 'import os; print(os.devnull)')" \
+            python -m pip install \
             --index-url https://pypi.org/simple/ \
             "$ARTIFACT_URL"
           python -m pip show pkcs11-check
