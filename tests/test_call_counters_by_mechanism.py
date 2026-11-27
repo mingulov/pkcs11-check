@@ -246,6 +246,16 @@ def test_schema_mech_rv_must_fit_inside_fn_rv() -> None:
     }
     assert schema.is_module_first_block(split_base) is False
 
+    # Positive control: the same fixture with room in the fn row validates,
+    # proving the summed check alone causes the rejection above.
+    roomy = copy.deepcopy(split_base)
+    roomy["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"]["calls"] = 15
+    roomy["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"]["by_rv"]["0"]["count"] = 10
+    roomy["by_module"][""]["buckets"]["test"]["calls"] = 15
+    roomy["by_module"][""]["calls"] = 15
+    roomy["total_calls"] = 15
+    assert schema.is_module_first_block(roomy) is True
+
 
 def test_schema_mech_key_rules() -> None:
     """64-bit ids validate; uppercase spellings do not (merge-split)."""
