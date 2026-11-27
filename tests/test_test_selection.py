@@ -13,6 +13,7 @@ from pkcs11_check.core.test_selection import (
     DisabledBaseline,
     DisabledCandidateReviewRecord,
     DisabledSelectionPlan,
+    all_matched_items_disabled,
     build_disabled_selection_plan,
     collect_disabled_candidate_review_records,
     collect_disabled_candidates,
@@ -901,3 +902,29 @@ def test_portable_nodeid_malformed_fails() -> None:
 
     with pytest.raises(ValueError, match="malformed"):
         portable_nodeid("test_encrypt.py", "no_double_colon")
+
+
+def _matched_item(tmp_path: Path, name: str, test: str) -> CollectedPytestItem:
+    file_path = tmp_path / name
+    return CollectedPytestItem(nodeid=f"{file_path}::{test}", file_path=str(file_path), markers=[])
+
+
+def test_all_matched_items_disabled_single_match(tmp_path: Path) -> None:
+    """R18-2b: one matched node, disabled -> M3b fires."""
+    item = _matched_item(tmp_path, "test_seed.py", "test_seed_key_gen")
+    assert all_matched_items_disabled([item], {item.nodeid}) is True
+
+
+def test_all_matched_items_disabled_partial_match(tmp_path: Path) -> None:
+    """R18-2b control: one matched node survives -> M3b stays quiet."""
+    first = _matched_item(tmp_path, "test_seed.py", "test_seed_key_gen")
+    second = _matched_item(tmp_path, "test_seed.py", "test_seed_other")
+    assert all_matched_items_disabled([first, second], {first.nodeid}) is False
+
+
+def test_all_matched_items_disabled_empty_inputs(tmp_path: Path) -> None:
+    """R18-2b: manifest path (None), no match, and no baseline never fire."""
+    item = _matched_item(tmp_path, "test_seed.py", "test_seed_key_gen")
+    assert all_matched_items_disabled(None, {item.nodeid}) is False
+    assert all_matched_items_disabled([], {item.nodeid}) is False
+    assert all_matched_items_disabled([item], set()) is False

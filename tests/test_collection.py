@@ -13,9 +13,12 @@ import pytest
 from pkcs11_check.core import collection as col
 from pkcs11_check.core.collection import (
     CollectedPytestItem,
+    CollectedSkip,
     _read_collection_cache,
     collect_pytest_item_metadata,
+    collect_pytest_items_with_skips,
     load_collection_manifest,
+    load_collection_manifest_with_skips,
     save_collection_manifest,
 )
 
@@ -437,3 +440,756 @@ def test_explicit_env_carrying_data_override_uses_cache(
     monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
     collect_pytest_item_metadata(["anything.py"], [], env={"PKCS11_CHECK_DATA_DIR": str(data_a)})
     assert len(consulted) == 1, "cache not consulted despite carried override"
+
+
+def test_collect_items_with_skips_reports_module_skip(tmp_path: Path) -> None:
+    """R18-2a: a module-level skip yields no items and one skip record."""
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text(
+        "import pytest\n"
+        'pytest.skip("vectors not cloned", allow_module_level=True)\n'
+        "\n"
+        "def test_never():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
+    items, skips = collect_pytest_items_with_skips([str(target)], [], env=env)
+    assert items == []
+    assert len(skips) == 1
+    assert skips[0].nodeid.endswith(target.name)
+    assert skips[0].reason == "vectors not cloned"
+
+
+def _finish(plugin: col._CollectionPlugin, items: list[object]) -> None:
+    """Drive collection finish with fake items (deferred skip resolution)."""
+    from types import SimpleNamespace
+
+    plugin.pytest_collection_finish(SimpleNamespace(items=items))
+
+
+def _fake_item(nodeid: str, path: Path) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(nodeid=nodeid, path=path, iter_markers=lambda: [])
+
+
+def test_collection_skip_empty_nodeid_resolves_from_longrepr(tmp_path: Path) -> None:
+    """R21-3: an empty nodeid (cross-rootpath target) resolves to the file
+    named by the skip longrepr -- the shape Windows CI produces."""
+    from types import SimpleNamespace
+
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text("def test_never(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(target), 2, "Skipped: vectors not cloned"),
+        )
+    )
+    assert plugin.skips == []
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
+
+
+def test_collection_skip_empty_nodeid_keeps_empty_without_path() -> None:
+    """R21-3: a string longrepr carries no file, so the nodeid stays empty
+    rather than misattributing (session skips included)."""
+    from types import SimpleNamespace
+
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectreport(
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_empty_nodeid_rejects_missing_longrepr_path() -> None:
+    """R21-3: a longrepr path that is not a file is not trusted either."""
+    from types import SimpleNamespace
+
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=("/nonexistent/test_gone.py", 1, "Skipped: why"),
+        )
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="why")]
+
+
+def test_collection_skip_nonempty_nodeid_ignores_longrepr(tmp_path: Path) -> None:
+    """R21-3: pytest's own nodeid always wins over the longrepr fallback."""
+    from types import SimpleNamespace
+
+    other = tmp_path / "test_other.py"
+    other.write_text("def test_never(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="test_skipped_mod.py",
+            longrepr=(str(other), 2, "Skipped: vectors not cloned"),
+        )
+    )
+    assert plugin.skips == [
+        col.CollectedSkip(nodeid="test_skipped_mod.py", reason="vectors not cloned")
+    ]
+
+
+def test_collection_skip_same_helper_skips_stay_distinct(tmp_path: Path) -> None:
+    """R22-3: two files skipping from one shared helper keep both records."""
+    from types import SimpleNamespace
+
+    first = tmp_path / "test_xts.py"
+    second = tmp_path / "test_ccm.py"
+    helper = tmp_path / "acvp_loader.py"
+    for path in (first, second, helper):
+        path.write_text("# stub\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    for target in (first, second):
+        plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=target))
+        plugin.pytest_collectreport(
+            SimpleNamespace(
+                outcome="skipped",
+                nodeid="",
+                longrepr=(str(helper), 27, "Skipped: vectors unavailable"),
+            )
+        )
+    assert plugin.skips == []
+    _finish(plugin, [])
+    assert plugin.skips == [
+        col.CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
+        col.CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
+    ]
+
+
+def test_collection_skip_completed_file_never_pairs(tmp_path: Path) -> None:
+    """R23-1: a file with final items cannot absorb an empty skip, however
+    late its items arrive (the pruned-passed case stays honest)."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=tmp_path))
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(mod), 3, "Skipped: no dice"),
+        )
+    )
+    _finish(plugin, [_fake_item(f"{mod}::test_case", mod)])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_deselected_file_never_pairs(tmp_path: Path) -> None:
+    """R23-1: -k-emptied files count as completed via deselection events."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_deselected([SimpleNamespace(path=mod)])
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(mod), 3, "Skipped: no dice"),
+        )
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_string_longrepr_never_pairs(tmp_path: Path) -> None:
+    """R28-1: a string longrepr (session-shaped) never absorbs a file
+    start, however eligible -- pairing needs a module-shaped tuple."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_collectreport(
+        SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid="", reason="no dice")]
+
+
+def test_collection_skip_conftest_tuple_names_conftest_not_module(
+    tmp_path: Path,
+) -> None:
+    """R29-1: a tuple longrepr from a conftest hook is a session skip: it
+    must not pair with an eligible module start, and resolves to the
+    raising conftest instead."""
+    from types import SimpleNamespace
+
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("# hook\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    plugin.pytest_collectreport(
+        SimpleNamespace(
+            outcome="skipped",
+            nodeid="",
+            longrepr=(str(conftest), 7, "Skipped: hook says no"),
+        )
+    )
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(conftest), reason="hook says no")]
+
+
+def _fake_result(value: object | None) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(get_result=lambda: value)
+
+
+def test_make_monitoring_marks_final_report(tmp_path: Path) -> None:
+    """R27-1: the monitor stamps whatever make returns (incl. replacements)
+    and ignores other hooks and empty outcomes."""
+    from types import SimpleNamespace
+
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text("def test_never(): pass\n", encoding="utf-8")
+    report: object = SimpleNamespace(outcome="skipped", nodeid="")
+    assert (
+        col._stamp_make_collect_report(
+            _fake_result(report),
+            "pytest_make_collect_report",
+            [],
+            {"collector": SimpleNamespace(path=target)},
+        )
+        is None
+    )
+    assert report._p11c_nodeid == (str(target), False)
+    other: object = SimpleNamespace(outcome="skipped", nodeid="")
+    col._stamp_make_collect_report(
+        _fake_result(other),
+        "pytest_collection",
+        [],
+        {"collector": SimpleNamespace(path=target)},
+    )
+    assert not hasattr(other, "_p11c_nodeid")
+    col._stamp_make_collect_report(
+        _fake_result(None),
+        "pytest_make_collect_report",
+        [],
+        {"collector": SimpleNamespace(path=target)},
+    )
+
+
+def _drive_make_wrapper(plugin: col._CollectionPlugin, collector: object, report: object) -> object:
+    """Drive the make_collect_report wrapper hook manually (pluggy protocol)."""
+    gen = plugin.pytest_make_collect_report(collector)  # type: ignore[arg-type]
+    next(gen)
+    try:
+        gen.send(report)
+    except StopIteration as stop:
+        return stop.value
+    raise AssertionError("wrapper hook must return via StopIteration")
+
+
+def test_make_wrapper_marks_with_kind(tmp_path: Path) -> None:
+    """R30-1: the restored wrapper stamps (path, is-session) tuples."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import pytest as _pytest
+
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text("def test_never(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    skipped: object = SimpleNamespace(outcome="skipped", nodeid="")
+    assert _drive_make_wrapper(plugin, SimpleNamespace(path=target), skipped) is skipped
+    assert skipped._p11c_nodeid == (str(target), False)
+    session = MagicMock(spec=_pytest.Session)
+    session.path = tmp_path
+    session_report: object = SimpleNamespace(outcome="skipped", nodeid="")
+    _drive_make_wrapper(plugin, session, session_report)
+    assert session_report._p11c_nodeid == (str(tmp_path), True)
+
+
+def test_collection_skip_make_mark_wins_over_pairing(tmp_path: Path) -> None:
+    """R24-1: a stamped session skip resolves to the stamp, never the module."""
+    from types import SimpleNamespace
+
+    root = tmp_path / "root"
+    root.mkdir()
+    mod = tmp_path / "test_mod.py"
+    mod.write_text("def test_case(): pass\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    plugin.pytest_collectstart(SimpleNamespace(nodeid="", path=mod))
+    session_report = SimpleNamespace(outcome="skipped", nodeid="", longrepr="Skipped: no dice")
+    session_report._p11c_nodeid = (str(root), True)
+    plugin.pytest_collectreport(session_report)
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(root), reason="no dice")]
+
+
+def test_collection_skip_session_mark_prefers_conftest_longrepr(
+    tmp_path: Path,
+) -> None:
+    """R29-1 preserved: a session mark with a conftest tuple resolves to
+    the raising conftest, not the session root."""
+    from types import SimpleNamespace
+
+    root = tmp_path / "root"
+    root.mkdir()
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("# hook\n", encoding="utf-8")
+    plugin = col._CollectionPlugin()
+    report = SimpleNamespace(
+        outcome="skipped",
+        nodeid="",
+        longrepr=(str(conftest), 7, "Skipped: hook says no"),
+    )
+    report._p11c_nodeid = (str(root), True)
+    plugin.pytest_collectreport(report)
+    _finish(plugin, [])
+    assert plugin.skips == [col.CollectedSkip(nodeid=str(conftest), reason="hook says no")]
+
+
+def test_collect_items_shared_helper_skips_stay_distinct(tmp_path: Path) -> None:
+    """R22-3 end to end: two files skipping from one shared helper keep
+    both records, each naming its own module."""
+    root = tmp_path / "root"
+    root.mkdir()
+    first = tmp_path / "test_xts.py"
+    second = tmp_path / "test_ccm.py"
+    helper = tmp_path / "acvp_loader.py"
+    helper.write_text(
+        "import pytest\n"
+        "\n"
+        "def require_vectors():\n"
+        '    pytest.skip("vectors unavailable", allow_module_level=True)\n',
+        encoding="utf-8",
+    )
+    for target in (first, second):
+        target.write_text(
+            "from acvp_loader import require_vectors\nrequire_vectors()\ndef test_never(): pass\n",
+            encoding="utf-8",
+        )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [str(first), str(second)], ["--rootdir", str(root)], env=env
+    )
+    assert items == []
+    assert skips == [
+        CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
+        CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
+    ]
+
+
+def test_collect_items_generate_tests_skips_stay_per_module(tmp_path: Path) -> None:
+    """R30-1 end to end: a conftest hook skipping two modules keeps both
+    module records (no collapse onto the conftest), even when a -p plugin
+    toggles tracing and thereby removes hook-call monitoring."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n"
+        "\n"
+        "def pytest_generate_tests(metafunc):\n"
+        '    pytest.skip("vectors unavailable", allow_module_level=True)\n',
+        encoding="utf-8",
+    )
+    first = tmp_path / "test_one.py"
+    second = tmp_path / "test_two.py"
+    for target in (first, second):
+        target.write_text("def test_never(): pass\n", encoding="utf-8")
+    (tmp_path / "tracing_toggle.py").write_text(
+        "import pytest\n"
+        "\n"
+        "_undos = []\n"
+        "\n"
+        "@pytest.hookimpl(tryfirst=True)\n"
+        "def pytest_configure(config):\n"
+        "    _undos.append(config.pluginmanager.enable_tracing())\n"
+        "\n"
+        "def pytest_sessionstart(session):\n"
+        "    while _undos:\n"
+        "        _undos.pop()()\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [str(first), str(second)],
+        ["--rootdir", str(root), "--confcutdir", str(tmp_path), "-p", "tracing_toggle"],
+        env=env,
+    )
+    assert items == []
+    assert skips == [
+        CollectedSkip(nodeid=str(first), reason="vectors unavailable"),
+        CollectedSkip(nodeid=str(second), reason="vectors unavailable"),
+    ]
+
+
+def test_collect_items_forced_rootdir_skip_names_module(tmp_path: Path) -> None:
+    """R24-1 end to end: a cross-rootdir skipped target resolves to itself."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = tmp_path / "test_skipped_mod.py"
+    target.write_text(
+        "import pytest\n"
+        'pytest.skip("vectors not cloned", allow_module_level=True)\n'
+        "def test_never(): pass\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
+    items, skips = collect_pytest_items_with_skips([str(target)], ["--rootdir", str(root)], env=env)
+    assert items == []
+    assert skips == [CollectedSkip(nodeid=str(target), reason="vectors not cloned")]
+
+
+@pytest.mark.parametrize("priority", ["", ", tryfirst=True"])
+def test_collect_items_replacing_plugin_session_skip_not_module(
+    tmp_path: Path, priority: str
+) -> None:
+    """R26-1/R27-1 end to end: a -p wrapper replacing the session report
+    with a skip attributes to the session root at any wrapper priority,
+    never the successful module."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    plug = tmp_path / "replacing_plugin.py"
+    plug.write_text(
+        "import pytest\n"
+        "from _pytest.reports import CollectReport\n"
+        "\n"
+        f"@pytest.hookimpl(wrapper=True{priority})\n"
+        "def pytest_make_collect_report(collector):\n"
+        "    from _pytest.main import Session\n"
+        "    report = yield\n"
+        "    if isinstance(collector, Session):\n"
+        "        return CollectReport(\n"
+        '            collector.nodeid, "skipped", "Skipped: session says no", []\n'
+        "        )\n"
+        "    return report\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [f"{target}::test_case"],
+        ["--rootdir", str(root), "-p", "replacing_plugin"],
+        env=env,
+    )
+    assert items == []
+    assert skips == [CollectedSkip(nodeid=str(root), reason="session says no")]
+
+
+def test_collect_items_teardown_plus_replacer_still_attributes_session(
+    tmp_path: Path,
+) -> None:
+    """R31-1 end to end: startup tracing teardown plus a tryfirst
+    replacing wrapper still attributes the session skip to the session
+    root -- monitoring registers at collection entry, after teardown."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    plug = tmp_path / "teardown_replacer.py"
+    plug.write_text(
+        "import pytest\n"
+        "from _pytest.reports import CollectReport\n"
+        "\n"
+        "_undos = []\n"
+        "\n"
+        "@pytest.hookimpl(tryfirst=True)\n"
+        "def pytest_configure(config):\n"
+        "    _undos.append(config.pluginmanager.enable_tracing())\n"
+        "\n"
+        "def pytest_sessionstart(session):\n"
+        "    while _undos:\n"
+        "        _undos.pop()()\n"
+        "\n"
+        "@pytest.hookimpl(wrapper=True, tryfirst=True)\n"
+        "def pytest_make_collect_report(collector):\n"
+        "    from _pytest.main import Session\n"
+        "    report = yield\n"
+        "    if isinstance(collector, Session):\n"
+        "        return CollectReport(\n"
+        '            collector.nodeid, "skipped", "Skipped: session says no", []\n'
+        "        )\n"
+        "    return report\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PKCS11_CHECK_NO_COLLECTION_CACHE": "1",
+        "PYTHONPATH": str(tmp_path),
+    }
+    items, skips = collect_pytest_items_with_skips(
+        [f"{target}::test_case"],
+        ["--rootdir", str(root), "-p", "teardown_replacer"],
+        env=env,
+    )
+    assert items == []
+    assert skips == [CollectedSkip(nodeid=str(root), reason="session says no")]
+
+
+def test_collect_items_with_skips_matches_legacy_items(tmp_path: Path) -> None:
+    """R18-2a: the combined API returns the same items as the legacy one."""
+    target = tmp_path / "test_demo.py"
+    target.write_text(
+        "def test_case():\n    assert True\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
+    items, skips = collect_pytest_items_with_skips([str(target)], [], env=env)
+    assert skips == []
+    assert items == collect_pytest_item_metadata([str(target)], [], env=env)
+    assert len(items) == 1
+
+
+def test_collection_manifest_skips_round_trip(tmp_path: Path) -> None:
+    """R18-2a: skips survive a manifest round trip; legacy load ignores them."""
+    manifest_path = tmp_path / "collection.json"
+    items = [
+        CollectedPytestItem(
+            nodeid="test_demo.py::test_case",
+            file_path=str((tmp_path / "test_demo.py").resolve()),
+            markers=[],
+        )
+    ]
+    skips = [CollectedSkip(nodeid="test_skipped.py", reason="vectors not cloned")]
+    save_collection_manifest(manifest_path, items, skips)
+    assert load_collection_manifest_with_skips(manifest_path) == (items, skips)
+    assert load_collection_manifest(manifest_path) == items
+
+
+def test_collection_manifest_missing_skips_means_none(tmp_path: Path) -> None:
+    """R18-2a: old manifests without the skips key load with no skips."""
+    manifest_path = tmp_path / "collection.json"
+    manifest_path.write_text('{"items": []}\n', encoding="utf-8")
+    assert load_collection_manifest_with_skips(manifest_path) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "skips_payload",
+    [
+        {"nodeid": "x.py"},
+        {"reason": "why"},
+        {"nodeid": 1, "reason": "why"},
+        {"nodeid": "x.py", "reason": None},
+        "not-an-object",
+    ],
+)
+def test_collection_manifest_malformed_skips_raise(tmp_path: Path, skips_payload: object) -> None:
+    """R18-2a: malformed skip records fail loudly, like malformed items."""
+    manifest_path = tmp_path / "collection.json"
+    manifest_path.write_text(
+        json.dumps({"items": [], "collection_skips": [skips_payload]}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="skip"):
+        load_collection_manifest_with_skips(manifest_path)
+
+
+def test_collection_digest_invalidates_on_external_target_edit(tmp_path: Path) -> None:
+    """R19-2: editing an external target file changes the cache digest."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    before = col._collection_inputs_digest([str(target)], [])
+    assert before is not None
+    target.write_text("def test_one(): pass\ndef test_two_added(): pass\n", encoding="utf-8")
+    after = col._collection_inputs_digest([str(target)], [])
+    assert after is not None
+    assert before != after
+
+
+def test_collection_digest_covers_nodeid_and_dir_targets(tmp_path: Path) -> None:
+    """R19-2: nodeid targets hash their file; dir targets hash their trees."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    nodeid_before = col._collection_inputs_digest([f"{target}::test_one"], [])
+    dir_before = col._collection_inputs_digest([str(tmp_path)], [])
+    target.write_text("def test_one(): pass\ndef test_two_added(): pass\n", encoding="utf-8")
+    assert col._collection_inputs_digest([f"{target}::test_one"], []) != nodeid_before
+    assert col._collection_inputs_digest([str(tmp_path)], []) != dir_before
+
+
+def test_collection_digest_invalidates_on_ancestor_conftest_edit(tmp_path: Path) -> None:
+    """R20-2: editing a conftest.py or config above a file target rekeys."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text("# empty\n", encoding="utf-8")
+    before = col._collection_inputs_digest([str(target)], [])
+    assert before is not None
+    conftest.write_text("# edited: markers for the suite below\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], []) != before
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\n", encoding="utf-8")
+    middle = col._collection_inputs_digest([str(target)], [])
+    assert middle is not None and middle != before
+    config.write_text("[pytest]\nmarkers = smoke: a smoke test\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], []) != middle
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    ["pytest.toml", ".pytest.toml", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"],
+)
+def test_collection_digest_invalidates_on_ancestor_config_edit(
+    tmp_path: Path, config_name: str
+) -> None:
+    """R21-2: every pytest config name above a target rekeys on edit."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    config = tmp_path / config_name
+    config.write_text("# v1\n", encoding="utf-8")
+    before = col._collection_inputs_digest([str(target)], [])
+    assert before is not None
+    config.write_text("# v1 with more content\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], []) != before
+
+
+def test_collection_digest_invalidates_on_dash_c_config_edit(tmp_path: Path) -> None:
+    """R22-2: editing a -c/--config-file config rekeys (all flag forms)."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    config = tmp_path / "selected.ini"
+    config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
+    arg_forms = [
+        ["-c", str(config)],
+        [f"-c{config}"],
+        [f"-c={config}"],
+        [f"--config-file={config}"],
+        ["--config-file", str(config)],
+        ["-qc", str(config)],
+        [f"-qc{config}"],
+    ]
+    for args in arg_forms:
+        before = col._collection_inputs_digest([str(target)], args)
+        assert before is not None
+        config.write_text("[pytest]\naddopts = -k test_one\nmarkers = x: y\n", encoding="utf-8")
+        after = col._collection_inputs_digest([str(target)], args)
+        assert after is not None and after != before
+        config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
+
+
+def test_collection_digest_keys_pytest_addopts(tmp_path: Path) -> None:
+    """R22-2: the addopts string itself rekeys, and so does its -c file."""
+    target = tmp_path / "test_external.py"
+    target.write_text("def test_one(): pass\n", encoding="utf-8")
+    base = col._collection_inputs_digest([str(target)], [], pytest_addopts="")
+    assert base is not None
+    assert col._collection_inputs_digest([str(target)], [], pytest_addopts="-k foo") != base
+    config = tmp_path / "selected.ini"
+    config.write_text("[pytest]\n", encoding="utf-8")
+    # R23-4: quote the path: shlex would eat raw Windows backslashes.
+    addopts = f'-c "{config}"'
+    before = col._collection_inputs_digest([str(target)], [], pytest_addopts=addopts)
+    assert before is not None
+    config.write_text("[pytest]\naddopts = -k test_one\n", encoding="utf-8")
+    assert col._collection_inputs_digest([str(target)], [], pytest_addopts=addopts) != before
+
+
+def test_collection_recollects_after_external_target_edit(tmp_path: Path) -> None:
+    """R19-2 end to end: a new matching test is collected, never stale-hit."""
+    first = tmp_path / "test_first.py"
+    second = tmp_path / "test_second.py"
+    first.write_text("def test_match_me(): pass\n", encoding="utf-8")
+    second.write_text("def test_unrelated(): pass\n", encoding="utf-8")
+    cache_env = {
+        key: value for key, value in os.environ.items() if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
+    }
+    args = ["-k", "match_me"]
+    # Warm the cache, then add a matching test to the second file.
+    assert len(collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)) == 1
+    second.write_text(
+        "def test_unrelated(): pass\ndef test_match_me_too(): pass\n", encoding="utf-8"
+    )
+    items = collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)
+    assert sorted(item.nodeid.split("::")[-1] for item in items) == [
+        "test_match_me",
+        "test_match_me_too",
+    ]
+
+
+def test_collection_recollects_after_conftest_marks_new_file(tmp_path: Path) -> None:
+    """R20-2 end to end: a conftest edit that marks a new file invalidates."""
+    first = tmp_path / "test_first.py"
+    second = tmp_path / "test_second.py"
+    first.write_text("def test_alpha(): pass\n", encoding="utf-8")
+    second.write_text("def test_beta(): pass\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(
+        "import pytest\n"
+        "\n"
+        "def pytest_collection_modifyitems(items):\n"
+        "    for item in items:\n"
+        '        if item.path.name == "test_first.py":\n'
+        "            item.add_marker(pytest.mark.smoke)\n",
+        encoding="utf-8",
+    )
+    cache_env = {
+        key: value for key, value in os.environ.items() if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
+    }
+    args = ["-m", "smoke"]
+    assert len(collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)) == 1
+    conftest.write_text(
+        "import pytest\n"
+        "\n"
+        "def pytest_collection_modifyitems(items):\n"
+        "    for item in items:\n"
+        "        item.add_marker(pytest.mark.smoke)\n",
+        encoding="utf-8",
+    )
+    items = collect_pytest_item_metadata([str(first), str(second)], args, env=cache_env)
+    assert len(items) == 2
+
+
+def test_collection_recollects_after_addopts_config_broadens_k(tmp_path: Path) -> None:
+    """R22-2 end to end: broadening -k inside a PYTEST_ADDOPTS -c file
+    invalidates the warm cache instead of serving the stale selection."""
+    first = tmp_path / "test_alpha.py"
+    second = tmp_path / "test_beta.py"
+    first.write_text("def test_alpha(): pass\n", encoding="utf-8")
+    second.write_text("def test_beta(): pass\n", encoding="utf-8")
+    config = tmp_path / "selected.ini"
+    config.write_text("[pytest]\naddopts = -k test_alpha\n", encoding="utf-8")
+
+    def _env() -> dict[str, str]:
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key != "PKCS11_CHECK_NO_COLLECTION_CACHE"
+        }
+        # R23-4: quote the path: shlex would eat raw Windows backslashes.
+        env["PYTEST_ADDOPTS"] = f'-c "{config}"'
+        return env
+
+    targets = [str(first), str(second)]
+    assert len(collect_pytest_item_metadata(targets, [], env=_env())) == 1
+    config.write_text("[pytest]\naddopts = -k 'test_alpha or test_beta'\n", encoding="utf-8")
+    items = collect_pytest_item_metadata(targets, [], env=_env())
+    assert sorted(item.nodeid.split("::")[-1] for item in items) == [
+        "test_alpha",
+        "test_beta",
+    ]

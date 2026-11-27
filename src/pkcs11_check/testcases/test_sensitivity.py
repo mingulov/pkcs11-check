@@ -119,6 +119,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
+    delivery_unproved,
     refusal_for,
 )
 from pkcs11_check.testcases.conftest import (
@@ -3621,6 +3622,48 @@ def _matrix_first_length_problem(length: int, cap: int) -> tuple[str, str, str]:
     return ("untouched buffer", "provider-written bytes", "pre-call sentinel bytes intact")
 
 
+_MATRIX_BIGINT_ATTRS = frozenset(
+    {
+        int(CKA_MODULUS),
+        int(CKA_PUBLIC_EXPONENT),
+        int(CKA_PRIVATE_EXPONENT),
+        int(CKA_PRIME_1),
+        int(CKA_PRIME_2),
+        int(CKA_EXPONENT_1),
+        int(CKA_EXPONENT_2),
+        int(CKA_COEFFICIENT),
+    }
+)
+
+
+def _matrix_check_integer_member(
+    len_d: int, observed: bytes, cap: int, expected: bytes
+) -> tuple[bool, str, str, str]:
+    """Compare a known bigint read by integer value (fw#95).
+
+    Minimal-encoding (BN_num_bytes) providers return RSA integers without
+    leading-zero padding, so only the integer value is pinned, in
+    1..len(expected) bytes within the buffer. want/got stay length-only:
+    values are key material and must never reach the records.
+    """
+    bound = min(cap, len(expected))
+    if not 0 < len_d <= bound:
+        return (
+            False,
+            "impossible reported length",
+            f"1..{bound} bytes encoding the known integer",
+            f"{len_d}",
+        )
+    if int.from_bytes(observed[:len_d], "big") != int.from_bytes(expected, "big"):
+        return (
+            False,
+            "wrong integer value",
+            "minimal-or-full-width encoding of the known integer",
+            f"{len_d} bytes",
+        )
+    return True, "", "", ""
+
+
 def _check_matrix_readable_member(
     *,
     rs: Any,
@@ -3878,6 +3921,10 @@ def _check_matrix_readable_member(
                     want = ""
                     got = ""
                 correct = populated
+        elif int(attr) in _MATRIX_BIGINT_ATTRS:
+            correct, problem, want, got = _matrix_check_integer_member(
+                len_d, observed, cap, expected
+            )
         else:
             lengths_ok = len_d <= cap and len_d == len(expected)
             delivered = observed[:len_d] if lengths_ok else b""
@@ -4540,10 +4587,14 @@ def _skip_unless_sealed_unreadable(
     failure xfails visibly; a refusal that still wrote bytes fails;
     TYPE_INVALID or any other answered-nothing shape skips as moot
     (no value present, so the seal question cannot be asked).
-    Undefined RVs still fail loud.
+    Undefined RVs still fail loud. A malformed refusal (finite length
+    retained without a write) terminates visibly: only a clean refusal
+    proves the seal, so the dependent search never runs on it. The read
+    verifies delivery and judges strictly (R12-2): unproved bytes never
+    read back as clear.
     """
     try:
-        read = read_attributes(rs.raw, rs.sh, handle, [attr])
+        read = read_attributes(rs.raw, rs.sh, handle, [attr], verify_delivery=True)
     except CkrAssertionError as exc:
         if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
             record = classification.record_as(
@@ -4577,17 +4628,6 @@ def _skip_unless_sealed_unreadable(
             f"{label}: sealed {attr_name} seal check inconclusive "
             f"({ckr_name(exc.rv)}); seal unproved"
         )
-    value = attr_or_record(
-        read,
-        attr,
-        label=f"{label}: seal check",
-        reason="not_operational",
-        kind="policy",
-        inherit_mechanism=False,
-        sensitive_is_conformant=True,
-    )
-    if value is not MISSING_ATTRIBUTE:
-        pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
     refusal = refusal_for(read, attr)
     if refusal is not None and refusal.leaked_len is not None:
         record = classification.record_as(
@@ -4605,6 +4645,57 @@ def _skip_unless_sealed_unreadable(
             detail={"leaked_len": refusal.leaked_len},
         )
         classification.raise_for_record(record)
+    if refusal is not None and refusal.malformed:
+        # R9-3: a malformed refusal proves nothing about the seal (only a
+        # clean refusal does), so terminate here instead of running the
+        # dependent search on an unproved premise.
+        record = classification.record_as(
+            "not_operational",
+            kind="policy",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: sealed {attr_name} seal check refused malformed "
+                f"({ckr_name(refusal.ckr)} with a retained finite length, no "
+                "write); seal unproved"
+            ),
+            detail={"malformed_refusal": True},
+        )
+        classification.raise_for_record(record)
+    if delivery_unproved(read, attr):
+        # R14-1: the retry contradicted a successful first read, so this
+        # outcome proves nothing about the seal -- terminate here instead
+        # of granting seal credit (or silence) below. Only a clean
+        # refusal proves the seal, so the dependent search never runs on
+        # it. The observed retry RV rides on the record when there is one.
+        record = classification.record_as(
+            "not_operational",
+            kind="policy",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            actual=refusal.ckr if refusal is not None else None,
+            summary=(
+                f"{label}: sealed {attr_name} seal check unproved "
+                "(retry contradicted the first read); seal unproved"
+            ),
+            detail={"unproved_delivery": True},
+        )
+        classification.raise_for_record(record)
+    value = attr_or_record(
+        read,
+        attr,
+        label=f"{label}: seal check",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+        strict_delivery=True,
+    )
+    if value is not MISSING_ATTRIBUTE:
+        pytest.skip(f"{label}: sealed {attr_name} reads back clear; seal unproved")
     if refusal is not None and refusal.ckr == int(CKR_ATTRIBUTE_SENSITIVE):
         return
     pytest.skip(f"{label}: sealed {attr_name} has no value present; seal question moot")

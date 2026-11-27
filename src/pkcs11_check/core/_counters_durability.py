@@ -866,6 +866,82 @@ def _is_transient_write_error(exc: OSError) -> bool:
     return sys.platform == "win32" and exc.errno in _WIN32_TRANSIENT_WRITE_ERRNOS
 
 
+#: Errnos that trigger the rename-over-existing fallback (M7): vboxsf-class
+#: filesystems refuse atomic replace with EPERM/EACCES instead of renaming.
+_REPLACE_FALLBACK_ERRNOS = frozenset({errno.EPERM, errno.EACCES})
+
+_replace_fallback_warned = False
+
+
+def _warn_replace_fallback_once(path: Path | str) -> None:
+    """Warn once per process that atomic replace fell back (nonstandard FS)."""
+    global _replace_fallback_warned
+    if _replace_fallback_warned:
+        return
+    _replace_fallback_warned = True
+    warnings.warn(
+        f"counters persistence {path}: atomic replace refused; "
+        "using fallback writes; prefer a native filesystem for counter durability",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> bool:
+    """Land tmp onto resolved despite rename-over-existing refusal (M7).
+
+    Tries unlink+replace (atomicity preserved: a crash leaves resolved
+    missing, which readers treat as absent), then a direct plain write
+    (torn-on-crash, likewise fail-visible). The committed bytes are
+    stashed first and restored best-effort when nothing lands, so total
+    failure preserves the old snapshot instead of deleting it. A present
+    but unstashable destination refuses the destructive path outright.
+    Returns True when the payload landed; False leaves tmp for the
+    caller to clean and the original error to raise. Callers warn on
+    success.
+    """
+    tmp_path = Path(tmp)
+    resolved_path = Path(resolved)
+    try:
+        old = resolved_path.read_bytes()
+    except FileNotFoundError:
+        old = None
+    except OSError:
+        # Present but unstashable (or unreadable): refuse the destructive
+        # path rather than risk an unrestorable delete (F2b). Only
+        # FileNotFoundError counts as absence; any other read error --
+        # including a stat this probe never performs -- refuses, so the
+        # caller raises CounterPersistenceError and cleans the tmp.
+        return False
+    try:
+        resolved_path.unlink()
+    except OSError:
+        pass
+    else:
+        try:
+            os.replace(tmp_path, resolved_path)
+        except OSError:
+            pass
+        else:
+            return True
+    try:
+        with open(resolved_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+    except OSError:
+        if old is not None:
+            try:
+                resolved_path.write_bytes(old)
+            except OSError:
+                pass
+        return False
+    try:
+        tmp_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return True
+
+
 def append_journal(path: Path | str, record: dict[str, Any]) -> None:
     """Append one window record to a journal (no fsync by design).
 
@@ -925,7 +1001,9 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
 
     A crash lands the old or the new content, never a mix; readers treat a
     torn file as absent. Transient write errors retry boundedly (each attempt
-    cleans its tmp first), then raise.
+    cleans its tmp first), then raise. Rename-over-existing refusal (EPERM /
+    EACCES, vboxsf-class filesystems) falls back to unlink+replace, then a
+    direct plain write, warning once per process.
 
     Raises:
         CounterPersistenceError: When the payload cannot be encoded or written.
@@ -941,8 +1019,6 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(text)
                 fh.flush()
-            os.replace(tmp, resolved)
-            return
         except OSError as exc:
             try:
                 tmp.unlink(missing_ok=True)
@@ -951,6 +1027,25 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
             if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
                 raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
             time.sleep(_WRITE_RETRY_BACKOFF_S)
+            continue
+        try:
+            os.replace(tmp, resolved)
+            return
+        except OSError as exc:
+            if exc.errno in _REPLACE_FALLBACK_ERRNOS and (
+                attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc)
+            ):
+                if _replace_with_fallback(tmp, resolved, text):
+                    _warn_replace_fallback_once(resolved)
+                    return
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
+                raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
+            time.sleep(_WRITE_RETRY_BACKOFF_S)
+            continue
 
 
 def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> FenceOutcome:
@@ -960,8 +1055,15 @@ def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> Fence
     need no signal. Only a pid whose live birth matches the registry is ever
     signaled, through an incarnation-pinning handle (pidfd on Linux, process
     handle on Windows); the birth is re-verified immediately before the
-    signal closes the TOCTOU window. Unverifiable producers (unknown
-    platform, unreadable birth) report ``unresolved`` with a warning and are
+    signal closes the TOCTOU window. SECURITY (M8 residual): the pinning
+    verifies the victim, not the registry -- a planted registry naming a
+    live (pid, birth) pair still signals it, so resume trusts the counters
+    dir it was pointed at (which M8 confines to allocated sibling forms).
+    Ancestry gating cannot fix this (crashed runs' orphans are reparented);
+    a future hardening is refusing pids whose birth predates the state
+    file.
+    Unverifiable producers (unknown platform, unreadable birth) report
+    ``unresolved`` with a warning and are
     never signaled; resume must skip their conflicting reruns.
     """
     verdict = verify_producer(registry)
@@ -2975,12 +3077,23 @@ def write_probe_sidecar(
     if not finalized:
         payload["finalized"] = False
     tmp = f"{path}.tmp-{os.getpid()}"
+    text = json.dumps(payload)
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
+            fh.write(text)
             fh.flush()
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
         os.replace(tmp, path)
-    except (OSError, TypeError, ValueError):
+    except OSError as exc:
+        if exc.errno in _REPLACE_FALLBACK_ERRNOS and _replace_with_fallback(tmp, path, text):
+            _warn_replace_fallback_once(Path(path))
+            return
         try:
             os.unlink(tmp)
         except OSError:
@@ -3036,6 +3149,23 @@ def mark_probe_consumed(sidecar: Path | str, *, parent_uuid: str | None = None) 
     try:
         os.replace(path, marked)
     except OSError as exc:
+        if exc.errno in _REPLACE_FALLBACK_ERRNOS:
+            try:
+                stale = marked.read_bytes() if marked.exists() else None
+            except OSError:
+                stale = None
+            try:
+                marked.unlink(missing_ok=True)
+                os.replace(path, marked)
+            except OSError:
+                if stale is not None:
+                    try:
+                        marked.write_bytes(stale)
+                    except OSError:
+                        pass
+            else:
+                _warn_replace_fallback_once(marked)
+                return marked
         raise CounterPersistenceError(f"cannot mark probe sidecar consumed: {exc}") from exc
     return marked
 
@@ -7373,11 +7503,16 @@ def _prune_sidecar_tmps(
     path: Path,
     listed: Mapping[str, str] | None = None,
     *,
+    root: Path | str,
     baseline_missing_observed: bool = False,
     held_tmps: Container[str] | None = None,
     preserved_out: set[str] | None = None,
 ) -> tuple[int, int, bool]:
     """Delete a sidecar's rewrite tmps except unadjudicable ones (#88R3).
+
+    M8: tmps resolving outside root retain loudly with the held family,
+    never prune (a planted baseline must never delete outside the
+    counters dir).
 
     A tmp deletes when it proves debris (torn/unparseable, or
     validity-proven returnless -- a malformed or dual-form body proves
@@ -7505,6 +7640,10 @@ def _prune_sidecar_tmps(
                 except ValueError:
                     torn = True
         if torn:
+            if _deletion_refused(root, tmp, verb="prune"):
+                retained.append(tmp.name)
+                hold_baseline = True
+                continue
             if _unlink_counted(tmp):
                 removed += 1
             else:
@@ -7554,6 +7693,10 @@ def _prune_sidecar_tmps(
             hold_baseline = True
             if preserved_out is not None:
                 preserved_out.add(str(tmp))
+            continue
+        if _deletion_refused(root, tmp, verb="prune"):
+            retained.append(tmp.name)
+            hold_baseline = True
             continue
         if _unlink_counted(tmp):
             removed += 1
@@ -7616,17 +7759,46 @@ def _report_unvisited_baseline_tmps(path: Path, preserved_out: set[str] | None) 
         )
 
 
+def _deletion_refused(root: Path | str, path: Path | str, *, verb: str) -> bool:
+    """Whether deleting path is refused: not inside the counters root (M8).
+
+    The parent chain resolves (a lexical check misses intermediate links);
+    the final component stays unresolved so inside symlinks unlink safely
+    as links. Refusals warn loudly and retain the evidence; extractor
+    dedup keeps retention exact. Never raises.
+    """
+    try:
+        root_resolved = Path(root).resolve()
+        parent_resolved = Path(path).parent.resolve()
+    except OSError:
+        refused = True
+    else:
+        refused = not (parent_resolved == root_resolved or root_resolved in parent_resolved.parents)
+    if refused:
+        warnings.warn(
+            f"refused to {verb} {path}: not inside the counters root; evidence retained",
+            UserWarning,
+            stacklevel=3,
+        )
+    return refused
+
+
 def _consume_producer_files(
     paths: list[Path],
     digests: Mapping[str, str] | None = None,
     proved_absent: Container[str] | None = None,
     ghosts: Container[str] | None = None,
     *,
+    root: Path | str,
     held_tmps: Container[str] | None = None,
     preserved_tmps_out: set[str] | None = None,
     veto: Container[str] | None = None,
 ) -> list[Path]:
     """Delete collected/committed evidence files (best effort, never raises).
+
+    M8: paths resolving outside root are retained with a loud warning (a
+    planted registry must never delete outside the counters dir); they
+    report held without pinning their phantom family.
 
     A baseline whose tmps the prune holds (failed unlink, unreadable
     tmp, or listing fault) stays as the discoverable cleanup record:
@@ -7713,6 +7885,11 @@ def _consume_producer_files(
 
     for path in ordered:
         key = str(path)
+        if _deletion_refused(root, path, verb="consume"):
+            # M8: outside-root evidence never deletes; held without
+            # pinning (no legitimate retry route exists for it).
+            _hold(path, veto_only=True)
+            continue
         if proved_absent is not None and key in proved_absent:
             if _path_state(path) != "missing":
                 # Proved absent at retry time but present now: a ghost
@@ -7826,6 +8003,7 @@ def _consume_producer_files(
             baseline_missing_observed=skip_unlink,
             held_tmps=held_tmps,
             preserved_out=preserved_tmps_out,
+            root=root,
         )
         if not hold and digests is not None and key in digests:
             # Re-verify immediately before the unlink (#88R32): bytes
@@ -8402,7 +8580,7 @@ def collect_unit(
         _revoke_recovery_cancelled_tmp_binds(
             read_digests, None, _fresh_pass_recoveries(appended), child_recoveries, None
         )
-        _consume_producer_files(to_consume_all, read_digests)
+        _consume_producer_files(to_consume_all, read_digests, root=root)
         return appended
     for sidecar_path in sidecar_files:
         try:
@@ -8910,7 +9088,7 @@ def collect_unit(
     _revoke_recovery_cancelled_tmp_binds(
         read_digests, None, _fresh_pass_recoveries(appended), child_recoveries, None
     )
-    _consume_producer_files(to_consume_all, read_digests)
+    _consume_producer_files(to_consume_all, read_digests, root=root)
     for twin in reap_after_consume:
         _reap_torn_registry(root, twin)
     return appended
@@ -9076,8 +9254,12 @@ def _reap_torn_registry(root: Path, registry_path: Path) -> bool:
     survives, while still-torn bytes reap as adjudicated. Returns
     True when the file was unlinked (or already gone: nothing left
     to hold). All registry deletion funnels through here (collection
-    and sweep alike) so the triage cannot be bypassed.
+    and sweep alike) so the triage cannot be bypassed. Registry paths
+    resolving outside the counters root (for example through a linked
+    registrations dir) are retained with a loud warning instead (M8/F1).
     """
+    if _deletion_refused(root, registry_path, verb="reap"):
+        return False
     try:
         raw: str | None = registry_path.read_text(encoding="utf-8")
     except OSError:
@@ -15999,6 +16181,15 @@ def sweep_orphans(
         ordered = [path for path in paths if not _is_registry_path(path)]
         ordered.extend(path for path in paths if _is_registry_path(path))
         for index, path in enumerate(ordered):
+            if _deletion_refused(root, path, verb="remove"):
+                # M8: a planted path outside the counters root is not
+                # part of this operation (a boundary verdict, not a
+                # fault): it counts retained and the inside members
+                # keep full stop-semantics among themselves, so a
+                # hostile member cannot pin legitimate cleanup.
+                if _path_state(path) != "missing":
+                    retained += 1
+                continue
             state = _path_state(path)
             if state == "missing":
                 continue
@@ -16094,6 +16285,14 @@ def sweep_orphans(
             return
         names = sorted(inspected)
         for index, tmp_str in enumerate(names):
+            if _deletion_refused(root, Path(tmp_str), verb="prune"):
+                # M8: a planted tmp outside the counters root is not
+                # part of this operation: it counts retained and the
+                # loop proceeds (same boundary-verdict rule as the
+                # primary loop above).
+                if _path_state(Path(tmp_str)) != "missing":
+                    retained += 1
+                continue
             tmp_state = _path_state(Path(tmp_str))
             if tmp_state == "missing":
                 continue
@@ -16371,7 +16570,7 @@ def sweep_orphans(
             # on the next pass), but rewrite tmps triage by content --
             # complete ones retain loudly for forensics (F1), never
             # silently with the baseline.
-            pruned, kept, hold = _prune_sidecar_tmps(sidecar_path)
+            pruned, kept, hold = _prune_sidecar_tmps(sidecar_path, root=root)
             removed += pruned
             retained += kept
             if hold:
@@ -16489,7 +16688,7 @@ def sweep_orphans(
             retained += 1
             continue
         if raw is None or not isinstance(raw, dict):
-            pruned, kept, hold = _prune_sidecar_tmps(probe_path)
+            pruned, kept, hold = _prune_sidecar_tmps(probe_path, root=root)
             removed += pruned
             retained += kept
             if hold:
@@ -21972,6 +22171,7 @@ def prepare_resume(
             held_tmps=carried_held_tmps,
             preserved_tmps_out=preserved_now,
             veto=vetoed_now,
+            root=root,
         )
         retired_now = {tmp for tmp in carried_held_tmps if _path_state(Path(tmp)) == "missing"}
         if (preserved_now or retired_now) and staged_this_pass:

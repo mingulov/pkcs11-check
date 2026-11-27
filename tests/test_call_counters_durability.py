@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,10 @@ from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
 _UUID_A = "a" * 32
 _UUID_B = "b" * 32
 _RUN = "R1"
+
+needs_posix_quarantine = pytest.mark.skipif(
+    sys.platform == "win32", reason="quarantine needs POSIX delete-while-open"
+)
 
 
 def _counts_block(
@@ -5708,7 +5713,9 @@ class TestSweepAndFence:
         def _consume() -> None:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                done.append(durability._consume_producer_files([fifo], {str(fifo): "0" * 64}))
+                done.append(
+                    durability._consume_producer_files([fifo], {str(fifo): "0" * 64}, root=tmp_path)
+                )
 
         worker = threading.Thread(target=_consume, daemon=True)
         worker.start()
@@ -8226,6 +8233,7 @@ class TestSweepAndFence:
         assert _UUID_A in plan["unresolved"]
         assert slot.exists()
 
+    @needs_posix_quarantine
     def test_quarantine_move_does_not_defer(self, engaged: Path) -> None:
         """#88R38-4: this pass's own quarantine is accounted, never a divergence."""
         pid, birth = _dead_pid_with_birth()
@@ -9676,7 +9684,7 @@ class TestSweepAndFence:
 
         monkeypatch.setattr(durability, "_prune_sidecar_tmps", _delete_then_delegate)
         monkeypatch.setattr(durability, "_path_state", _plant_on_missing)
-        held = durability._consume_producer_files([target], {str(target): digest})
+        held = durability._consume_producer_files([target], {str(target): digest}, root=engaged)
         assert planted == ["ghost"], "the ghost must land in the re-verify window"
         assert target.exists(), "the ghost is never deleted unadjudicated"
         assert held == [target]
@@ -9719,7 +9727,7 @@ class TestSweepAndFence:
             return status
 
         monkeypatch.setattr(durability, "_path_state", _reappear_on_missing)
-        held = durability._consume_producer_files([sidecar], {str(sidecar): digest})
+        held = durability._consume_producer_files([sidecar], {str(sidecar): digest}, root=engaged)
         assert reappeared == ["ghost"], "the baseline must blink mid-cleanup"
         assert sidecar.exists(), "the reappeared baseline is held, never consumed"
         assert held == [sidecar]
@@ -16321,7 +16329,7 @@ class TestSweepAndFence:
         sidecar = Path(planted["sidecar"])
         deep = "[" * 100_000 + "]" * 100_000
         tmp = _plant_tmp(sidecar, None, raw=deep)
-        removed, retained, hold = durability._prune_sidecar_tmps(sidecar)
+        removed, retained, hold = durability._prune_sidecar_tmps(sidecar, root=engaged)
         assert (removed, retained, hold) == (1, 0, False)
         assert not tmp.exists()
 
@@ -17321,7 +17329,7 @@ class TestSweepAndFence:
             [self._loss_bind_info()], {(_UUID_B, 1)}, {}
         )
         assert held == []
-        assert [str(path) for path in bound] == ["/x/t.tmp-a"]
+        assert [Path(path).as_posix() for path in bound] == ["/x/t.tmp-a"]
 
     def test_loss_binder_holds_receipt_bearing(self) -> None:
         """#88R38-6: unaccounted receipts pin their tmp."""
@@ -17569,7 +17577,7 @@ class TestSweepAndFence:
             [self._loss_bind_info()], {(_UUID_B, 1)}, {}
         )
         assert held == []
-        assert [str(path) for path in bound] == ["/x/t.tmp-a"]
+        assert [Path(path).as_posix() for path in bound] == ["/x/t.tmp-a"]
 
     def test_dual_form_counters_returns_hold_parentless_tmp(
         self, engaged: Path, tmp_path: Path
@@ -18577,7 +18585,9 @@ class TestSweepAndFence:
         assert swept["removed"] == 0
         assert sidecar.exists()
 
-    def test_sweep_withholds_unreadable_sidecar_body(self, engaged: Path) -> None:
+    def test_sweep_withholds_unreadable_sidecar_body(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """#88R36-5: an unreadable body withholds instead of deleting blind."""
         pid, birth = _dead_pid_with_birth()
         planted = _plant_producer(
@@ -18591,16 +18601,30 @@ class TestSweepAndFence:
         _require_dead_producer(planted)
         Path(planted["registry"]).unlink()
         sidecar = Path(planted["sidecar"])
-        sidecar.chmod(0o000)
-        try:
-            with pytest.warns(UserWarning, match="retained"):
-                swept = durability.sweep_orphans(
-                    engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
-                )
-            assert swept["removed"] == 0
-            assert sidecar.exists()
-        finally:
-            sidecar.chmod(0o644)
+        # Deterministic unreadability (chmod-000 is a read-only noop on
+        # Windows): fail the body reads exactly like an I/O fault.
+        sidecar_name = sidecar.name
+        real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
+
+        def _eperm_body(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self.name == sidecar_name:
+                raise PermissionError("injected sidecar EPERM")
+            return real_read_text(self, *args, **kwargs)
+
+        def _eperm_body_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self.name == sidecar_name:
+                raise PermissionError("injected sidecar EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _eperm_body)
+        monkeypatch.setattr(Path, "read_bytes", _eperm_body_bytes)
+        with pytest.warns(UserWarning, match="retained"):
+            swept = durability.sweep_orphans(
+                engaged, current_run=_RUN, collected_runs=frozenset({"OLD"})
+            )
+        assert swept["removed"] == 0
+        assert sidecar.exists()
 
     def test_torn_body_keeps_debris_behavior(self, engaged: Path) -> None:
         """#88R35-7: torn (non-dict) bodies keep converging, never refusing."""
@@ -24181,6 +24205,224 @@ class TestTransientWriteRetry:
         assert is_transient(OSError(errno.EPERM, "denied")) is True
         assert is_transient(OSError(errno.ENOSPC, "no space")) is False
 
+    # -- M7: rename-over-existing fallback for filesystems refusing it (vboxsf) --
+
+    def test_sidecar_eperm_uses_unlink_replace_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+        real_replace = os.replace
+        calls = 0
+
+        def _vboxsf(src: Any, dst: Any) -> None:
+            nonlocal calls
+            calls += 1
+            if os.path.exists(dst):
+                raise OSError(errno.EPERM, "Operation not permitted")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _vboxsf)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+        assert calls >= 2
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_sidecar_plain_write_leg_when_replace_impossible(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_replace_fallback_returns_false_when_all_fail(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nope" / "s.json"
+        assert durability._replace_with_fallback(tmp_path / "t.tmp-1", missing, "{}") is False
+
+    def test_sidecar_fallback_failure_stays_loud(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr(durability, "_replace_with_fallback", lambda *a: False, raising=False)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
+
+    def test_sidecar_unreadable_destination_refuses_without_bare_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """F2b: read+stat EACCES refuses via CounterPersistenceError (no tmp left)."""
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+
+        def _raise_eacces(self: Path, *args: Any, **kwargs: Any) -> Any:
+            raise PermissionError(errno.EACCES, "Permission denied")
+
+        monkeypatch.setattr(Path, "read_bytes", _raise_eacces)
+        monkeypatch.setattr(Path, "exists", _raise_eacces)
+
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert list(tmp_path.glob("*.tmp-*")) == []
+        assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+
+    def test_sidecar_total_failure_restores_committed_snapshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        real_open = open
+
+        def _no_target_write(path: Any, *args: Any, **kwargs: Any) -> Any:
+            mode = args[0] if args else kwargs.get("mode", "")
+            if str(path) == str(target) and "w" in str(mode):
+                raise OSError(errno.ENOSPC, "no space left")
+            return real_open(path, *args, **kwargs)
+
+        real_unlink = Path.unlink
+        unlinked: list[str] = []
+
+        def _spy_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            unlinked.append(str(self))
+            real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr("builtins.open", _no_target_write)
+        monkeypatch.setattr(Path, "unlink", _spy_unlink)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert str(target) in unlinked, "fallback deleted the committed file"
+        assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_sidecar_unreadable_old_refuses_destructive_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "s.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+        real_read_bytes = Path.read_bytes
+        unlinked: list[str] = []
+
+        def _unreadable(self: Path) -> bytes:
+            if str(self) == str(target):
+                raise OSError(errno.EACCES, "denied")
+            return real_read_bytes(self)
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        real_unlink = Path.unlink
+
+        def _spy_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            unlinked.append(str(self))
+            real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_bytes", _unreadable)
+        monkeypatch.setattr(Path, "unlink", _spy_unlink)
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(target, {"a": 1})
+        assert str(target) not in unlinked, "unstashable snapshot must not be deleted"
+        assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+
+    def test_replace_fallback_warns_once_per_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            durability.write_sidecar_atomic(tmp_path / "a.json", {"a": 1})
+            durability.write_sidecar_atomic(tmp_path / "b.json", {"b": 2})
+        assert len([w for w in caught if "fallback" in str(w.message)]) == 1
+
+    def test_probe_sidecar_eperm_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "probe-aaaaaaaa-0-bead1234.json"
+        target.write_text(json.dumps({"old": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            durability.write_probe_sidecar(
+                target,
+                worker_uuid=_UUID_A,
+                probe_seq=0,
+                counters=[{"total_calls": 5}],
+                finalized=True,
+            )
+        assert json.loads(target.read_text(encoding="utf-8"))["counters"] == [{"total_calls": 5}]
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_mark_consumed_eperm_renames_via_unlink(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sidecar = tmp_path / "probe-aaaaaaaa-0-bead1234.json"
+        sidecar.write_text(json.dumps({"v": 1}), encoding="utf-8")
+        stale = tmp_path / "probe-consumed-aaaaaaaa-0-bead1234.json"
+        stale.write_text(json.dumps({"stale": True}), encoding="utf-8")
+        real_replace = os.replace
+
+        def _vboxsf(src: Any, dst: Any) -> None:
+            if os.path.exists(dst):
+                raise OSError(errno.EPERM, "Operation not permitted")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _vboxsf)
+        monkeypatch.setattr(durability, "_replace_fallback_warned", False)
+        with pytest.warns(UserWarning, match="fallback"):
+            marked = durability.mark_probe_consumed(sidecar)
+        assert marked == stale
+        assert json.loads(stale.read_text(encoding="utf-8")) == {"v": 1}
+        assert not sidecar.exists()
+
+    def test_mark_consumed_fallback_failure_preserves_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sidecar = tmp_path / "probe-aaaaaaaa-0-bead1234.json"
+        sidecar.write_text(json.dumps({"v": 1}), encoding="utf-8")
+        stale = tmp_path / "probe-consumed-aaaaaaaa-0-bead1234.json"
+        stale.write_text(json.dumps({"stale": True}), encoding="utf-8")
+
+        def _always_eperm(src: Any, dst: Any) -> None:
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "replace", _always_eperm)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.mark_probe_consumed(sidecar)
+        assert json.loads(sidecar.read_text(encoding="utf-8")) == {"v": 1}
+        assert json.loads(stale.read_text(encoding="utf-8")) == {"stale": True}
+
     def test_journal_partial_write_completes_exactly_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -28492,6 +28734,7 @@ def test_orphan_tmp_scalar_maxes_across_candidates(tmp_path: Path) -> None:
     assert partials[0]["probes_lost"] == 3
 
 
+@needs_posix_quarantine
 def test_orphan_tmp_divergent_quarantined(tmp_path: Path) -> None:
     """#88R3F3: divergent tmps are preserved, not consumed."""
     pid, birth = _dead_pid_with_birth()
@@ -28627,6 +28870,7 @@ def _quarantine_planted(tmp: Path) -> Path:
     return target
 
 
+@needs_posix_quarantine
 def test_partial_quarantine_retry_holds_conflict(tmp_path: Path) -> None:
     """#88R4-F3: a crash between renames never publishes one side."""
     pid, birth = _dead_pid_with_birth()
@@ -28841,6 +29085,7 @@ def test_unreadable_quarantine_defers(tmp_path: Path, monkeypatch: pytest.Monkey
     assert quarantined.exists()
 
 
+@needs_posix_quarantine
 def test_partial_probe_quarantine_retry_holds(tmp_path: Path) -> None:
     """#88R4-F3: a crashed probe quarantine never publishes one side."""
     pid, birth = _dead_pid_with_birth()
@@ -29186,6 +29431,7 @@ def test_probe_tmp_wrong_unit_ignored(tmp_path: Path) -> None:
     assert _fn_leaf(partials[0], "C_Digest")["by_rv"] == {}
 
 
+@needs_posix_quarantine
 def test_probe_tmp_divergent_warns_and_keeps_orphan(tmp_path: Path) -> None:
     """#88R3F3: irreconcilable probe tmps warn loudly and replay nothing."""
     pid, birth = _dead_pid_with_birth()
@@ -30389,7 +30635,9 @@ class TestStatFaultTolerance:
         with monkeypatch.context() as m:
             fired = _fault_stat_always(m, target)
             with pytest.warns(UserWarning, match="held"):
-                held = durability._consume_producer_files([target], {str(target): digest})
+                held = durability._consume_producer_files(
+                    [target], {str(target): digest}, root=tmp_path
+                )
         assert fired, "the stat fault must engage"
         assert held == [target]
         assert target.exists()
@@ -30405,7 +30653,7 @@ class TestStatFaultTolerance:
             fired = _fault_stat_always(m, target)
             fired_scan = _fault_scandir_always(m, target.parent)
             with pytest.warns(UserWarning):
-                held = durability._consume_producer_files([target], {})
+                held = durability._consume_producer_files([target], {}, root=tmp_path)
         assert fired and fired_scan, "both faults must engage"
         assert held == [target]
         assert target.exists()
@@ -31598,7 +31846,7 @@ class TestFinalAccountingAuthorization:
         return {
             "key": key,
             "report": {
-                "path": "/x/sidecar.partial.json.tmp-dup",
+                "path": str(Path("/x/sidecar.partial.json.tmp-dup")),
                 "digest": "dT",
                 "verdict": "candidate",
                 "dropped": {},
@@ -31615,7 +31863,9 @@ class TestFinalAccountingAuthorization:
     def test_delta_carveout_binds_proved_checkpoint(self) -> None:
         """#88R38-3: proof + cover bind a duplicate with no exact auth."""
         fix = self._delta_bind_fixture()
-        digests = {"/x/sidecar.partial.json": "d1"}
+        base = str(Path("/x/sidecar.partial.json"))
+        dup = str(Path("/x/sidecar.partial.json.tmp-dup"))
+        digests = {base: "d1"}
         bound: set[str] = set()
         durability._bind_accounted_tmp_digests(
             [fix["report"]],
@@ -31627,15 +31877,17 @@ class TestFinalAccountingAuthorization:
             "delta",
             digests,
             bound_out=bound,
-            published={"/x/sidecar.partial.json": "d1"},
+            published={base: "d1"},
         )
-        assert digests.get("/x/sidecar.partial.json.tmp-dup") == "dT"
-        assert "/x/sidecar.partial.json.tmp-dup" in bound
+        assert digests.get(dup) == "dT"
+        assert dup in bound
 
     def test_delta_carveout_rejects_evolved_base(self) -> None:
         """#88R38-3: a proof for other bytes authorizes nothing."""
         fix = self._delta_bind_fixture()
-        digests = {"/x/sidecar.partial.json": "d2"}
+        base = str(Path("/x/sidecar.partial.json"))
+        dup = str(Path("/x/sidecar.partial.json.tmp-dup"))
+        digests = {base: "d2"}
         bound: set[str] = set()
         durability._bind_accounted_tmp_digests(
             [fix["report"]],
@@ -31647,15 +31899,17 @@ class TestFinalAccountingAuthorization:
             "delta",
             digests,
             bound_out=bound,
-            published={"/x/sidecar.partial.json": "d1"},
+            published={base: "d1"},
         )
-        assert "/x/sidecar.partial.json.tmp-dup" not in digests
+        assert dup not in digests
         assert not bound
 
     def test_delta_carveout_rejects_missing_proof(self) -> None:
         """#88R38-3: cover alone never stands for the checkpoint."""
         fix = self._delta_bind_fixture()
-        digests = {"/x/sidecar.partial.json": "d1"}
+        base = str(Path("/x/sidecar.partial.json"))
+        dup = str(Path("/x/sidecar.partial.json.tmp-dup"))
+        digests = {base: "d1"}
         bound: set[str] = set()
         durability._bind_accounted_tmp_digests(
             [fix["report"]],
@@ -31663,13 +31917,13 @@ class TestFinalAccountingAuthorization:
             [],
             fix["staged"],
             fix["cover"],
-            {"/x/sidecar.partial.json": "d1"},
+            {base: "d1"},
             "delta",
             digests,
             bound_out=bound,
             published={},
         )
-        assert "/x/sidecar.partial.json.tmp-dup" not in digests
+        assert dup not in digests
         assert not bound
 
     def test_loss_key_never_covers_receipt_claim(self, engaged: Path) -> None:
@@ -31768,7 +32022,9 @@ class TestFinalAccountingAuthorization:
         tmp.write_text(json.dumps(raw), encoding="utf-8")
         digest = hashlib.sha256(sidecar.read_bytes()).hexdigest()
         with pytest.warns(UserWarning, match="unadjudicated tmp"):
-            held = durability._consume_producer_files([sidecar], {str(sidecar): digest})
+            held = durability._consume_producer_files(
+                [sidecar], {str(sidecar): digest}, root=engaged
+            )
         assert tmp.exists(), "the loss-only checkpoint is held, not pruned"
         assert sidecar.exists()
         assert held == [sidecar]
@@ -31940,7 +32196,12 @@ class TestFinalAccountingAuthorization:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             durability._consume_producer_files(
-                [sidecar], None, {str(sidecar)}, None, preserved_tmps_out=preserved
+                [sidecar],
+                None,
+                {str(sidecar)},
+                None,
+                preserved_tmps_out=preserved,
+                root=engaged,
             )
         assert preserved == set(), "torn bytes never stage a forensic hold"
         assert [w for w in caught if "unadjudicated tmp" in str(w.message)] == []
@@ -32022,7 +32283,7 @@ def test_prune_holds_dual_form_returnless_tmp(engaged: Path) -> None:
         },
     )
     with pytest.warns(UserWarning, match="unadjudicated tmp"):
-        removed, retained, hold = durability._prune_sidecar_tmps(sidecar)
+        removed, retained, hold = durability._prune_sidecar_tmps(sidecar, root=engaged)
     assert (removed, retained, hold) == (0, 1, True)
     assert tmp.exists()
 
@@ -32040,7 +32301,7 @@ def test_prune_holds_malformed_block_returnless_tmp(engaged: Path) -> None:
     sidecar = Path(planted["sidecar"])
     tmp = _plant_tmp(sidecar, {"worker_uuid": _UUID_A, "in_progress": {"total_calls": 2}})
     with pytest.warns(UserWarning, match="unadjudicated tmp"):
-        removed, retained, hold = durability._prune_sidecar_tmps(sidecar)
+        removed, retained, hold = durability._prune_sidecar_tmps(sidecar, root=engaged)
     assert (removed, retained, hold) == (0, 1, True)
     assert tmp.exists()
 
@@ -37287,6 +37548,7 @@ def _r41_4_checkpoint_dup_report() -> dict[str, Any]:
     }
 
 
+@needs_posix_quarantine
 def test_r41_4_checkpoint_for_voided_publication_authorizes_nothing() -> None:
     """#88R41-4 pin: the checkpoint route needs proof AND effectiveness.
 
@@ -38309,6 +38571,7 @@ def _sweep_retained(root: Path, plan: dict[str, Any]) -> dict[str, int]:
     )
 
 
+@needs_posix_quarantine
 def test_r42_q1_quarantine_failure_retains_originals(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -38350,6 +38613,7 @@ def test_r42_q1_quarantine_failure_retains_originals(
     assert sorted(archived) == sorted(fam["originals"])
 
 
+@needs_posix_quarantine
 def test_r42_q1_partial_quarantine_holds_both_sides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -38385,6 +38649,7 @@ def test_r42_q1_partial_quarantine_holds_both_sides(
     assert list(root.glob("probe-*.tmp-*")) == []
 
 
+@needs_posix_quarantine
 def test_r42_q1_quarantine_never_overwrites_archive(tmp_path: Path) -> None:
     """#88R42-Q1: a quarantined copy is never replaced; both copies survive."""
     root = tmp_path / "counters"
@@ -38408,6 +38673,7 @@ def test_r42_q1_quarantine_never_overwrites_archive(tmp_path: Path) -> None:
     assert sorted(archived) == sorted([prior_bytes, *fam["originals"]])
 
 
+@needs_posix_quarantine
 def test_r43_f9_midflight_arrival_never_replaces(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -38441,6 +38707,7 @@ def test_r43_f9_midflight_arrival_never_replaces(
     assert any("different evidence" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r43_f9_crash_between_link_and_unlink_completes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -38512,6 +38779,7 @@ def test_r43_f9_unlink_failure_retains_both(
     assert any("both retained for retry" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r43_f9_one_source_concurrent_finishes_or_holds(tmp_path: Path) -> None:
     """#88R43-F9: a same-source twin either completes together or holds apart."""
     import warnings
@@ -38544,6 +38812,7 @@ def test_r43_f9_one_source_concurrent_finishes_or_holds(tmp_path: Path) -> None:
     assert any("concurrent" in text for text in texts2), texts2
 
 
+@needs_posix_quarantine
 def test_r43_f9_two_sources_one_destination_falls_back(tmp_path: Path) -> None:
     """#88R43-F9: a second generation under one archive name lands beside it."""
     import warnings
@@ -38569,6 +38838,7 @@ def test_r43_f9_two_sources_one_destination_falls_back(tmp_path: Path) -> None:
     assert any("different evidence" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r43_f9_collision_policy_success_at_new_archive_path(tmp_path: Path) -> None:
     """#88R43-F9 pin: an occupied archive diverts, never blocks or replaces."""
     import warnings
@@ -38618,6 +38888,7 @@ def test_r43_f9_link_unavailable_holds_source(
     assert any("unavailable" in text and "retained" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r42_q2_covered_conflict_retries_identically(tmp_path: Path) -> None:
     """#88R42-Q2: a covered conflict holds the same disposition every pass."""
     import warnings
@@ -38654,6 +38925,7 @@ def test_r42_q2_covered_conflict_retries_identically(tmp_path: Path) -> None:
     assert fam["marker"].exists()
 
 
+@needs_posix_quarantine
 def test_r42_q2_sibling_converges_while_conflict_held(tmp_path: Path) -> None:
     """#88R42-Q2: an unaffected sibling publishes while the conflict holds."""
     root = tmp_path / "counters"
@@ -38724,6 +38996,7 @@ def _r43_f10_adjudicated(
     return fam, winner, restored, forensics
 
 
+@needs_posix_quarantine
 def test_r43_f10_marker_only_edit_holds_unpublished_rows(tmp_path: Path) -> None:
     """#88R43-F10: a marker-only edit holds; the selected rows stay unpublished."""
     import warnings
@@ -38749,6 +39022,7 @@ def test_r43_f10_marker_only_edit_holds_unpublished_rows(tmp_path: Path) -> None
     assert sorted(path.read_bytes() for path in forensics.iterdir()) == sorted(fam["originals"])
 
 
+@needs_posix_quarantine
 def test_r43_f10_effective_publication_converges_once(tmp_path: Path) -> None:
     """#88R43-F10: a same-scope publication accounting for the rows converges exactly once."""
     root = tmp_path / "counters"
@@ -38788,6 +39062,7 @@ def test_r43_f10_effective_publication_converges_once(tmp_path: Path) -> None:
     assert sorted(path.read_bytes() for path in forensics.iterdir()) == sorted(fam["originals"])
 
 
+@needs_posix_quarantine
 def test_r42_q2_archive_outside_holds(tmp_path: Path) -> None:
     """#88R42-Q2 as amended by #88R43-F10: archiving out still holds the retry."""
     import warnings
@@ -47836,6 +48111,7 @@ def test_r43_blb5_legacy_shortcut_holds_like_entry_present_twin(tmp_path: Path) 
     assert held == {"fresh": True, "legacy": True}, held
 
 
+@needs_posix_quarantine
 def test_r44_g5a_replacement_after_link_preserved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -47896,6 +48172,7 @@ def test_r44_g5a_replaced_archive_aborts_unlink(
     assert any("quarantine" in text and "retained" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_g5b_interrupted_fallback_with_gap_recognized(tmp_path: Path) -> None:
     """#88R44-G5: a same-inode fallback behind a suffix gap is recognized."""
     import warnings
@@ -47921,6 +48198,7 @@ def test_r44_g5b_interrupted_fallback_with_gap_recognized(tmp_path: Path) -> Non
     assert any("quarantine" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_g5b_fallback_retry_recognizes_dot_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -47960,6 +48238,7 @@ def test_r44_g5b_fallback_retry_recognizes_dot_one(
     assert any("quarantine" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_g5_normal_path_single_archive(tmp_path: Path) -> None:
     """#88R44-G5 control: a clean quarantine lands exactly one archive (no over-hold)."""
     import warnings
@@ -47978,6 +48257,7 @@ def test_r44_g5_normal_path_single_archive(tmp_path: Path) -> None:
     assert sorted(path.name for path in root.glob("slot.quarantined-*")) == [archive.name]
 
 
+@needs_posix_quarantine
 def test_r44_g5_collect_route_replacement_retained(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -48019,6 +48299,7 @@ def test_r44_g5_collect_route_replacement_retained(
     assert any("quarantine" in text and "retained" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_g5_resume_route_replacement_retained(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -49653,3 +49934,71 @@ def test_r44_g3_witnessed_marker_publishes_both_orders(
     assert not any(f"withholds recovery of ({_UUID_A}, 0)" in text for text in final_texts), (
         final_texts
     )
+
+
+class TestEvidenceContainment:
+    """M8: planted evidence paths never delete outside the counters root."""
+
+    def test_consume_refuses_outside_paths(self, tmp_path: Path) -> None:
+        root = tmp_path / "counters"
+        root.mkdir()
+        victim = tmp_path / "victim.txt"
+        victim.write_text("do not delete", encoding="utf-8")
+        decoy = tmp_path / "victim.txt.tmp-9"
+        decoy.write_text("do not delete", encoding="utf-8")
+        inside = root / "evidence.json"
+        inside.write_text("{}", encoding="utf-8")
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            held = durability._consume_producer_files([victim, inside], root=root)
+        assert victim.exists() and decoy.exists()
+        assert victim in held
+        assert not inside.exists()
+
+    def test_consume_refuses_counters_root_itself(self, tmp_path: Path) -> None:
+        root = tmp_path / "counters"
+        root.mkdir()
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            held = durability._consume_producer_files([root], root=root)
+        assert root.is_dir()
+        assert held == [root]
+
+    def test_sweep_retains_planted_outside_sidecar(self, engaged: Path, tmp_path: Path) -> None:
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=12345,
+            birth=999,
+            run_id=_RUN,
+            in_progress=_counts_block(1),
+        )
+        outside = tmp_path / "victim.txt"
+        outside.write_text("do not delete", encoding="utf-8")
+        reg_path = Path(planted["registry"])
+        content = json.loads(reg_path.read_text(encoding="utf-8"))
+        content["sidecar"] = str(outside)
+        reg_path.write_text(json.dumps(content), encoding="utf-8")
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            swept = durability.sweep_orphans(
+                engaged, current_run=_RUN, committed_uuids=frozenset({_UUID_A})
+            )
+        assert outside.exists()
+        assert not reg_path.exists()
+        assert swept["removed"] >= 1
+
+    def test_sweep_refuses_linked_registrations_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "counters"
+        root.mkdir()
+        outside = tmp_path / "victim"
+        outside.mkdir()
+        (outside / "package.json").write_text('{"name": "x"}', encoding="utf-8")
+        link = root / "registrations"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        with pytest.warns(UserWarning, match="not inside the counters root"):
+            swept = durability.sweep_orphans(root, current_run=_RUN)
+        assert (outside / "package.json").exists()
+        assert swept["removed"] == 0

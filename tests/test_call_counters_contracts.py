@@ -1253,7 +1253,6 @@ class TestGoldenBlocks:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="rc2-Task-2: module-first records not emitted or folded", strict=False)
 class TestForwardTask2ModuleFirst:
     def test_module_first_session_folds_exactly(self, tmp_path: Path) -> None:
         block = _module_block(

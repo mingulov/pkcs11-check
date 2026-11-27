@@ -19,13 +19,22 @@ from pkcs11_check.core.sharding import duration_by_unit_from_results, plan_shard
 
 console = Console()
 
-_DEFAULT_TESTCASES = "src/pkcs11_check/testcases"
+
+def _default_testcases_dir() -> Path:
+    """U10: the shipped testcases dir, wherever the package is installed."""
+    import pkcs11_check
+
+    package_file = pkcs11_check.__file__
+    if package_file is None:  # pragma: no cover - namespace-package edge
+        console.print("[red]Error:[/red] cannot locate the installed pkcs11_check package")
+        raise typer.Exit(code=2)
+    return Path(package_file).resolve().parent / "testcases"
 
 
 def shard_units_command(
     shards: int = typer.Option(..., "--shards", "-n", help="Number of shards (>=1)"),
-    testcases_dir: Path = typer.Option(
-        Path(_DEFAULT_TESTCASES), "--testcases", help="Directory of test files to shard"
+    testcases_dir: Path | None = typer.Option(
+        None, "--testcases", help="Directory of test files to shard (default: shipped testcases)"
     ),
     prior_results: Path | None = typer.Option(
         None,
@@ -46,9 +55,10 @@ def shard_units_command(
         console.print("[red]Error:[/red] --shards must be >= 1")
         raise typer.Exit(code=2)
 
-    units = sorted(str(p) for p in testcases_dir.rglob("test_*.py"))
+    root = testcases_dir if testcases_dir is not None else _default_testcases_dir()
+    units = sorted(str(p) for p in root.rglob("test_*.py"))
     if not units:
-        console.print(f"[red]Error:[/red] no test_*.py files under {testcases_dir}")
+        console.print(f"[red]Error:[/red] no test_*.py files under {root}")
         raise typer.Exit(code=2)
 
     durations = None

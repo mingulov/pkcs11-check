@@ -57,7 +57,9 @@ def refusal_rv_for(attrs: Mapping[Any, Any], attr: Any) -> int | None:
     returned and the caller must route that shape through ``attr_or_record``
     (which records the contradiction) plus a terminating classifier.
     Forwarding its RV into a negative-operation classifier would downgrade
-    a measured contradiction to an honest-deviation xfail.
+    a measured contradiction to an honest-deviation xfail. A malformed
+    refusal (R8-1: finite length retained without a write) is likewise
+    withheld: it must be reported as malformed, never forwarded as clean.
 
     Use this only when the calling oracle must forward the original refusal
     RV (e.g. into a negative-operation classifier); ordinary absence
@@ -67,6 +69,8 @@ def refusal_rv_for(attrs: Mapping[Any, Any], attr: Any) -> int | None:
     if refusal is None:
         return None
     if refusal.leaked_len is not None:
+        return None
+    if refusal.malformed:
         return None
     return refusal.ckr
 
@@ -88,6 +92,25 @@ def _sentinel_without_ckr(attrs: Mapping[Any, Any], attr: Any) -> bool:
         return False
 
 
+def delivery_unproved(attrs: Mapping[Any, Any], attr: Any) -> bool:
+    """Whether ``read_attributes`` marked delivery unproved for ``attr`` (R11-2).
+
+    True only when the read left residual doubt about delivery (its
+    additive ``unproved_delivery`` channel: untouched fill on success, or
+    a partial write the retry did not fully resolve); a plain ``Mapping``
+    with no such channel reports ``False``. The narrowly recognized
+    accessor for the channel (R12-1): probe and oracle callers consult
+    delivery state through this, never by direct sidecar access.
+    """
+    observed = getattr(attrs, "unproved_delivery", None)
+    if not observed:
+        return False
+    try:
+        return attr in observed
+    except TypeError:
+        return False
+
+
 def attr_or_record(
     attrs: Mapping[Any, Any],
     attr: Any,
@@ -99,6 +122,7 @@ def attr_or_record(
     inherit_mechanism: bool = True,
     sensitive_is_conformant: bool = False,
     optional_if_absent: bool = False,
+    strict_delivery: bool = False,
 ) -> Any:
     """Return an attribute or record its absence without terminating the test.
 
@@ -106,6 +130,15 @@ def attr_or_record(
     ``read_attributes`` observed an actual refusal CKR for ``attr`` (carried via
     its additive ``refusals`` channel), that CKR rides on the emitted record as
     ``actual_ckr`` -- never invented when no CKR was actually observed.
+
+    With ``strict_delivery``, an unproved delivery (``read_attributes``
+    success that left residual doubt, e.g. untouched fill or an
+    unresolved partial write) is retained as a visible deviation instead
+    of a value -- and never as silent capability absence. Opt in at
+    callers whose verdicts must not rest on unproved bytes. Concrete
+    refusal evidence still takes precedence over the mark: a
+    refusal-with-data (always a self-contradiction) or a malformed
+    refusal is reported as itself, with the mark riding on the record.
 
     Whether a ``CKR_ATTRIBUTE_SENSITIVE`` refusal is *conformant* or a *defect*
     depends on whether ``attr`` could legitimately be sensitive, which only the
@@ -136,9 +169,6 @@ def attr_or_record(
     """
     if reason not in ("honest_deviation", "not_operational"):
         raise ValueError(f"invalid missing-attribute reason: {reason!r}")
-    if attr in attrs:
-        return attrs[attr]
-
     try:
         attr_id: int | None = int(attr)
     except (TypeError, ValueError, OverflowError):
@@ -153,7 +183,14 @@ def attr_or_record(
         # but still wrote real bytes into the template -- a finding regardless of
         # whether this attribute could legitimately be sensitive. Bounded length
         # only; the bytes themselves are never carried into the record.
+        # R14-2: concrete refusal evidence beats the delivery mark (a
+        # refusing retry that also wrote stays a hard finding, never a
+        # mark-deviation xfail); the mark rides on the record when set.
         detail["leaked_len"] = refusal.leaked_len
+        if refusal.reported_len is not None:
+            detail["reported_len"] = refusal.reported_len
+        if delivery_unproved(attrs, attr):
+            detail["unproved_delivery"] = True
         record_as(
             "self_contradiction",
             kind="policy",
@@ -169,6 +206,85 @@ def attr_or_record(
             detail=detail,
         )
         return MISSING_ATTRIBUTE
+
+    if refusal is not None and refusal.malformed:
+        # R8-1: refusal honored (no value surfaced) but a finite length was
+        # retained without a write -- sloppy, not a leak. Named as malformed
+        # (never forwarded as clean), proportionate xfail: nothing unsafe
+        # happened, so this notes the shape without failing the run.
+        # R14-2b: same precedence as the leak above -- the concrete shape
+        # and its CKR survive a retry mark.
+        # R17-1: an overrun withheld under an aggregate multi-attribute
+        # refusal reports through this same site (no new emitter): the
+        # record keeps capacity + reported length + the aggregate call RV,
+        # and the summary names the RV aggregate so no per-attribute cause
+        # is implied. Proportionate xfail like the plain malformed shape:
+        # no per-attribute write is proven against zero-fill, and the call
+        # itself signaled failure (success-claimed overruns stay fail-loud
+        # via the N-003 raise instead).
+        overrun = (
+            refusal.capacity is not None
+            and refusal.reported_len is not None
+            and refusal.reported_len > refusal.capacity
+        )
+        detail["malformed_refusal"] = True
+        if overrun:
+            detail["reported_len"] = refusal.reported_len
+            detail["capacity"] = refusal.capacity
+        if delivery_unproved(attrs, attr):
+            detail["unproved_delivery"] = True
+        record_as(
+            reason,
+            kind=kind,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            actual=refusal.ckr,
+            summary=(
+                f"{label}: attribute claims {refusal.reported_len} bytes in a "
+                f"{refusal.capacity}-byte buffer on a call returning "
+                f"{ckr_name(refusal.ckr)} (aggregate RV, unattributed)"
+                if overrun
+                else f"{label}: attribute refusal malformed "
+                f"({ckr_name(refusal.ckr)} with a retained finite length, no write)"
+            ),
+            detail=detail,
+        )
+        return MISSING_ATTRIBUTE
+
+    if strict_delivery and delivery_unproved(attrs, attr):
+        # Unproved delivery (untouched fill or an unresolved partial
+        # write): retained as a visible deviation for strict callers --
+        # never a value, and never silent capability absence for
+        # optional callers. Lenient callers keep today's shape. Checked
+        # before presence: the channel marks doubt about a value that
+        # may still sit in the mapping. Concrete refusal evidence above
+        # still takes precedence (R14-2).
+        try:
+            strict_id: int | None = int(attr)
+        except (TypeError, ValueError, OverflowError):
+            strict_id = None
+        strict_name = ATTR_NAMES.get(strict_id, str(attr)) if strict_id is not None else str(attr)
+        record_as(
+            reason,
+            kind=kind,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            inherit_mechanism=inherit_mechanism,
+            # R15-2: a known refusal CKR (e.g. a contradicting retry
+            # refusal) rides on the mark record instead of being dropped.
+            actual=refusal.ckr if refusal is not None else None,
+            summary=f"{label}: attribute value unproved (delivery not established)",
+            detail={
+                "attribute": {"name": strict_name, "id": strict_id},
+                "unproved_delivery": True,
+            },
+        )
+        return MISSING_ATTRIBUTE
+    if attr in attrs:
+        return attrs[attr]
 
     if optional_if_absent and refusal is not None and refusal.ckr == CKR_ATTRIBUTE_TYPE_INVALID:
         return MISSING_ATTRIBUTE

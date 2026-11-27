@@ -21,6 +21,7 @@ import pytest
 
 from pkcs11_check.raw.recipes import ImplausibleModuleLengthError
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.types_std import CKR_USER_NOT_LOGGED_IN
 from pkcs11_check.testcases.acvp.aes.base_cts import (
     CtsDetectionResult as _CtsDetectionResult,
 )
@@ -41,16 +42,20 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     # Classify CTS variant test items
     cts_variant_items: dict[str, list[pytest.Item]] = {}
+    sentinel_selected = False
     for item in items:
         nodeid = item.nodeid
         if "test_cts.py" not in nodeid:
+            continue
+        if nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected":
+            sentinel_selected = True
             continue
         for v in ("1", "2", "3"):
             if f"_cs{v}_" in nodeid:
                 cts_variant_items.setdefault(v, []).append(item)
                 break
 
-    if not cts_variant_items:
+    if not cts_variant_items and not sentinel_selected:
         return
 
     detection = _probe_cts_variant(config)
@@ -62,10 +67,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         # detection-failure classification.  The sentinel is skipped only when
         # it is actually part of this selection; never assume pytest selected a
         # sibling test or add one to the run.
-        sentinel_selected = any(
-            item.nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected"
-            for item in items
-        )
         if sentinel_selected:
             # Detection failed: skip all CS variant tests.  The selected
             # sentinel remains the sole reporter.
@@ -113,6 +114,15 @@ def _detection_skip_reason(detection: _CtsDetectionResult) -> str:
         return (
             f"CKM_AES_CTS variant detection failed with {ckr}; "
             "the selected CTS reporter records the provider finding"
+        )
+    if (
+        detection.status is _CtsDetectionStatus.NOT_OPERATIONAL
+        and detection.error_rv is not None
+        and int(detection.error_rv) == int(CKR_USER_NOT_LOGGED_IN)
+    ):
+        return (
+            "probe ran logged out (no PIN configured) and the module refused "
+            "with CKR_USER_NOT_LOGGED_IN; configure a PIN to exercise CTS vectors"
         )
     return (
         "CKM_AES_CTS variant detection failed; the selected CTS reporter records "
@@ -281,8 +291,9 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
         rs = _MinimalSession(raw, sh, frozenset(names))
         # Use the structured process cache so the selected sentinel/vector
         # runtime guard reuses this collection result instead of touching the
-        # provider a second time.
-        return get_cts_detection(rs)
+        # provider a second time. The probe threads its login state so a
+        # logged-out login refusal converts before caching (S2).
+        return get_cts_detection(rs, logged_in=logged_in)
     finally:
         if logged_in:
             logout_quietly(raw, sh)

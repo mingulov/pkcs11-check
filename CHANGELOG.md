@@ -1,5 +1,131 @@
 # Changelog
 
+## [0.3.1] - 2026-11-23
+
+Counting-exactness and honesty release: provider call counts now reconcile
+exactly against external tracers, partially delivered reads are flagged
+instead of silently trusted, and the command line fails fast with clear
+messages where it used to run on with tracebacks. Not yet validated by a
+full provider round (see Known limitations).
+
+### Added
+
+- Run totals at the end of every text-mode isolated run, so a finished
+  run states its own outcome without opening a report file
+  (`--isolation none` keeps showing pytest's own summary).
+- `--version` flag printing the same string as the `version` subcommand.
+- A per-slot initialized marker in `info`, naming how many token slots
+  are actually initialized.
+- A `docs/round-evidence.md` page stating honestly what the round-evidence
+  commands and receipt checks do and do not verify.
+- A documented inventory of every `PKCS11_CHECK_*` environment variable
+  in `docs/configuration.md`, plus an "Empty PIN semantics" section
+  pinning the exact three-way behavior.
+- A "Files a run creates" section in the README listing exactly what a
+  default run writes, with `.gitignore` guidance.
+- SHA256SUMS asset attached to every GitHub release.
+
+### Fixed
+
+- Call counting gaps found by cross-checking against an external tracer:
+  lost probe processes, early startup sequences, and helper-program
+  boundaries are now counted or explicitly named, never silently missed.
+- Crash recovery for counters: a run that crashes and is fully recovered
+  reports exact totals; anything less is reported incomplete rather
+  than quietly wrong, except for the narrow recovery cases
+  listed under Known limitations.
+- Attribute reads the provider did not fully deliver are now flagged as
+  unproved instead of silently accepted; reads claiming more bytes than
+  their buffer fail loudly with both lengths.
+- Seal and absence checks no longer grant credit when a retry contradicts
+  the first read.
+- RSA and EC private-value comparisons ignore leading-zero padding, so
+  providers returning short forms no longer fail against padded expected
+  values.
+- Wrong PIN in `test` now fails fast with one message and exit code 2
+  instead of per-test login failures.
+- The `--pin` login probe's own calls now join the session totals
+  instead of vanishing; a crashed or timed-out probe retains its
+  counter evidence alongside its verdict.
+- A `--pin` login probe that crashes or hangs now refuses the suite
+  with exit code 1 instead of running on silently; an inconclusive
+  probe warns loudly, and resumed runs keep the saved outcome's exit
+  code through these gates.
+- Empty `--match` selections exit before running any unit instead of
+  running the whole suite vacuously.
+- Empty selections now report collection-skip reasons (such as missing
+  vector data) instead of a bare "0 matched", and a selection whose
+  every matched test is excluded by the disabled baseline fails fast
+  instead of running the remaining files vacuously.
+- Default output no longer shows internal per-process report-log paths
+  (still visible with `--verbose`).
+- `--show-config` now emits the same dead-setting warnings as a real run
+  and shows provided-but-ignored values instead of hiding them.
+- Garbage `PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES` values warn loudly
+  instead of silently falling back.
+- The secret-guard for probe parameters now catches credential key
+  respellings (`userPin`, `password`, `token_pin`, …), not just exact
+  `pin`/`PIN`.
+- Token-mint helper commands run under a 120-second timeout so a hung
+  mint cannot hang the suite.
+- IV-sensitivity tests use fixed distinct IVs, so a ciphertext match
+  always proves provider behavior, never a provider random-number
+  collision.
+- Dead settings (`timeout_operation`, `timeout_test`, `max_sessions`,
+  `skip_unsupported`, `--sessions`) hidden from help and `--show-config`
+  output; they remain documented in `docs/configuration.md`.
+- Stale documentation claims removed or corrected throughout (timing
+  figures, test counts, old version references, Windows coverage notes).
+
+### Known limitations
+
+- Call counters: a run that crashes and is fully recovered reports
+  exact totals; in rare multiple-fault situations (for example a crash
+  while results are being collected, or during a resumed run) the
+  report may say the counts are incomplete instead of recovering them
+  exactly. Exception: counts can still be dropped silently when
+  counter-evidence files cannot be used at collection time: a resumed
+  run whose prior report is present but unreadable; counter files
+  unreadable through a disk or permission fault; counter files discarded
+  during cleanup because their matching files are missing or their run
+  was already treated as collected; and counter files held for a later
+  pass because the process slot they name looks still occupied. In these
+  cases the totals can still report complete. Apart from that exception,
+  counts are never
+  silently wrong as "complete", and they never change any test result.
+  For exact totals, use a fresh run.
+- Resumed runs: if a resumed run fails its startup checks, it can
+  overwrite the previous report files. Keep a copy of any report you
+  need before resuming.
+- Call counters count calls made by pkcs11-check itself. Calls made by
+  helper programs it launches (such as OpenSSL interoperability tests)
+  are not included, and a whole-machine crash (not just a program
+  crash) can still lose the last moments of counts.
+- Running the tests directly with pytest keeps counts in memory only.
+- The round-evidence commands (`evidence-export`, `evidence-admit`,
+  `evidence-compare`) are included for an upcoming CI workflow that is
+  not yet active; receipt checks verify file shape and linkage, not
+  the recorded digests themselves.
+- Startup-check counter evidence can fail warn-only under disk I/O
+  pathology (loud warning, no loss record).
+- Sign-permission checks: on modules where generic-secret keys are
+  unavailable, a refusal on the signing-disabled key earns a pass only
+  when the signing-enabled comparison key initializes signing. If the
+  comparison key gives a normal refusal instead, the result is
+  inconclusive; if a key reports signing disabled yet successfully
+  initializes signing, that contradiction is reported as a failure.
+- Key-derivation policy checks read the second key's allowed-mechanism
+  list strictly: a two-key derivation the list excludes is reported as
+  a failure even when the module performs it. This reading is intentional
+  and will be revisited if a conforming module disputes it.
+- Object-copy checks treat inconsistent copy answers as failures: one
+  guess accepted while the other is refused, or two different standard
+  refusals for the same question, is reported as a failure. This
+  consistency rule is intentional and will be revisited if a conforming
+  module disputes it.
+- No complete provider round has been run for this release; results
+  against your module may differ from the SoftHSM2-based testing.
+
 ## [0.3.0] - 2026-11-17
 
 Coverage and verdict-accuracy release: six new conformance areas,
@@ -98,15 +224,6 @@ validated by a full provider round (see Known limitations).
   counter design.
 - Startup-check counter evidence can fail warn-only under disk I/O
   pathology (loud warning, no loss record).
-- Return-value counters distinguish two crash shapes. A call that never
-  returns (provider crash mid-call) is counted as a call with no return
-  code: none exists to record. Separately, a code that did return can be
-  lost before persistence: the call is recorded before the provider runs
-  but its return code is journaled after, so a crash in between orphans
-  the code (observed only in runs with intentional crash tests, and rare
-  there). Persisting every return before the counters rewrite would add
-  a flush per call for negligible gain, so it stays deferred; tracked
-  as follow-up work (fw#88).
 - Crash-exactness needs the CLI runner (or an exported counters
   directory): bare-pytest runs count in memory only, so a crash can
   lose unflushed calls, and their rows read isolation unknown.

@@ -100,6 +100,7 @@ from pkcs11_check.fixtures import (  # noqa: F401
     p11_module_session,
     p11_raw_session,
     p11_session,
+    resolve_cli_settings,
 )
 from pkcs11_check.raw.types_std import (
     CKR_OK,
@@ -130,15 +131,21 @@ def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
         except Exception as exc:
             pytest.exit(f"Unable to load p11 manifest: {exc}", returncode=2)
     else:
+        from tomllib import TOMLDecodeError
+
+        from pydantic import ValidationError
+
+        try:
+            merged = resolve_cli_settings(Path(module_path), config.getoption)
+        except (ValidationError, TOMLDecodeError) as exc:
+            raise pytest.UsageError(f"invalid pkcs11-check configuration: {exc}") from exc
+        interface = merged.interface or "auto"
+        slot = merged.slot
         manifest_fd, manifest_raw_path = tempfile.mkstemp(
             prefix="pkcs11-check-manifest-", suffix=".json"
         )
         os.close(manifest_fd)
         manifest_path = Path(manifest_raw_path)
-        interface_option = config.getoption("p11_interface", default=None)
-        interface = "auto" if interface_option is None else str(interface_option)
-        slot_option = config.getoption("p11_slot", default=None)
-        slot = 0 if slot_option is None else int(slot_option)
         try:
             manifest = run_preflight_subprocess(
                 Path(module_path),

@@ -3252,6 +3252,7 @@ def test_qc4a_wrap_peer_contradiction_fails_self_contradiction() -> None:
     record = _assert_fail_record("self_contradiction", "policy")
     assert record.actual_ckr == ckr_name(_TYPE_INVALID), record.summary
     assert (record.detail or {}).get("leaked_len") == len(leak), record.detail
+    assert (record.detail or {}).get("reported_len") == len(leak), record.detail
     assert _reported_outcome() == "fail", [rec.reason for rec in C.get_records()]
     assert not [note for note in get_notes() if "peer claim" in note.description], [
         note.description for note in get_notes()
@@ -5078,6 +5079,7 @@ def test_qc4b_create_component_contradiction_fails_self_contradiction() -> None:
     record = _assert_fail_record("self_contradiction", "policy")
     assert record.actual_ckr == ckr_name(_TYPE_INVALID), record.summary
     assert (record.detail or {}).get("leaked_len") == len(leak), record.detail
+    assert (record.detail or {}).get("reported_len") == len(leak), record.detail
     assert _reported_outcome() == "fail", [rec.reason for rec in C.get_records()]
     _assert_cleaned_up(fake)
     _assert_no_secret_bytes()
