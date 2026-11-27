@@ -506,6 +506,11 @@ def s4_census() -> list[tuple[str, str]]:
 # Adding an entry is a deliberate, reviewable act -- prefer routing through
 # CK_UNAVAILABLE_INFORMATION / CK_UNAVAILABLE_INFORMATION_32 instead.
 _S4_CENSUS: tuple[tuple[str, str], ...] = (
+    # fixed 64-bit wire bound for mechanism ids (#87 item 1): the counter
+    # wire carries up to 16 hex digits on EVERY platform, so this must not
+    # route through the platform-width CK_UNAVAILABLE_INFORMATION (32-bit
+    # on Windows would diverge parse behavior by platform).
+    ("src/pkcs11_check/core/counters_schema.py", "MAX_MECH_ID"),
     # the generated 32-bit seam definition itself
     ("src/pkcs11_check/raw/types_std.py", "CK_UNAVAILABLE_INFORMATION_32"),
     # 32-bit-max / oversized-length stimuli (fixed 32-bit values by design)

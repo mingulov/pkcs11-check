@@ -72,6 +72,7 @@ from pkcs11_check.core._counters_durability import (
     write_sidecar_atomic,
 )
 from pkcs11_check.core.counters_schema import (
+    MAX_MECH_ID,
     UNKNOWN_MODULE,
     ensure_five_buckets,
     is_birth_token,
@@ -670,11 +671,12 @@ def _resolve_mech(mech: int | None) -> int | None:
     """Return the CKM mechanism id, failing loud on a mistyped value.
 
     None means unattributed (not a mechanism call, or the struct was
-    unreadable); bools and negatives are caller bugs, never wire data.
+    unreadable); bools, negatives, and above-64-bit ids are caller bugs,
+    never wire data (a longer key would fail its whole block closed).
     """
     if mech is None:
         return None
-    if not isinstance(mech, int) or isinstance(mech, bool) or mech < 0:
+    if not isinstance(mech, int) or isinstance(mech, bool) or mech < 0 or mech > MAX_MECH_ID:
         raise ValueError(f"invalid call-counter mechanism: {mech!r}")
     return mech
 
@@ -1052,7 +1054,9 @@ def _parse_flat_rows(flat: Any) -> list[tuple[str, str, int | None, int, int | N
             continue
         if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
             continue
-        if mech is not None and (not isinstance(mech, int) or isinstance(mech, bool) or mech < 0):
+        if mech is not None and (
+            not isinstance(mech, int) or isinstance(mech, bool) or mech < 0 or mech > MAX_MECH_ID
+        ):
             continue
         parsed.append((module, fn, rv, count, mech))
     return parsed
