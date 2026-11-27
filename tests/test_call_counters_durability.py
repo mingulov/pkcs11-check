@@ -75734,16 +75734,15 @@ def test_r44_ar67_guard_depth_retries_resolved_root() -> None:
     assert durability._guard_depth(Path("//tmp/x/counters/a/b/f"), root, resolved) == 3
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
 def test_r44_ar67_quarantine_identity_missing_reads_none(tmp_path: Path) -> None:
     """#88R44-[A]r67: only a regular file has a quarantine identity.
 
     Claude Q3 N3/L2: the sweep-won-race rework mocks
     _quarantine_name_identity, so the mocked seam itself
     needs a pin: missing reads None, present reads its
-    (st_dev, st_ino) pair -- and symlinks and directories
-    read None too (lstat-based, regular-files-only, so a
-    symlinked archive name can never verify).
+    (st_dev, st_ino) pair, and directories read None
+    (lstat-based, regular-files-only). Symlinks pin
+    separately: only their creation needs POSIX.
     """
     import os
 
@@ -75755,9 +75754,25 @@ def test_r44_ar67_quarantine_identity_missing_reads_none(tmp_path: Path) -> None
         os.stat(present).st_dev,
         os.stat(present).st_ino,
     )
-    link = tmp_path / "link.tmp-1"
-    os.symlink(present, link)
-    assert durability._quarantine_name_identity(link) is None
     subdir = tmp_path / "adir"
     subdir.mkdir()
     assert durability._quarantine_name_identity(subdir) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar69_quarantine_identity_symlink_reads_none(tmp_path: Path) -> None:
+    """#88R44-[A]r69: a symlinked name has no quarantine identity.
+
+    Codex R68 Minor: only symlink creation needs the POSIX
+    gate; the missing/regular/directory pins run unmarked
+    (including on Windows CI). A symlinked archive name
+    reads None, so it can never verify and authorize the
+    source unlink.
+    """
+    import os
+
+    present = tmp_path / "here.tmp-1"
+    present.write_bytes(b"x")
+    link = tmp_path / "link.tmp-1"
+    os.symlink(present, link)
+    assert durability._quarantine_name_identity(link) is None
