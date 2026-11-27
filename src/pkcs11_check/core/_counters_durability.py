@@ -3300,8 +3300,11 @@ class _OwnerCensus(NamedTuple):
     (bytes unknown or unusable). ``trusted`` lists uuids with clean
     evidence (name-matched registries, consistent sidecars):
     contradictory bodies count for completeness but never authorize
-    deletion (#88R44-[A]r19). ``unbound`` names the root-relative
-    paths whose evidence raised global attribution uncertainty, so
+    deletion (#88R44-[A]r19). ``trusted_by`` records which
+    root-relative path attested each trusted uuid, so deletion
+    can re-verify the basis instead of trusting the scan
+    (#88R44-[A]r21). ``unbound`` names the root-relative paths
+    whose evidence raised global attribution uncertainty, so
     stall voices can name the blocking file (#88R44-[A]r18).
     """
 
@@ -3311,6 +3314,7 @@ class _OwnerCensus(NamedTuple):
     identity_unbound: bool = False
     unbound: frozenset[str] = frozenset()
     trusted: frozenset[str] = frozenset()
+    trusted_by: frozenset[tuple[str, str]] = frozenset()
 
     @property
     def complete(self) -> bool:
@@ -3372,15 +3376,40 @@ def _evidence_relkey(root: Path, path: Path) -> str:
     """Root-relative key for a census fault entry (#88R44-[A]r18).
 
     Basenames collide across directories (junk in registrations/
-    can share a root sidecar's name), so same-pass reaps subtract
-    by path. Falls back to the bare name when unrelatable
-    (outside-root linked paths, which are retained-never-reaped,
-    so the fallback never wrongly subtracts). Never raises.
+    can share a root sidecar's name), so fault entries key by
+    path (#88R44-[A]r19 replaced subtraction with existence
+    filtering; the keys still disambiguate). Falls back to the
+    bare name when unrelatable (outside-root linked paths, which
+    are retained-never-reaped, so the fallback never wrongly
+    matches). Never raises.
     """
     try:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.name
+
+
+def _sidecar_attested_owner(name: str, status: str, sidecar: Any | None) -> str | None:
+    """Body uuid one sidecar read attests, else None (#88R44-[A]r22).
+
+    THE sidecar consistency rule, shared by the census scan and
+    the deletion-time reread (Codex R21-2: the reread's private
+    copy rejected claimless valid bodies the census trusted, so
+    a rival the scan saw vanished at the witness consult). A
+    valid body with no contradictory filename claim attests its
+    owner; anything else -- unreadable, torn, unparseable, or a
+    filename/body mismatch -- attests nobody. Never raises.
+    """
+    if status != "ok" or not (
+        isinstance(sidecar, dict) and is_worker_uuid(sidecar.get("worker_uuid"))
+    ):
+        return None
+    body = sidecar["worker_uuid"]
+    assert isinstance(body, str)
+    claimed = _uuid_from_evidence_name(name)
+    if claimed is not None and claimed != body:
+        return None
+    return body
 
 
 def _owner_census(root: Path) -> _OwnerCensus:
@@ -3406,6 +3435,7 @@ def _owner_census(root: Path) -> _OwnerCensus:
     """
     uuids: set[str] = set()
     trusted: set[str] = set()
+    trusted_by: set[tuple[str, str]] = set()
     degraded: dict[str, set[tuple[str, str, str]]] = {}
     inventory_failed = False
     identity_unbound = False
@@ -3481,6 +3511,7 @@ def _owner_census(root: Path) -> _OwnerCensus:
                 if content is not None:
                     uuids.add(content["worker_uuid"])
                     trusted.add(content["worker_uuid"])
+                    trusted_by.add((content["worker_uuid"], _evidence_relkey(root, registry_path)))
                     continue
                 status, payload = _read_json_evidence(registry_path)
                 if status == "gone":
@@ -3516,6 +3547,7 @@ def _owner_census(root: Path) -> _OwnerCensus:
                     ):
                         uuids.add(filename_claim)
                         trusted.add(filename_claim)
+                        trusted_by.add((filename_claim, _evidence_relkey(root, registry_path)))
                     elif is_worker_uuid(body_uuid) and (
                         filename_claim is None or body_uuid != filename_claim
                     ):
@@ -3572,16 +3604,23 @@ def _owner_census(root: Path) -> _OwnerCensus:
                 # opaque bytes).
                 _degrade_opaque(sidecar_path, _uuid_from_evidence_name(sidecar_path.name))
             else:
-                claimed = _uuid_from_evidence_name(sidecar_path.name)
-                if claimed is not None and claimed != sidecar["worker_uuid"]:
+                # Valid body with a uuid: the shared attestation
+                # rule decides (validity is established above, so
+                # the helper refuses only on a filename/body
+                # contradiction).
+                owner = _sidecar_attested_owner(sidecar_path.name, status, sidecar)
+                if owner is None:
                     # Readable filename/body contradiction, same rule
                     # (#88R44-[A]r17): the body counts (authoritative)
                     # but nothing is trusted, so attribution waits
                     # for the contradiction to resolve.
                     _flag_unbound(sidecar_path)
-                    _degrade_claimed(sidecar_path, claimed, "opaque")
+                    claimed = _uuid_from_evidence_name(sidecar_path.name)
+                    if claimed is not None:
+                        _degrade_claimed(sidecar_path, claimed, "opaque")
                 else:
-                    trusted.add(sidecar["worker_uuid"])
+                    trusted.add(owner)
+                    trusted_by.add((owner, _evidence_relkey(root, sidecar_path)))
                 uuids.add(sidecar["worker_uuid"])
     return _OwnerCensus(
         uuids=frozenset(uuids),
@@ -3590,6 +3629,7 @@ def _owner_census(root: Path) -> _OwnerCensus:
         identity_unbound=identity_unbound,
         unbound=frozenset(unbound),
         trusted=frozenset(trusted),
+        trusted_by=frozenset(trusted_by),
     )
 
 
@@ -3609,11 +3649,64 @@ def _format_unbound_blockers(unbound: Collection[str]) -> str:
 
 
 _UNBOUND_STALL_EXIT = (
-    "exit: restore a verified binding for the blocking files (readability, "
-    "or rename to match the body uuid without overwriting another identity), "
-    "or archive the unresolved collision together with its affected probes "
-    "and markers outside the counters directory, then rerun"
+    "exit: verify against independent evidence which side is authoritative "
+    "(provider records, sibling files, operator log) without overwriting "
+    "any identity, then either restore the verified binding (readability, "
+    "or rename to match an established live family) or archive the "
+    "unresolved collision together "
+    "with its affected probes and markers outside the counters directory, "
+    "then rerun"
 )
+
+
+def _warn_sidecar_contradiction(name: str, claimed: str, body: object) -> None:
+    """Voice a sidecar filename/body contradiction (#88R44-[A]r22).
+
+    Shared by the committed and run-credit arms: both used to
+    retain with no exit at all (Codex R21 test note). The exit
+    is verify-first like every registry mismatch -- a blind
+    rename trusts the body, but the body may be the lie.
+    Ownerless bodies (readable dicts with no owner identity)
+    take a body-repair-or-archival exit instead (#88R44-[A]r23,
+    Codex R22-4; reworked #88R44-[A]r24, Codex R23-2; dual
+    binding #88R44-[A]r25, Codex R24-3): the census files them
+    as opaque/global, so a scoped contradiction voice would
+    misdirect archival -- and a rename cannot clear the hold
+    (the body stays ownerless), so rename advice is reserved
+    for readable mismatches whose body can attest the verified
+    destination.
+    """
+    if not is_worker_uuid(body):
+        warnings.warn(
+            f"sidecar {name} carries no owner identity and could belong "
+            "to anyone; retained as ambiguity evidence; exit: establish "
+            "the owner against independent evidence (provider records, "
+            "sibling files, operator log) without overwriting any "
+            "identity, then either repair the body to name the verified "
+            "owner and bind the filename to match it (rename without "
+            "overwriting; either half alone still holds) or archive "
+            "the file outside the counters directory together with any "
+            "probe/marker evidence that cannot be tied to a single "
+            "other owner, then rerun",
+            UserWarning,
+            stacklevel=3,
+        )
+        return
+    assert isinstance(body, str)
+    prefixes = sorted({claimed[:8], body[:8]})
+    warnings.warn(
+        f"sidecar {name} body contradicts its filename; retained as "
+        "contradiction evidence; exit: verify against independent "
+        "evidence which side is authoritative without overwriting "
+        "any identity, then either rename to the verified binding "
+        "(establish the destination producer family first -- it "
+        "must already be live under that uuid) or archive it "
+        "outside the counters directory together "
+        f"with any probe/marker evidence under prefixes {', '.join(prefixes)}, "
+        "then rerun",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def _contradictory_registry_owner(name: str, raw: str | None) -> str | None:
@@ -3636,6 +3729,7 @@ def _contradictory_registry_owner(name: str, raw: str | None) -> str | None:
         return None
     if owner == parse_registry_filename(name):
         return None
+    assert isinstance(owner, str)
     return owner
 
 
@@ -3643,9 +3737,10 @@ def _known_producer_uuids(root: Path) -> tuple[set[str], bool]:
     """Return every producer uuid visible in the counters dir (content-authoritative).
 
     Returns ``(uuids, complete)``: ``complete`` is False whenever any
-    listing or read faulted or any sidecar evidence is unbound,
-    since a hidden uuid may collide under a legacy prefix the scan
-    reports as unique. Callers disable legacy prefix attribution
+    listing or read faulted or any identity evidence (sidecar or
+    registry, #88R44-[A]r22) is unbound, since a hidden uuid may
+    collide under a legacy prefix the scan reports as unique.
+    Callers disable legacy prefix attribution
     on an incomplete scan (the orphan waits for a clean pass)
     instead of attributing from a partial set (#88R26-2). Thin
     wrapper over :func:`_owner_census` (identical set and bit).
@@ -8360,15 +8455,31 @@ def _slot_tmps_adjudicated(
 
 
 def _replay_baseline_usable(path: Path) -> bool:
-    """Whether a sidecar file could anchor tmp replay (#88R3)."""
-    payload = read_json_file(path)
+    """Whether a sidecar file could anchor tmp replay (#88R3).
+
+    The read is descriptor-verified nonblocking (#88R44-[A]r29,
+    Codex R28-2): a FIFO baseline reads None instead of hanging
+    the prune. Missing, torn, and nonregular baselines all read
+    unusable, exactly as before.
+    """
+    raw = _read_regular_file_bytes(path)
+    if raw is None:
+        return False
+    try:
+        payload = _json_loads_evidence(raw.decode("utf-8"))
+    except ValueError:
+        return False
     if not isinstance(payload, dict):
         return False
     in_progress = payload.get("in_progress")
     if isinstance(in_progress, dict):
         return is_module_first_block(in_progress) and _is_nonneg_int(payload.get("journal_seq"))
     if isinstance(payload.get("counters"), list):
-        return _read_probe_orphan(path) is not None
+        # Single byte generation (#88R44-[A]r30, Codex R29-1):
+        # the orphan parse runs on the already-read payload,
+        # never a second read -- a FIFO swapped in after the
+        # safe read must not hang the decision.
+        return _parse_probe_orphan_payload(payload) is not None
     return False
 
 
@@ -8587,6 +8698,26 @@ def _seed_staged_tmp_digests(
             read_digests[stage_path] = stage_digest
 
 
+def _tmp_bytes_evolved(tmp: Path, bound: str) -> bool | None:
+    """Whether a classified tmp's bytes changed since classification (#88R44-[A]r24).
+
+    Re-reads via the nonblocking descriptor-verified digest and
+    compares against the classified bytes: a replacement between
+    classification and unlink must never inherit the debris
+    verdict (Codex R23-1). None on verified absence (skip
+    silently -- another pass owns the outcome); unreadable or
+    nonregular reads as evolved (fail closed -- a FIFO swapped
+    in reads None instead of hanging the recheck, Codex R24-2).
+    Never raises.
+    """
+    current = _sha256_regular_file_hex(tmp)
+    if current is not None:
+        return current != bound
+    if _path_state(tmp) == "missing":
+        return None
+    return True
+
+
 def _prune_sidecar_tmps(
     path: Path,
     listed: Mapping[str, str] | None = None,
@@ -8609,7 +8740,14 @@ def _prune_sidecar_tmps(
     baseline exists (its returns were replayed or ruled out upstream).
     Unreadable tmps (after retry) and complete-with-returns tmps
     without a usable baseline retain for a later pass or forensic
-    review, named loudly (never silently).
+    review, named loudly (never silently). Every unlink re-verifies
+    the classified bytes first (#88R44-[A]r24): an evolved tmp
+    retains loudly with the held baseline instead of inheriting
+    the debris verdict. The tmp inventory re-lists before return,
+    and present names that were neither pruned nor deliberately
+    retained hold the baseline (#88R44-[A]r27): recreated,
+    repruned, or newly arrived evidence is unclassified until a
+    fresh pass looks at it.
     ``listed`` maps adjudicated tmp paths to their byte digests (None
     keeps the legacy content-only rules): an unlisted or evolved tmp
     retains and holds its baseline instead of deleting unread
@@ -8664,32 +8802,41 @@ def _prune_sidecar_tmps(
             )
             return (0, 0, True)
         tmps.extend(slot_tmps)
-    if not tmps:
-        return (0, 0, False)
-    baseline_usable = _replay_baseline_usable(path)
+    # No early return on empty inventory (#88R44-[A]r28, Codex
+    # R27-1): an arrival straddling the initial listings would
+    # otherwise skip revalidation entirely. The loop no-ops on
+    # empty and the end check below still runs.
+    # Usability resolves lazily at the forensics arm below
+    # (#88R44-[A]r29, Codex R28-2): nothing else needs it, and an
+    # eager read would hang the empty pass on a FIFO baseline.
+    baseline_usable: bool | None = None
     retained: list[str] = []
     removed = 0
     hold_baseline = False
+    forensics_digests: dict[str, str] = {}
     producer_baseline = path.name.endswith(SIDECAR_SUFFIX)
     producer_listed = listed is not None and producer_baseline
     for tmp in tmps:
         payload: Any = None
         torn = False
         listed_match = False
+        bound_digest = ""
         if listed is not None and not producer_listed:
             # Verify and classify the same bytes (#88R13-2c): one
             # atomic read feeds both the digest check and the content
             # rules, so a replacement between two reads can never
-            # inherit the verified file's authorization.
-            try:
-                data = _read_bytes_with_retry(tmp)
-            except FileNotFoundError:
-                continue
-            except OSError:
+            # inherit the verified file's authorization. The read is
+            # descriptor-verified regular (#88R44-[A]r26): a FIFO
+            # reads None instead of hanging classification.
+            data = _read_regular_file_bytes(tmp)
+            if data is None:
+                if _path_state(tmp) == "missing":
+                    continue
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
-            if hashlib.sha256(data).hexdigest() != listed.get(str(tmp)):
+            bound_digest = hashlib.sha256(data).hexdigest()
+            if bound_digest != listed.get(str(tmp)):
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
@@ -8703,41 +8850,56 @@ def _prune_sidecar_tmps(
             # verdict lands below — debris still prunes content-only
             # while unlisted-or-evolved evidence holds.
             assert listed is not None
-            try:
-                data = _read_bytes_with_retry(tmp)
-            except FileNotFoundError:
-                continue
-            except OSError:
+            data = _read_regular_file_bytes(tmp)
+            if data is None:
+                if _path_state(tmp) == "missing":
+                    continue
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
-            listed_match = hashlib.sha256(data).hexdigest() == listed.get(str(tmp))
+            bound_digest = hashlib.sha256(data).hexdigest()
+            listed_match = bound_digest == listed.get(str(tmp))
             try:
                 payload = _json_loads_evidence(data.decode("utf-8"))
             except ValueError:
                 torn = True
         else:
-            try:
-                raw = _read_text_with_retry(tmp)
-            except FileNotFoundError:
-                continue
-            except ValueError:
-                torn = True
-            except OSError:
+            # Legacy content-only rules, but the single read is
+            # bytes-first (#88R44-[A]r24): the classified bytes'
+            # digest binds the later unlink, so a replacement
+            # between classification and unlink retains loudly
+            # instead of inheriting the debris verdict. The read is
+            # descriptor-verified regular (#88R44-[A]r26, Codex
+            # R25-2): nonregular evidence holds instead of hanging.
+            data = _read_regular_file_bytes(tmp)
+            if data is None:
+                if _path_state(tmp) == "missing":
+                    continue
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
-            else:
-                try:
-                    payload = _json_loads_evidence(raw)
-                except ValueError:
-                    torn = True
+            bound_digest = hashlib.sha256(data).hexdigest()
+            try:
+                payload = _json_loads_evidence(data.decode("utf-8"))
+            except ValueError:
+                torn = True
         if torn:
             if _deletion_refused(root, tmp, verb="prune"):
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
             if vetoed_baseline:
+                retained.append(tmp.name)
+                hold_baseline = True
+                continue
+            # Final byte proof, closest to the unlink (#88R44-[A]r25,
+            # Codex R24-1): containment and veto verdicts do not
+            # depend on file content, so the digest comparison runs
+            # last, leaving only the accepted post-match race window.
+            evolved = _tmp_bytes_evolved(tmp, bound_digest)
+            if evolved is None:
+                continue
+            if evolved:
                 retained.append(tmp.name)
                 hold_baseline = True
                 continue
@@ -8777,7 +8939,10 @@ def _prune_sidecar_tmps(
                 if preserved_out is not None:
                     preserved_out.add(str(tmp))
                 continue
+            if baseline_usable is None:
+                baseline_usable = _replay_baseline_usable(path)
             if not baseline_usable:
+                forensics_digests[tmp.name] = bound_digest
                 retained.append(tmp.name)
                 continue
         if not _tmp_body_proves_empty(payload):
@@ -8799,10 +8964,108 @@ def _prune_sidecar_tmps(
             retained.append(tmp.name)
             hold_baseline = True
             continue
+        # Final byte proof, closest to the unlink (same rule as the
+        # torn arm above, #88R44-[A]r25).
+        evolved = _tmp_bytes_evolved(tmp, bound_digest)
+        if evolved is None:
+            continue
+        if evolved:
+            retained.append(tmp.name)
+            hold_baseline = True
+            continue
         if _unlink_counted(tmp):
             removed += 1
         else:
             retained.append(tmp.name)
+            hold_baseline = True
+    # Revalidate the tmp inventory before the baseline goes
+    # (#88R44-[A]r27, Codex R26-1): any present name that was not
+    # deliberately retained is unclassified evidence -- recreated
+    # after absence, repruned, or newly arrived mid-prune -- and
+    # holds the baseline for a fresh pass instead of orphaning
+    # it. Deliberately retained tmps (forensics, holds) subtract
+    # out, so the F1 exception survives; stable absence (nothing
+    # present, nothing retained) converges silently. The pair is
+    # bracketed as one observation with one retry (#88R44-[A]r28,
+    # Codex R27-1): an arrival between the two listings must not
+    # read as a coherent empty view. The forensics digest checks
+    # ride inside the same bracket (#88R44-[A]r29, Codex R28-1):
+    # hashing is slow enough to admit arrivals, so a mid-hash
+    # arrival retries like a mid-listing one. The bracket narrows
+    # the race to the accepted post-match window (Claude Q3): an
+    # arrival after the final after-sample waits for the next
+    # pass, like every other verify-to-unlink window.
+    prefixes = [f"{path.name}.tmp-"]
+    if slot_name is not None:
+        prefixes.append(f"{slot_name}.tmp-")
+
+    def _relist_once() -> set[str] | None:
+        names: set[str] = set()
+        for prefix in prefixes:
+            relisted = _list_tmp_paths(path.parent, prefix)
+            if relisted is None:
+                return None
+            names.update(entry.name for entry in relisted)
+        return names
+
+    current: set[str] | None = None
+    forensics_swapped = False
+    faulted = False
+    for _attempt in range(2):
+        before = _dir_mtime_ns(path.parent)
+        names = _relist_once()
+        if names is None:
+            faulted = True
+            break
+        # Forensics names re-verify by content inside the bracket:
+        # a retained-for-forensics tmp replaced under its own
+        # name holds like a new arrival, and an arrival landing
+        # mid-hash breaks the after-sample so the pass retries
+        # instead of reading a coherent view. A name absent from
+        # this listing is skipped (vanished: nothing left to
+        # adjudicate); a disappearance during hashing reads None,
+        # mismatches, and holds. Only the coherent attempt's
+        # comparison counts -- a raced attempt's digests prove
+        # nothing and are recomputed on the retry.
+        forensics_swapped = any(
+            name in names and _sha256_regular_file_hex(path.parent / name) != digest
+            for name, digest in forensics_digests.items()
+        )
+        after = _dir_mtime_ns(path.parent)
+        if before is not None and before == after:
+            current = names
+            break
+    if current is None:
+        if faulted:
+            warnings.warn(
+                f"cannot re-enumerate tmps under {path.name} (I/O fault); baseline held",
+                UserWarning,
+                stacklevel=3,
+            )
+        else:
+            warnings.warn(
+                f"tmp inventory under {path.name} changed during the final check (race); "
+                "baseline held for retry",
+                UserWarning,
+                stacklevel=3,
+            )
+        hold_baseline = True
+    else:
+        kept = set(retained)
+        unexpected = sorted(name for name in current if name not in kept)
+        if unexpected:
+            # Unexpected names ride retained (loud summary voice)
+            # but intentionally skip preserved_out (Claude Q3): the
+            # hold keeps the family this pass, the next pass
+            # classifies them fresh, and _remove_with_tmps's final
+            # empty-inventory check holds the primaries anyway.
+            retained.extend(unexpected)
+            hold_baseline = True
+        if forensics_swapped:
+            # The coherent pass re-hashed a forensics name to
+            # different bytes (or the bytes vanished mid-hash):
+            # the classified evidence is gone either way, so the
+            # baseline holds for a fresh pass.
             hold_baseline = True
     if retained:
         shown = ", ".join(retained[:3])
@@ -10621,26 +10884,34 @@ def _reap_torn_registry(
     if raw is not None and _parse_registry_content(registry_path.name, raw) is not None:
         return False
     uuid = parse_registry_filename(registry_path.name)
-    if uuid is not None and list(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}")):
-        return False
     # A readable registry whose body contradicts its filename is
     # contradiction evidence, never debris (#88R44-[A]r19,
     # Claude-3; unparseable names included #88R44-[A]r20): reaping
-    # it would erase the only proof of the body's owner. Hold
-    # loudly for operator resolution.
+    # it would erase the only proof of the body's owner. Diagnosed
+    # ahead of the sidecar shield (#88R44-[A]r21, Codex R20-4) so
+    # the contradiction voices instead of retaining silently;
+    # both files retain either way. The exit requires independent
+    # verification first (#88R44-[A]r21, Codex R20-3): a blind
+    # rename trusts the body, but the body may be the lie.
     mismatch_owner = _contradictory_registry_owner(registry_path.name, raw)
     if mismatch_owner is not None:
         prefixes = sorted({mismatch_owner[:8], uuid[:8] if uuid is not None else ""} - {""})
         warnings.warn(
             f"registry {registry_path.name} body names a different owner "
             f"({mismatch_owner}); retained as contradiction evidence; exit: "
-            "rename it to match its body uuid (without overwriting another "
-            "identity), or archive it outside the counters directory together "
+            "verify against independent evidence which side is authoritative "
+            "(provider records, sibling files, operator log) without "
+            "overwriting any identity, then either rename to the verified "
+            "binding (establish the destination producer family first -- it "
+            "must already be live under that uuid) or archive it outside "
+            "the counters directory together "
             f"with any probe/marker evidence under prefixes {', '.join(prefixes)}, "
             "then rerun",
             UserWarning,
             stacklevel=2,
         )
+        return False
+    if uuid is not None and list(root.glob(f"{uuid}-*{SIDECAR_SUFFIX}")):
         return False
     if uuid is not None:
         # Sole-identity debris under a live collision holds instead
@@ -10658,8 +10929,25 @@ def _reap_torn_registry(
         # collision counted -- contradictory bodies count but never
         # authorize deletion, #88R44-[A]r19).
         snap = snapshot_fn() if snapshot_fn is not None else _ambiguity_snapshot(root)
-        if uuid not in snap.census.trusted:
+        # Verified target (#88R44-[A]r21, narrowed #88R44-[A]r22,
+        # Codex R21-2): the census may predate a mid-pass
+        # replacement of the TARGET's own basis, so the bypass
+        # re-reads it. Rivals stay census-known: an unverified
+        # rival is uncertain, not absent.
+        target_verified = _owner_evidence_survives(root, snap.census, uuid)
+        if not target_verified:
             if not snap.probes_readable:
+                # Raced scans rerun; only truly unreadable ones
+                # need fixing (#88R44-[A]r22, Claude Q3).
+                if snap.inventory_raced:
+                    warnings.warn(
+                        f"registry {registry_path.name} is torn but the probe inventory "
+                        "changed during the scan (race); retained as ambiguity "
+                        "evidence; exit: rerun",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    return False
                 warnings.warn(
                     f"registry {registry_path.name} is torn but the probe inventory is "
                     "unreadable (a hidden probe may collide under its prefix); retained "
@@ -10698,6 +10986,21 @@ def _reap_torn_registry(
                         stacklevel=2,
                     )
                     return False
+                # Stale scan (#88R44-[A]r22, Codex R21-2): the
+                # census counted this owner but its basis lapsed
+                # mid-pass, so the scan-time membership is stale --
+                # hold for a clean pass rather than consulting a
+                # witness against it. (Uncounted targets fall
+                # through to the witness below.)
+                if uuid in snap.census.uuids:
+                    warnings.warn(
+                        f"registry {registry_path.name} is torn but its owner's evidence "
+                        "changed during the pass; retained as ambiguity evidence; "
+                        "exit: rerun to re-scan (transient, not a persistent collision)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    return False
                 witness = _torn_collision_witness(uuid, snap.census, snap.probe_prefixes)
                 if witness is not None:
                     warnings.warn(
@@ -10716,14 +11019,27 @@ def _reap_torn_registry(
             # the reap re-verifies its own prefix's file versions.
             # Trusted owners skip this: their surviving evidence
             # keeps every collision counted regardless of flips.
+            # Unverifiable paths (dangling, EPERM) name the file
+            # with a repair exit; plain changes rerun (#88R44-[A]r21).
             if not _prefix_generations_fresh(root, snap, uuid[:8]):
-                warnings.warn(
-                    f"registry {registry_path.name} is torn but probe evidence under its "
-                    "prefix changed during the pass; retained as ambiguity evidence; "
-                    "exit: rerun to re-scan (transient, not a persistent collision)",
-                    UserWarning,
-                    stacklevel=2,
-                )
+                bad = _unverifiable_prefix_path(root, snap, uuid[:8])
+                if bad is not None:
+                    warnings.warn(
+                        f"registry {registry_path.name} is torn but probe evidence "
+                        f"{bad} under its prefix is unverifiable (dangling or "
+                        "unreadable); retained as ambiguity evidence; exit: repair "
+                        "or archive it outside the counters directory, then rerun",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    warnings.warn(
+                        f"registry {registry_path.name} is torn but probe evidence under its "
+                        "prefix changed during the pass; retained as ambiguity evidence; "
+                        "exit: rerun to re-scan (transient, not a persistent collision)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 return False
     try:
         recheck: str | None = registry_path.read_text(encoding="utf-8")
@@ -10743,10 +11059,13 @@ def _reap_torn_registry(
         warnings.warn(
             f"registry {registry_path.name} changed into contradiction evidence "
             f"(body now names {recheck_owner}); retained; exit: "
-            "rename it to match its body uuid (without overwriting another "
-            "identity), or archive it outside the counters directory together "
-            "with any probe/marker evidence under the affected prefixes, "
-            "then rerun",
+            "verify against independent evidence which side is authoritative "
+            "without overwriting any identity, then either rename to the "
+            "verified binding (establish the destination producer family "
+            "first -- it must already be live under that uuid) or archive "
+            "it outside the counters directory "
+            "together with any probe/marker evidence under the affected "
+            "prefixes, then rerun",
             UserWarning,
             stacklevel=2,
         )
@@ -18635,11 +18954,13 @@ class _AmbiguitySnapshot(NamedTuple):
     census: _OwnerCensus
     probe_prefixes: frozenset[str]
     probes_readable: bool
+    inventory_raced: bool
     probe_names: frozenset[str] | None
     marker_names: frozenset[str] | None
     probe_dir_mtime_ns: int | None
     pinned_by: dict[str, frozenset[str]]
     generations: dict[str, tuple[int, int, int]]
+    names_by_prefix: dict[str, frozenset[str]]
 
 
 class _ProbeInventory(NamedTuple):
@@ -18650,9 +18971,11 @@ class _ProbeInventory(NamedTuple):
     ``dir_mtime_ns`` is the counters-dir mtime after the body scan;
     ``pinned_by`` maps each pinning prefix to its evidence names;
     ``generations`` maps every listed probe/marker name to its
-    ``(inode, mtime_ns, size)`` at classification time. Memo
-    holders re-verify cheaply before reuse and rescan only on
-    change (#88R44-[A]r19).
+    ``(inode, mtime_ns, size)`` at classification time;
+    ``names_by_prefix`` indexes every listed name by its probe
+    prefix once, so reap-path queries never re-scan the inventory
+    (#88R44-[A]r21). Memo holders re-verify cheaply before reuse
+    and rescan only on change (#88R44-[A]r19).
     """
 
     prefixes: frozenset[str]
@@ -18662,6 +18985,7 @@ class _ProbeInventory(NamedTuple):
     dir_mtime_ns: int | None
     pinned_by: dict[str, frozenset[str]]
     generations: dict[str, tuple[int, int, int]]
+    names_by_prefix: dict[str, frozenset[str]]
 
 
 def _dir_mtime_ns(path: Path) -> int | None:
@@ -18714,6 +19038,7 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
     probe_prefixes: set[str] = set()
     pinned_by: dict[str, set[str]] = {}
     generations: dict[str, tuple[int, int, int]] = {}
+    names_by_prefix: dict[str, set[str]] = {}
 
     def _note_pin(prefix: str, name: str) -> None:
         probe_prefixes.add(prefix)
@@ -18723,6 +19048,9 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
         generation = _file_generation(path)
         if generation is not None:
             generations[path.name] = generation
+        prefix = _prefix_of_evidence_name(path.name)
+        if prefix is not None:
+            names_by_prefix.setdefault(prefix, set()).add(path.name)
 
     # Both listings first (#88R44-[A]r19): a failed probe listing
     # must not leave the marker names unset, or freshness would
@@ -18798,6 +19126,7 @@ def _probe_ambiguity_prefixes(root: Path) -> tuple[_ProbeInventory, bool]:
         mtime_after,
         {prefix: frozenset(names) for prefix, names in pinned_by.items()},
         dict(generations),
+        {prefix: frozenset(names) for prefix, names in names_by_prefix.items()},
     )
     raced = mtime_before is None or mtime_after is None or mtime_before != mtime_after
     return inventory, raced
@@ -18828,9 +19157,13 @@ def _subtract_departures(
 
     Gone is gone (ground truth needs no provenance tracking):
     departed names drop from the pin map, empty prefixes unpin,
-    and the clock resets to the current mtime. Same-name content
-    flips are invisible here -- the reap-path generation gate
-    covers those. Never raises.
+    and the clock resets to the current mtime. The collision map
+    recomputes only when the prefix set changes (#88R44-[A]r22,
+    Claude Q3): it derives from the census (fixed here) plus the
+    pin keys, so a surviving prefix set reuses the map instead of
+    rescanning every uuid per removal. Same-name content flips
+    are invisible here -- the reap-path generation gate covers
+    those. Never raises.
     """
     departed: set[str] = set()
     if snap.probe_names is not None and current_probes is not None:
@@ -18840,15 +19173,22 @@ def _subtract_departures(
     pinned_by = {prefix: names - departed for prefix, names in snap.pinned_by.items()}
     pinned_by = {prefix: names for prefix, names in pinned_by.items() if names}
     generations = {name: gen for name, gen in snap.generations.items() if name not in departed}
+    names_by_prefix = {prefix: names - departed for prefix, names in snap.names_by_prefix.items()}
+    names_by_prefix = {prefix: names for prefix, names in names_by_prefix.items() if names}
     probe_names = snap.probe_names if current_probes is None else current_probes
     marker_names = snap.marker_names if current_markers is None else current_markers
     prefixes = frozenset(pinned_by)
-    prefix_counts: dict[str, int] = {}
-    for known in snap.census.uuids:
-        prefix_counts[known[:8]] = prefix_counts.get(known[:8], 0) + 1
-    held = frozenset(
-        uuid for uuid in snap.census.uuids if _sweep_prefix_collision(uuid, prefix_counts, prefixes)
-    )
+    if prefixes == frozenset(snap.pinned_by):
+        held = snap.collision_held
+    else:
+        prefix_counts: dict[str, int] = {}
+        for known in snap.census.uuids:
+            prefix_counts[known[:8]] = prefix_counts.get(known[:8], 0) + 1
+        held = frozenset(
+            uuid
+            for uuid in snap.census.uuids
+            if _sweep_prefix_collision(uuid, prefix_counts, prefixes)
+        )
     return snap._replace(
         probe_prefixes=prefixes,
         probe_names=probe_names,
@@ -18856,6 +19196,7 @@ def _subtract_departures(
         probe_dir_mtime_ns=mtime,
         pinned_by=pinned_by,
         generations=generations,
+        names_by_prefix=names_by_prefix,
         collision_held=held,
     )
 
@@ -18868,12 +19209,18 @@ def _refresh_memo(
     """Fresh-or-rebuilt snapshot for one memo holder (#88R44-[A]r20).
 
     Steady state costs one stat: an unchanged mtime on a readable
-    memo proves an unchanged inventory (every probe/marker write
-    links/unlinks, and sub-tick double writes are impossible on
+    memo proves an unchanged inventory (probe/marker writes
+    link/unlink except the supported in-place probe fallback,
+    whose same-name flips the reap-path generation gate covers,
+    #88R44-[A]r22; sub-tick double writes are impossible on
     nanosecond-class filesystems). Pure departures subtract
     precisely without body reads; arrivals, heals, and races
     rescan fully. A failed memo reuses itself while its listings
-    still fail (heal-checked by names, never by bodies).
+    still fail (heal-checked by names, never by bodies). Note the
+    steady state is per quiescent window, not per sweep: a sweep
+    that removes anything relists per removal (each unlink bumps
+    the clock), though the pin-map recompute is skipped while the
+    prefix set survives (#88R44-[A]r22, Claude Q3).
     """
     memo = holder[0]
     if memo is not None:
@@ -18881,6 +19228,15 @@ def _refresh_memo(
         if mtime is not None and mtime == memo.probe_dir_mtime_ns and memo.probes_readable:
             return memo
         current_probes, current_markers = _inventory_names(root)
+        # Bracket the relist (#88R44-[A]r22, Codex R21-1): the two
+        # listings can straddle a change (a marker moved to a
+        # probe, a departure swapped for an arrival), and the
+        # mixed view would subtract phantoms or miss arrivals --
+        # rebuild from a bracketed scan instead of trusting it.
+        if mtime is None or _dir_mtime_ns(root) != mtime:
+            memo = build()
+            holder[0] = memo
+            return memo
         memo_probes: frozenset[str] | None = memo.probe_names
         memo_markers: frozenset[str] | None = memo.marker_names
         probes_subset = memo_probes is not None and (
@@ -18914,23 +19270,44 @@ def _prefix_generations_fresh(root: Path, snap: _AmbiguitySnapshot, prefix: str)
     supplier-to-gate window (one dir stat narrows, never closes,
     the lock-free race: a change landing between this check and
     the unlink is the accepted verify-to-unlink window). Only the
-    memo's names under the prefix are statted (prefix-scoped,
+    indexed names under the prefix are statted (prefix-scoped via
+    the build-time index -- never a re-scan (#88R44-[A]r21);
     bodies never read); a file the memo never saw, or whose
     generation changed, reads stale. Never raises.
     """
     mtime = _dir_mtime_ns(root)
     if mtime is None or mtime != snap.probe_dir_mtime_ns:
         return False
-    names: set[str] = set()
-    if snap.probe_names is not None:
-        names |= {name for name in snap.probe_names if _prefix_of_evidence_name(name) == prefix}
-    if snap.marker_names is not None:
-        names |= {name for name in snap.marker_names if _prefix_of_evidence_name(name) == prefix}
-    for name in names:
+    for name in snap.names_by_prefix.get(prefix, ()):
         generation = _file_generation(root / name)
         if generation is None or snap.generations.get(name) != generation:
             return False
     return True
+
+
+def _unverifiable_prefix_path(root: Path, snap: _AmbiguitySnapshot, prefix: str) -> str | None:
+    """First prefix path that stat cannot verify, else None (#88R44-[A]r21, Codex R20-5).
+
+    Distinguishes an unverifiable path (dangling link, EPERM --
+    lstat succeeds but content stat fails, or neither read works
+    for a non-absence reason: persistent, repair or archive exit)
+    from an observed generation change (transient, rerun exit).
+    Only absence errors (the file truly went away) read as
+    disappearance (#88R44-[A]r22, Codex R21-4). Only the indexed
+    names are statted. Never raises.
+    """
+    for name in snap.names_by_prefix.get(prefix, ()):
+        path = root / name
+        try:
+            os.stat(path)
+        except OSError:
+            try:
+                os.lstat(path)
+            except OSError as lstat_fault:
+                if lstat_fault.errno in (errno.ENOENT, errno.ENOTDIR):
+                    continue
+            return name
+    return None
 
 
 def _prefix_of_evidence_name(name: str) -> str | None:
@@ -18990,12 +19367,55 @@ def _ambiguity_snapshot(root: Path, census: _OwnerCensus | None = None) -> _Ambi
         census=census_here,
         probe_prefixes=inventory.prefixes,
         probes_readable=inventory.readable,
+        inventory_raced=raced,
         probe_names=inventory.probe_names,
         marker_names=inventory.marker_names,
         probe_dir_mtime_ns=inventory.dir_mtime_ns,
         pinned_by=inventory.pinned_by,
         generations=inventory.generations,
+        names_by_prefix=inventory.names_by_prefix,
     )
+
+
+def _consistent_sidecar_owner(path: Path) -> str | None:
+    """Body uuid of an attesting sidecar, else None (#88R44-[A]r21).
+
+    Fresh read through the SHARED attestation rule (#88R44-[A]r22,
+    Codex R21-2 -- the private copy used to reject claimless
+    valid bodies the census trusted): deletion re-reads the
+    basis instead of trusting the scan. Never raises.
+    """
+    status, sidecar = _read_json_evidence(path)
+    return _sidecar_attested_owner(path.name, status, sidecar)
+
+
+def _owner_evidence_survives(root: Path, census: _OwnerCensus, uuid: str) -> bool:
+    """Whether clean evidence still attests one uuid (#88R44-[A]r21, Codex R20-2).
+
+    Re-reads every trust-basis file instead of trusting the
+    scan: a basis replaced between scan and deletion no longer
+    attests, even when the census still lists its owner. A probe
+    check alone cannot catch owner-evidence changes, so deletion
+    verifies its own basis. Registries must validate; sidecars
+    must parse with a matching body uuid. Uncounted owners skip
+    the scan outright (#88R44-[A]r23, Codex R22-5): every
+    trust-basis owner is added to the census uuids at the same
+    three construction sites, so no basis can attest an owner
+    the census never saw. Never raises.
+    """
+    if uuid not in census.uuids:
+        return False
+    for owner, key in census.trusted_by:
+        if owner != uuid:
+            continue
+        path = root / key
+        if key.startswith(f"{REGISTRY_DIRNAME}/"):
+            content = read_registry_file(path)
+            if content is not None and content["worker_uuid"] == uuid:
+                return True
+        elif _consistent_sidecar_owner(path) == uuid:
+            return True
+    return False
 
 
 def _torn_collision_witness(
@@ -19017,13 +19437,17 @@ def _torn_collision_witness(
     through the trust gate first (#88R44-[A]r19: contradictory
     bodies count but never bypass, and the unbound-hold gate
     precedes this call), making that clause vacuous-today but
-    load-bearing for reuse). Identity blindness deliberately plays
-    no part here: the torn file itself usually causes it, and
-    deferring on it would stall debris convergence -- torn files
-    without a live collision still reap. Probe-inventory
-    readability and beyond-target identity faults hold at the call
-    sites instead (reap + sidecar loops, #88R44-[A]r16), where the
-    target file is known and excludable. Never raises.
+    load-bearing for reuse). Membership is census-known only
+    (#88R44-[A]r22 reverts the r21 verified-set override, Codex
+    R21-2: an unverified rival is uncertain, not absent --
+    only the TARGET's bypass re-verifies). Identity blindness
+    deliberately plays no part here:
+    the torn file itself usually causes it, and deferring on it
+    would stall debris convergence -- torn files without a live
+    collision still reap. Probe-inventory readability and
+    beyond-target identity faults hold at the call sites instead
+    (reap + sidecar loops, #88R44-[A]r16), where the target file
+    is known and excludable. Never raises.
     """
     if filename_uuid is None or filename_uuid in census.uuids:
         return None
@@ -19101,7 +19525,80 @@ def sweep_orphans(
             )
         retained += 1
 
-    def _remove(paths: list[Path], expected: Mapping[str, str]) -> None:
+    def _family_prefixes_hold(
+        paths: list[Path], verdict: tuple[str, str, str] | None = None
+    ) -> bool:
+        """Whether the universal generation gate holds one family (#88R44-[A]r21).
+
+        No family member unlinks while its prefix's probe evidence
+        is stale. Torn paths gate individually first (their voice
+        wins there); this covers every other deletion structurally
+        -- authority removals included -- so proof is required
+        wherever deletion happens, not per call site.
+        Journals/tmps carry no probe prefix and gate vacuously
+        through their family's identity files. Skipped while no
+        memo exists (debris-only sweeps never build one,
+        preserving lazy body reads). Runs before the tmp loop AND
+        at the primaries (#88R44-[A]r22, Codex R21-3): a probe
+        can land mid-loop. Verdict-authorized removals also
+        re-adjudicate their authorizing verdict on the refreshed
+        snapshot (``verdict`` is the ``(kind, uuid, display)`` the
+        verdict passed on, kind ``"authority"`` or ``"torn"``;
+        #88R44-[A]r22, Codex R21-1; kinds #88R44-[A]r23, Codex
+        R22-1/R22-2): verdict and generation proof bind to the
+        same snapshot, so a rebuild re-adjudicates instead of
+        executing stale truth under fresh generations. Torn
+        routes re-check the torn verdict (which excludes the
+        target's own causes); authority routes the authority
+        verdict. Verdict first: a live collision outranks a
+        rerun exit. Voices the cause; callers count the
+        survivors. Never raises.
+        """
+        if _ambiguity_memo[0] is None:
+            return False
+        snapshot = _ambiguity_pieces()
+        if verdict is not None:
+            kind, uuid, display = verdict
+            if kind == "torn":
+                held = _torn_sidecar_verdict_on(snapshot, uuid, display)
+            else:
+                assert kind == "authority", kind
+                held = _authority_verdict_on(snapshot, uuid, display)
+            if held:
+                return True
+        gated: set[str] = set()
+        for path in paths:
+            owner = parse_registry_filename(path.name) or _uuid_from_evidence_name(path.name)
+            if owner is not None:
+                gated.add(owner[:8])
+        for prefix in sorted(gated):
+            if not _prefix_generations_fresh(root, snapshot, prefix):
+                bad = _unverifiable_prefix_path(root, snapshot, prefix)
+                if bad is not None:
+                    warnings.warn(
+                        f"family under prefix {prefix} held: probe evidence "
+                        f"{bad} is unverifiable (dangling or unreadable); "
+                        "retained as ambiguity evidence; exit: repair or "
+                        "archive it outside the counters directory, then rerun",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    warnings.warn(
+                        f"family under prefix {prefix} held: probe evidence changed "
+                        "during the pass; retained as ambiguity evidence; "
+                        "exit: rerun to re-scan (transient, not a persistent collision)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                return True
+        return False
+
+    def _remove(
+        paths: list[Path],
+        expected: Mapping[str, str],
+        verdict: tuple[str, str, str] | None = None,
+    ) -> None:
         """Unlink sweep primaries, registries last, stopping past a mismatch (#88R39-4).
 
         Each primary carrying an expected digest re-hashes at its own
@@ -19128,6 +19625,11 @@ def sweep_orphans(
         nonlocal removed, retained
         ordered = [path for path in paths if not _is_registry_path(path)]
         ordered.extend(path for path in paths if _is_registry_path(path))
+        if _family_prefixes_hold(ordered, verdict):
+            for rest in ordered:
+                if _path_state(rest) != "missing":
+                    retained += 1
+            return
         for index, path in enumerate(ordered):
             if _deletion_refused(root, path, verb="remove"):
                 # M8: a planted path outside the counters root is not
@@ -19191,6 +19693,7 @@ def sweep_orphans(
         inspected: dict[str, str] | None,
         tmp_glob: tuple[Path, str] | None,
         primary_digests: Mapping[str, str],
+        verdict: tuple[str, str, str] | None = None,
     ) -> None:
         """Authoritative removal, tmps first (#88R5-6, hardened #88R36-3, #88R39-4).
 
@@ -19211,7 +19714,9 @@ def sweep_orphans(
         primaries re-prove still-missing here too (#88R39-F1): an
         appearance holds the whole family before anything unlinks.
         The single-path verify-to-unlink interval stays explicit (no
-        lock couples them).
+        lock couples them). The universal generation gate also runs
+        before the tmp loop (#88R44-[A]r22): a held family keeps
+        its tmps, not just its primaries.
         """
         nonlocal removed, retained
 
@@ -19232,6 +19737,11 @@ def sweep_orphans(
             _count_survivors([])
             return
         names = sorted(inspected)
+        # Early gate (#88R44-[A]r22, Codex R21-3): the primaries
+        # re-gate below, but tmps must not unlink ahead of a hold.
+        if _family_prefixes_hold(paths, verdict):
+            _count_survivors(names)
+            return
         for index, tmp_str in enumerate(names):
             if _deletion_refused(root, Path(tmp_str), verb="prune"):
                 # M8: a planted tmp outside the counters root is not
@@ -19307,7 +19817,7 @@ def sweep_orphans(
                 )
                 _count_survivors([])
                 return
-        _remove(paths, primary_digests)
+        _remove(paths, primary_digests, verdict)
 
     sweep_registries = _list_evidence_files(reg_dir, "", ".json")
     if sweep_registries is None:
@@ -19325,11 +19835,109 @@ def sweep_orphans(
     def _ambiguity_pieces() -> _AmbiguitySnapshot:
         return _refresh_memo(root, _ambiguity_memo, lambda: _ambiguity_snapshot(root))
 
-    def _defer_authority_removal(uuid: str, display: str) -> bool:
-        """Whether authority-based removal of one family defers (#88R44-[A]r7)."""
-        snapshot = _ambiguity_pieces()
+    def _torn_sidecar_verdict_on(snapshot: _AmbiguitySnapshot, uuid: str, display: str) -> bool:
+        """Whether one torn sidecar defers on one snapshot (#88R44-[A]r23).
+
+        The torn-sidecar verdict, bound to an explicit snapshot:
+        verified-target bypass (fresh basis reread), then the
+        readability, unbound, beyond-target, stale-membership,
+        and witness holds in order. Shared by the committed and
+        uncommitted loop arms and re-run by the universal gate
+        (Codex R22-1/R22-2): torn routes re-check the torn
+        verdict, never the authority verdict (whose prefix
+        blindness counts the target's own torn cause and would
+        self-stall). Voices the cause.
+        """
+        if _owner_evidence_survives(root, snapshot.census, uuid):
+            return False
+        if not snapshot.probes_readable:
+            if snapshot.inventory_raced:
+                warnings.warn(
+                    f"{display} is torn but the probe "
+                    "inventory changed during the scan (race); retained as "
+                    "ambiguity evidence; exit: rerun",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+            warnings.warn(
+                f"{display} is torn but the probe inventory "
+                "is unreadable (a hidden probe may collide under its prefix); "
+                "retained as ambiguity evidence; exit: fix the unreadable "
+                "inventory and rerun",
+                UserWarning,
+                stacklevel=3,
+            )
+            return True
+        if uuid[:8] in snapshot.probe_prefixes:
+            if snapshot.census.identity_unbound:
+                blocked = _format_unbound_blockers(snapshot.census.unbound)
+                warnings.warn(
+                    f"{display} is torn but unbound evidence "
+                    "could still supply a rival "
+                    f"({blocked}); retained as ambiguity evidence; "
+                    f"{_UNBOUND_STALL_EXIT}",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+            if snapshot.census.blind_except(root, uuid[:8], uuid):
+                warnings.warn(
+                    f"{display} is torn but the identity scan "
+                    "degraded beyond this file (a hidden collider may share its "
+                    "probe prefix); retained as ambiguity evidence; exit: fix "
+                    "the unreadable evidence and rerun",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+            if uuid in snapshot.census.uuids:
+                warnings.warn(
+                    f"{display} is torn but its owner's "
+                    "evidence changed during the pass; retained as ambiguity "
+                    "evidence; exit: rerun to re-scan (transient, not a "
+                    "persistent collision)",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+            witness = _torn_collision_witness(uuid, snapshot.census, snapshot.probe_prefixes)
+            if witness is not None:
+                warnings.warn(
+                    f"{display} is torn but its owner is "
+                    "otherwise unknown, sharing its probe prefix with "
+                    f"{witness} while probe or marker evidence exists under it; "
+                    "retained as ambiguity evidence; exit: attribute the probe's owner "
+                    "or archive the collision, then rerun",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+        return False
+
+    def _authority_verdict_on(snapshot: _AmbiguitySnapshot, uuid: str, display: str) -> bool:
+        """Whether one family defers on one snapshot (#88R44-[A]r22).
+
+        The verdict half of authority removal, bound to an
+        explicit snapshot: the universal gate re-adjudicates on
+        its own refreshed snapshot (Codex R21-1), so the verdict
+        a removal executes under is never older than its
+        generation proof. Voices the cause.
+        """
         blind_reason, collision_held = snapshot.blind_reason, snapshot.collision_held
         if blind_reason is not None:
+            # A raced scan reruns first (#88R44-[A]r22, Claude Q3):
+            # nothing is unreadable, and any co-occurring fault
+            # re-voices on the clean pass.
+            if snapshot.inventory_raced:
+                warnings.warn(
+                    f"{display} cannot prove non-collision "
+                    "(probe inventory changed during the scan); "
+                    "authority-based removal deferred; exit: rerun",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
             blocked = _format_unbound_blockers(snapshot.census.unbound)
             if blocked:
                 warnings.warn(
@@ -19354,16 +19962,127 @@ def sweep_orphans(
         # prefix (see _owner_census), so debris under a distant
         # prefix must not stall this family's removal.
         if snapshot.census.prefix_blind(root, uuid[:8]):
+            # Same-owner torn causes never blind their own family's
+            # authority removal (#88R44-[A]r26, Codex R25-3): a torn
+            # file's true owner, if any, is the one its filename
+            # names (blind_except's rule), so it cannot hide a rival
+            # from its own family's removal -- which takes its torn
+            # members with it. Other torn or opaque evidence still
+            # blinds; with only own-torn causes the verdict falls
+            # through to the live-collision check below.
+            foreign = [
+                (key, kind)
+                for key, claimed, kind in snapshot.census.degraded.get(uuid[:8], ())
+                if _path_state(root / key) != "missing" and not (kind == "torn" and claimed == uuid)
+            ]
+            if not foreign and uuid[:8] in snapshot.probe_prefixes:
+                # All blindness is own-torn but a probe floats: hold
+                # to preserve the last usable binding (#88R44-[A]r27,
+                # Codex R26-2) -- removing the family would orphan a
+                # recoverable probe with no rival to fold to.
+                # Collection consumes the probe only after the torn
+                # members archive out (collect quarantines loudly
+                # until then, #88R44-[A]r30, Claude Q3 finding 4);
+                # then the quiet prefix converges below. The voice
+                # names the members to archive and tells the
+                # operator to keep the probe -- archiving the probe
+                # would destroy the recoverable evidence.
+                own_torn = sorted(
+                    key
+                    for key, claimed, kind in snapshot.census.degraded.get(uuid[:8], ())
+                    if kind == "torn" and claimed == uuid and _path_state(root / key) != "missing"
+                )
+                named = _format_unbound_blockers(own_torn) or "its torn members"
+                warnings.warn(
+                    f"{display} shares its probe prefix with torn evidence while "
+                    "probe or marker evidence exists under it; retained as ambiguity "
+                    f"evidence; exit: archive {named} outside the counters directory, "
+                    "then collect the probe evidence and rerun (keep the probe: it "
+                    "carries recoverable calls)",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+            if foreign:
+                # Torn-only blindness voices the collision (or a plain
+                # rerun when no probe floats): torn bytes cannot be
+                # fixed (#88R44-[A]r22, Claude Q3 blast radius).
+                causes = foreign
+                kinds = {kind for _, kind in causes}
+                if kinds and kinds <= {"torn"}:
+                    if uuid[:8] in snapshot.probe_prefixes:
+                        warnings.warn(
+                            f"{display} shares its probe prefix with torn evidence while "
+                            "probe or marker evidence exists under it; retained as ambiguity "
+                            "evidence; exit: attribute the probe's owner or archive the "
+                            "collision, then rerun",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                    else:
+                        # Name the blockers with an archival escape
+                        # alongside rerun-first (#88R44-[A]r23, Codex
+                        # R22-3): shielded or directory-shaped debris
+                        # never converges, and the bare rerun exit
+                        # looped forever on it.
+                        named = _format_unbound_blockers(sorted(key for key, _ in causes))
+                        warnings.warn(
+                            f"{display} cannot prove non-collision "
+                            f"(torn debris under its probe prefix: {named}); "
+                            "authority-based removal deferred; exit: rerun "
+                            "(debris usually converges on its own pass); if the "
+                            "debris persists, archive it outside the counters "
+                            "directory together with any probe/marker evidence "
+                            f"under prefix {uuid[:8]}, then rerun",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                    return True
+                warnings.warn(
+                    f"{display} cannot prove non-collision "
+                    "(identity scan degraded under its probe prefix); "
+                    "authority-based removal deferred; exit: fix "
+                    "the unreadable evidence and rerun",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return True
+        # Last-binding preservation (#88R44-[A]r29, Codex R28-3): a
+        # sole counted family under a floating probe prefix is the
+        # last usable binding for that evidence -- removing it
+        # would orphan a recoverable probe with no rival to fold
+        # to, even with no torn debris anywhere. The hold is
+        # independent of torn debris and rival count: collection
+        # consumes the probe through the preserved binding (or
+        # archival settles it), then the quiet prefix converges.
+        # No counted-sharer test on the target itself: a family
+        # that healed between the scan and this verdict still
+        # binds on disk, so it preserves too.
+        if uuid[:8] in snapshot.probe_prefixes and not any(
+            other != uuid and other.startswith(uuid[:8]) for other in snapshot.census.uuids
+        ):
             warnings.warn(
-                f"{display} cannot prove non-collision "
-                "(identity scan degraded under its probe prefix); "
-                "authority-based removal deferred; exit: fix "
-                "the unreadable evidence and rerun",
+                f"{display} is the last usable binding under its probe prefix while "
+                "probe or marker evidence exists under it; retained as ambiguity "
+                "evidence; exit: collect the probe evidence, then rerun (or archive "
+                "the probe together with this family outside the counters directory)",
                 UserWarning,
                 stacklevel=3,
             )
             return True
-        if uuid in collision_held:
+        if uuid in collision_held or (
+            # A counted same-prefix sharer holds an uncounted
+            # target too (#88R44-[A]r30, Codex R29-2): the census
+            # may miss the target (parked or healed mid-pass)
+            # while counting its sibling, and collision_held only
+            # covers counted UUIDs -- but the removal target still
+            # shares its floating prefix with a listed sibling, so
+            # the same ambiguity holds. Counted targets keep the
+            # construction as their single source of truth.
+            uuid not in snapshot.census.uuids
+            and uuid[:8] in snapshot.probe_prefixes
+            and any(other != uuid and other.startswith(uuid[:8]) for other in snapshot.census.uuids)
+        ):
             warnings.warn(
                 f"{display} shares its probe prefix with a listed sibling while "
                 "probe or marker evidence exists under it; retained as ambiguity evidence; "
@@ -19373,6 +20092,10 @@ def sweep_orphans(
             )
             return True
         return False
+
+    def _defer_authority_removal(uuid: str, display: str) -> bool:
+        """Whether authority-based removal of one family defers (#88R44-[A]r7)."""
+        return _authority_verdict_on(_ambiguity_pieces(), uuid, display)
 
     for registry_path in sweep_registries:
         claimed = parse_registry_filename(registry_path.name)
@@ -19432,6 +20155,7 @@ def sweep_orphans(
                     journal_path=journal_p,
                     journal_absent=journal_absent,
                 ),
+                verdict=("authority", uuid, f"registry {registry_path.name}"),
             )
             continue
         run_id = content["run_id"]
@@ -19486,6 +20210,7 @@ def sweep_orphans(
                                 journal_path=journal_p,
                                 journal_absent=journal_absent,
                             ),
+                            verdict=("authority", uuid, f"registry {registry_path.name}"),
                         )
             continue
         retained += 1
@@ -19542,11 +20267,10 @@ def sweep_orphans(
                 _count_if_present(journal_path)
                 continue
             if isinstance(sidecar, dict) and sidecar.get("worker_uuid") != uuid:
-                warnings.warn(
-                    f"sidecar {sidecar_path.name} body contradicts its filename; retained",
-                    UserWarning,
-                    stacklevel=2,
-                )
+                # Same verify-first rule as registry mismatches
+                # (#88R44-[A]r22, Codex R21 test note): the exit
+                # used to be missing entirely.
+                _warn_sidecar_contradiction(sidecar_path.name, uuid, sidecar.get("worker_uuid"))
                 retained += 1
                 _count_if_present(journal_path)
                 continue
@@ -19567,83 +20291,13 @@ def sweep_orphans(
                 # naming anyone else hold too (#88R44-[A]r16): only
                 # the target owner's own faults are excludable.
                 snapshot = _ambiguity_pieces()
-                if uuid not in snapshot.census.trusted:
-                    if not snapshot.probes_readable:
-                        warnings.warn(
-                            f"sidecar {sidecar_path.name} is torn but the probe inventory "
-                            "is unreadable (a hidden probe may collide under its prefix); "
-                            "retained as ambiguity evidence; exit: fix the unreadable "
-                            "inventory and rerun",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                        retained += 1
-                        _count_if_present(journal_path)
-                        continue
-                    # A readable inventory excluding this prefix clears
-                    # beyond-owner faults (#88R44-[A]r17): with no
-                    # probe or marker under the prefix, nothing can
-                    # misattribute, so debris converges even when
-                    # owner discovery there is degraded. But a
-                    # floating probe or marker plus unbound evidence
-                    # evidence holds regardless (#88R44-[A]r18).
-                    if uuid[:8] in snapshot.probe_prefixes:
-                        if snapshot.census.identity_unbound:
-                            blocked = _format_unbound_blockers(snapshot.census.unbound)
-                            warnings.warn(
-                                f"sidecar {sidecar_path.name} is torn but unbound evidence "
-                                "could still supply a rival "
-                                f"({blocked}); retained as ambiguity evidence; "
-                                f"{_UNBOUND_STALL_EXIT}",
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                            retained += 1
-                            _count_if_present(journal_path)
-                            continue
-                        if snapshot.census.blind_except(root, uuid[:8], uuid):
-                            warnings.warn(
-                                f"sidecar {sidecar_path.name} is torn but the identity scan "
-                                "degraded beyond this file (a hidden collider may share its "
-                                "probe prefix); retained as ambiguity evidence; exit: fix "
-                                "the unreadable evidence and rerun",
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                            retained += 1
-                            _count_if_present(journal_path)
-                            continue
-                        witness = _torn_collision_witness(
-                            uuid, snapshot.census, snapshot.probe_prefixes
-                        )
-                        if witness is not None:
-                            warnings.warn(
-                                f"sidecar {sidecar_path.name} is torn but its owner is "
-                                "otherwise unknown, sharing its probe prefix with "
-                                f"{witness} while probe or marker evidence exists under it; "
-                                "retained as ambiguity evidence; exit: attribute the probe's owner "
-                                "or archive the collision, then rerun",
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                            retained += 1
-                            _count_if_present(journal_path)
-                            continue
-                # Generation gate (#88R44-[A]r20): re-verify the
-                # prefix's file versions (catches same-name flips
-                # the directory never showed -- including on the
-                # F3-clear path, which skips the membership block).
-                if not _prefix_generations_fresh(root, snapshot, uuid[:8]):
-                    warnings.warn(
-                        f"sidecar {sidecar_path.name} is torn but probe evidence under its "
-                        "prefix changed during the pass; retained as ambiguity evidence; "
-                        "exit: rerun to re-scan (transient, not a persistent collision)",
-                        UserWarning,
-                        stacklevel=2,
-                    )
+                if _torn_sidecar_verdict_on(snapshot, uuid, f"sidecar {sidecar_path.name}"):
                     retained += 1
                     _count_if_present(journal_path)
                     continue
+                # No loop-level generation gate: the universal gate
+                # re-verifies at removal (#88R44-[A]r24, Codex R23
+                # ruling 1).
             debris = _sweep_verified_debris(sidecar_path)
             if debris is None:
                 retained += 1
@@ -19654,6 +20308,15 @@ def sweep_orphans(
                 debris,
                 (sidecar_path.parent, f"{sidecar_path.name}.tmp-"),
                 _bound_primary_digest(sidecar_path, sidecar_digest),
+                # Torn bodies re-check the torn verdict (which
+                # excludes the target's own causes); healthy bodies
+                # the authority verdict they passed (#88R44-[A]r23,
+                # Codex R22-2).
+                verdict=(
+                    ("torn", uuid, f"sidecar {sidecar_path.name}")
+                    if not isinstance(sidecar, dict)
+                    else ("authority", uuid, f"sidecar {sidecar_path.name}")
+                ),
             )
         elif status == "unreadable" or (reg_state != "missing" and isinstance(sidecar, dict)):
             # An I/O fault proves nothing either way (retry later), and a
@@ -19674,105 +20337,48 @@ def sweep_orphans(
             # Faults naming anyone else hold too (#88R44-[A]r16):
             # only the target owner's own faults are excludable.
             snapshot = _ambiguity_pieces()
-            if uuid not in snapshot.census.trusted:
-                if not snapshot.probes_readable:
-                    warnings.warn(
-                        f"sidecar {sidecar_path.name} is torn but the probe inventory "
-                        "is unreadable (a hidden probe may collide under its prefix); "
-                        "retained as ambiguity evidence; exit: fix the unreadable "
-                        "inventory and rerun",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                    retained += 1
-                    _count_if_present(journal_path)
-                    continue
-                # A readable inventory excluding this prefix clears
-                # beyond-owner faults (#88R44-[A]r17): with no probe
-                # or marker under the prefix, nothing can
-                # misattribute, so debris converges even when owner
-                # discovery there is degraded. But a floating probe
-                # or marker plus unbound evidence holds
-                # regardless (#88R44-[A]r18).
-                if uuid[:8] in snapshot.probe_prefixes:
-                    if snapshot.census.identity_unbound:
-                        blocked = _format_unbound_blockers(snapshot.census.unbound)
-                        warnings.warn(
-                            f"sidecar {sidecar_path.name} is torn but unbound evidence "
-                            "could still supply a rival "
-                            f"({blocked}); retained as ambiguity evidence; "
-                            f"{_UNBOUND_STALL_EXIT}",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                        retained += 1
-                        _count_if_present(journal_path)
-                        continue
-                    if snapshot.census.blind_except(root, uuid[:8], uuid):
-                        warnings.warn(
-                            f"sidecar {sidecar_path.name} is torn but the identity scan "
-                            "degraded beyond this file (a hidden collider may share its "
-                            "probe prefix); retained as ambiguity evidence; exit: fix "
-                            "the unreadable evidence and rerun",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                        retained += 1
-                        _count_if_present(journal_path)
-                        continue
-                    witness = _torn_collision_witness(
-                        uuid, snapshot.census, snapshot.probe_prefixes
-                    )
-                    if witness is not None:
-                        warnings.warn(
-                            f"sidecar {sidecar_path.name} is torn but its owner is "
-                            "otherwise unknown, sharing its probe prefix with "
-                            f"{witness} while probe or marker evidence exists under it; "
-                            "retained as ambiguity evidence; exit: attribute the probe's owner "
-                            "or archive the collision, then rerun",
-                            UserWarning,
-                            stacklevel=2,
-                        )
-                        retained += 1
-                        _count_if_present(journal_path)
-                        continue
-                # Generation gate (#88R44-[A]r20): re-verify the
-                # prefix's file versions (catches same-name flips
-                # the directory never showed -- including on the
-                # F3-clear path, which skips the membership block).
-                if not _prefix_generations_fresh(root, snapshot, uuid[:8]):
-                    warnings.warn(
-                        f"sidecar {sidecar_path.name} is torn but probe evidence under its "
-                        "prefix changed during the pass; retained as ambiguity evidence; "
-                        "exit: rerun to re-scan (transient, not a persistent collision)",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                    retained += 1
-                    _count_if_present(journal_path)
-                    continue
+            if _torn_sidecar_verdict_on(snapshot, uuid, f"sidecar {sidecar_path.name}"):
+                retained += 1
+                _count_if_present(journal_path)
+                continue
+            # No loop-level generation gate: the universal gate
+            # re-verifies at removal (#88R44-[A]r24, Codex R23
+            # ruling 1 -- this also retires the preserved
+            # gate-if-unverified asymmetry, since the universal
+            # gate now owns generation checks on both arms).
             # Otherwise mutual debris: the torn baseline goes (the
             # registry reaps on the next pass), but rewrite tmps
             # triage by content -- complete ones retain loudly for
             # forensics (F1), never silently with the baseline.
+            # Gate before the prune and re-check the torn verdict
+            # at the removal (#88R44-[A]r23, Codex R22-1): a probe
+            # landing mid-route must rehold via the witness.
+            if _family_prefixes_hold(
+                [sidecar_path], ("torn", uuid, f"sidecar {sidecar_path.name}")
+            ):
+                retained += 1
+                _count_if_present(journal_path)
+                continue
             pruned, kept, hold = _prune_sidecar_tmps(sidecar_path, root=root)
             removed += pruned
             retained += kept
             if hold:
                 retained += 1
             else:
-                _remove([sidecar_path], _bound_primary_digest(sidecar_path, sidecar_digest))
+                _remove(
+                    [sidecar_path],
+                    _bound_primary_digest(sidecar_path, sidecar_digest),
+                    ("torn", uuid, f"sidecar {sidecar_path.name}"),
+                )
         elif isinstance(sidecar, dict) and sidecar.get("worker_uuid") != uuid:
             # Filename/body mismatch (#88R34-5, widened #88R35-7): the
             # body's run credit is unattributable (it may name another
             # producer's run, or nothing at all), so the sweep trusts
             # nothing in it -- retain loudly for forensics instead of
             # crediting. Torn (non-dict) bodies keep debris behavior.
-            warnings.warn(
-                f"sidecar {sidecar_path.name} body contradicts its filename; retained",
-                UserWarning,
-                stacklevel=2,
-            )
+            # The exit is verify-first like every other mismatch
+            # (#88R44-[A]r22, Codex R21 test note).
+            _warn_sidecar_contradiction(sidecar_path.name, uuid, sidecar.get("worker_uuid"))
             retained += 1
             _count_if_present(journal_path)
         elif sidecar.get("run_id") in collected_runs and sidecar.get("run_id") != current_run:
@@ -19812,6 +20418,7 @@ def sweep_orphans(
                 debris,
                 (sidecar_path.parent, f"{sidecar_path.name}.tmp-"),
                 _bound_primary_digest(sidecar_path, sidecar_digest),
+                verdict=("authority", uuid, f"sidecar {sidecar_path.name}"),
             )
         else:
             retained += 1
@@ -21770,14 +22377,14 @@ def _cleanup_retry_proved(
     return True, seed_digests, seed_absent
 
 
-def _sha256_regular_file_hex(path: Path) -> str | None:
-    """Hex digest when ``path`` opens to a regular file, else None (#88R27-4).
+def _read_regular_file_once(path: Path) -> bytes | None:
+    """File bytes when ``path`` opens to a regular file, else None (#88R44-[A]r26).
 
     Opens first (nonblocking where the platform has it), then verifies
-    the DESCRIPTOR: a swap between stat and open affects the pathname,
-    never our fd, so a FIFO switched in mid-check reads None instead
-    of blocking the barrier. FIFOs, sockets, dirs, devices, and
-    unreadable or vanished paths all read None. Never raises.
+    the DESCRIPTOR is regular before reading a byte: a FIFO reads None
+    instead of hanging the caller. Unreadable or vanished paths read
+    None. Single attempt -- callers that retry use
+    :func:`_read_regular_file_bytes`. Never raises.
     """
     # O_BINARY (#88R31-WIN3): on Windows os.open defaults to text mode,
     # which translates CRLF and breaks every digest comparison against
@@ -21811,7 +22418,56 @@ def _sha256_regular_file_hex(path: Path) -> str | None:
             os.close(fd)
         except OSError:
             pass
-    return hashlib.sha256(b"".join(chunks)).hexdigest()
+    return b"".join(chunks)
+
+
+def _read_regular_file_bytes(path: Path) -> bytes | None:
+    """File bytes when ``path`` opens to a regular file, else None (#88R44-[A]r26).
+
+    Opens first (nonblocking where the platform has it), then verifies
+    the DESCRIPTOR is regular before reading a byte: a FIFO reads None
+    instead of hanging the caller (Codex R25-2 -- prune
+    classification must never block on nonregular evidence).
+    Unreadable or vanished paths read None; callers distinguish
+    absence via ``_path_state``. Retries transient faults (AV
+    locks) like :func:`_read_bytes_with_retry`. Never raises.
+    """
+    attempts = 0
+    while True:
+        # Proved absence never retries; anything else unreadable
+        # retries like _read_bytes_with_retry (AV locks). A FIFO
+        # costs three fast opens here, never a hang (no blocking
+        # open anywhere on this path).
+        if _path_state(path) == "missing":
+            return None
+        data = _read_regular_file_once(path)
+        if data is not None:
+            return data
+        if _path_state(path) == "missing":
+            return None
+        attempts += 1
+        if attempts >= 3:
+            return None
+        time.sleep(0.001)
+
+
+def _sha256_regular_file_hex(path: Path) -> str | None:
+    """Hex digest when ``path`` opens to a regular file, else None (#88R27-4).
+
+    Opens first (nonblocking where the platform has it), then verifies
+    the DESCRIPTOR: a swap between stat and open affects the pathname,
+    never our fd, so a FIFO switched in mid-check reads None instead
+    of blocking the barrier. FIFOs, sockets, dirs, devices, and
+    unreadable or vanished paths all read None. Single attempt by
+    contract (#88R44-[A]r27, Codex R26-3): retries live in
+    :func:`_read_regular_file_bytes` (classification) only, so
+    staging, barrier seeds, and deletion checks keep the
+    one-shot proof they were reviewed against. Never raises.
+    """
+    data = _read_regular_file_once(path)
+    if data is None:
+        return None
+    return hashlib.sha256(data).hexdigest()
 
 
 def _verify_strict_retry_files(
