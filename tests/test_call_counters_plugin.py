@@ -176,6 +176,78 @@ def test_emit_session_record_without_report_log_is_silent() -> None:
     )
 
 
+def test_emit_probe_attestation_writes_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-G7: session emission attests admitted folded-probe digests."""
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV, _publication_digest
+
+    call_counters.reset_for_tests()
+    root = tmp_path / "counters"
+    root.mkdir()
+    monkeypatch.setenv(COUNTERS_DIR_ENV, str(root))
+    monkeypatch.delenv(call_counters.RUN_ID_ENV, raising=False)
+    call_counters.note_folded_probe_digest(child_uuid="b" * 32, probe_seq=3, digest="e" * 64)
+    written: list[dict[str, Any]] = []
+    config = SimpleNamespace(
+        _report_log_plugin=SimpleNamespace(_write_json_data=written.append),
+    )
+    plugin_counters.emit_session_record(cast("pytest.Config", config))
+    assert len(written) == 1
+    worker = call_counters.get_worker_uuid()
+    path = root / f"attestations-{worker}.jsonl"
+    assert path.exists()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["worker_uuid"] == worker
+    assert record["run_id"] == ""
+    assert record["publication"] == _publication_digest(json.loads(json.dumps(written[0])))
+    assert record["attestations"] == [{"worker_uuid": "b" * 32, "probe_seq": 3, "digest": "e" * 64}]
+    call_counters.reset_for_tests()
+
+
+def test_emit_probe_attestation_skips_when_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-G7: no admitted digests means no attestation artifact."""
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV
+
+    call_counters.reset_for_tests()
+    root = tmp_path / "counters"
+    root.mkdir()
+    monkeypatch.setenv(COUNTERS_DIR_ENV, str(root))
+    written: list[dict[str, Any]] = []
+    config = SimpleNamespace(
+        _report_log_plugin=SimpleNamespace(_write_json_data=written.append),
+    )
+    plugin_counters.emit_session_record(cast("pytest.Config", config))
+    assert len(written) == 1
+    assert list(root.glob("attestations-*")) == []
+    call_counters.reset_for_tests()
+
+
+def test_emit_probe_attestation_skips_when_disengaged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-G7: disengaged durability means no attestation artifact."""
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV
+
+    call_counters.reset_for_tests()
+    root = tmp_path / "counters"
+    root.mkdir()
+    monkeypatch.delenv(COUNTERS_DIR_ENV, raising=False)
+    call_counters.note_folded_probe_digest(child_uuid="b" * 32, probe_seq=3, digest="e" * 64)
+    written: list[dict[str, Any]] = []
+    config = SimpleNamespace(
+        _report_log_plugin=SimpleNamespace(_write_json_data=written.append),
+    )
+    plugin_counters.emit_session_record(cast("pytest.Config", config))
+    assert len(written) == 1
+    assert list(root.glob("attestations-*")) == []
+    call_counters.reset_for_tests()
+
+
 # --------------------------------------------------------------------------
 # Attach helper
 # --------------------------------------------------------------------------

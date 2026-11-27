@@ -250,6 +250,7 @@ def write_coverage(
     receipts: list[dict[str, Any]] | None = None,
     lost_keys: list[dict[str, Any]] | None = None,
     strict: bool = False,
+    sidecar_digest: str | None = None,
 ) -> None:
     """Write function/mechanism counts and their successful/return-value subsets (I6).
 
@@ -265,7 +266,9 @@ def write_coverage(
     grandchild receipts (omitted when None/empty, so legacy payloads are
     byte-identical). ``lost_keys`` carries the child's keyed-loss set
     (omitted when None/empty, same legacy rule); the parent unions it and
-    treats the scalar minus its length as unkeyed.
+    treats the scalar minus its length as unkeyed. ``sidecar_digest``
+    carries the digest of the child's flushed sidecar bytes (omitted
+    when None, same legacy rule) for the parent's attestation basis.
     No-op when the environment variable is absent. Write failures are
     swallowed (best-effort exit path) unless ``strict`` is set, in
     which case they propagate so the caller can warn loudly (the fork
@@ -290,6 +293,8 @@ def write_coverage(
             payload["receipts"] = receipts
         if lost_keys:
             payload["lost_keys"] = lost_keys
+        if sidecar_digest is not None:
+            payload["sidecar_digest"] = sidecar_digest
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     except (OSError, TypeError, ValueError):
@@ -321,7 +326,7 @@ def flush_probe_sidecar(
     *,
     lost_keys: list[dict[str, Any]] | None = None,
     probes_lost: int = 0,
-) -> None:
+) -> str | None:
     """Write this probe child's counters sidecar for the parent's fallback.
 
     The parent deletes the sidecar after a coverage commit
@@ -335,6 +340,11 @@ def flush_probe_sidecar(
     parent did not assign a sidecar path. Never raises. Delegates to the
     core writer shared with the mid-run record-path trigger, so both
     emit byte-identical shapes.
+
+    Returns the sha256 of the exact serialized bytes landed (the
+    caller's attestation basis), or None when skipped or failed
+    (#88R44-F5: the exit coverage carries this digest -- never a
+    file re-read, which would attest whatever occupies the name).
     """
     from pkcs11_check.core._counters_durability import (
         PROBE_SIDECAR_ENV,
@@ -345,12 +355,12 @@ def flush_probe_sidecar(
 
     path = os.environ.get(PROBE_SIDECAR_ENV)
     if not path or counters is None:
-        return
+        return None
     receipt = probe_coverage_receipt()
     if receipt is None:
-        return
+        return None
     try:
-        write_probe_sidecar(
+        return write_probe_sidecar(
             path,
             worker_uuid=receipt["worker_uuid"],
             probe_seq=receipt["probe_seq"],
@@ -362,7 +372,7 @@ def flush_probe_sidecar(
             birth=birth_token_for_pid(os.getpid()),
         )
     except (OSError, TypeError, ValueError):
-        pass
+        return None
 
 
 def emit_harness_error(exc: BaseException, *, phase: str) -> None:

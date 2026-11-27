@@ -1751,6 +1751,37 @@ def test_probe_sidecar_omits_identity_when_unset(
     assert "isolation" not in payload
 
 
+def test_probe_sidecar_flush_returns_landed_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F5: the flush returns the digest of the bytes it wrote."""
+    import hashlib
+
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV, PROBE_SIDECAR_ENV
+    from pkcs11_check.testcases._probes._emit import flush_probe_sidecar
+
+    sidecar = tmp_path / "probe-sidecar.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "7")
+    digest = flush_probe_sidecar([["m", "C_Login", 0, 4]])
+    assert digest is not None
+    assert digest == hashlib.sha256(sidecar.read_bytes()).hexdigest()
+
+
+def test_probe_sidecar_failed_flush_attests_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F5: a failed final flush returns None (no file re-read)."""
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV, PROBE_SIDECAR_ENV
+    from pkcs11_check.testcases._probes._emit import flush_probe_sidecar
+
+    sidecar = tmp_path / "missing-dir" / "probe-sidecar.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "7")
+    assert flush_probe_sidecar([["m", "C_Login", 0, 4]]) is None
+    assert not sidecar.exists()
+
+
 def test_probe_sidecar_finalized_flag_round_trips(tmp_path: Path) -> None:
     from pkcs11_check.core._counters_durability import _read_probe_orphan, write_probe_sidecar
 
