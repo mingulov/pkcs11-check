@@ -36,7 +36,7 @@ key_inject = "unwrap"
 | Setting | Env | Default | Layers | Meaning |
 |---|---|---|---|---|
 | `module` | `P11TEST_MODULE` | *(required)* | CLI only | Path to the PKCS#11 shared library. Required `--module` flag; env/TOML are never read. |
-| `slot` | `P11TEST_SLOT` | `0` | CLI only | Slot **index** into the present-token slot list, not a raw slot ID. NSS uses slot 1. Only `--slot` applies; env/TOML are silently dead without the warning this file describes. |
+| `slot` | `P11TEST_SLOT` | `0` | CLI only | Slot **index** into the present-token slot list, not a raw slot ID. NSS uses slot 1. Only `--slot` applies; provided env/TOML values warn (in `test` runs and `--show-config`) and are ignored. |
 | `pin` | `P11TEST_PIN` | none | CLI > env > TOML | User PIN. When unset, `C_Login` is never called. `--pin` bridges into the child environment. |
 | `so_pin` | `P11TEST_SO_PIN` | none | CLI > env > TOML | Security Officer PIN, for the tests that need a genuine `CKU_SO` session. Without it those tests fall back to guessing the user PIN. |
 | `interface` | `P11TEST_INTERFACE` | `auto` | CLI only | Interface version to request: `auto`, `2.40`, `3.0`, `3.1`, `3.2`. Only `--interface` applies. |
@@ -109,9 +109,26 @@ Detection is a liveness probe between test units, never a list of error codes: m
 
 A daemon that is reachable but degraded -- answering, only ever more slowly -- is **not** detected. That needs a different signal than reachability.
 
+## Empty PIN semantics
+
+Three states, three behaviors (cleanup deferred; this section pins the
+current truth):
+
+- **Absent** (no `--pin`, no `P11TEST_PIN`, no TOML `pin`): nothing logs
+  in; tests that need a PIN skip with an explicit reason.
+- **Non-empty**: sessions log in; PIN-needing tests run.
+- **Empty string** (`--pin ""` or `P11TEST_PIN=`): an empty `--pin` never
+  overrides the environment (a set `P11TEST_PIN` wins); session fixtures
+  treat empty as absent and do **not** log in. One known inconsistency:
+  `get_pin_bytes()` returns `b""` (not `None`) for an empty PIN, so its
+  security-test consumers proceed as if a PIN existed. To force a
+  no-login run, unset `P11TEST_PIN` rather than emptying it.
+
 ## Environment variables that are not settings
 
-These are switches, with no TOML or CLI equivalent.
+These have no TOML or CLI equivalent. The operator knobs first, then the
+full inventory (most of it internal parent/child plumbing -- do not export
+those by hand).
 
 | Variable | Meaning |
 |---|---|

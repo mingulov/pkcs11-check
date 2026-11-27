@@ -68,6 +68,15 @@ def test_dump_rejects_pin_nested_in_a_list() -> None:
         ProbeParams.dump({"module_path": "/lib/x.so", "extra": {"items": [{"so_pin": "1234"}]}})
 
 
+@pytest.mark.parametrize(
+    "key", ["userPin", "password", "token_pin", "P11TEST_PIN", "PassWd", "SECRET"]
+)
+def test_dump_rejects_credential_spelling_variants(key: str) -> None:
+    """S8: the guard is substring-based; respellings cannot smuggle credentials."""
+    with pytest.raises(PinInParamsError):
+        ProbeParams.dump({"module_path": "/lib/x.so", key: "hunter2"})
+
+
 def test_load_rejects_non_object(tmp_path: Path) -> None:
     p = tmp_path / "params.json"
     p.write_text(json.dumps([1, 2, 3]), encoding="utf-8")

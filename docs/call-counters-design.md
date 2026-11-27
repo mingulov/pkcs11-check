@@ -4,9 +4,13 @@ Shipped feature reference. The call counters count every `C_*` call made
 through the loaded module - by function name and `CK_RV`, attributed to one of
 five scope buckets and to the module id bound to the handle the call passed
 through - so that run totals match an external observer's counts for fully
-recovered executions. Anything less is fail-visible: named losses and
-`complete: false`, or a loud warning for preflight persistence failures
-(see Durability).
+recovered executions *within the counted scope*. Anything less is fail-visible:
+named losses and `complete: false`, or a loud warning for preflight
+persistence failures (see Durability). Scope limits: helper programs the
+harness launches (OpenSSL/p11-kit interop, external provision commands) and
+foreign native dispatch are never counted (see Exclusions); durability covers
+process death, while a whole-machine crash can still lose the unflushed tail
+(see Durability); bare-`pytest` runs keep counts in memory only.
 Per-test window entries ride `report.jsonl`'s `user_properties` and one session
 record per process rides the same stream, each carrying the process
 `worker_uuid`; the extractor folds both into a `call_counters` block in

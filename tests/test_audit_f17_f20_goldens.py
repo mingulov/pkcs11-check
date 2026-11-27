@@ -160,17 +160,62 @@ def test_unit_discovery_keeps_good_nodeids_despite_bad_line(
     assert collect_pytest_nodeids(["test_a.py"], []) == ["test_a.py::test_1"]
 
 
+class _DecodingPopen:
+    """Fake ``subprocess.Popen`` with byte pipes (R24-2).
+
+    Returns raw bytes like binary-mode pipes; the caller under test
+    decodes lossily itself (errors=replace), which the tests below pin.
+    """
+
+    def __init__(self, stdout_bytes: bytes, stderr_bytes: bytes, returncode: int) -> None:
+        self.pid = 4242
+        self.returncode: int | None = None
+        self._stdout_bytes = stdout_bytes
+        self._stderr_bytes = stderr_bytes
+        self._returncode = returncode
+
+    def __call__(self, cmd: Any, **kwargs: Any) -> _DecodingPopen:
+        assert "text" not in kwargs, "login probe must use binary pipes"
+        return self
+
+    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
+        del timeout
+        self.returncode = self._returncode
+        return (self._stdout_bytes, self._stderr_bytes)
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    def wait(self) -> int:
+        self.returncode = -9
+        return -9
+
+
 def test_login_probe_survives_bad_bytes_on_stderr(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
 
     stdout = b'{"status": "ok", "detail": "fine"}\n'
-    monkeypatch.setattr(subprocess, "run", _decoding_run(stdout, stderr_bytes=_BAD_BYTES))
+    monkeypatch.setattr(subprocess, "Popen", _DecodingPopen(stdout, _BAD_BYTES, 0))
     probe = run_login_probe_subprocess(
         tmp_path / "module.so", interface="auto", slot=0, pin=b"1234", timeout=5
     )
     assert (probe.status, probe.detail) == ("ok", "fine")
+
+
+def test_login_probe_replaces_bad_bytes_in_error_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R24-2: caller-side decoding stays errors=replace on byte pipes."""
+    from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
+
+    monkeypatch.setattr(subprocess, "Popen", _DecodingPopen(b"not json\n", _BAD_BYTES, 1))
+    probe = run_login_probe_subprocess(
+        tmp_path / "module.so", interface="auto", slot=0, pin=b"1234", timeout=5
+    )
+    assert probe.status == "error"
+    assert "marker-line � garbage" in probe.detail
 
 
 def test_collection_worker_survives_bad_bytes_on_stdout(

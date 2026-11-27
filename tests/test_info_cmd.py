@@ -142,3 +142,96 @@ def test_info_success_against_softhsm(tmp_path: Path, monkeypatch: pytest.Monkey
     assert "Module:" in result.output
     assert "Slots with tokens:" in result.output
     assert "Mechanism" in result.output
+
+
+def _fake_module(slots: list[tuple[str, int]]) -> object:
+    """Fake loader module: (label, flags) per token-present slot."""
+
+    class _Token:
+        def __init__(self, label: str, flags: int) -> None:
+            self.label = label
+            self.manufacturer_id = "FakeHSM"
+            self.model = "Fake v1"
+            self.flags = flags
+
+    class _Slot:
+        def __init__(self, label: str, flags: int) -> None:
+            self._token = _Token(label, flags)
+            self.queries = 0
+
+        def get_token(self) -> _Token:
+            return self._token
+
+        def get_mechanisms(self) -> list[int]:
+            self.queries += 1
+            return [0x1082] if self._token.label else []
+
+        def get_mechanism_info(self, mech: int) -> object:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(min_key_length=16, max_key_length=32)
+
+    class _Module:
+        path = "fake.so"
+        interface_version = "3.0"
+
+        def __init__(self) -> None:
+            self._slots = [_Slot(label, flags) for label, flags in slots]
+
+        def get_interface_list(self) -> list[tuple[str, int, int]]:
+            return []
+
+        def get_slots(self, token_present: bool = True) -> list[_Slot]:
+            assert token_present
+            return self._slots
+
+    return _Module()
+
+
+def test_collect_marks_uninitialized_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U9: collection records per-slot initialized state from token flags."""
+    from pkcs11_check.raw.types_std import CKF_TOKEN_INITIALIZED
+
+    fake = _fake_module([("demo", int(CKF_TOKEN_INITIALIZED)), ("", 0)])
+    monkeypatch.setattr(info_cmd, "load_module", lambda *a, **k: fake)
+    info = info_cmd._collect_module_info("fake.so", "auto")
+    assert [slot.initialized for slot in info.slots] == [True, False]
+    # N7: mechanism queries run only for the initialized slot.
+    assert [slot.queries for slot in fake._slots] == [1, 0]
+
+
+def test_render_names_usable_slot_and_skips_uninitialized_table(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U9: exactly one usable slot named; no duplicated table for the other."""
+    info = info_cmd.ModuleInfo(
+        path="fake.so",
+        interface_version="3.0",
+        interfaces=(),
+        slots=(
+            info_cmd.SlotInfo(
+                index=0,
+                label="demo",
+                manufacturer_id="FakeHSM",
+                model="Fake v1",
+                mechanisms=(("AES_CBC", "16", "32"),),
+                initialized=True,
+            ),
+            info_cmd.SlotInfo(
+                index=1,
+                label="",
+                manufacturer_id="FakeHSM",
+                model="Fake v1",
+                mechanisms=(("AES_CBC", "16", "32"),),
+                initialized=False,
+            ),
+        ),
+    )
+    info_cmd._render_module_info(info)
+    out = capsys.readouterr().out
+    assert "(1 initialized)" in out
+    assert "Slot 0:" in out
+    assert "not initialized" in out
+    assert out.count("Mechanisms (") == 1

@@ -32,19 +32,31 @@ from pkcs11_check.raw.types_std import (
     CK_UNAVAILABLE_INFORMATION,
     CKA_CLASS,
     CKA_DERIVE,
+    CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
+    CKA_SIGN,
     CKA_SIGN_RECOVER,
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VERIFY_RECOVER,
+    CKK_EC,
+    CKK_EC_EDWARDS,
+    CKK_EC_MONTGOMERY,
+    CKK_ML_DSA,
     CKO_PRIVATE_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -52,7 +64,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import test_attribute_defaults as defaults_case
 from pkcs11_check.testcases import test_keypair_consistency as pair_case
 from pkcs11_check.testcases import test_object as object_case
-from tests._skip_assert import assert_xfails
+from tests._skip_assert import assert_skips, assert_xfails
 
 _OK = int(CKR_OK)
 _TYPE_INVALID = int(CKR_ATTRIBUTE_TYPE_INVALID)
@@ -63,6 +75,7 @@ _NOT_PERMITTED = int(CKR_KEY_FUNCTION_NOT_PERMITTED)
 _UNAVAILABLE = int(CK_UNAVAILABLE_INFORMATION)
 _VALUE = int(CKA_VALUE)
 _DERIVE = int(CKA_DERIVE)
+_EC_POINT = int(CKA_EC_POINT)
 _MODULUS = int(CKA_MODULUS)
 _MODULUS_BITS = int(CKA_MODULUS_BITS)
 
@@ -425,6 +438,41 @@ def test_public_value_sentinel_without_ckr_passes() -> None:
     _assert_cleanup(fake)
 
 
+def test_public_value_retry_refusal_after_partial_stays_visible() -> None:
+    """R14-1: a marked retry refusal gets no absence credit (no silent pass)."""
+
+    class _FlakyRaw(_EncodingRaw):
+        def __init__(self) -> None:
+            super().__init__()
+            self.value_reads = 0
+
+        def C_GetAttributeValue(  # noqa: N802
+            self, _sh: int, handle: int, tmpl: Any, count: int
+        ) -> int:
+            if int(count) == 1 and int(tmpl[0].type) == _VALUE:
+                self.value_reads += 1
+                if self.value_reads <= 2:
+                    tmpl[0].ulValueLen = 3
+                    if tmpl[0].pValue:
+                        ctypes.memset(tmpl[0].pValue, 0x66, 1)
+                    return _OK
+                tmpl[0].ulValueLen = _UNAVAILABLE
+                return _TYPE_INVALID
+            return super().C_GetAttributeValue(_sh, handle, tmpl, count)
+
+    fake = _FlakyRaw()
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_public_value_absent,
+        _rs(fake),
+        "rsa",
+    )
+    assert any(
+        rec.detail is not None and rec.detail.get("unproved_delivery") is True for rec in _records()
+    )
+    assert any(rec.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID" for rec in _records())
+    _assert_cleanup(fake)
+
+
 # --- QC7a: DSA / DH raw Y (#4) ---------------------------------------------
 
 
@@ -569,6 +617,46 @@ def test_ec_private_value_sensitive_refusal_after_unsealed_claim_fails() -> None
     _assert_cleanup(fake)
 
 
+def _minimal_scalar_transform(stored: dict[int, bytes]) -> dict[int, bytes]:
+    """Model a minimal-encoding provider: strip leading zeros on store."""
+    out = dict(stored)
+    scalar = out.get(_VALUE)
+    if scalar is not None:
+        out[_VALUE] = scalar.lstrip(b"\x00") or b"\x00"
+    return out
+
+
+def test_ec_private_value_minimal_encoding_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A minimal-encoded P-256 scalar reads back by integer value (fw#95)."""
+    small = int.from_bytes(b"\x00" + bytes(range(1, 32)), "big")
+    key = ec.derive_private_key(small, ec.SECP256R1())
+    monkeypatch.setattr(ec, "generate_private_key", lambda curve: key)
+    fake = _EncodingRaw()
+    fake.create_transform = _minimal_scalar_transform
+    object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+        _rs(fake), "ec"
+    )
+    _assert_cleanup(fake)
+
+
+def test_edwards_private_value_minimal_encoding_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Minimal-encoding is EC-only: stripped Edwards seeds still fail (fw#95)."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    seed = b"\x00" + bytes(range(1, 32))
+    key = ed25519.Ed25519PrivateKey.from_private_bytes(seed)
+    monkeypatch.setattr(ed25519.Ed25519PrivateKey, "generate", staticmethod(lambda: key))
+    fake = _EncodingRaw()
+    fake.create_transform = _minimal_scalar_transform
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), "edwards"
+        )
+    _assert_cleanup(fake)
+
+
 def test_private_value_claim_overridden_is_not_judged() -> None:
     from pkcs11_check.raw.types_std import CKA_SENSITIVE
 
@@ -584,13 +672,386 @@ def test_private_value_claim_overridden_is_not_judged() -> None:
     _assert_cleanup(fake)
 
 
+class _CurveRefusalRaw(_EncodingRaw):
+    """Refuse creates for one key type with a scripted RV (fw#93)."""
+
+    def __init__(
+        self,
+        key_type: int,
+        rv: int,
+        *,
+        only_if: Any = None,
+        alt_only_if: Any = None,
+        alt_rv: int | None = None,
+        refuse_genpair: bool = True,
+        genpair_rv: int | None = None,
+        genpair_rv_for: Any = None,
+    ) -> None:
+        super().__init__()
+        self._refuse_key_type = key_type
+        self._refuse_rv = rv
+        self._only_if = only_if
+        self._alt_only_if = alt_only_if
+        self._alt_rv = alt_rv
+        self._refuse_genpair = refuse_genpair
+        self._genpair_rv = genpair_rv
+        self._genpair_rv_for = genpair_rv_for
+        # Every C_GenerateKeyPair entry, refused or served (genpair_calls
+        # only records served allocations in the base class).
+        self.genpair_attempts = 0
+
+    def C_CreateObject(self, _sh: int, tmpl: Any, count: int, handle_ptr: Any) -> int:  # noqa: N802
+        if int(count) > 0:
+            attrs = _decode_template(tmpl, int(count))
+            if attrs.get(int(CKA_KEY_TYPE)) == _ulong_blob(self._refuse_key_type):
+                if self._only_if is None or self._only_if(attrs):
+                    self.create_calls.append(attrs)
+                    return self._refuse_rv
+                if (
+                    self._alt_only_if is not None
+                    and self._alt_rv is not None
+                    and self._alt_only_if(attrs)
+                ):
+                    self.create_calls.append(attrs)
+                    return self._alt_rv
+        return super().C_CreateObject(_sh, tmpl, count, handle_ptr)
+
+    def C_GenerateKeyPair(  # noqa: N802
+        self,
+        _sh: int,
+        _mech: Any,
+        pub_tmpl: Any,
+        pub_count: int,
+        priv_tmpl: Any,
+        priv_count: int,
+        pub_ptr: Any,
+        priv_ptr: Any,
+    ) -> int:
+        # The R2-6 baseline consults generation on the same curve: a fake
+        # modeling a genuinely unsupported curve refuses both legs.
+        self.genpair_attempts += 1
+        if self._genpair_rv_for is not None:
+            pub_attrs = _decode_template(pub_tmpl, int(pub_count))
+            scripted = self._genpair_rv_for(pub_attrs)
+            if scripted is not None:
+                return int(scripted)
+        elif self._refuse_genpair:
+            return self._genpair_rv if self._genpair_rv is not None else self._refuse_rv
+        return super().C_GenerateKeyPair(
+            _sh, _mech, pub_tmpl, pub_count, priv_tmpl, priv_count, pub_ptr, priv_ptr
+        )
+
+
+def test_montgomery_import_curve_refusal_skips() -> None:
+    """Curve refusal on Montgomery import+baseline skips: unsupported (fw#93, R2-6)."""
+    fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_CURVE_NOT_SUPPORTED))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+def test_ec_import_curve_refusal_skips() -> None:
+    """Curve refusal on EC import+baseline skips as well (fw#93, R2-6)."""
+    fake = _CurveRefusalRaw(int(CKK_EC), int(CKR_CURVE_NOT_SUPPORTED))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ec",
+    )
+    _assert_cleanup(fake)
+
+
+def test_montgomery_import_general_error_xfails_not_skips() -> None:
+    """General failures stay loud: KEYPAIR-set RVs xfail, never skip (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_GENERAL_ERROR))
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+def test_montgomery_import_function_failed_xfails_not_skips() -> None:
+    """Function failure on Montgomery import xfails, never skips (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_EC_MONTGOMERY), int(CKR_FUNCTION_FAILED))
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_attribute_type_invalid_skips() -> None:
+    """ML-DSA-44 import refused as unknown attributes skips (fw#93)."""
+    fake = _CurveRefusalRaw(int(CKK_ML_DSA), int(CKR_ATTRIBUTE_TYPE_INVALID))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ml_dsa_44",
+    )
+    _assert_cleanup(fake)
+
+
+def test_montgomery_import_without_mechanism_skips() -> None:
+    """No advertised family mechanism skips before attempting the import (fw#93)."""
+    fake = _EncodingRaw()
+    rs = SimpleNamespace(
+        raw=fake,
+        sh=7,
+        slot_id=0,
+        has_mechanism=lambda *_a: False,
+        has_mechanism_flag=lambda *_a: False,
+    )
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        rs,
+        "montgomery",
+    )
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type",
+    [
+        ("ec", int(CKK_EC)),
+        ("edwards", int(CKK_EC_EDWARDS)),
+        ("montgomery", int(CKK_EC_MONTGOMERY)),
+    ],
+)
+def test_import_curve_refusal_with_working_baseline_reraises(family: str, key_type: int) -> None:
+    """R2-6: import refusal with a working gen baseline stays loud."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(key_type, int(CKR_CURVE_NOT_SUPPORTED), refuse_genpair=False)
+    with pytest.raises(CkrAssertionError, match="baseline"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), family
+        )
+    assert len(fake.genpair_calls) == 1
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type",
+    [
+        ("ec", int(CKK_EC)),
+        ("edwards", int(CKK_EC_EDWARDS)),
+        ("montgomery", int(CKK_EC_MONTGOMERY)),
+    ],
+)
+def test_import_curve_refusal_with_refused_baseline_skips(family: str, key_type: int) -> None:
+    """R2-6: baseline refusal confirms absence (skip names the baseline)."""
+    fake = _CurveRefusalRaw(key_type, int(CKR_CURVE_NOT_SUPPORTED))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        family,
+        match="baseline",
+    )
+    # R4-6: the baseline is one raw same-curve attempt (no wrapper retries).
+    assert fake.genpair_attempts == 1
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type",
+    [
+        ("ec", int(CKK_EC)),
+        ("edwards", int(CKK_EC_EDWARDS)),
+        ("montgomery", int(CKK_EC_MONTGOMERY)),
+    ],
+)
+def test_import_curve_refusal_with_undefined_baseline_rv_reraises(
+    family: str, key_type: int
+) -> None:
+    """R4-5: an undefined baseline RV never confirms absence (loud, exact RV)."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(key_type, int(CKR_CURVE_NOT_SUPPORTED), genpair_rv=0x00FFFFFF)
+    with pytest.raises(CkrAssertionError, match="0x00ffffff"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), family
+        )
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type",
+    [
+        ("ec", int(CKK_EC)),
+        ("edwards", int(CKK_EC_EDWARDS)),
+        ("montgomery", int(CKK_EC_MONTGOMERY)),
+    ],
+)
+def test_import_undefined_rv_never_consults_baseline(family: str, key_type: int) -> None:
+    """R4-5: a non-explicit primary refusal stays loud without a baseline call."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(key_type, 0x00FFFFFF)
+    with pytest.raises(CkrAssertionError, match="0x00ffffff"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), family
+        )
+    assert fake.genpair_attempts == 0
+    _assert_cleanup(fake)
+
+
+@pytest.mark.parametrize(
+    "family,key_type,gen_mechs",
+    [
+        ("ec", int(CKK_EC), ("EC_KEY_PAIR_GEN", "ECDSA_KEY_PAIR_GEN")),
+        ("edwards", int(CKK_EC_EDWARDS), ("EC_EDWARDS_KEY_PAIR_GEN",)),
+        ("montgomery", int(CKK_EC_MONTGOMERY), ("EC_MONTGOMERY_KEY_PAIR_GEN",)),
+    ],
+)
+def test_import_curve_refusal_without_gen_mechanism_xfails_inconclusive(
+    family: str, key_type: int, gen_mechs: tuple[str, ...]
+) -> None:
+    """R5-3: unadvertised generation makes the import refusal inconclusive."""
+    from types import SimpleNamespace
+
+    fake = _CurveRefusalRaw(
+        key_type, int(CKR_CURVE_NOT_SUPPORTED), genpair_rv=int(CKR_MECHANISM_INVALID)
+    )
+    rs = SimpleNamespace(
+        raw=fake,
+        sh=7,
+        slot_id=0,
+        has_mechanism=lambda name: name not in gen_mechs,
+        has_mechanism_flag=lambda *_a: True,
+    )
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        rs,
+        family,
+        match="inconclusive",
+    )
+    assert fake.genpair_attempts == 0
+    inconclusive = [rec for rec in _records() if "inconclusive" in (rec.summary or "")]
+    assert len(inconclusive) == 1
+    # R6-4: the RV belongs to the import that returned it, not the baseline.
+    assert inconclusive[0].operation == "C_CreateObject"
+    assert inconclusive[0].actual_ckr == "CKR_CURVE_NOT_SUPPORTED"
+    _assert_cleanup(fake)
+
+
+def test_montgomery_baseline_ignores_other_curve() -> None:
+    """R4-6: an X448 success never credits an X25519 import baseline (skip)."""
+    from pkcs11_check.raw.ec import encode_named_curve_parameters
+
+    x25519_params = encode_named_curve_parameters("x25519")
+
+    def _refuse_x25519_only(pub_attrs: dict[int, bytes]) -> int | None:
+        if pub_attrs.get(int(CKA_EC_PARAMS)) == x25519_params:
+            return int(CKR_CURVE_NOT_SUPPORTED)
+        return None
+
+    fake = _CurveRefusalRaw(
+        int(CKK_EC_MONTGOMERY),
+        int(CKR_CURVE_NOT_SUPPORTED),
+        genpair_rv_for=_refuse_x25519_only,
+    )
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "montgomery",
+        match="baseline",
+    )
+    # Only X25519 is attempted; X448 is never touched.
+    assert fake.genpair_attempts == 1
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_minimal_baseline_works_reraises() -> None:
+    """R2-6: ML-DSA refusal with a working minimal template stays loud."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(
+        int(CKK_ML_DSA),
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        only_if=lambda attrs: int(CKA_SIGN) in attrs,
+    )
+    with pytest.raises(CkrAssertionError, match="baseline"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), "ml_dsa_44"
+        )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_minimal_baseline_refused_skips() -> None:
+    """R2-6: minimal-template refusal confirms absence (skip names the baseline)."""
+    fake = _CurveRefusalRaw(int(CKK_ML_DSA), int(CKR_ATTRIBUTE_TYPE_INVALID))
+    assert_skips(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ml_dsa_44",
+        match="baseline",
+    )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_unexpected_baseline_rv_reraises() -> None:
+    """R4-5: a non-explicit minimal-template RV never confirms absence (loud)."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(
+        int(CKK_ML_DSA),
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        only_if=lambda attrs: int(CKA_SIGN) in attrs,
+        alt_only_if=lambda attrs: int(CKA_SIGN) not in attrs,
+        alt_rv=0x00FFFFFF,
+    )
+    with pytest.raises(CkrAssertionError, match="0x00ffffff"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), "ml_dsa_44"
+        )
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_undefined_rv_never_consults_baseline() -> None:
+    """R4-5: a non-explicit primary refusal stays loud without a baseline call."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    fake = _CurveRefusalRaw(int(CKK_ML_DSA), 0x00FFFFFF)
+    with pytest.raises(CkrAssertionError, match="0x00ffffff"):
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material(
+            _rs(fake), "ml_dsa_44"
+        )
+    # Exactly one create: the primary. A non-shape RV propagates at once.
+    assert len(fake.create_calls) == 1
+    _assert_cleanup(fake)
+
+
+def test_mldsa44_import_unavailable_baseline_xfails_inconclusive() -> None:
+    """R4-5: a baseline that cannot run is inconclusive, never absence."""
+    fake = _CurveRefusalRaw(
+        int(CKK_ML_DSA),
+        int(CKR_ATTRIBUTE_TYPE_INVALID),
+        only_if=lambda attrs: int(CKA_SIGN) in attrs,
+        alt_only_if=lambda attrs: int(CKA_SIGN) not in attrs,
+        alt_rv=int(CKR_FUNCTION_NOT_SUPPORTED),
+    )
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ml_dsa_44",
+        match="inconclusive",
+    )
+    _assert_cleanup(fake)
+
+
 # --- QC7a: generated/imported equivalence (#7) -------------------------------
 
 
 def test_generated_imported_private_value_equivalent_passes() -> None:
     fake = _EncodingRaw()
     scalar = b"\x01" + b"\x07" * 31
-    fake.genpair_queue = [({}, {_VALUE: scalar})]
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
     object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
         _rs(fake)
     )
@@ -611,6 +1072,236 @@ def test_generated_imported_private_value_mismatch_fails() -> None:
         object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
             _rs(fake)
         )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_minimal_length_passes() -> None:
+    """A 31-byte generated P-256 scalar passes the generated leg (fw#95)."""
+    fake = _EncodingRaw()
+    scalar = bytes(range(1, 32))
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+        _rs(fake)
+    )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_overlong_still_fails() -> None:
+    """A 33-byte generated value still fails (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: bytes(range(1, 34))})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_at_or_above_curve_order_fails() -> None:
+    """A generated scalar >= P-256 order fails: range is part of validity (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: b"\xff" * 32})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_zero_scalar_fails() -> None:
+    """A zero generated scalar fails (fw#95)."""
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: b"\x00" * 32})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def _p256_point_for(scalar: bytes) -> bytes:
+    """DER-OCTET P-256 public point derived from a scalar (test helper)."""
+    nums = (
+        ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    raw_point = b"\x04" + nums.x.to_bytes(32, "big") + nums.y.to_bytes(32, "big")
+    return b"\x04\x41" + raw_point
+
+
+def test_generated_scalar_matching_public_point_passes() -> None:
+    """F8: scalar deriving the generated point passes the binding check."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+        _rs(fake)
+    )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_public_mismatch_fails() -> None:
+    """F8: scalar not deriving the generated point fails (key confusion caught)."""
+    scalar_a = b"\x01" + b"\x07" * 31
+    scalar_b = b"\x02" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar_a)}, {_VALUE: scalar_b})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_undecodable_point_fails() -> None:
+    """F8: undecodable points fail (garbage is assessed broken, per precedent)."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: b"garbage"}, {_VALUE: scalar})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_compressed_mismatch_fails() -> None:
+    """F8: binding sees compressed encodings too (no silent pass)."""
+    scalar_a = b"\x01" + b"\x07" * 31
+    scalar_b = b"\x02" + b"\x07" * 31
+    nums_a = (
+        ec.derive_private_key(int.from_bytes(scalar_a, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    compressed_a = (b"\x02" if nums_a.y % 2 == 0 else b"\x03") + nums_a.x.to_bytes(32, "big")
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: b"\x04\x21" + compressed_a}, {_VALUE: scalar_b})]
+    with pytest.raises(Failed):
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+            _rs(fake)
+        )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_compressed_match_passes() -> None:
+    """F8 control: matching compressed points pass the binding check."""
+    scalar = b"\x01" + b"\x07" * 31
+    nums = (
+        ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+        .public_key()
+        .public_numbers()
+    )
+    compressed = (b"\x02" if nums.y % 2 == 0 else b"\x03") + nums.x.to_bytes(32, "big")
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: b"\x04\x21" + compressed}, {_VALUE: scalar})]
+    object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent(
+        _rs(fake)
+    )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_absent_point_records_deviation() -> None:
+    """R4-8: an omitted generated point deviates, never silently passes binding."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: scalar})]
+    fake.attr_rv_by_role = {("genpair_pub", _EC_POINT): _TYPE_INVALID}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    assert any(
+        rec.reason == "honest_deviation"
+        and rec.detail is not None
+        and rec.detail.get("attribute", {}).get("id") == _EC_POINT
+        for rec in _records()
+    )
+    _assert_cleanup(fake)
+
+
+def test_generated_scalar_sentinel_point_reuses_single_deviation() -> None:
+    """R5-4: sentinel-shaped absence reuses its record; no invented CKR."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({}, {_VALUE: scalar})]
+    fake.attr_sentinel_ok_by_role = {("genpair_pub", _EC_POINT)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    point_deviations = [
+        rec
+        for rec in _records()
+        if rec.detail is not None and rec.detail.get("attribute", {}).get("id") == _EC_POINT
+    ]
+    assert len(point_deviations) == 1
+    assert point_deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert point_deviations[0].detail.get("producer_operation") == "C_GenerateKeyPair"
+    _assert_cleanup(fake)
+
+
+def _value_deviations() -> list[Any]:
+    return [
+        rec
+        for rec in _records()
+        if rec.detail is not None and rec.detail.get("attribute", {}).get("id") == _VALUE
+    ]
+
+
+def test_known_material_value_sentinel_reuses_single_deviation() -> None:
+    """R6-2: sentinel VALUE on known-material import judges once, no invented CKR."""
+    fake = _EncodingRaw()
+    fake.attr_sentinel_ok_by_role = {("create", _VALUE)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_ec_family_value_raw_known_material,
+        _rs(fake),
+        "ec",
+        match="unavailable",
+    )
+    deviations = _value_deviations()
+    assert len(deviations) == 1
+    assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert deviations[0].detail.get("producer_operation") == "C_CreateObject"
+    _assert_cleanup(fake)
+
+
+def test_generated_value_sentinel_reuses_single_deviation() -> None:
+    """R6-2: sentinel VALUE on the generated leg judges once, no invented CKR."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    fake.attr_sentinel_ok_by_role = {("genpair_priv", _VALUE)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    deviations = _value_deviations()
+    assert len(deviations) == 1
+    assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert deviations[0].detail.get("producer_operation") == "C_GenerateKeyPair"
+    _assert_cleanup(fake)
+
+
+def test_reimported_value_sentinel_reuses_single_deviation() -> None:
+    """R6-2: sentinel VALUE on the re-import leg judges once, no invented CKR."""
+    scalar = b"\x01" + b"\x07" * 31
+    fake = _EncodingRaw()
+    fake.genpair_queue = [({_EC_POINT: _p256_point_for(scalar)}, {_VALUE: scalar})]
+    fake.attr_sentinel_ok_by_role = {("create", _VALUE)}
+    assert_xfails(
+        object_case.TestAttributeValueEncodings().test_private_value_generated_imported_equivalent,
+        _rs(fake),
+        match="unavailable",
+    )
+    deviations = _value_deviations()
+    assert len(deviations) == 1
+    assert deviations[0].actual_ckr != "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert deviations[0].detail.get("producer_operation") == "C_CreateObject"
     _assert_cleanup(fake)
 
 

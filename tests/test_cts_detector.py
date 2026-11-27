@@ -15,8 +15,10 @@ from pkcs11_check.raw.types_std import (
     CKF_DECRYPT,
     CKF_ENCRYPT,
     CKM_AES_CTS,
+    CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_FAILED,
     CKR_KEY_SIZE_RANGE,
+    CKR_OK,
     CKR_USER_NOT_LOGGED_IN,
     CKU_USER,
 )
@@ -658,7 +660,7 @@ def test_cts_probe_coerces_missing_interface_to_auto(
 
 
 def _install_collection_probe_stubs(
-    monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any], *, stub_detection: bool = True
 ) -> None:
     """Stub the provider surface behind the collection CTS probe."""
 
@@ -674,7 +676,7 @@ def _install_collection_probe_stubs(
     def fake_login(raw: Any, sh: int, user: int, pin: bytes) -> None:
         captured.setdefault("logins", []).append((sh, user, pin))
 
-    def fake_detected(rs: Any) -> base_cts.CtsDetectionResult:
+    def fake_detected(rs: Any, **kwargs: Any) -> base_cts.CtsDetectionResult:
         return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
 
     monkeypatch.setattr("pkcs11_check.core.loader.load_module", fake_load_module)
@@ -690,7 +692,8 @@ def _install_collection_probe_stubs(
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.login_user", fake_login)
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.logout_quietly", lambda *a: None)
     monkeypatch.setattr("pkcs11_check.raw.bootstrap.close_session_quietly", lambda *a: None)
-    monkeypatch.setattr(base_cts, "get_cts_detection", fake_detected)
+    if stub_detection:
+        monkeypatch.setattr(base_cts, "get_cts_detection", fake_detected)
 
 
 def _collection_config(opts: dict[str, Any]) -> Any:
@@ -721,6 +724,478 @@ def test_cts_collection_probe_logs_in_with_env_pin(
 
     assert result.status is base_cts.CtsDetectionStatus.DETECTED
     assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+@pytest.fixture
+def _fresh_detection_cache() -> Any:
+    base_cts.reset_cts_detection_cache()
+    yield
+    base_cts.reset_cts_detection_cache()
+
+
+def test_cts_collection_probe_env_pin_yields_detection_not_setup_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """#89 end-to-end: env pin logs in, so a login-enforcing module detects."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def login_enforcing_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        if not captured.get("logins"):
+            return base_cts.CtsDetectionResult(
+                base_cts.CtsDetectionStatus.SETUP_ERROR,
+                error_rv=int(CKR_USER_NOT_LOGGED_IN),
+                detail={"attempts": [{"ckr": int(CKR_USER_NOT_LOGGED_IN)}]},
+            )
+        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", login_enforcing_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.DETECTED
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+def test_cts_collection_probe_without_pin_surfaces_not_operational(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """S2: logged-out login refusal is not-operational (xfail), not a FAIL."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    inner_calls: list[Any] = []
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def login_enforcing_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        inner_calls.append(rs)
+        if not captured.get("logins"):
+            return base_cts.CtsDetectionResult(
+                base_cts.CtsDetectionStatus.SETUP_ERROR,
+                error_rv=int(CKR_USER_NOT_LOGGED_IN),
+                detail={"attempts": [{"ckr": int(CKR_USER_NOT_LOGGED_IN)}]},
+            )
+        return base_cts.CtsDetectionResult(base_cts.CtsDetectionStatus.DETECTED, variant="1")
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", login_enforcing_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.NOT_OPERATIONAL
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    assert "logged-out" in result.detail.get("reason", "")
+    assert not captured.get("logins")
+    # The converted result is what the cache holds: the sentinel and the
+    # standalone vector guard consume it converted, not as setup-error.
+    again = base_cts.get_cts_detection(SimpleNamespace())
+    assert again.status is base_cts.CtsDetectionStatus.NOT_OPERATIONAL
+    assert len(inner_calls) == 1
+
+
+def test_cts_collection_probe_logged_in_login_refusal_stays_loud(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """S2 control: logged-in meetings with the same RV stay SETUP_ERROR (loud)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def always_refusing_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={"attempts": [{"ckr": int(CKR_USER_NOT_LOGGED_IN)}]},
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", always_refusing_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+def test_cts_mixed_refusal_reports_off_contract_rv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R4-7: mixed attempts report the off-contract RV+operation, not the login RV."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {"ckr": 0x00FFFFFF, "operation": "C_Encrypt", "stage": "operation"},
+                    {
+                        "ckr": int(CKR_USER_NOT_LOGGED_IN),
+                        "operation": "C_Login",
+                        "stage": "setup",
+                    },
+                    {
+                        "ckr": int(CKR_USER_NOT_LOGGED_IN),
+                        "operation": "C_Login",
+                        "stage": "setup",
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    with pytest.raises(CkrAssertionError, match="C_Encrypt") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+
+
+def test_cts_mixed_refusal_logged_in_reports_off_contract_rv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R4-7: reselection is login-independent (mixed while logged in)."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("P11TEST_PIN", "envpin")
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {"ckr": 0x00FFFFFF, "operation": "C_Encrypt", "stage": "operation"},
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    assert captured.get("logins") == [(1234, CKU_USER, b"envpin")]
+
+
+def test_cts_mixed_success_reports_off_contract_rv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R5-2: successes never win selection; the off-contract attempt does."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {
+                        "ckr": 0x00FFFFFF,
+                        "operation": "C_CreateObject",
+                        "stage": "setup",
+                        "key_bits": 256,
+                        "case": None,
+                    },
+                    {
+                        "ckr": int(CKR_OK),
+                        "operation": "C_Encrypt",
+                        "stage": "operation",
+                        "key_bits": 128,
+                        "case": "aligned",
+                    },
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    with pytest.raises(CkrAssertionError, match="C_CreateObject") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+
+
+def test_cts_mixed_listed_refusal_keeps_primary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R5-2: listed clean refusals are not candidates; the primary stands."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {
+                        "ckr": int(CKR_ARGUMENTS_BAD),
+                        "operation": "C_Encrypt",
+                        "stage": "operation",
+                        "key_bits": 256,
+                        "case": "aligned",
+                    },
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+
+
+def test_cts_mixed_off_contract_prefers_operation_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R5-2: operation-stage off-contract wins over setup (detector priority)."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=0x00FFFFFE,
+            detail={
+                "attempts": [
+                    {
+                        "ckr": 0x00FFFFFF,
+                        "operation": "C_Encrypt",
+                        "stage": "operation",
+                        "key_bits": 192,
+                        "case": "aligned",
+                    },
+                    {
+                        "ckr": 0x00FFFFFE,
+                        "operation": "C_CreateObject",
+                        "stage": "setup",
+                        "key_bits": 128,
+                        "case": None,
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    with pytest.raises(CkrAssertionError, match="C_Encrypt") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+
+
+def test_cts_mixed_same_rv_names_operation_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _fresh_detection_cache: Any
+) -> None:
+    """R6-3: the same RV in both stages names the operation attempt."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    _isolate_pin_env(monkeypatch, tmp_path)
+    captured: dict[str, Any] = {}
+    _install_collection_probe_stubs(monkeypatch, captured, stub_detection=False)
+
+    def mixed_inner(rs: Any) -> base_cts.CtsDetectionResult:
+        return base_cts.CtsDetectionResult(
+            base_cts.CtsDetectionStatus.SETUP_ERROR,
+            error_rv=int(CKR_USER_NOT_LOGGED_IN),
+            detail={
+                "attempts": [
+                    {
+                        "ckr": 0x00FFFFFF,
+                        "operation": "C_Encrypt",
+                        "stage": "operation",
+                        "key_bits": 192,
+                        "case": "aligned",
+                    },
+                    {
+                        "ckr": 0x00FFFFFF,
+                        "operation": "C_CreateObject",
+                        "stage": "setup",
+                        "key_bits": 128,
+                        "case": None,
+                    },
+                    {"ckr": int(CKR_USER_NOT_LOGGED_IN)},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(base_cts, "_detect_cts_variant", mixed_inner)
+
+    result = aes_conftest._detect_variant_via_pkcs11(_collection_config({}))
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    with pytest.raises(CkrAssertionError, match="C_Encrypt") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+    assert "C_CreateObject" not in str(excinfo.value)
+
+
+def test_cts_detector_captures_encrypt_stage_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R7-2: operation attempts carry the failing C_* stage, not bare C_Encrypt."""
+
+    def _import(_rs: Any, _key: bytes, **_kwargs: Any) -> int:
+        return 99
+
+    def _refuse_init(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("init refused", 0x00FFFFFF, "C_EncryptInit")
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", _import)
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(base_cts, "encrypt_single", _refuse_init)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == 0x00FFFFFF
+    operations = [
+        attempt["operation"]
+        for attempt in result.detail["attempts"]
+        if attempt["stage"] == "operation"
+    ]
+    assert operations and all(op == "C_EncryptInit" for op in operations)
+
+
+def test_cts_reporter_passes_selected_operation() -> None:
+    """R7-2: the setup-error raise carries the selected attempt's operation."""
+    result = base_cts.CtsDetectionResult(
+        base_cts.CtsDetectionStatus.SETUP_ERROR,
+        error_rv=0x00FFFFFF,
+        detail={
+            "attempts": [
+                {
+                    "ckr": 0x00FFFFFF,
+                    "operation": "C_EncryptInit",
+                    "stage": "operation",
+                    "key_bits": 256,
+                    "case": "aligned",
+                },
+            ],
+            "primary_attempt": {"operation": "C_EncryptInit", "stage": "operation"},
+        },
+    )
+
+    with pytest.raises(CkrAssertionError, match="C_EncryptInit") as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == 0x00FFFFFF
+    assert excinfo.value.operation == "C_EncryptInit"
+
+
+def test_cts_not_operational_names_supplying_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R8-2: clean-refusal xfails name the refusing call, not bare C_Encrypt."""
+
+    def _import(_rs: Any, _key: bytes, **_kwargs: Any) -> int:
+        return 99
+
+    def _refuse_init(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("init refused", int(CKR_ARGUMENTS_BAD), "C_EncryptInit")
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", _import)
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(base_cts, "encrypt_single", _refuse_init)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+    assert result.status is base_cts.CtsDetectionStatus.NOT_OPERATIONAL
+
+    captured: dict[str, Any] = {}
+
+    def _capture(_reason: str, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(base_cts, "classify", _capture)
+    base_cts.report_cts_detection(result)
+    assert captured["operation"] == "C_EncryptInit"
+
+
+def test_cts_not_operational_shared_rv_names_operation_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9-4: a listed RV in both stages names the operation attempt."""
+
+    def _import(_rs: Any, key: bytes, **_kwargs: Any) -> int:
+        if key == bytes(range(32)):
+            return 99
+        raise CkrAssertionError("import refused", int(CKR_ARGUMENTS_BAD), "C_CreateObject")
+
+    def _refuse_init(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("init refused", int(CKR_ARGUMENTS_BAD), "C_EncryptInit")
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", _import)
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(base_cts, "encrypt_single", _refuse_init)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+    assert result.status is base_cts.CtsDetectionStatus.NOT_OPERATIONAL
+
+    captured: dict[str, Any] = {}
+
+    def _capture(_reason: str, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(base_cts, "classify", _capture)
+    base_cts.report_cts_detection(result)
+    assert captured["operation"] == "C_EncryptInit"
+
+
+def test_detection_skip_reason_names_logged_out_login_refusal() -> None:
+    """S2: logged-out skips tell the operator to configure a PIN."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    detection = base_cts.CtsDetectionResult(
+        base_cts.CtsDetectionStatus.NOT_OPERATIONAL,
+        error_rv=int(CKR_USER_NOT_LOGGED_IN),
+    )
+    reason = aes_conftest._detection_skip_reason(detection)
+    assert "logged out" in reason
+    assert "PIN" in reason
 
 
 def test_cts_collection_probe_cli_pin_wins_over_env(

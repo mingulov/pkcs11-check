@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
+    CKA_MODULUS,
     CKA_PRIME,
     CKA_PRIME_1,
     CKA_PRIME_2,
@@ -305,6 +306,11 @@ class _MatrixFake:
             assert isinstance(behavior, tuple)
             data = bytes(behavior[1])
             return _OK, len(data), data
+        if tag == "padded":
+            assert isinstance(behavior, tuple)
+            data = self._secret_for(handle, attr)
+            padded = b"\x00" * int(behavior[1]) + data
+            return _OK, len(padded), padded
         if tag == "refuse":
             assert isinstance(behavior, tuple)
             return int(behavior[1]), _U64, None
@@ -863,6 +869,124 @@ def test_unsealed_ec_import_readable_exact() -> None:
 def test_unsealed_mldsa_import_readable_exact() -> None:
     _unsealed(_rs(_MatrixFake(claim=b"\x00")), "mldsa", "import", "unsealed")
     _assert_no_terminal_records()
+
+
+# --- fw#95: minimal (BN_num_bytes) integer encodings ---------------------------
+
+
+_RSA_BIGINT_ATTRS = frozenset(
+    {
+        int(CKA_MODULUS),
+        int(CKA_PUBLIC_EXPONENT),
+        int(CKA_PRIVATE_EXPONENT),
+        int(CKA_PRIME_1),
+        int(CKA_PRIME_2),
+        int(CKA_EXPONENT_1),
+        int(CKA_EXPONENT_2),
+        int(CKA_COEFFICIENT),
+    }
+)
+
+
+class _MinimalEncodingFake(_MatrixFake):
+    """Minimal-encoding provider: strips leading zeros on integer-attr reads.
+
+    Models providers that return RSA CRT integers without leading-zero
+    padding. Only "readable" rows for the configured attrs are normalized,
+    so scripted behaviors (wrong/fixed/refusals) keep their exact bytes.
+    """
+
+    def __init__(self, *args: Any, minimal_attrs: set[int] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._minimal_attrs = minimal_attrs if minimal_attrs is not None else set(_RSA_BIGINT_ATTRS)
+
+    def _plan(
+        self,
+        handle: int,
+        attr: int,
+        behavior: Behavior,
+        *,
+        is_query: bool,
+        is_reread: bool,
+        cap: int,
+    ) -> tuple[int, int | None, bytes | None]:
+        rv, length, fill = super()._plan(
+            handle, attr, behavior, is_query=is_query, is_reread=is_reread, cap=cap
+        )
+        tag = behavior[0] if isinstance(behavior, tuple) else behavior
+        if rv != _OK or tag != "readable" or int(attr) not in self._minimal_attrs:
+            return rv, length, fill
+        minimal = self._secret_for(handle, attr).lstrip(b"\x00") or b"\x00"
+        if fill is not None:
+            return rv, len(minimal), minimal
+        if length is not None:
+            return rv, len(minimal), None
+        return rv, length, fill
+
+
+def test_unsealed_rsa_import_minimal_encoding_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Minimal-encoding providers pass the unsealed RSA import cell (fw#95)."""
+    real_components = ts._matrix_rsa_components
+
+    def _leading_zero_components() -> dict[str, bytes]:
+        comp = real_components()
+        comp["exponent_1"] = b"\x00" + comp["exponent_1"][1:]
+        comp["private_exponent"] = b"\x00\x00" + comp["private_exponent"][2:]
+        return comp
+
+    monkeypatch.setattr(ts, "_matrix_rsa_components", _leading_zero_components)
+    _unsealed(_rs(_MinimalEncodingFake(claim=b"\x00")), "rsa", "import", "unsealed")
+    _assert_no_terminal_records()
+
+
+def test_unsealed_aes_import_stripped_value_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stripped octet-string bytes still fail: normalization is bigint-only (fw#95)."""
+    monkeypatch.setattr(ts, "_MATRIX_AES_SECRET", b"\x00" + bytes(range(1, 32)))
+    fake = _MinimalEncodingFake(claim=b"\x00", minimal_attrs={int(CKA_VALUE)})
+    with pytest.raises(Failed) as excinfo:
+        _unsealed(_rs(fake), "aes", "import", "unsealed")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    assert _records_by_reason("wrong_result")
+
+
+def test_unsealed_rsa_import_wrong_integer_still_fails() -> None:
+    """A wrong integer value still fails: minimal encoding is not a free pass (fw#95)."""
+    fake = _MinimalEncodingFake({int(CKA_EXPONENT_1): "wrong"}, claim=b"\x00")
+    with pytest.raises(Failed) as excinfo:
+        _unsealed(_rs(fake), "rsa", "import", "unsealed")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    assert _records_by_reason("wrong_result")
+
+
+def test_unsealed_rsa_import_overlong_integer_still_fails() -> None:
+    """An overlong integer encoding still fails: minimal-or-full width only (fw#95)."""
+    fake = _MinimalEncodingFake({int(CKA_EXPONENT_1): ("overlong", 200)}, claim=b"\x00")
+    with pytest.raises(Failed) as excinfo:
+        _unsealed(_rs(fake), "rsa", "import", "unsealed")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    assert _records_by_reason("wrong_result")
+
+
+def test_unsealed_rsa_import_overlong_padded_integer_still_fails() -> None:
+    """Overlong same-integer encodings fail: width is pinned, not just capacity (fw#95)."""
+    fake = _MinimalEncodingFake({int(CKA_EXPONENT_1): ("padded", 72)}, claim=b"\x00")
+    with pytest.raises(Failed) as excinfo:
+        _unsealed(_rs(fake), "rsa", "import", "unsealed")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    assert _records_by_reason("wrong_result")
+
+
+def test_sealed_rsa_import_minimal_encoding_still_fails() -> None:
+    """Minimal bytes on a sealed read still disclose: the leak verdict holds (fw#95)."""
+    behaviors = dict(_RSA_SENSITIVE)
+    # PRIME_1 is readable (minimal-encoded) while every other member stays sealed.
+    del behaviors[int(CKA_PRIME_1)]
+    with pytest.raises(Failed) as excinfo:
+        _sealed(_rs(_MinimalEncodingFake(behaviors)), "rsa", "import", "both")
+    assert not isinstance(excinfo.value, pytest.xfail.Exception)
+    leaks = _records_by_reason("self_contradiction")
+    assert leaks
+    assert any("CKA_PRIME_1" in record.label for record in leaks)
 
 
 def _dispatched(rs: SimpleNamespace, family_id: str, creation: str, seal: str) -> None:

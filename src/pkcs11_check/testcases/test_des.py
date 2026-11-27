@@ -319,8 +319,10 @@ class TestDESEncryption:
             CKM_DES_KEY_GEN,
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
-        iv1 = generate_random(rs.raw, rs.sh, 8)
-        iv2 = generate_random(rs.raw, rs.sh, 8)
+        # S5: fixed distinct values (deterministic attribution;
+        # a ciphertext match then proves IV-insensitivity, never a provider-RNG collision).
+        iv1 = b"\x00" * 8
+        iv2 = b"\x01" * 8
         try:
             ct1 = _encrypt_or_xfail(
                 rs.raw,
@@ -875,8 +877,10 @@ class TestDES3Encryption:
             CKM_DES3_KEY_GEN,
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
-        iv1 = generate_random(rs.raw, rs.sh, 8)
-        iv2 = generate_random(rs.raw, rs.sh, 8)
+        # S5: fixed distinct values (deterministic attribution;
+        # a ciphertext match then proves IV-insensitivity, never a provider-RNG collision).
+        iv1 = b"\x00" * 8
+        iv2 = b"\x01" * 8
         try:
             ct1 = encrypt_single(
                 rs.raw,

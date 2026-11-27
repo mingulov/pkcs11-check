@@ -10,6 +10,7 @@ downgraded to a timeout (review findings R2/R5).
 
 from __future__ import annotations
 
+import io
 import os
 import signal
 import sys
@@ -17,10 +18,11 @@ import time
 from typing import Any
 
 import pytest
+from _pytest._io import TerminalWriter
 
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
-from pkcs11_check.core.file_runner import _run_subprocess_tee
+from pkcs11_check.core.file_runner import _QuietDisplayFilter, _run_subprocess_tee
 from pkcs11_check.core.process_observation import build_process_observation
 
 # Direct child spawns a grandchild that inherits stdout/stderr (close_fds keeps
@@ -165,3 +167,242 @@ def test_tee_captures_output_larger_than_pipe_buffer() -> None:
     )
     assert rc == 0, rc
     assert len(out) == n, len(out)
+
+
+def test_quiet_display_hides_report_log_chatter_but_keeps_capture(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U6: internal report-log lines leave live display, stay in capture."""
+    script = (
+        "import sys\n"
+        "sys.stdout.write('hello\\n')\n"
+        "sys.stdout.write('------ generated report log file: /tmp/x.jsonl -------\\n')\n"
+        "sys.stdout.write('world\\n')\n"
+    )
+    rc, out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "hello" in shown and "world" in shown, shown
+    assert "generated report log file" not in shown, shown
+    assert "generated report log file" in out, out
+
+
+def test_loud_display_shows_everything(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U6 control: without the flag the display is byte-identical."""
+    script = (
+        "import sys\nsys.stdout.write("
+        "'------ generated report log file: /tmp/x.jsonl -------\\n')\n"
+    )
+    rc, _out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script], env=dict(os.environ), timeout=30
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "generated report log file" in shown, shown
+
+
+def test_quiet_display_flushes_long_unterminated_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M6: the hold cap never stalls liveness output (e.g. -q dots).
+
+    20000 newline-free bytes force multiple 8 KiB reads, so the hold cap
+    must flush mid-stream however the pipe chunks -- deterministic, no
+    sleeps. The completed line still filters on its marker.
+    """
+    script = (
+        "import sys\n"
+        "sys.stdout.write('x' * 20000)\n"
+        "sys.stdout.write('------ generated report log file: /tmp/x.jsonl -------\\n')\n"
+    )
+    rc, _out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "x" * 1024 in shown, shown
+    assert "generated report log file" not in shown, shown
+
+
+def test_quiet_display_eof_flushing_and_filtering(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M6: EOF flushes a normal tail but still withholds a noise tail."""
+    script = "import sys\nsys.stdout.write('tail-no-newline')\nsys.stdout.flush()\n"
+    rc, _out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "tail-no-newline" in shown, shown
+
+
+def test_quiet_display_eof_withholds_noise_tail(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M6: an unterminated noise line stays hidden at EOF."""
+    script = (
+        "import sys\n"
+        "sys.stdout.write('------ generated report log file: /tmp/x.jsonl -------')\n"
+        "sys.stdout.flush()\n"
+    )
+    rc, out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "generated report log file" not in shown, shown
+    assert "generated report log file" in out, out
+
+
+def _long_noise_line(total: int = 1153) -> bytes:
+    """A write_sep-framed noise line of exactly ``total`` bytes (with newline)."""
+    head = b"------ generated report log file: "
+    assert len(head) < total - 1
+    return head + b"p" * (total - 1 - len(head)) + b"\n"
+
+
+def _terminal_writer_separator(width: int = 2220) -> bytes:
+    """The real pytest separator line: marker sits past the hold cap."""
+    buf = io.StringIO()
+    TerminalWriter(file=buf).sep("-", "generated report log file: /tmp/x.jsonl", fullwidth=width)
+    return buf.getvalue().encode("utf-8")
+
+
+@pytest.mark.parametrize("split_at", [None, 7, 10, 30, 1025, 1152])
+def test_quiet_filter_split_noise_line_stays_hidden(split_at: int | None) -> None:
+    """R18-3a: a noise line is hidden however the pipe chunks it.
+
+    Split points cover whole delivery, right after the dashes, mid-marker
+    (twice), the old hold-cap trip point, and just before the newline.
+    """
+    line = _long_noise_line()
+    assert len(line) == 1153
+    chunks = [line] if split_at is None else [line[:split_at], line[split_at:]]
+    display = _QuietDisplayFilter()
+    shown = b"".join(display.feed(chunk) for chunk in chunks) + display.finish()
+    assert shown == b""
+
+
+def test_quiet_filter_shows_dots_immediately() -> None:
+    """R18-3b: short liveness output never waits for EOF in quiet mode."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"." * 40) == b"." * 40
+    assert display.feed(b"more\n") == b"more\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_holds_noise_prefix_across_chunks() -> None:
+    """R18-3a: a dash-tolerant marker prefix holds until it resolves."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"--- gen") == b""
+    assert display.feed(b"erated report log file: /x ---\nOK\n") == b"OK\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_suppression_resumes_after_newline() -> None:
+    """R18-3a: a mid-line marker drops through the next newline, then shows."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"------ generated report log file: /par") == b""
+    assert display.feed(b"tial-path ---\nvisible\n") == b"visible\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_cap_flushes_markerless_dash_run() -> None:
+    """R18-3a: the cap backstops dash-only runs that never resolve."""
+    display = _QuietDisplayFilter()
+    shown = display.feed(b"-" * 2000)
+    assert len(shown) > 1024
+    assert shown + display.finish() == b"-" * 2000
+
+
+def test_quiet_filter_wide_separator_split_mid_marker_stays_hidden() -> None:
+    """R19-3: Codex's 2220-wide separator hides marker+path whole and split.
+
+    The split lands past the hold cap, so leading framing dashes may show
+    (content-free, like any pytest separator); the marker, path, and
+    everything after them never do.
+    """
+    line = _terminal_writer_separator()
+    assert len(line) > 1024 and b"generated report log file:" in line
+    split_at = line.find(b"generated") + 5
+    assert split_at > 1024
+    whole = _QuietDisplayFilter()
+    assert whole.feed(line) + whole.finish() == b""
+    split = _QuietDisplayFilter()
+    shown = split.feed(line[:split_at]) + split.feed(line[split_at:]) + split.finish()
+    assert b"generated" not in shown
+    assert b"/tmp/x.jsonl" not in shown
+    assert shown.strip(b"- ") == b""
+
+
+def test_quiet_filter_holds_mid_line_marker_prefix() -> None:
+    """R19-3: a marker starting mid-tail still suppresses (suffix match)."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"foo gener") == b""
+    assert display.feed(b"ated report log file: /x\nOK\n") == b"OK\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_cap_overlap_preserves_split_marker() -> None:
+    """R19-3: a cap flush never breaks a marker across the boundary."""
+    display = _QuietDisplayFilter()
+    shown = display.feed(b"-" * 2000 + b"generated rep")
+    assert b"generated rep" not in shown
+    assert display.feed(b"ort log file: /p ---\nDONE\n") == b"DONE\n"
+    assert display.finish() == b""
+
+
+def test_quiet_filter_finish_shows_held_non_noise() -> None:
+    """R18-3: an unresolved held prefix still shows at EOF (evidence)."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"--- gen") == b""
+    assert display.finish() == b"--- gen"
+
+
+def test_quiet_filter_finish_withholds_noise() -> None:
+    """R18-3: an unterminated noise tail stays hidden at EOF."""
+    display = _QuietDisplayFilter()
+    assert display.feed(b"------ generated report log file: /x ---") == b""
+    assert display.finish() == b""
+
+
+def test_quiet_display_hides_chunked_long_noise_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R18-3a end to end: a two-write noise line hides however chunked."""
+    head = "------ generated report log file: " + "p" * 990
+    tail = "q" * 100 + "\n"
+    script = (
+        "import sys\n"
+        f"sys.stdout.write({head!r})\n"
+        "sys.stdout.flush()\n"
+        f"sys.stdout.write({tail!r})\n"
+        "sys.stdout.flush()\n"
+    )
+    rc, out, _err, _observation = _run_subprocess_tee(
+        [sys.executable, "-c", script],
+        env=dict(os.environ),
+        timeout=30,
+        quiet_unit_display=True,
+    )
+    shown = capsys.readouterr().out
+    assert rc == 0, rc
+    assert "generated report log file" not in shown, shown
+    assert "p" * 990 in out and "q" * 100 in out, out

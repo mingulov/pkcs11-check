@@ -36,9 +36,9 @@ P11TEST_SO_PIN=... uv run pkcs11-check test --module /path/to/module.so --pin 12
 ### Test profiles (marker selection)
 
 ```bash
-uv run pkcs11-check test --module <so> --marker smoke                            # ~27 tests, ~5s
-uv run pkcs11-check test --module <so> --marker "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
-uv run pkcs11-check test --module <so> --marker "wycheproof or acvp or cctv"     # ~72K vectors only
+uv run pkcs11-check test --module <so> --marker smoke                            # smoke subset
+uv run pkcs11-check test --module <so> --marker "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # main suite
+uv run pkcs11-check test --module <so> --marker "wycheproof or acvp or cctv"     # vector suites only
 uv run pkcs11-check test --module <so>                                           # full collection
 ```
 

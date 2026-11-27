@@ -81,6 +81,11 @@ Only targets missing from saved results run. Failed, crashed, timed-out, unverif
 `escalated`, and `crash_limited` targets are not retried by `--resume`; use a fresh run without
 `--resume` when those targets must be revalidated. An escalated parent remains in the saved
 results while any missing expanded child still runs.
+
+> **Warning -- back up reports before resuming.** If a resumed run fails its
+> startup checks, it can overwrite the previous report files. Keep a copy of
+> any report you need. (Known limitation; a code fix is deferred follow-up
+> work. Fresh runs never touch prior reports.)
 Fresh non-resume runs reset the state and remove the state-specific report-record shards, known
 `report.jsonl`, configured output, `quality.json` beside the output, and `coverage.json`/
 `provisioning.json` beside `report.jsonl` before starting, so prior-generation evidence cannot

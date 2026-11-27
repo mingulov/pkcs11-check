@@ -16,7 +16,8 @@ from pkcs11_check.cli.app import app
 from pkcs11_check.core import collection_errors as collection_errors_mod
 from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
 from pkcs11_check.core._report_records import _write_unit_report_record_cache
-from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.collection import CollectedPytestItem, CollectedSkip
+from pkcs11_check.core.doctor_probe import LoginProbe
 from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
@@ -32,6 +33,31 @@ from tests._plain_cli_runner import PlainCliRunner
 # Strips ANSI so assertions on message content hold regardless of the caller's
 # terminal environment (FORCE_COLOR/TERM). See tests/_plain_cli_runner.py.
 runner = PlainCliRunner()
+
+
+def _auto_discover_with_collected(
+    collected: list[CollectedPytestItem],
+) -> object:
+    """Fake auto discovery that fills collected_out and returns demo units."""
+
+    def fake(
+        targets: object,
+        default_root: object,
+        *,
+        pytest_args: object,
+        policy_file: object,
+        collected_out: list[CollectedPytestItem] | None = None,
+        skips_out: object = None,
+    ) -> list[str]:
+        del targets, default_root, pytest_args, policy_file, skips_out
+        if collected_out is not None:
+            collected_out.extend(collected)
+        return [
+            "src/pkcs11_check/testcases/test_demo.py",
+            "src/pkcs11_check/testcases/test_marked.py::test_case",
+        ]
+
+    return fake
 
 
 def _ok_preflight(
@@ -77,6 +103,13 @@ class TestVersionCommand:
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
         assert f"pkcs11-check {__version__}" in result.output
+
+    def test_version_flag_matches_subcommand(self) -> None:
+        """U3: pkcs11-check --version prints the same string, exit 0."""
+        flag = runner.invoke(app, ["--version"])
+        subcommand = runner.invoke(app, ["version"])
+        assert flag.exit_code == 0, flag.output
+        assert flag.output == subcommand.output
 
 
 def test_test_none_json_uses_output_directory_for_report_log(
@@ -383,6 +416,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -451,6 +485,1027 @@ class TestTestCommand:
         assert "--p11-so-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
 
+    def test_test_bad_pin_fails_fast_without_running_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U1: wrong PIN prints one message and exits 2; no units run."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def bad_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("pin_incorrect")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", bad_pin_probe)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "9999", "--isolation", "file"],
+        )
+        assert result.exit_code == 2, result.output
+        assert result.output.count("PIN incorrect for slot 0") == 1, result.output
+        assert "pkcs11-check doctor" in result.output
+        assert called == []
+
+    def test_test_good_pin_runs_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U1 control: a correct PIN proceeds to the runner unchanged."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def good_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("ok")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", good_pin_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert "PIN incorrect" not in result.output
+        assert called == ["run"]
+
+    def test_test_pin_probe_crashed_fails_fast(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-1b: a provider that dies on login refuses the suite (exit 1)."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 1, result.output
+        assert "refusing to run the suite" in " ".join(result.output.split())
+        assert called == []
+
+    def test_test_pin_probe_timeout_fails_fast(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-1b: a provider that hangs on login refuses the suite (exit 1)."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def hung_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("timeout", "login probe timed out after 10s")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", hung_probe)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 1, result.output
+        assert "refusing to run the suite" in " ".join(result.output.split())
+        assert called == []
+
+    def test_test_pin_probe_crashed_json_writes_results_and_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1: a crashed probe in JSON mode leaves results + report.jsonl."""
+        from pkcs11_check.core.preflight import append_preflight_evidence
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            append_preflight_evidence(kwargs["counters"].evidence_path, [{"probe": "evidence"}])
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["status"] == "crashed"
+        # The report writer abs-normalizes signal codes (shared with the
+        # manifest path): raw -11 renders as 11.
+        assert payload["units"][0]["returncode"] == 11
+        report_jsonl = output_path.parent / "report.jsonl"
+        assert "probe" in report_jsonl.read_text(encoding="utf-8")
+
+    def test_test_pin_probe_timeout_json_uses_124(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1: a hung probe in JSON mode reports timeout/124, incomplete."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def hung_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("timeout", "login probe timed out after 10s", 1)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", hung_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["status"] == "timeout"
+        assert payload["units"][0]["returncode"] == 124
+
+    def test_test_pin_probe_crashed_none_json_writes_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1: none-mode probe crash still leaves the requested report."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "none",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["status"] == "crashed"
+
+    def test_test_pin_probe_crashed_text_writes_no_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1 control: text mode keeps message-only refusal (no files)."""
+        monkeypatch.chdir(tmp_path)
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def crashed_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_probe)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 1, result.output
+        assert not (tmp_path / "pkcs11-check-results.json").exists()
+        assert not (tmp_path / "report.jsonl").exists()
+
+    def test_test_pin_incorrect_json_writes_no_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-1 control: usage errors (exit 2) write no report, as before."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "out.json"
+
+        def bad_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("pin_incorrect")
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", bad_pin_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "9999",
+                "--isolation",
+                "file",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert not output_path.exists()
+
+    def test_test_pin_probe_error_warns_and_proceeds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-1b control: an inconclusive probe warns loudly, suite runs."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def error_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("error", "no probe result")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", error_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "login probe inconclusive" in result.output
+        assert called == ["run"]
+
+    def test_test_pin_probe_error_escapes_hostile_detail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R19-4: provider bytes in the probe detail render literally."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        def hostile_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("error", "[/red]")
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", hostile_probe)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Traceback" not in result.output
+        assert "[/red]" in result.output
+        assert called == ["run"]
+
+    def test_test_resume_wrong_pin_preserves_prior_provider_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-1b: on resume the saved crash (exit 1) wins over fresh exit 2."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "crashed", -11, 0.1)],
+            ),
+        )
+
+        def bad_pin_probe(*args: object, **kwargs: object) -> LoginProbe:
+            return LoginProbe("pin_incorrect")
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", bad_pin_probe)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "9999",
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert "PIN incorrect for slot 0" in result.output
+
+    def test_test_empty_match_fails_fast_without_running_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U11: a selection matching nothing exits 2 before any unit runs."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd, "collect_pytest_items_with_skips", lambda targets, args: ([], [])
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--match",
+                "zzz_no_such_test_zzz",
+                "--isolation",
+                "file",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "0 tests matched" in result.output
+        assert called == []
+
+    def test_test_matched_but_all_units_excluded_names_exclusion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M3/M5: matched-but-excluded says so; does not claim 0 matched."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [CollectedPytestItem(nodeid="a.py::t", file_path="a.py", markers=[])],
+                [],
+            ),
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--match", "t", "--isolation", "file"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "1 tests matched but all units were excluded" in result.output
+        assert "0 tests matched" not in result.output
+        assert called == []
+
+    def test_test_empty_match_reports_collection_skips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-2a: a skipped module's reason survives the empty-selection gate."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        target = tmp_path / "test_acvp_sha3.py"
+        target.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [str(target)],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [],
+                [CollectedSkip(nodeid="test_acvp_sha3.py", reason="vectors not cloned")],
+            ),
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), str(target), "--isolation", "file"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "0 tests matched" in result.output
+        assert "skipped at collection: vectors not cloned" in result.output
+        assert called == []
+
+    def test_test_empty_match_caps_collection_skips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-2a: many collection skips render capped, with a remainder line."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        target = tmp_path / "test_many.py"
+        target.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        skips = [
+            CollectedSkip(nodeid=f"test_{index}.py", reason="vectors not cloned")
+            for index in range(11)
+        ]
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [str(target)],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: ([], skips),
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), str(target), "--isolation", "file"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "test_9.py" in result.output
+        assert "test_10.py" not in result.output
+        assert "and 1 more skipped at collection" in result.output
+
+    def test_test_matched_but_all_excluded_with_scheduled_file_exits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-2b (M3b): the only matched node disabled, a zero-match file
+        scheduled -> fail fast instead of a vacuous run."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        seed_file = tmp_path / "test_seed.py"
+        encrypt_file = tmp_path / "test_encrypt.py"
+        seed_file.write_text("", encoding="utf-8")
+        encrypt_file.write_text("", encoding="utf-8")
+        matched = f"{seed_file}::test_seed_key_gen"
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(seed_file),
+                str(encrypt_file),
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [CollectedPytestItem(nodeid=matched, file_path=str(seed_file), markers=[])],
+                [],
+            ),
+        )
+        monkeypatch.setattr(
+            disabled_baseline_mod,
+            "load_disabled_baseline",
+            lambda path: DisabledBaseline(
+                source_path=Path("config/disabled-tests.txt"),
+                disabled_nodeids=frozenset({matched}),
+                fingerprint="baseline-fp-test",
+            ),
+            raising=False,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                str(seed_file),
+                str(encrypt_file),
+                "--match",
+                "test_seed_key_gen",
+                "--isolation",
+                "file",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "1 tests matched but every matched test was excluded" in result.output
+        assert called == []
+
+    def test_test_matched_disabled_unmatched_scheduled_file_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-2b control: baseline misses the match -> explicit targets run."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        seed_file = tmp_path / "test_seed.py"
+        encrypt_file = tmp_path / "test_encrypt.py"
+        seed_file.write_text("", encoding="utf-8")
+        encrypt_file.write_text("", encoding="utf-8")
+        matched = f"{seed_file}::test_seed_key_gen"
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(seed_file),
+                str(encrypt_file),
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [CollectedPytestItem(nodeid=matched, file_path=str(seed_file), markers=[])],
+                [],
+            ),
+        )
+        monkeypatch.setattr(
+            disabled_baseline_mod,
+            "load_disabled_baseline",
+            lambda path: DisabledBaseline(
+                source_path=Path("config/disabled-tests.txt"),
+                disabled_nodeids=frozenset({f"{seed_file}::test_unrelated"}),
+                fingerprint="baseline-fp-test",
+            ),
+            raising=False,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                str(seed_file),
+                str(encrypt_file),
+                "--match",
+                "test_seed_key_gen",
+                "--isolation",
+                "file",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "were excluded" not in result.output
+        assert called == ["run"]
+
+    def test_test_no_selection_zero_units_skips_fast_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M5: without any selection, empty units never hit the U11 error."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [],
+        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        assert "0 tests matched" not in result.output
+        assert "were excluded" not in result.output
+        assert called == ["run"]
+
+    def test_test_nonempty_match_runs_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U11 control: a matching selection proceeds to the runner."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        called: list[str] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            called.append("run")
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [
+                    CollectedPytestItem(
+                        nodeid="test_alpha.py::test_hit", file_path="test_alpha.py", markers=[]
+                    )
+                ],
+                [],
+            ),
+        )
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--match", "test_hit", "--isolation", "file"],
+        )
+        assert "0 tests matched" not in result.output
+        assert called == ["run"]
+
+    def test_test_text_run_ends_with_unit_totals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U5: a text-mode run ends with a totals line."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            save_run_state(
+                kwargs["state_file"],
+                FileRunState(
+                    units=["a.py", "b.py"],
+                    fingerprint="fp",
+                    results=[
+                        FileRunResult("a.py", "passed", 0, 0.1),
+                        FileRunResult("b.py", "failed", 1, 0.2),
+                    ],
+                ),
+            )
+            return 1
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [CollectedPytestItem(nodeid="a.py::t", file_path="a.py", markers=[])],
+                [],
+            ),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert "Totals: 1 failed, 1 passed (2 total)" in result.output
+
+    def test_test_corrupt_state_skips_totals_without_masking_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M2: a malformed state file never masks the run's exit code."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            kwargs["state_file"].write_text("[]", encoding="utf-8")
+            return 3
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 3, result.output
+        assert "Totals:" not in result.output
+        assert "Traceback" not in result.output
+
+    def test_test_totals_escapes_hostile_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R18-4: tampered statuses render literally, never crash the exit."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            save_run_state(
+                kwargs["state_file"],
+                FileRunState(
+                    units=["a.py"],
+                    fingerprint="fp",
+                    results=[FileRunResult("a.py", "[/red]", 0, 0.1)],
+                ),
+            )
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Traceback" not in result.output
+        assert "[/red]" in result.output
+
+    def test_test_json_run_prints_no_text_totals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U5 control: JSON mode keeps totals in the file, not on console."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            assert isinstance(kwargs["state_file"], Path)
+            save_run_state(
+                kwargs["state_file"],
+                FileRunState(
+                    units=["a.py"],
+                    fingerprint="fp",
+                    results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                ),
+            )
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, args: (
+                [CollectedPytestItem(nodeid="a.py::t", file_path="a.py", markers=[])],
+                [],
+            ),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(state_file),
+                "--output",
+                "json",
+                "--output-file",
+                str(tmp_path / "results.json"),
+            ],
+        )
+        assert "Totals:" not in result.output
+
+    def test_unit_display_quiet_by_default_loud_when_verbose(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U6: chatter hidden by default, shown with --verbose or DEBUG."""
+        assert test_cmd._unit_display_quiet(False) is True
+        assert test_cmd._unit_display_quiet(True) is False
+        import logging
+
+        monkeypatch.setattr(logging.getLogger(), "level", logging.DEBUG)
+        assert test_cmd._unit_display_quiet(False) is False
+
+    def test_test_threads_quiet_display_to_runner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U6: default runs hide unit chatter; --verbose shows it."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        seen: list[object] = []
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            seen.append(kwargs.get("quiet_unit_display"))
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        runner.invoke(app, ["test", "--module", str(module), "--isolation", "file", "--verbose"])
+        assert seen == [True, False], seen
+
+    def test_provenance_explains_dev_checkout_suffix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U4: a git-describe version says once that it is a dev checkout."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "_build_run_provenance",
+            lambda *a, **k: {
+                "framework": {"version": "v0.3.0-71-gabc1234-dirty", "source": "git-describe"},
+                "provider": {},
+            },
+        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        assert "v0.3.0-71-gabc1234-dirty (dev checkout)" in result.output
+
+    def test_provenance_clean_for_package_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U4 control: a package version prints with no suffix clause."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "_build_run_provenance",
+            lambda *a, **k: {
+                "framework": {"version": "0.3.1", "source": "package"},
+                "provider": {},
+            },
+        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+        assert "pkcs11-check 0.3.1 |" in result.output
+        assert "dev checkout" not in result.output
+
+    def test_sessions_hidden_from_help_but_still_accepted(self) -> None:
+        """U13: the dead --sessions knob is hidden, not removed."""
+        help_text = runner.invoke(app, ["test", "--help"])
+        assert help_text.exit_code == 0, help_text.output
+        assert "--sessions" not in help_text.output
+        parsed = runner.invoke(
+            app, ["test", "--module", "m.so", "--sessions", "4", "--show-config"]
+        )
+        assert parsed.exit_code == 0, parsed.output
+
+    def test_sessions_warning_fires_in_every_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """N5: the dead --sessions warning fires in none mode too."""
+        test_cmd._warn_ignored_sessions(4, "file")
+        test_cmd._warn_ignored_sessions(4, "none")
+        test_cmd._warn_ignored_sessions(1, "none")
+        err = capsys.readouterr().err
+        assert err.count("--sessions is ignored") == 2, err
+        assert "--isolation none mode" in err
+
+    def test_sessions_warns_in_isolated_modes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U13: passing --sessions warns that it is ignored."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def fake_run(*args: object, **kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "file", "--sessions", "4"],
+        )
+        assert "--sessions is ignored" in result.output
+
+    def test_resume_barrier_refusal_names_fresh_run_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """S12: a failed resume barrier refuses loudly and names the way out."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "prepare_resume", lambda *a, **k: {"barrier_ok": False})
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(tmp_path / "state.json"),
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "without proven quiescence" in result.output
+        assert "without --resume" in result.output
+
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
@@ -469,6 +1524,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -540,6 +1596,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -627,6 +1684,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -696,6 +1754,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
+            collected_items: object = None,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -726,6 +1786,20 @@ class TestTestCommand:
             lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
                 "src/pkcs11_check/testcases/test_demo.py::test_case"
             ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_items_with_skips",
+            lambda targets, pytest_args: (
+                [  # type: ignore[arg-type]
+                    CollectedPytestItem(
+                        nodeid="src/pkcs11_check/testcases/test_demo.py::test_case",
+                        file_path="src/pkcs11_check/testcases/test_demo.py",
+                        markers=[],
+                    )
+                ],
+                [],
+            ),
         )
         monkeypatch.setattr(
             test_cmd,
@@ -780,6 +1854,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -809,13 +1884,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: (
-                (collected_out.extend(collected) if collected_out is not None else None)
-                or [
-                    "src/pkcs11_check/testcases/test_demo.py",
-                    "src/pkcs11_check/testcases/test_marked.py::test_case",
-                ]
-            ),  # type: ignore[arg-type]
+            _auto_discover_with_collected(collected),  # type: ignore[arg-type]
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1238,6 +2307,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -1265,7 +2335,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [  # type: ignore[arg-type]
+            lambda targets, default_root, **_rest: [  # type: ignore[arg-type]
                 str(default_root / "test_alpha.py")
             ],
         )
@@ -1315,6 +2385,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -1344,7 +2415,9 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "load_run_state",
-            lambda path: SimpleNamespace(units=["saved.py", "saved.py::test_case"]),  # type: ignore[arg-type]
+            lambda path: SimpleNamespace(  # type: ignore[arg-type]
+                units=["saved.py", "saved.py::test_case"], results=[], fingerprint=""
+            ),
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1355,8 +2428,8 @@ class TestTestCommand:
         )
         monkeypatch.setattr(
             test_cmd,
-            "collect_pytest_item_metadata",
-            lambda targets, pytest_args: collected,  # type: ignore[arg-type]
+            "collect_pytest_items_with_skips",
+            lambda targets, pytest_args: (collected, []),  # type: ignore[arg-type]
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1412,14 +2485,17 @@ class TestTestCommand:
         )
         monkeypatch.setattr(
             test_cmd,
-            "collect_pytest_item_metadata",
-            lambda targets, pytest_args: [  # type: ignore[arg-type]
-                CollectedPytestItem(
-                    nodeid=f"{marked_file}::test_one",
-                    file_path=str(marked_file),
-                    markers=["subprocess_per_test"],
-                )
-            ],
+            "collect_pytest_items_with_skips",
+            lambda targets, pytest_args: (
+                [  # type: ignore[arg-type]
+                    CollectedPytestItem(
+                        nodeid=f"{marked_file}::test_one",
+                        file_path=str(marked_file),
+                        markers=["subprocess_per_test"],
+                    )
+                ],
+                [],
+            ),
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1494,6 +2570,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -1523,9 +2600,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [
-                str(default_root / "test_alpha.py")
-            ],  # type: ignore[arg-type]
+            lambda targets, default_root, **_rest: [str(default_root / "test_alpha.py")],  # type: ignore[arg-type]
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1536,7 +2611,7 @@ class TestTestCommand:
         )
         monkeypatch.setattr(
             test_cmd,
-            "collect_pytest_item_metadata",
+            "collect_pytest_items_with_skips",
             lambda *_args, **_kwargs: pytest.fail(  # type: ignore[arg-type]
                 "ignored disabled baseline must not trigger metadata collection"
             ),
@@ -2371,6 +3446,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -2401,7 +3477,9 @@ class TestTestCommand:
         raw_b = "app/test_demo.py::test_b"
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
 
-        def fake_discover(targets, default_root, *, granularity, pytest_args, collected_out=None):
+        def fake_discover(
+            targets, default_root, *, granularity, pytest_args, collected_out=None, skips_out=None
+        ):
             if collected_out is not None:
                 collected_out.extend(
                     [
@@ -2476,6 +3554,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -2527,14 +3606,14 @@ class TestTestCommand:
 
         def fake_collect(
             targets: list[str], pytest_args: list[str], *, env: dict[str, str] | None = None
-        ) -> list[CollectedPytestItem]:
+        ) -> tuple[list[CollectedPytestItem], list[CollectedSkip]]:
             del targets, pytest_args, env
             collection_calls.append(None)
-            return collected
+            return collected, []
 
         monkeypatch.setattr(
             test_cmd,
-            "collect_pytest_item_metadata",
+            "collect_pytest_items_with_skips",
             fake_collect,
         )
         monkeypatch.setattr(
@@ -2595,6 +3674,7 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            quiet_unit_display: bool = False,
             deselect_by_file: dict[str, set[str]] | None = None,
             baseline_fingerprint: str | None = None,
             provenance: object = None,
@@ -3988,3 +5068,46 @@ def test_merge_shards_cli_includes_shard_with_only_selection_json(tmp_path: Path
     assert any(
         "shard1" in w and "LOST" in w for w in merged_data.get("shards", {}).get("warnings", [])
     )
+
+
+def test_recorded_counters_dir_accepts_allocated_forms(tmp_path: Path) -> None:
+    """M8: sibling canonical/nonce counters dirs are accepted for resume."""
+    state = tmp_path / "run.json"
+    state.touch()
+    canonical = tmp_path / "run.json.counters"
+    canonical.mkdir()
+    nonced = tmp_path / "run.json.counters.abcdef12"
+    nonced.mkdir()
+    assert test_cmd._validated_recorded_counters_dir(state, str(canonical)) == canonical.resolve()
+    assert test_cmd._validated_recorded_counters_dir(state, str(nonced)) == nonced.resolve()
+
+
+def test_recorded_counters_dir_refuses_outside_and_lookalikes(tmp_path: Path) -> None:
+    """M8: non-sibling dirs and hostile lookalikes are refused for resume."""
+    state = tmp_path / "run.json"
+    state.touch()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    outsider = elsewhere / "run.json.counters"
+    outsider.mkdir()
+    lookalike = tmp_path / "run.json.counters.evil"
+    lookalike.mkdir()
+    with pytest.raises(ValueError, match="not an allocated counters dir"):
+        test_cmd._validated_recorded_counters_dir(state, str(outsider))
+    with pytest.raises(ValueError, match="not an allocated counters dir"):
+        test_cmd._validated_recorded_counters_dir(state, str(lookalike))
+
+
+def test_recorded_counters_dir_refuses_symlink_escape(tmp_path: Path) -> None:
+    """M8: a correctly-named link escaping the state dir is refused."""
+    state = tmp_path / "run.json"
+    state.touch()
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "run.json.counters"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="not an allocated counters dir"):
+        test_cmd._validated_recorded_counters_dir(state, str(link))

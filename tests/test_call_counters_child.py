@@ -2123,6 +2123,8 @@ def test_sigkill_fence_refusal_stays_loud(tmp_path: Path, monkeypatch: pytest.Mo
     from pkcs11_check.core import _counters_durability as durability
     from pkcs11_check.core.counters_schema import is_birth_token
 
+    if durability.birth_token_for_pid(os.getpid()) is None:
+        pytest.skip("birth tokens unavailable: proven-dead bypass untestable (#88R31-MAC1)")
     real_terminate = durability._terminate_verified
 
     def _refuse_adoption(pid: int, birth: int, timeout_s: float) -> bool:

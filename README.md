@@ -19,7 +19,7 @@ Large xfail/fail counts are normal: PKCS#11 cannot express many constraints (for
 example, there is no per-curve capability flag), so one capability gap
 multiplies across thousands of vectors. Both xfail and fail are recorded
 findings - how the module differed from the checked expectation - not defects in
-pkcs11-check. See [docs/interpreting-results.md](docs/interpreting-results.md).
+pkcs11-check. See [docs/interpreting-results.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/interpreting-results.md).
 
 ## What it is not
 
@@ -44,17 +44,21 @@ project.
 ## Quick start
 
 ```bash
-# Install
-git clone https://github.com/mingulov/pkcs11-check
+# Install from PyPI
+pip install pkcs11-check
+
+# Or from source, pinned to this release (prefix the commands below with `uv run`)
+git clone --branch v0.3.1 https://github.com/mingulov/pkcs11-check
 cd pkcs11-check
 uv sync
 
-# Run against any PKCS#11 module you provide
-uv run pkcs11-check test --module /path/to/module.so --pin 1234
+# Run against any PKCS#11 module you provide (needs an initialized token
+# with PIN 1234 - see "First run" below for a from-scratch SoftHSM2 setup)
+pkcs11-check test --module /path/to/module.so --pin 1234
 ```
 
 (See "First run in 60 seconds" below for a complete SoftHSM2 example. For
-container-based walkthroughs see [docs/docker-examples.md](docs/docker-examples.md).)
+container-based walkthroughs see [docs/docker-examples.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/docker-examples.md).)
 
 ### First run in 60 seconds (from PyPI)
 
@@ -65,12 +69,12 @@ pip install pkcs11-check
 export SOFTHSM2_CONF="$HOME/softhsm2.conf"
 mkdir -p "$HOME/softhsm2-tokens"
 echo "directories.tokendir = $HOME/softhsm2-tokens" > "$SOFTHSM2_CONF"
-softhsm2-util --init-token --slot 0 --label demo --pin 1234 --so-pin 5678
+softhsm2-util --init-token --free --label demo --pin 1234 --so-pin 5678
 
 # 2. Diagnose the setup (module loads? slot / PIN / token OK?)
 pkcs11-check doctor --module /usr/lib/softhsm/libsofthsm2.so --slot 0 --pin 1234
 
-# 3. Fast first run (~2s)
+# 3. Fast first run
 pkcs11-check test --module /usr/lib/softhsm/libsofthsm2.so --pin 1234 --slot 0 --marker smoke
 
 # 4. Optional: full coverage (downloads ~800 MB of vectors, then runs the suite)
@@ -89,16 +93,14 @@ Two non-obvious rules:
 If anything fails, run **`pkcs11-check doctor`** first - it checks the module,
 slot, PIN, token, and data, and prints the exact next step for each problem.
 
-**New to this?** [docs/getting-started-softhsm2.md](docs/getting-started-softhsm2.md)
+**New to this?** [docs/getting-started-softhsm2.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/getting-started-softhsm2.md)
 is a complete copy-pasteable walkthrough - install, create a SoftHSM2 config and
 token from scratch, run the suite, and read the results.
 
 ### Saving a report
 
 By default `pkcs11-check test` prints a human-readable summary and keeps **no**
-report file. The `generated report log file: /tmp/pkcs11-check-...jsonl` lines you
-may notice are *internal* per-process logs that the isolated runner aggregates and
-then deletes - they are not meant to be read directly.
+report file.
 
 To save a machine-readable report, add `--output json` and `--output-file`. The
 files are written next to the path you give:
@@ -112,12 +114,48 @@ That writes into `./reports/`:
 
 - **`report.jsonl`** - one JSON record per test (outcome, return code, notes)
 - **`results.json`** - the consolidated run summary (counts, crashes, environment)
-- **`coverage.json`**, **`quality.json`** - mechanism coverage and the
-  per-outcome classification report
+- **`quality.json`** - the per-outcome classification report
+- **`coverage.json`** - mechanism coverage, only when the run collected
+  coverage data (absent otherwise, not an empty file)
 
 Use `--output junit --output-file ./reports/results.xml` for JUnit XML instead
 (for CI). The output directory is taken from the `--output-file` path, so point it
 wherever you want the files created.
+
+### Files a run creates
+
+A default `pkcs11-check test` run writes these entries in the current
+directory (fresh-dir `ls -a`, nothing else):
+
+- **`.pkcs11-check-isolation-state.json`** - run state for resume
+  (`--resume` continues from it; `--state-file` moves it elsewhere)
+- **`..pkcs11-check-isolation-state.json.report-records/`** - per-unit
+  report cache feeding resume and the final report (yes, two leading
+  dots - historical name, kept so old run dirs still resume)
+- **`.pkcs11-check-isolation-state.json.counters.<id>`** - call-counter
+  evidence dir (`<id>` differs per run; the previous one is removed)
+- **`.pkcs11-check-isolation-state.json.lock`** - run guard marker
+- **`.pkcs11-check-isolation-state.json.preflight-counters.jsonl`** -
+  preflight counter evidence
+- **`.benchmarks/`**, **`.hypothesis/`** - pytest-plugin caches, only when
+  suites using those plugins ran
+
+With `--output json` the machine-readable `results.json`, `report.jsonl`,
+and `quality.json` land next to `--output-file` instead of the system temp
+dir (default file name `pkcs11-check-results.json` in the current
+directory), plus `coverage.json` only when the run collected coverage
+data. Suggested `.gitignore` for run dirs:
+
+```gitignore
+.pkcs11-check-*
+..pkcs11-check-*
+pkcs11-check-results.*
+report.jsonl
+coverage.json
+quality.json
+.benchmarks/
+.hypothesis/
+```
 
 ## Test suite
 
@@ -138,20 +176,20 @@ Test categories:
 pkcs11-check runs against **any** PKCS#11 module. It is regularly exercised
 against a broad set of open-source implementations - software HSMs, a TPM stack,
 cloud KMS bridges, smart-card simulators, and a TEE - listed with upstream links
-in [docs/providers.md](docs/providers.md). Several C/C++ implementations are
+in [docs/providers.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/providers.md). Several C/C++ implementations are
 additionally run under a separate AddressSanitizer + UBSan build. Exact versions
 move over time and are intentionally not pinned here.
 
 ## Known limitations
 
-SO login and destructive `CKA_TRUSTED` import coverage ship in v0.1.8. Supply the distinct
+SO login and destructive `CKA_TRUSTED` import coverage require the distinct
 SO PIN through `P11TEST_SO_PIN`; these token-mutating tests still require `--destructive`.
 
 - Provider-generated in-band IV profiles, proxy/loader mutable-parameter
   preservation checks, and broader mutable-output simulator targets are tracked
   as future interop work.
 
-Planned and considered work is listed in [docs/roadmap.md](docs/roadmap.md).
+Planned and considered work is listed in [docs/roadmap.md](https://github.com/mingulov/pkcs11-check/blob/main/docs/roadmap.md).
 
 ## Architecture
 
@@ -164,14 +202,14 @@ src/pkcs11_check/
     ckr/        - CKR return code compliance tests
   plugin.py     - pytest plugin (markers, fixtures, collection)
   fixtures.py   - p11_session, p11_module, p11_config
-  config.py     - four-layer config (CLI > env > TOML > defaults)
+  config.py     - four-layer config (CLI > env > TOML > defaults; some keys CLI-only, a few dead - see docs/configuration.md)
 ```
 
 ## Key features
 
-- **`pkcs11_check.raw`** - pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
+- **`pkcs11_check.raw`** - pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, PQC mechanisms (ML-KEM, ML-DSA, SLH-DSA), all 68 standard functions
 - **Crash-safe by default** - `--isolation auto` runs each test unit in its own subprocess, so a provider crash is recorded as that unit's result instead of killing the suite. `disabled-tests` files are for hangs/crashes you deliberately exclude up front, not a crash workaround
-- **`--ckr-strict`** mode enforces exact OASIS spec CKR codes (not just "any error")
+- **CKR return-code compliance** - `testcases/ckr/` checks exact OASIS spec CKR codes (not just "any error"). Bare pytest only, not a `pkcs11-check test` flag: `uv run pytest src/pkcs11_check/testcases/ckr/ --ckr-strict --p11-module <module> --p11-pin <pin>` for the strictest spec reading
 - **Wycheproof + ACVP vectors** - cross-verification against C2SP and NIST test vectors
 
 ## Documentation
@@ -180,7 +218,7 @@ src/pkcs11_check/
 - `docs/configuration.md` - every setting, its env var and TOML key, and the merge order
 - `docs/architecture.md` - codebase structure and test writing guide
 - `docs/commands.md` - build, test, and Docker commands
-- `docs/test-universe.md` - collected product-test counts by group
+- `docs/test-universe.md` - collected product-test counts by group (point-in-time snapshot, May 2026 -- illustrative, not current)
 - `docs/mechanism-output-parameters.md` - generated IV/nonce/tag output-parameter coverage
 - `docs/file-isolation.md` - isolation runner design
 - `docs/running-under-tracer.md` - running under an external tracer/profiler/observer
@@ -192,8 +230,8 @@ src/pkcs11_check/
 
 Licensed under either of
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/mingulov/pkcs11-check/blob/main/LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](https://github.com/mingulov/pkcs11-check/blob/main/LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
@@ -203,5 +241,5 @@ pkcs11-check ships ctypes bindings generated from the public-domain PKCS#11
 v3.2 header from `latchset/pkcs11-headers` (the header itself is a dev-time
 codegen input kept in the source repository, not shipped in the package), and
 its `fetch-data` command downloads test vectors from C2SP and NIST. See
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the full list and
+[`THIRD_PARTY_LICENSES.md`](https://github.com/mingulov/pkcs11-check/blob/main/THIRD_PARTY_LICENSES.md) for the full list and
 per-source license terms.

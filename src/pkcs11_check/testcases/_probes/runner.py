@@ -233,7 +233,14 @@ def _delete_probe_sidecar(path: str | None, *, force_tmps: bool = False) -> bool
                 except OSError:
                     pass
     else:
-        _prune_sidecar_tmps(Path(path))
+        # Parent-assigned paths (never evidence content): containment
+        # anchors at the sidecar's own parent. This API accepts
+        # sidecars anywhere (callers plant them outside the engaged
+        # counters dir); trust here comes from assignment, not
+        # location, so the check is a no-op by layout. Root stays a
+        # required parameter so collection/sweep (untrusted evidence
+        # paths) cannot pass an unanchored prune.
+        _prune_sidecar_tmps(Path(path), root=Path(path).parent)
     try:
         os.unlink(path)
     except FileNotFoundError:

@@ -3069,6 +3069,11 @@ class _Analyzer:
                             # as refusal_rv_for() plus leaked_len (an
                             # int): no provider bytes, untainted result.
                             bindings[bound] = "refusal-rv"
+                        elif alias.name == "delivery_unproved":
+                            # R12-1: bool membership test over the
+                            # additive channel: no provider bytes,
+                            # untainted result.
+                            bindings[bound] = "refusal-rv"
                         elif alias.name == "MISSING_ATTRIBUTE":
                             bindings[bound] = "sentinel"
                     elif module == _CLASSIFICATION_MODULE and alias.name in {
@@ -4561,6 +4566,8 @@ class _Analyzer:
                         state.bindings[bound] = "helper"
                     elif alias.name in {"refusal_rv_for", "refusal_for"}:
                         state.bindings[bound] = "refusal-rv"
+                    elif alias.name == "delivery_unproved":
+                        state.bindings[bound] = "refusal-rv"
                     elif alias.name == "MISSING_ATTRIBUTE":
                         state.bindings[bound] = "sentinel"
                 elif module == _CLASSIFICATION_MODULE and alias.name in {
@@ -4700,6 +4707,7 @@ class _Analyzer:
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr in {
                 "refusal_rv_for",
                 "refusal_for",
+                "delivery_unproved",
             }:
                 return _Value(callable_kind="refusal-rv")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "MISSING_ATTRIBUTE":
