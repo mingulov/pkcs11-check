@@ -235,6 +235,9 @@ from pkcs11_check.core._run_state import (
     _REDACTED_ENV_KEYS as _REDACTED_ENV_KEYS,
 )
 from pkcs11_check.core._run_state import (
+    StateFingerprintMismatchError as StateFingerprintMismatchError,
+)
+from pkcs11_check.core._run_state import (
     _backend_args_snapshot as _backend_args_snapshot,
 )
 from pkcs11_check.core._run_state import (
@@ -2758,6 +2761,12 @@ def run_isolated_pytest_units(
         )
         if resume and previous_state is not None:
             state = previous_state
+            # B1/C11: backfill the module snapshot onto legacy states (saved
+            # before the field existed) on an accepted resume, so the next
+            # early failure can verify instead of merging blind. In-memory
+            # only; the normal per-unit saves persist it.
+            if state.module_snapshot is None and run_module_snapshot is not None:
+                state.module_snapshot = run_module_snapshot
         else:
             state = FileRunState(
                 units=[],
@@ -2780,7 +2789,7 @@ def run_isolated_pytest_units(
             f"state file {state_file} belongs to a different isolated run; "
             "use a different --state-file or remove the old one"
         )
-        raise ValueError(msg)
+        raise StateFingerprintMismatchError(msg)
     else:
         state = previous_state or FileRunState(
             units=units,
@@ -2788,6 +2797,13 @@ def run_isolated_pytest_units(
             results=[],
             module_snapshot=run_module_snapshot,
         )
+        # B1/C11: backfill the module snapshot onto legacy states (see above).
+        if (
+            previous_state is not None
+            and state.module_snapshot is None
+            and run_module_snapshot is not None
+        ):
+            state.module_snapshot = run_module_snapshot
         pending_units = units_remaining_for_resume(units, previous_state)
 
     if units and resume and previous_state is not None and not state.process_observations_complete:

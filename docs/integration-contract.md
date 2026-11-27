@@ -136,7 +136,9 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   alongside one of those harness exits still returns `1`.
 - Known limitation: if a resumed run fails its startup checks, it can overwrite the previous
   report files. Keep a copy of any report you need before resuming; a code fix is deferred
-  follow-up work.
+  follow-up work. Exception: a resume refused as cross-provider (state file belongs to a
+  different module run) never touches the prior summary -- its separate failure report lands
+  beside the requested path as `<stem>.refused<suffix>`.
 - Daemon recovery can replace a dying provider's result only as the current aggregate verdict.
   The superseded attempt (including report records, output, and process observations) remains in
   `attempt_history`; every confirmed daemon death remains in `recovery_events` and contributes a
@@ -243,8 +245,10 @@ evidence while resuming; consumers should use `report.jsonl` as the documented r
 must not reinterpret either harness record as provider findings.
 Collision rule: `--output-file` must not name the `report.jsonl` path itself (same file). Under
 such a collision the summary owns the file (still valid JSON) and the counter evidence is
-not retained to it: early-failure summaries fold counters from the current preflight evidence
-only, completed runs keep the counters the runner extracted before the skipped splice.
+not retained to it: early-failure summaries fold counters from the accumulated preflight
+evidence file (which also holds earlier rounds' scopes) instead of the JSONL; completed
+isolated runs keep the counters the runner extracted before the skipped splice (the
+non-isolated path splices into a temp log before extracting, so it never collides).
 Daemon-recovery evidence uses `RecoveryAttempt` and `RecoveryEvent` records. Consumers that do not
 understand custom record types may ignore them, but must not reinterpret them as `TestReport`.
 Call-phase `TestReport` records may carry serialized `pkcs11_classification` entries. Their

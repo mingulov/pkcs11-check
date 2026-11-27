@@ -127,12 +127,18 @@ def test_collection_failure_results_carry_block(tmp_path: Path) -> None:
             "total_per_file_deselected": 0,
         },
     )
+    import io
+
+    from rich.console import Console
+
     test_cmd._persist_collection_failure(
         diagnostic="boom",
         state_file=Path(tmp_path / "state.json"),
         report_config=report_config,
         resume=False,
         provenance={},
+        module=tmp_path / "dummy.so",
+        console=Console(file=io.StringIO(), width=100),
     )
     payload = json.loads(results_path.read_text(encoding="utf-8"))
     assert payload["disabled_baseline"]["fingerprint"] == "fp-sha"

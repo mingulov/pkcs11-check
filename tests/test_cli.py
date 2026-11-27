@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree as ET
@@ -89,13 +90,19 @@ def _persist_failure(
     *,
     report_config: IsolatedReportConfig | None = None,
     resume: bool = False,
-) -> None:
-    test_cmd._persist_collection_failure(
+) -> bool:
+    import io
+
+    from rich.console import Console
+
+    return test_cmd._persist_collection_failure(
         diagnostic=diagnostic,
         state_file=state_file,
         report_config=report_config,
         resume=resume,
         provenance={},
+        module=state_file.parent / "dummy.so",
+        console=Console(file=io.StringIO(), width=100),
     )
 
 
@@ -5258,29 +5265,30 @@ class TestTestCommand:
         assert not output_path.exists()
 
     @staticmethod
-    def _b1_counter_line(pid: int, total: int, *, run_id: str, worker_uuid: str) -> str:
-        return json.dumps(
-            {
-                "$report_type": "CallCountersReport",
-                "pid": pid,
-                "run_id": run_id,
-                "worker_uuid": worker_uuid,
-                "isolation": "file",
-                "probes_lost": 0,
-                "total_calls": total,
-                "buckets": {
-                    "test": {
-                        "calls": total,
-                        "by_fn": {
-                            "C_Sign": {
-                                "calls": total,
-                                "by_rv": {"0": {"name": "CKR_OK", "count": total}},
-                            }
-                        },
-                    }
-                },
-            }
-        )
+    def _b1_counter_line(pid: int, total: int, *, run_id: str, worker_uuid: str | None) -> str:
+        record: dict[str, object] = {
+            "$report_type": "CallCountersReport",
+            "pid": pid,
+            "run_id": run_id,
+            "isolation": "file",
+            "probes_lost": 0,
+            "total_calls": total,
+            "buckets": {
+                "test": {
+                    "calls": total,
+                    "by_fn": {
+                        "C_Sign": {
+                            "calls": total,
+                            "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                        }
+                    },
+                }
+            },
+        }
+        if worker_uuid is not None:
+            # Legacy shape: uuid-less repeats keep summing (no first-wins).
+            record["worker_uuid"] = worker_uuid
+        return json.dumps(record)
 
     def _b1_crashed_manifest(self, module: object) -> CapabilityManifest:
         return CapabilityManifest(
@@ -5294,6 +5302,20 @@ class TestTestCommand:
             process_observation=build_process_observation(str(module), "preflight", 0, -11),
             error="preflight crashed",
         )
+
+    def _b1_appending_preflight(
+        self, evidence_path: Path, line: str, *, ok: bool = False
+    ) -> Callable[[object], CapabilityManifest]:
+        """Mock preflight that appends its scope like the real one first."""
+
+        def _mock(module: object, **kwargs: object) -> CapabilityManifest:
+            with open(evidence_path, "a", encoding="utf-8") as handle:
+                handle.write(line)
+            if ok:
+                return _ok_preflight(module, **kwargs)  # type: ignore[arg-type]
+            return self._b1_crashed_manifest(module)
+
+        return _mock
 
     def test_test_resume_manifest_crash_preserves_prior_results(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5424,7 +5446,7 @@ class TestTestCommand:
     def test_test_resume_early_failure_appends_jsonl_and_folds_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1: the JSONL keeps prior rounds; counters fold old + new."""
+        """B1/C10: only the new tail appends; counters fold old + new, no dups."""
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
 
         module = tmp_path / "dummy.so"
@@ -5440,18 +5462,18 @@ class TestTestCommand:
         )
         results_path = tmp_path / "results.json"
         prior_jsonl = tmp_path / "report.jsonl"
-        prior_jsonl.write_text(
-            self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n",
-            encoding="utf-8",
-        )
-        preflight_evidence_path_for_state(state_file).write_text(
-            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
-            encoding="utf-8",
-        )
+        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        prior_jsonl.write_text(round_one, encoding="utf-8")
+        # The evidence file accumulates every round; only this run's scope
+        # (appended by the mock during the run) may land in the JSONL.
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(round_one, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, **kwargs: self._b1_crashed_manifest(module),
+            self._b1_appending_preflight(evidence_path, current_line),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -5497,19 +5519,21 @@ class TestTestCommand:
         )
         results_path = tmp_path / "results.json"
         prior_jsonl = tmp_path / "report.jsonl"
-        prior_jsonl.write_text(
-            self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n",
-            encoding="utf-8",
-        )
-        preflight_evidence_path_for_state(state_file).write_text(
-            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
-            encoding="utf-8",
-        )
+        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        prior_jsonl.write_text(round_one, encoding="utf-8")
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(round_one, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
 
         def crashed_login(*args: object, **kwargs: object) -> LoginProbe:
             return LoginProbe("crashed", "login probe crashed (SIGSEGV)", -11)
 
-        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            self._b1_appending_preflight(evidence_path, current_line, ok=True),
+        )
         monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", crashed_login)
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -5540,10 +5564,11 @@ class TestTestCommand:
     def test_test_resume_retry_never_double_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1: re-appending an accumulated sidecar folds first-wins (no double count).
+        """B1: a retried round re-appends its tail; uuid repeats fold first-wins.
 
-        The bytes duplicate (the extractor's torn-append shape, also what the
-        normal splice path produces); the counts must not.
+        Each attempt appends only its own tail past the pre-run snapshot, so
+        a retried scope lands twice in the bytes (the extractor's torn-append
+        shape); the uuid-bearing counts must not double.
         """
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
 
@@ -5559,40 +5584,45 @@ class TestTestCommand:
             ),
         )
         results_path = tmp_path / "results.json"
-        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
-        round_two = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16)
+        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        round_two = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
         prior_jsonl = tmp_path / "report.jsonl"
-        prior_jsonl.write_text(round_one + "\n", encoding="utf-8")
-        preflight_evidence_path_for_state(state_file).write_text(
-            round_one + "\n" + round_two + "\n", encoding="utf-8"
-        )
+        prior_jsonl.write_text(round_one, encoding="utf-8")
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(round_one, encoding="utf-8")
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, **kwargs: self._b1_crashed_manifest(module),
+            self._b1_appending_preflight(evidence_path, round_two),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
         )
-        result = runner.invoke(
-            app,
-            [
-                "test",
-                "--module",
-                str(module),
-                "--output",
-                "json",
-                "--output-file",
-                str(results_path),
-                "--resume",
-                "--state-file",
-                str(state_file),
-            ],
-        )
-        assert result.exit_code == 1, result.output
+        argv = [
+            "test",
+            "--module",
+            str(module),
+            "--output",
+            "json",
+            "--output-file",
+            str(results_path),
+            "--resume",
+            "--state-file",
+            str(state_file),
+        ]
+        first = runner.invoke(app, argv)
+        assert first.exit_code == 1, first.output
+        payload_one = json.loads(results_path.read_text(encoding="utf-8"))
+        # Retry: the mock appends the same scope again (same run identity),
+        # so the tail duplicates in both files; the fold must not move.
+        second = runner.invoke(app, argv)
+        assert second.exit_code == 1, second.output
+        payload_two = json.loads(results_path.read_text(encoding="utf-8"))
         assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 3
-        payload = json.loads(results_path.read_text(encoding="utf-8"))
-        assert payload["call_counters"]["total_calls"] == 15
+        assert payload_one["call_counters"]["total_calls"] == 15
+        assert payload_two["call_counters"] == payload_one["call_counters"]
+        assert payload_two["units"] == payload_one["units"]
 
     def test_test_resume_without_state_falls_back_to_fresh_shape(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5822,61 +5852,6 @@ class TestTestCommand:
         rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
         assert rows == sorted([("a.py", "passed"), (str(module), "crashed")])
 
-    def test_test_resume_early_failure_retry_is_counter_idempotent(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """B1: consecutive resume retries re-append bytes but fold identical counts."""
-        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
-
-        module = tmp_path / "dummy.so"
-        module.write_text("", encoding="utf-8")
-        state_file = tmp_path / "state.json"
-        save_run_state(
-            state_file,
-            FileRunState(
-                units=["a.py"],
-                fingerprint="prior",
-                results=[FileRunResult("a.py", "passed", 0, 0.1)],
-            ),
-        )
-        results_path = tmp_path / "results.json"
-        prior_jsonl = tmp_path / "report.jsonl"
-        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
-        round_two = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16)
-        prior_jsonl.write_text(round_one + "\n", encoding="utf-8")
-        preflight_evidence_path_for_state(state_file).write_text(
-            round_one + "\n" + round_two + "\n", encoding="utf-8"
-        )
-        monkeypatch.setattr(
-            test_cmd,
-            "run_preflight_subprocess",
-            lambda module, **kwargs: self._b1_crashed_manifest(module),
-        )
-        monkeypatch.setattr(
-            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
-        )
-        argv = [
-            "test",
-            "--module",
-            str(module),
-            "--output",
-            "json",
-            "--output-file",
-            str(results_path),
-            "--resume",
-            "--state-file",
-            str(state_file),
-        ]
-        first = runner.invoke(app, argv)
-        assert first.exit_code == 1, first.output
-        payload_one = json.loads(results_path.read_text(encoding="utf-8"))
-        second = runner.invoke(app, argv)
-        assert second.exit_code == 1, second.output
-        payload_two = json.loads(results_path.read_text(encoding="utf-8"))
-        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 5
-        assert payload_two["call_counters"] == payload_one["call_counters"]
-        assert payload_two["units"] == payload_one["units"]
-
     def test_test_resume_manifest_crash_cross_module_reports_separately(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -5899,6 +5874,8 @@ class TestTestCommand:
             ),
         )
         results_path = tmp_path / "results.json"
+        prior_summary = '{"summary": "provider-a"}\n'
+        results_path.write_text(prior_summary, encoding="utf-8")
         prior_jsonl = tmp_path / "report.jsonl"
         prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
         prior_jsonl.write_text(prior_line, encoding="utf-8")
@@ -5935,14 +5912,19 @@ class TestTestCommand:
         )
         assert result.exit_code == 1, result.output
         assert "different module" in result.output
-        # Fresh shape: only the current crash row; the prior JSONL keeps
-        # provider A's bytes exactly and the refused scope is quarantined
-        # out of the shared evidence file, so a later valid resume never
-        # folds provider B's counts; the separate summary still counts B's
-        # own round from the quarantined tail.
-        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        # Fresh shape at the separate path: only the current crash row; the
+        # prior summary, JSONL, and evidence bytes stay exactly A's, and the
+        # refused scope is quarantined out of the shared evidence file, so a
+        # later valid resume never folds provider B's counts; the separate
+        # summary still counts B's own round from the quarantined tail.
+        separate_path = tmp_path / "results.refused.json"
+        payload = json.loads(separate_path.read_text(encoding="utf-8"))
         rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
         assert rows == [(str(module_b), "crashed")]
+        assert "Separate failure report" in result.output
+        # The console wraps long paths mid-word, so no path substring is
+        # asserted; the file read below proves the separate report landed.
+        assert results_path.read_text(encoding="utf-8") == prior_summary
         assert prior_jsonl.read_text(encoding="utf-8") == prior_line
         assert evidence_path.read_text(encoding="utf-8") == prior_line
         assert payload["call_counters"]["total_calls"] == 5
@@ -6113,28 +6095,47 @@ class TestTestCommand:
         assert payload["call_counters"]["total_calls"] == 5
 
     def test_quarantine_refused_evidence_branches(self, tmp_path: Path) -> None:
-        """B1/R3-1: quarantine returns the tail and restores the shared file."""
+        """B1/R3-1/R4-1: quarantine returns the tail and restores the shared file."""
         import io
 
         from rich.console import Console
 
         console = Console(file=io.StringIO(), width=100)
+        quarantine = test_cmd._quarantine_refused_evidence
 
-        assert test_cmd._quarantine_refused_evidence(None, None, console) == b""
-        assert test_cmd._quarantine_refused_evidence(tmp_path / "gone.jsonl", None, console) == b""
+        def identity_of(path: Path) -> tuple[int, int]:
+            live = path.stat()
+            return (live.st_ino, live.st_dev)
+
+        assert quarantine(None, None, None, console) == b""
+        assert quarantine(tmp_path / "gone.jsonl", None, None, console) == b""
 
         evidence = tmp_path / "evidence.jsonl"
         evidence.write_bytes(b"AAAABBBB")
-        assert test_cmd._quarantine_refused_evidence(evidence, 4, console) == b"BBBB"
+        assert quarantine(evidence, 4, identity_of(evidence), console) == b"BBBB"
         assert evidence.read_bytes() == b"AAAA"
 
         evidence.write_bytes(b"AAAABBBB")
-        assert test_cmd._quarantine_refused_evidence(evidence, None, console) == (b"AAAABBBB")
+        assert quarantine(evidence, None, None, console) == (b"AAAABBBB")
         assert not evidence.exists()
 
         evidence.write_bytes(b"AAAA")
-        assert test_cmd._quarantine_refused_evidence(evidence, 99, console) == b""
+        assert quarantine(evidence, 99, identity_of(evidence), console) == b""
         assert evidence.read_bytes() == b"AAAA"
+
+        # Unknown boundary: the file stays, loudly, with no tail claimed.
+        evidence.write_bytes(b"AAAABBBB")
+        stream = io.StringIO()
+        loud = Console(file=stream, width=100)
+        assert quarantine(evidence, test_cmd._PRE_SIZE_UNKNOWN, None, loud) == b""
+        assert evidence.read_bytes() == b"AAAABBBB"
+        assert "boundary unknown" in stream.getvalue()
+
+        # Replaced file (identity mismatch): same leave-alone rule.
+        stream2 = io.StringIO()
+        assert quarantine(evidence, 4, (0, 0), Console(file=stream2, width=100)) == b""
+        assert evidence.read_bytes() == b"AAAABBBB"
+        assert "replaced" in stream2.getvalue()
 
     def test_prior_state_gate_strictness(self, tmp_path: Path) -> None:
         """B1/R3-2: mtime/digest changes refuse; path aliases still admit."""
@@ -6220,7 +6221,7 @@ class TestTestCommand:
     def test_test_resume_early_failure_failed_append_folds_union(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """B1/R3-3: a failed append still folds history plus the current round."""
+        """B1/R3-3/R4-4: a failed append still folds history plus the current round."""
         import builtins
 
         from pkcs11_check.core.preflight import preflight_evidence_path_for_state
@@ -6240,25 +6241,47 @@ class TestTestCommand:
         prior_jsonl = tmp_path / "report.jsonl"
         prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
         prior_jsonl.write_text(prior_line + "\n", encoding="utf-8")
-        preflight_evidence_path_for_state(state_file).write_text(
-            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
-            encoding="utf-8",
-        )
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(prior_line + "\n", encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
 
         real_open = builtins.open
 
-        def fail_read_write_bytes(
+        class _FailingWriter:
+            """File wrapper whose writes fail cleanly (nothing lands)."""
+
+            def __init__(self, wrapped: object) -> None:
+                self._wrapped = wrapped
+
+            def write(self, data: bytes) -> int:
+                raise OSError("forced append failure")
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                self._wrapped.close()
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._wrapped, name)
+
+        def fail_writes_and_reopens(
             file: object, mode: str = "r", *args: object, **kwargs: object
         ) -> object:
-            if "b" in mode and "+" in mode:
-                raise OSError("forced append failure")
-            return real_open(file, mode, *args, **kwargs)
+            # The retain appends via "rb+" and rolls back via "r+b".
+            if mode == "r+b":
+                raise OSError("forced rollback failure")
+            handle = real_open(file, mode, *args, **kwargs)
+            if mode == "rb+":
+                return _FailingWriter(handle)
+            return handle
 
-        monkeypatch.setattr(builtins, "open", fail_read_write_bytes)
+        monkeypatch.setattr(builtins, "open", fail_writes_and_reopens)
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, **kwargs: self._b1_crashed_manifest(module),
+            self._b1_appending_preflight(evidence_path, current_line),
         )
         monkeypatch.setattr(
             test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
@@ -6279,12 +6302,107 @@ class TestTestCommand:
             ],
         )
         assert result.exit_code == 1, result.output
-        # The JSONL keeps its old bytes (nothing retained, torn tail
-        # impossible since the open itself failed); the summary folds the
-        # union, so the current round never hides behind the history.
+        # The JSONL keeps its old bytes (the write failed cleanly); the
+        # summary folds the union, so the current round never hides behind
+        # the history. Both failures warn loudly: the rollback reopen fails
+        # too under this mock.
+        assert prior_jsonl.read_text(encoding="utf-8") == prior_line + "\n"
+        assert "not retained" in result.output
+        assert "could not be restored" in result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 15
+        assert payload["call_counters"]["complete"] is True
+
+    def test_test_resume_early_failure_partial_append_truncates_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R4-4: a torn partial tail is truncated back; the union still folds."""
+        import builtins
+
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
+        prior_jsonl.write_text(prior_line + "\n", encoding="utf-8")
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(prior_line + "\n", encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+
+        real_open = builtins.open
+
+        class _PartialWriter:
+            """File wrapper that lands 10 bytes, then fails every write."""
+
+            def __init__(self, wrapped: object) -> None:
+                self._wrapped = wrapped
+
+            def write(self, data: bytes) -> int:
+                self._wrapped.write(data[:10])
+                raise OSError("forced partial write")
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                self._wrapped.close()
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._wrapped, name)
+
+        def partial_then_fail(
+            file: object, mode: str = "r", *args: object, **kwargs: object
+        ) -> object:
+            handle = real_open(file, mode, *args, **kwargs)
+            if mode == "rb+":
+                return _PartialWriter(handle)
+            return handle
+
+        monkeypatch.setattr(builtins, "open", partial_then_fail)
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            self._b1_appending_preflight(evidence_path, current_line),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert "not retained" in result.output
+        assert "could not be restored" not in result.output
+        # The 10 torn bytes are gone (truncated back to the pre-append size);
+        # the union folds history plus the unretained round, complete.
         assert prior_jsonl.read_text(encoding="utf-8") == prior_line + "\n"
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["call_counters"]["total_calls"] == 15
+        assert payload["call_counters"]["complete"] is True
 
     def test_test_resume_without_state_rejoins_collection_sidecar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6345,6 +6463,350 @@ class TestTestCommand:
         # stateless path, the row rides the sidecar alone.
         assert stale_jsonl.read_text(encoding="utf-8") == "stale-unattributable-bytes\n"
 
+    def test_test_resume_runner_refusal_quarantines_and_keeps_exit_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R4-2/C7: a downstream fingerprint refusal quarantines; exit stays 2."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "fingerprint": "old",
+                    "results": [
+                        {
+                            "target": "a.py",
+                            "status": "failed",
+                            "returncode": 1,
+                            "duration_s": 0.1,
+                        }
+                    ],
+                    "units": ["a.py"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        evidence_path.write_text(prior_line, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            self._b1_appending_preflight(evidence_path, current_line, ok=True),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "belongs to a different isolated run" in " ".join(result.output.split())
+        # The refused scope is out of the shared file (a later valid resume
+        # never folds it), and the foreign failed row did not upgrade the
+        # exit code to 1.
+        assert evidence_path.read_text(encoding="utf-8") == prior_line
+
+    def test_test_fresh_none_run_ignores_stale_collection_sidecar(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R4-5: a fresh non-isolated run inherits no collection history."""
+        from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        sidecar = collection_failure_sidecar_path(state_file)
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_text = (
+            json.dumps(
+                {
+                    "$report_type": "CollectReport",
+                    "outcome": "failed",
+                    "nodeid": "b.py",
+                    "longrepr": "import boom",
+                }
+            )
+            + "\n"
+        )
+        sidecar.write_text(sidecar_text, encoding="utf-8")
+        results_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "none",
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
+        assert rows == [(str(module), "crashed")]
+        assert sidecar.read_text(encoding="utf-8") == sidecar_text
+
+    def test_test_none_resume_cross_module_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R4-5: none+resume takes the same module gate (no silent merge)."""
+        from pkcs11_check.core.file_runner import _path_snapshot
+
+        module_a = tmp_path / "a.so"
+        module_a.write_bytes(b"provider-a-bytes")
+        module_b = tmp_path / "b.so"
+        module_b.write_bytes(b"provider-b-bytes")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                module_snapshot=_path_snapshot(str(module_a)),
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        prior_jsonl.write_text(prior_line, encoding="utf-8")
+        # None-mode evidence is a private per-run temp file (never the state
+        # sibling), so only the state/JSONL merge needs the gate's refusal.
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module_b),
+                "--isolation",
+                "none",
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert "different module" in result.output
+        separate_path = tmp_path / "results.refused.json"
+        payload = json.loads(separate_path.read_text(encoding="utf-8"))
+        rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
+        assert rows == [(str(module_b), "crashed")]
+        assert prior_jsonl.read_text(encoding="utf-8") == prior_line
+
+    def test_persist_collection_failure_cross_module_reports_separately(
+        self, tmp_path: Path
+    ) -> None:
+        """B1/C3: a refused collection failure touches no prior artifact."""
+        import io
+
+        from rich.console import Console
+
+        from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
+        from pkcs11_check.core.file_runner import _path_snapshot
+
+        module_a = tmp_path / "a.so"
+        module_a.write_bytes(b"provider-a-bytes")
+        module_b = tmp_path / "b.so"
+        module_b.write_bytes(b"provider-b-bytes")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                module_snapshot=_path_snapshot(str(module_a)),
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_summary = '{"summary": "provider-a"}\n'
+        results_path.write_text(prior_summary, encoding="utf-8")
+        report_config = IsolatedReportConfig(
+            "json", results_path, jsonl_path=tmp_path / "report.jsonl"
+        )
+        refused = test_cmd._persist_collection_failure(
+            diagnostic="import boom",
+            state_file=state_file,
+            report_config=report_config,
+            resume=True,
+            provenance={},
+            module=module_b,
+            console=Console(file=io.StringIO(), width=100),
+        )
+        assert refused is True
+        # No sidecar/JSONL persists, no quality.json, the prior summary
+        # stands; the separate report carries this run's own row.
+        assert not collection_failure_sidecar_path(state_file).exists()
+        assert not (tmp_path / "report.jsonl").exists()
+        assert not (tmp_path / "quality.json").exists()
+        assert results_path.read_text(encoding="utf-8") == prior_summary
+        payload = json.loads((tmp_path / "results.refused.json").read_text(encoding="utf-8"))
+        rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
+        assert rows == [("<collection>", "failed")]
+        assert "import boom" in json.dumps(payload["units"][0])
+
+    def test_test_resume_plain_error_cross_module_keeps_exit_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/C7: a refused plain error keeps its base exit code (no consult)."""
+        from pkcs11_check.core.file_runner import _path_snapshot
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module_a = tmp_path / "a.so"
+        module_a.write_bytes(b"provider-a-bytes")
+        module_b = tmp_path / "b.so"
+        module_b.write_bytes(b"provider-b-bytes")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "failed", 1, 0.2)],
+                module_snapshot=_path_snapshot(str(module_a)),
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        evidence_path.write_text(prior_line, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+
+        def appending_error_preflight(module: object, **kwargs: object) -> CapabilityManifest:
+            with open(evidence_path, "a", encoding="utf-8") as handle:
+                handle.write(current_line)
+            return CapabilityManifest(
+                status="error",
+                module_path=str(module),
+                requested_interface="auto",
+                interface_version=None,
+                slot_index=0,
+                slot_count=None,
+                mechanisms=[],
+                error="preflight misconfigured",
+            )
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", appending_error_preflight)
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module_b),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        # Base 2 stands: A's failed row must not upgrade a refusal to 1.
+        # Plain errors write no report on any path.
+        assert result.exit_code == 2, result.output
+        assert not results_path.exists()
+        assert not (tmp_path / "results.refused.json").exists()
+        assert evidence_path.read_text(encoding="utf-8") == prior_line
+
+    def test_test_resume_tail_append_skips_uuid_less_duplicates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/C10: uuid-less legacy scopes are not re-appended (no double sum)."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        legacy_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid=None) + "\n"
+        prior_jsonl.write_text(legacy_line, encoding="utf-8")
+        evidence_path = preflight_evidence_path_for_state(state_file)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(legacy_line, encoding="utf-8")
+        current_line = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            self._b1_appending_preflight(evidence_path, current_line),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        # A whole-blob re-append would land the legacy scope twice and sum
+        # it twice (25); the tail append keeps 15.
+        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 2
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 15
+
     def test_fold_preflight_evidence_collision_skips_splice(self, tmp_path: Path) -> None:
         """B1/R3-5: the normal-path splice skips a collided summary file."""
         import io
@@ -6384,6 +6846,7 @@ class TestTestCommand:
             preflight_evidence_path=evidence,
             console=Console(file=io.StringIO(), width=100),
             prior_state=None,
+            pre_size=None,
         )
         assert result == (True, blob.encode("utf-8"))
         assert stale_jsonl.read_text(encoding="utf-8") == blob

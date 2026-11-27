@@ -653,6 +653,16 @@ def _fingerprint_env(
     return snapshot
 
 
+class StateFingerprintMismatchError(ValueError):
+    """Resume refused: the state file belongs to a different isolated run.
+
+    A ValueError subclass (existing handlers and message assertions keep
+    working); the distinct type lets the CLI quarantine the refused run's
+    evidence scope instead of treating it as an ordinary runner failure
+    (B1/R4-2).
+    """
+
+
 def build_state_fingerprint(
     units: list[str],
     pytest_args: list[str],
