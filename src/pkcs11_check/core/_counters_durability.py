@@ -19156,6 +19156,25 @@ def _dir_mtime_ns(path: Path) -> int | None:
         return None
 
 
+def _dir_change_ns(path: Path) -> tuple[int, int] | None:
+    """``(mtime_ns, ctime_ns)`` for bracket clocks, else None (#88R44-[A]r59).
+
+    The archival bracket compares change clocks, not mtimes
+    alone (Claude Q3 L1): mtime is owner-rewritable (freeze,
+    churn, set back), while ctime moves on every change --
+    the cover-up utime itself bumps it -- and cannot be set
+    back. On Windows ctime is birth time and renames preserve
+    it, so the pair adds no rewind resistance there (same as
+    mtime-only); POSIX change-time carries the fix. Never
+    raises.
+    """
+    try:
+        dir_stat = os.stat(path)
+    except OSError:
+        return None
+    return (dir_stat.st_mtime_ns, dir_stat.st_ctime_ns)
+
+
 def _file_generation(path: Path) -> tuple[int, int, int] | None:
     """``(inode, mtime_ns, size)`` for one evidence file, else None (#88R44-[A]r20).
 
@@ -20203,6 +20222,7 @@ def sweep_orphans(
             dependents: Collection[str],
             verified: Mapping[str, str] | None = None,
             absent: Mapping[str, str] | None = None,
+            drift_out: list[bool] | None = None,
         ) -> tuple[set[str], bool, bool, set[str]]:
             """Rewrite/quarantine companions for archival preview (#88R44-[A]r39).
 
@@ -20253,7 +20273,11 @@ def sweep_orphans(
             naming the culprit base (or the outside key), so
             voices can name the unreadable evidence (Claude Q3
             M5). Advisory only -- hold decisions never depend on
-            it.
+            it. When ``drift_out`` is given, render-time drift
+            appends a mark (Codex R58-2): a listing mismatch and
+            a vanish between two live checks are two successful
+            observations that differ, so they outrank co-faults
+            at the exit like bracket drift.
             """
 
             def _resolve(path: Path) -> str | None:
@@ -20291,10 +20315,15 @@ def sweep_orphans(
                 """Root-relative key for a resolved outside path (never absolute)."""
                 return _relkey_or_name(resolved, resolved_root, path.name)
 
-            def _validated_companions(
-                enumerated: Path, stem: str, base_key: str
+            def _validate_companion_entries(
+                enumerated: Path,
+                entries: list[Path],
+                stem: str,
+                base_key: str,
+                stacklevel: int,
+                fold_case: bool = False,
             ) -> set[str] | None:
-                """Companion relkeys in one directory, validated (None on fault).
+                """Validated relkeys for listed companions (None on fault).
 
                 Each companion resolves strictly and must stay
                 inside (Codex R43-1): an outside symlink companion
@@ -20302,8 +20331,169 @@ def sweep_orphans(
                 name. The verified target must also keep the
                 base's rewrite shape and a single link (Codex
                 R44-2): a companion pointing at another file is
-                not this base's rewrite. Faults record their key
-                and warn; the caller fails verification.
+                not this base's rewrite. The resolved target must
+                stay in the enumerated directory (Claude Q3
+                finding 2): a redirect or link carrying a
+                same-stem name across directories renders
+                unadopted content otherwise. Directory spellings
+                that differ only in case still agree when they
+                stat the same directory (Codex R56-3). The shape
+                match folds case with the listing filter, but
+                each inexact match first proves its exact
+                counterpart stats the same file (Codex R59-1):
+                mixed volumes fold some pairs and not others, so
+                unproven strangers drop instead of rendering.
+                Faults record their key and warn; the caller fails
+                verification. The stacklevel keeps warnings
+                pointed at the sweep caller regardless of which
+                helper listed. Unmapped fallback companions keep
+                exact matching (their names are producer
+                controlled; operator case renames there stay a
+                documented residual).
+                """
+                found_names: set[str] = set()
+                for entry in entries:
+                    if fold_case and not entry.name.startswith(
+                        (f"{stem}.tmp-", f"{stem}.quarantined-")
+                    ):
+                        # Case-only match: prove THIS pair folds
+                        # instead of inheriting the volume flag
+                        # (Codex R59-1). One volume can fold ASCII
+                        # while distinguishing other pairs, so a
+                        # witness elsewhere must not adopt a
+                        # same-lower stem's companion: the exact
+                        # counterpart either stats the same file
+                        # (fold: validate on), misses a listed
+                        # entry (distinct files: drop the
+                        # stranger), or fails while the entry
+                        # itself vanished (fault, like an
+                        # unresolvable companion).
+                        proven = False
+                        for infix in (".tmp-", ".quarantined-"):
+                            pattern = f"{stem}{infix}"
+                            if not entry.name.lower().startswith(pattern.lower()):
+                                continue
+                            counterpart = os.path.join(
+                                os.path.dirname(entry), pattern + entry.name[len(pattern) :]
+                            )
+                            try:
+                                proven = os.path.samefile(entry, counterpart)
+                            except FileNotFoundError:
+                                try:
+                                    os.lstat(entry)
+                                except OSError:
+                                    fault_keys.add(_lexical_key(entry))
+                                    return None
+                                proven = False
+                            except (OSError, RuntimeError, ValueError):
+                                fault_keys.add(_lexical_key(entry))
+                                return None
+                            break
+                        if not proven:
+                            continue
+                    validated = _resolve(entry)
+                    if validated is None:
+                        fault_keys.add(_lexical_key(entry))
+                        return None
+                    if not _resolved_inside(validated):
+                        warnings.warn(
+                            f"archival preview found {base_key} with a rewrite "
+                            "companion outside the counters directory "
+                            f"({_outside_key(entry, validated)}); archival inventory "
+                            "keeps the family in place; exit: investigate the "
+                            "directory layout before archiving",
+                            UserWarning,
+                            stacklevel=stacklevel,
+                        )
+                        fault_keys.add(_outside_key(entry, validated))
+                        return None
+                    if os.path.dirname(validated) != os.fspath(enumerated):
+                        try:
+                            same_dir = os.path.samefile(
+                                os.path.dirname(validated), os.fspath(enumerated)
+                            )
+                        except OSError:
+                            same_dir = False
+                        if not same_dir:
+                            warnings.warn(
+                                f"archival preview found {base_key} with a rewrite "
+                                "companion resolving outside its directory "
+                                f"({_key(validated)}); archival inventory "
+                                "keeps the family in place; exit: investigate the "
+                                "directory layout before archiving",
+                                UserWarning,
+                                stacklevel=stacklevel,
+                            )
+                            fault_keys.add(_key(validated))
+                            return None
+                    validated_base = os.path.basename(validated)
+                    if fold_case:
+                        shape_ok = validated_base.lower().startswith(
+                            (f"{stem.lower()}.tmp-", f"{stem.lower()}.quarantined-")
+                        )
+                    else:
+                        shape_ok = validated_base.startswith(
+                            (f"{stem}.tmp-", f"{stem}.quarantined-")
+                        )
+                    if not shape_ok:
+                        warnings.warn(
+                            f"archival preview found {base_key} with a rewrite "
+                            "companion pointing at another file "
+                            f"({_key(validated)}); archival inventory "
+                            "keeps the family in place; exit: investigate the "
+                            "directory layout before archiving",
+                            UserWarning,
+                            stacklevel=stacklevel,
+                        )
+                        fault_keys.add(_key(validated))
+                        return None
+                    try:
+                        entry_mode = os.stat(validated)
+                    except OSError:
+                        fault_keys.add(_lexical_key(entry))
+                        return None
+                    if not stat.S_ISDIR(entry_mode.st_mode) and entry_mode.st_nlink > 1:
+                        warnings.warn(
+                            f"archival preview found {base_key} with a rewrite "
+                            "companion with more than one link "
+                            f"({_key(validated)}); archival inventory "
+                            "keeps the family in place; exit: investigate the "
+                            "directory layout before archiving",
+                            UserWarning,
+                            stacklevel=stacklevel,
+                        )
+                        fault_keys.add(_key(validated))
+                        return None
+                    found_names.add(_key(validated))
+                    try:
+                        entry_is_link = stat.S_ISLNK(os.lstat(entry).st_mode)
+                    except OSError:
+                        # Fail loud like an unresolvable companion
+                        # (Codex R59 minor): islink swallows faults
+                        # as False, which would silently omit the
+                        # link from an otherwise published set.
+                        fault_keys.add(_lexical_key(entry))
+                        return None
+                    if entry_is_link:
+                        # Name the link alongside its target (Codex
+                        # R58 minor, Claude Q3 Q6): moving the target
+                        # alone strands a same-stem link (a
+                        # .quarantined-* alias over a .tmp-* target
+                        # still gates replay), so the preview lists
+                        # the link's own spelling too -- archiving
+                        # the set moves the link itself.
+                        found_names.add(_lexical_key(entry))
+                return found_names
+
+            def _validated_companions(
+                enumerated: Path, stem: str, base_key: str
+            ) -> set[str] | None:
+                """Companion relkeys in one directory, validated (None on fault).
+
+                Two glob listings feed the shared entry
+                validation. Mapped bases use the single-listing
+                snapshot below instead, so one observation
+                decides both presence and companions.
                 """
                 found_names: set[str] = set()
                 for glob in (f"{stem}.tmp-", f"{stem}.quarantined-"):
@@ -20311,56 +20501,172 @@ def sweep_orphans(
                     if found is None:
                         fault_keys.add(base_key)
                         return None
-                    for entry in found:
-                        validated = _resolve(entry)
-                        if validated is None:
-                            fault_keys.add(_lexical_key(entry))
-                            return None
-                        if not _resolved_inside(validated):
-                            warnings.warn(
-                                f"archival preview found {base_key} with a rewrite "
-                                "companion outside the counters directory "
-                                f"({_outside_key(entry, validated)}); archival inventory "
-                                "keeps the family in place; exit: investigate the "
-                                "directory layout before archiving",
-                                UserWarning,
-                                stacklevel=4,
-                            )
-                            fault_keys.add(_outside_key(entry, validated))
-                            return None
-                        if not os.path.basename(validated).startswith(
-                            (f"{stem}.tmp-", f"{stem}.quarantined-")
-                        ):
-                            warnings.warn(
-                                f"archival preview found {base_key} with a rewrite "
-                                "companion pointing at another file "
-                                f"({_key(validated)}); archival inventory "
-                                "keeps the family in place; exit: investigate the "
-                                "directory layout before archiving",
-                                UserWarning,
-                                stacklevel=4,
-                            )
-                            fault_keys.add(_key(validated))
-                            return None
-                        try:
-                            entry_mode = os.stat(validated)
-                        except OSError:
-                            fault_keys.add(_lexical_key(entry))
-                            return None
-                        if not stat.S_ISDIR(entry_mode.st_mode) and entry_mode.st_nlink > 1:
-                            warnings.warn(
-                                f"archival preview found {base_key} with a rewrite "
-                                "companion with more than one link "
-                                f"({_key(validated)}); archival inventory "
-                                "keeps the family in place; exit: investigate the "
-                                "directory layout before archiving",
-                                UserWarning,
-                                stacklevel=4,
-                            )
-                            fault_keys.add(_key(validated))
-                            return None
-                        found_names.add(_key(validated))
+                    validated = _validate_companion_entries(enumerated, found, stem, base_key, 5)
+                    if validated is None:
+                        return None
+                    found_names.update(validated)
                 return found_names
+
+            def _folding_sound(listed: list[Path]) -> bool:
+                """Whether case-folded matching is sound here (Codex R57-2).
+
+                True only when a listed name and its unlisted
+                swapped spelling stat the same file: folding
+                then matches real aliases. Same-name cousins
+                on a sensitive filesystem never trigger it
+                (different files), and listed twins are skipped
+                (a link pair proves nothing about the
+                filesystem). The scan runs to exhaustion (Codex
+                R58-1): an early inconclusive pair must not veto
+                a later proof, since one volume can fold ASCII
+                while leaving other pairs distinct -- so scan
+                order never changes the outcome, and no
+                preferred-first ordering is kept (Codex R59
+                minor: it evaded exhaustion pinning for no
+                outcome difference). The flag only licenses
+                inexact candidates; each one still proves
+                itself (Codex R59-1). Anything inconclusive
+                reads exact, which fails closed (missed variants
+                re-observe or omit visibly, never render wrong
+                content). Writers are assumed not to plant
+                hardlink traps mid-probe.
+                """
+                names = {entry.name for entry in listed}
+                for entry in listed:
+                    swapped_name = entry.name.swapcase()
+                    if swapped_name == entry.name or swapped_name in names:
+                        continue
+                    swapped = os.path.join(os.path.dirname(entry), swapped_name)
+                    try:
+                        if os.path.samefile(entry, swapped):
+                            return True
+                    except OSError:
+                        continue
+                return False
+
+            def _ordered_hits(listed: list[Path], stem: str, fold_case: bool) -> list[Path]:
+                """Rewrite-hit entries, tmp group before quarantined.
+
+                Matches the old glob order exactly (Codex R55
+                minor): the full sorted listing would put
+                quarantine first, which would reorder first
+                faults and the reported key. Within a group the
+                platform path order is kept. On
+                case-insensitive filesystems the stem match
+                folds case (Codex R56-3), or renames across
+                case would omit companions silently.
+                """
+
+                def _matches(name: str, infix: str) -> bool:
+                    if fold_case:
+                        return name.lower().startswith(f"{stem.lower()}{infix}")
+                    return name.startswith(f"{stem}{infix}")
+
+                return sorted(
+                    (
+                        entry
+                        for entry in listed
+                        if _matches(entry.name, ".tmp-") or _matches(entry.name, ".quarantined-")
+                    ),
+                    key=lambda entry: (0 if _matches(entry.name, ".tmp-") else 1, entry),
+                )
+
+            def _adopted_snapshot(
+                adopted: str, stem: str, base_key: str
+            ) -> tuple[bool, set[str] | None]:
+                """Presence plus companions from one listing (Codex R54-1/R54-2).
+
+                Returns (present, companions-or-None): a single
+                directory listing decides both, so the rendered
+                name and its companions form one consistent
+                snapshot -- no gate-then-list gap can omit
+                companions silently, and a mapped base never
+                skips silently into a partial offer. A listing
+                without the adopted name reads (False, empty):
+                the caller re-observes. A listing fault reads
+                (False, None): the caller fails. Callers render
+                only on (True, set).
+                """
+                parent = os.path.dirname(adopted)
+                if not _resolved_inside(parent):
+                    warnings.warn(
+                        f"archival preview found {base_key} with its parent "
+                        "outside the counters directory; archival inventory "
+                        "keeps the family in place; exit: investigate the "
+                        "directory layout before archiving",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+                    fault_keys.add(base_key)
+                    return False, None
+                listed = _listed_once(Path(parent))
+                if listed is None:
+                    fault_keys.add(base_key)
+                    return False, None
+                # Live statability, not substitute exclusion
+                # (Codex R55-2, Claude Q3 M2): samefile compares
+                # live resolutions, so it proves the candidate
+                # resolves now -- not that no same-named
+                # substitute sits under a redirect (all spellings
+                # resolve through the same live layout; the
+                # ancestor sampling excludes that). Candidates
+                # match exactly first; on a case-insensitive
+                # filesystem they also match case-folded (Codex
+                # R56-3), since POSIX normcase would miss them
+                # there. A racing entry (vanished mid-check) is
+                # churn and re-observes; an unstatable one fails
+                # loud.
+                want = os.path.basename(adopted)
+                candidates = [entry for entry in listed if entry.name == want]
+                fold_key = os.fspath(parent)
+                if fold_key not in folding_cache:
+                    folding_cache[fold_key] = _folding_sound(listed)
+                fold_case = folding_cache[fold_key]
+                if fold_case:
+                    # Over-broad candidates filter safely here
+                    # (Codex R59-1): every candidate still
+                    # confirms by stat identity below, unlike
+                    # companions, which have no adopted identity
+                    # to confirm against.
+                    lowered = want.lower()
+                    candidates.extend(
+                        entry
+                        for entry in listed
+                        if entry.name.lower() == lowered and entry.name != want
+                    )
+                present = False
+                for entry in candidates:
+                    try:
+                        if os.path.samefile(entry, adopted):
+                            present = True
+                            break
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exc:
+                        if exc.errno == errno.ENOTDIR:
+                            # Churn like a vanish (Claude Q3 N1):
+                            # the parent became a file mid-check.
+                            # ELOOP and the rest stay faults: a
+                            # loop is indeterminate, not a
+                            # disappearance. This deliberately
+                            # splits narrower than the absent
+                            # path's missing set -- a listed
+                            # candidate that cannot resolve is
+                            # fault evidence -- and mirrors the
+                            # member reread split.
+                            continue
+                        fault_keys.add(_lexical_key(entry))
+                        return False, None
+                if not present:
+                    return False, set()
+                return True, _validate_companion_entries(
+                    Path(parent),
+                    _ordered_hits(listed, stem, fold_case),
+                    stem,
+                    base_key,
+                    5,
+                    fold_case,
+                )
 
             try:
                 resolved_root = os.path.realpath(root, strict=True)
@@ -20368,26 +20674,210 @@ def sweep_orphans(
                 return set(), False, True, {"."}
             names: set[str] = set()
             fault_keys: set[str] = set()
+            listed_cache: dict[str, list[Path] | None] = {}
+            # One fold scan per directory per render (Codex R59-2):
+            # the snapshot path shares the cached listing object,
+            # so identical content is guaranteed and exhaustion
+            # makes the outcome order-independent. The absent path
+            # lists afresh and computes its own (a shared entry
+            # could serve a stale flag across churn).
+            folding_cache: dict[str, bool] = {}
+
+            def _listed_once(directory: Path) -> list[Path] | None:
+                """One full listing per directory per render (Codex R55 minor).
+
+                Many mapped bases can share an adopted directory
+                (dense rewrite backlogs); re-scanning and
+                re-sorting it per base multiplies render work.
+                The cache lives for this render call only: a
+                swap landing mid-loop renders at worst from a
+                stale listing, and the closing bracket
+                re-observes the churn through the adopted
+                ancestor sampling (Codex R56-1), so nothing
+                stale publishes. Callers must not mutate the
+                returned list.
+                """
+                key = os.fspath(directory)
+                if key not in listed_cache:
+                    listed_cache[key] = _list_evidence_files(directory, "", "")
+                return listed_cache[key]
 
             def _fail(key: str) -> tuple[set[str], bool, bool, set[str]]:
                 fault_keys.add(key)
                 return set(), False, True, fault_keys
 
+            def _note_drift() -> None:
+                """Mark render-time drift for the caller (Codex R58-2)."""
+                if drift_out is not None:
+                    drift_out.append(True)
+
+            def _check_dependent_shape(
+                base: Path,
+            ) -> tuple[set[str], bool, bool, set[str]] | None:
+                """Use-time dependent shape verdict, None when it passes.
+
+                Dependents must be regular files (Codex R44-2): a
+                linked dependent's target bytes are unverified
+                (probes have no body rule), so links and
+                multi-linked dependents fail here at use time
+                even when assembly verified them -- a
+                post-assembly swap cannot slip one in. Mapped
+                bases run this after the adopted snapshot (Codex
+                R55-3): an unavailable adopted target
+                re-observes instead of faulting on the live
+                miss, while a live miss with a readable adopted
+                target still faults first.
+                """
+                base_lexical = _lexical_key(base)
+                try:
+                    base_lstat = os.lstat(base)
+                except OSError:
+                    return _fail(base_lexical)
+                if stat.S_ISLNK(base_lstat.st_mode):
+                    warnings.warn(
+                        f"archival preview found dependent {base_lexical} as a link "
+                        "(dependents must be regular files); archival inventory "
+                        "keeps the family in place; exit: investigate the directory "
+                        "layout before archiving",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+                    return _fail(base_lexical)
+                if not stat.S_ISREG(base_lstat.st_mode):
+                    warnings.warn(
+                        f"archival preview found dependent {base_lexical} not as a "
+                        "regular file (dependents must be regular files); archival "
+                        "inventory keeps the family in place; exit: investigate the "
+                        "directory layout before archiving",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+                    return _fail(base_lexical)
+                if not stat.S_ISDIR(base_lstat.st_mode) and base_lstat.st_nlink > 1:
+                    warnings.warn(
+                        f"archival preview found dependent {base_lexical} with more "
+                        "than one link; archival inventory keeps the family in "
+                        "place; exit: investigate the directory layout before "
+                        "archiving",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+                    return _fail(base_lexical)
+                return None
+
             for base in bases:
                 base_key = os.fspath(base)
                 absent_parent = absent.get(base_key) if absent is not None else None
-                if _path_state(base) == "missing":
+                mapped = verified.get(base_key) if verified is not None else None
+                # Mapped bases always take the adopted path below
+                # (Codex R52-1): the live absence check ran before
+                # the map lookup, so a redirect bracketing only
+                # rendering dropped a pinned leg into the
+                # companion-only branch, which enumerated the
+                # transient parent live. The adopted path decides
+                # presence and companions from one listing (Codex
+                # R54-1/R54-2), which subsumes the adopted-present
+                # gate: an unavailable adopted target re-observes
+                # instead of rendering a companionless name or
+                # skipping silently into a partial offer. The
+                # drift check still re-resolves the lexical path,
+                # so a genuine vanish re-observes. A dependent
+                # spelling can carry a map entry when a probe
+                # filename rides the registry sidecar field (Codex
+                # R53-3): the live shape check below still gates
+                # it and fails closed on a live miss.
+                if _path_state(base) == "missing" and mapped is None:
                     if absent_parent is not None:
                         # Recorded-absent leg companions enumerate
                         # beside the adopted parent (Codex R48-1),
-                        # never a transiently redirected one.
-                        if _path_state(absent_parent) == "missing":
+                        # never a transiently redirected one. A
+                        # missing parent re-observes, checked both
+                        # before and after the listing (Codex
+                        # R56-2): any missing errno, as before the
+                        # single listing. Any other listing fault
+                        # fails loud: a persistent fault must not
+                        # become a rerun loop, and a mid-pass
+                        # onset converges on manual rerun. An empty
+                        # set re-lists and compares (Codex R58):
+                        # divergence re-observes; agreement defers
+                        # to the ancestor sampling, which catches
+                        # a vanish spanning both listings. Drift
+                        # marks only two live observations that
+                        # differ (Codex R58-2): the post-check
+                        # vanish and the compare mismatch. The
+                        # pre-check vanish stays unmarked (a parent
+                        # missing at first touch may never have
+                        # existed, and a stable miss must not hide
+                        # co-faults in a rerun loop). A vanish
+                        # marks only over established presence
+                        # (Codex R59-3): pre-check unreadable plus
+                        # a failed listing never proved the parent
+                        # was there, so the rerun stays unmarked
+                        # and a co-fault wins. An empty first
+                        # listing is likewise ambiguous ([] reads
+                        # for missing and empty dirs alike), so it
+                        # post-checks liveness first: missing
+                        # re-observes, unreadable fails like None,
+                        # and only a present parent re-lists --
+                        # else a vanished parent agrees with
+                        # itself and publishes.
+                        pre = _path_state(absent_parent)
+                        if pre == "missing":
                             return set(), False, False, set()
-                        companions = _validated_companions(
-                            Path(absent_parent), base.name, _lexical_key(base)
+                        listed = _list_evidence_files(Path(absent_parent), "", "")
+                        if listed is None:
+                            if _path_state(absent_parent) == "missing":
+                                if pre == "present":
+                                    _note_drift()
+                                return set(), False, False, set()
+                            fault_keys.add(_lexical_key(base))
+                            return set(), False, True, fault_keys
+                        fold_case = _folding_sound(listed)
+                        companions = _validate_companion_entries(
+                            Path(absent_parent),
+                            _ordered_hits(listed, base.name, fold_case),
+                            base.name,
+                            _lexical_key(base),
+                            4,
+                            fold_case,
                         )
                         if companions is None:
                             return set(), False, True, fault_keys
+                        if not companions:
+                            if not listed:
+                                # Ambiguous-empty first listing
+                                # (Codex R59-3): establish liveness
+                                # before comparing. A non-empty
+                                # first listing proves itself and
+                                # skips this.
+                                post = _path_state(absent_parent)
+                                if post == "missing":
+                                    if pre == "present":
+                                        _note_drift()
+                                    return set(), False, False, set()
+                                if post != "present":
+                                    fault_keys.add(_lexical_key(base))
+                                    return set(), False, True, fault_keys
+                            relisted = _list_evidence_files(Path(absent_parent), "", "")
+                            if relisted is None:
+                                # A faulted re-list mirrors the
+                                # first listing (Codex R58-2):
+                                # proven disappearance re-observes,
+                                # anything else fails loud. Presence
+                                # is established here (a non-empty
+                                # first listing, or the post-check
+                                # above read present), so the vanish
+                                # always marks.
+                                if _path_state(absent_parent) == "missing":
+                                    _note_drift()
+                                    return set(), False, False, set()
+                                fault_keys.add(_lexical_key(base))
+                                return set(), False, True, fault_keys
+                            if {entry.name for entry in relisted} != {
+                                entry.name for entry in listed
+                            }:
+                                _note_drift()
+                                return set(), False, False, set()
                         names.update(companions)
                         continue
                     # Companion-only base (Claude Q3 M3): rewrites may
@@ -20417,92 +20907,103 @@ def sweep_orphans(
                         return set(), False, True, fault_keys
                     names.update(companions)
                     continue
-                if _lexical_key(base) in dependents:
-                    base_lexical = _lexical_key(base)
-                    try:
-                        base_lstat = os.lstat(base)
-                    except OSError:
-                        return _fail(base_lexical)
-                    if stat.S_ISLNK(base_lstat.st_mode):
+                if mapped is not None:
+                    if absent_parent is not None:
+                        # Contradictory maps (no construction puts a
+                        # base in both): withhold as unverified
+                        # rather than picking a side.
+                        return set(), False, False, set()
+                    # Adopted single-listing render (Codex
+                    # R54-1/R54-2): one adopted-directory listing
+                    # decides both the name and its companions, so
+                    # no gate-then-list gap can omit companions
+                    # silently and no silent skip can strand them
+                    # into a partial offer. An unavailable adopted
+                    # target re-observes; a listing fault fails.
+                    # The snapshot runs before the dependent shape
+                    # check (Codex R55-3): a mapped dependent
+                    # whose adopted target is unavailable
+                    # re-observes instead of faulting on the live
+                    # miss.
+                    if not _resolved_inside(mapped):
+                        _outside = _outside_key(base, mapped)
                         warnings.warn(
-                            f"archival preview found dependent {base_lexical} as a link "
-                            "(dependents must be regular files); archival inventory "
-                            "keeps the family in place; exit: investigate the directory "
+                            f"archival preview found a removal candidate outside the "
+                            f"counters directory ({_outside}); archival inventory keeps "
+                            "the family in place; exit: investigate the directory "
                             "layout before archiving",
                             UserWarning,
                             stacklevel=3,
                         )
-                        return _fail(base_lexical)
-                    if not stat.S_ISREG(base_lstat.st_mode):
+                        return _fail(_outside)
+                    base_key = _key(mapped)
+                    stem = os.path.basename(mapped)
+                    present, mapped_companions = _adopted_snapshot(mapped, stem, base_key)
+                    if mapped_companions is None:
+                        return set(), False, True, fault_keys
+                    if not present:
+                        return set(), False, False, set()
+                    if _lexical_key(base) in dependents:
+                        shape_failed = _check_dependent_shape(base)
+                        if shape_failed is not None:
+                            return shape_failed
+                    names.add(base_key)
+                    names.update(mapped_companions)
+                else:
+                    if _lexical_key(base) in dependents:
+                        shape_failed = _check_dependent_shape(base)
+                        if shape_failed is not None:
+                            return shape_failed
+                    if absent_parent is not None:
+                        # A base resolving now that was absent at adoption
+                        # (Codex R48-1): a transient redirect made it
+                        # appear -- withhold as unverified (never render
+                        # the transient target); the drift check
+                        # re-observes.
+                        return set(), False, False, set()
+                    resolved_base = _resolve(base)
+                    if resolved_base is None:
+                        return _fail(_lexical_key(base))
+                    if not _resolved_inside(resolved_base):
+                        _outside = _outside_key(base, resolved_base)
                         warnings.warn(
-                            f"archival preview found dependent {base_lexical} not as a "
-                            "regular file (dependents must be regular files); archival "
-                            "inventory keeps the family in place; exit: investigate the "
+                            f"archival preview found a removal candidate outside the "
+                            f"counters directory ({_outside}); archival inventory keeps "
+                            "the family in place; exit: investigate the directory "
+                            "layout before archiving",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+                        return _fail(_outside)
+                    base_key = _key(resolved_base)
+                    names.add(base_key)
+                    # The enumerated directory IS the checked value's
+                    # parent (Codex R43-1): used directly, never
+                    # re-resolved -- a second resolution is exactly what
+                    # a mid-pass swap could disagree with. A base
+                    # resolving to the root itself (a symlink to the
+                    # counters dir) has its parent outside, so it warns
+                    # and fails instead of listing outside files.
+                    enumerated = Path(resolved_base).parent
+                    if not _resolved_inside(str(enumerated)):
+                        warnings.warn(
+                            f"archival preview found {base_key} with its parent "
+                            "outside the counters directory; archival inventory "
+                            "keeps the family in place; exit: investigate the "
                             "directory layout before archiving",
                             UserWarning,
                             stacklevel=3,
                         )
-                        return _fail(base_lexical)
-                    if not stat.S_ISDIR(base_lstat.st_mode) and base_lstat.st_nlink > 1:
-                        warnings.warn(
-                            f"archival preview found dependent {base_lexical} with more "
-                            "than one link; archival inventory keeps the family in "
-                            "place; exit: investigate the directory layout before "
-                            "archiving",
-                            UserWarning,
-                            stacklevel=3,
-                        )
-                        return _fail(base_lexical)
-                if absent_parent is not None:
-                    # A base resolving now that was absent at adoption
-                    # (Codex R48-1): a transient redirect made it
-                    # appear -- withhold as unverified (never render
-                    # the transient target); the drift check
-                    # re-observes.
-                    return set(), False, False, set()
-                resolved_base = _resolve(base)
-                if resolved_base is None:
-                    return _fail(_lexical_key(base))
-                if not _resolved_inside(resolved_base):
-                    _outside = _outside_key(base, resolved_base)
-                    warnings.warn(
-                        f"archival preview found a removal candidate outside the "
-                        f"counters directory ({_outside}); archival inventory keeps "
-                        "the family in place; exit: investigate the directory "
-                        "layout before archiving",
-                        UserWarning,
-                        stacklevel=3,
-                    )
-                    return _fail(_outside)
-                base_key = _key(resolved_base)
-                names.add(base_key)
-                # The enumerated directory IS the checked value's
-                # parent (Codex R43-1): used directly, never
-                # re-resolved -- a second resolution is exactly what
-                # a mid-pass swap could disagree with. A base
-                # resolving to the root itself (a symlink to the
-                # counters dir) has its parent outside, so it warns
-                # and fails instead of listing outside files.
-                enumerated = Path(resolved_base).parent
-                if not _resolved_inside(str(enumerated)):
-                    warnings.warn(
-                        f"archival preview found {base_key} with its parent "
-                        "outside the counters directory; archival inventory "
-                        "keeps the family in place; exit: investigate the "
-                        "directory layout before archiving",
-                        UserWarning,
-                        stacklevel=3,
-                    )
-                    return _fail(base_key)
-                # Companion stems come from the VERIFIED basename
-                # (Codex R43-2): searching under the alias stem
-                # beside the target directory omits the target's
-                # rewrites -- the exact strand the alias fix closes.
-                stem = os.path.basename(resolved_base)
-                companions = _validated_companions(enumerated, stem, base_key)
-                if companions is None:
-                    return set(), False, True, fault_keys
-                names.update(companions)
+                        return _fail(base_key)
+                    # Companion stems come from the VERIFIED basename
+                    # (Codex R43-2): searching under the alias stem
+                    # beside the target directory omits the target's
+                    # rewrites -- the exact strand the alias fix closes.
+                    stem = os.path.basename(resolved_base)
+                    companions = _validated_companions(enumerated, stem, base_key)
+                    if companions is None:
+                        return set(), False, True, fault_keys
+                    names.update(companions)
                 if stem.startswith(PROBE_CONSUMED_PREFIX):
                     slot = _marker_slot_name(stem)
                     if slot is None:
@@ -20515,46 +21016,62 @@ def sweep_orphans(
 
         def _sample_dirs(
             dirs: Collection[Path | str],
-        ) -> dict[str, tuple[str, int]] | None:
+        ) -> dict[str, tuple[str, int, int]] | None:
             """Resolution-plus-clock sample for fixed directories (Codex R44-3).
 
             Each entry records the strict resolution AND the
-            resolved directory's clock, keyed lexically. None when
+            resolved directory's change clock (mtime plus
+            ctime, Claude Q3 L1), keyed lexically. None when
             any directory is unresolvable or unstatable (fail
             closed: the caller treats it as drift). Never raises.
             """
-            sample: dict[str, tuple[str, int]] = {}
+            sample: dict[str, tuple[str, int, int]] = {}
             for directory in dirs:
                 try:
                     resolved = os.path.realpath(directory, strict=True)
                 except (OSError, RuntimeError, ValueError):
                     return None
-                mtime = _dir_mtime_ns(Path(resolved))
-                if mtime is None:
+                clock = _dir_change_ns(Path(resolved))
+                if clock is None:
                     return None
-                sample[os.fspath(directory)] = (resolved, mtime)
+                sample[os.fspath(directory)] = (resolved, clock[0], clock[1])
             return sample
 
         def _bracket_sample(
             bases: Collection[Path],
-        ) -> dict[str, tuple[str, int]] | None:
+        ) -> dict[str, tuple[str, int, int]] | None:
             """Bracket sample for archival bases (Claude Q3 L6, Codex R44-3).
 
             Root, registrations, and every base parent, keyed
             lexically (each entry records the strict resolution
-            AND the clock): clocks catch rewrite arrivals and
-            departures, resolution strings catch mid-pass parent
-            swaps deterministically (no stat tuple distinguishes
-            a re-symlink -- inodes reuse, ticks collide -- but
-            the resolved path differs). Enumerated directories
+            AND the change clock): clocks catch rewrite arrivals
+            and departures, resolution strings catch mid-pass
+            parent swaps deterministically (no stat tuple
+            distinguishes a re-symlink -- inodes reuse, ticks
+            collide -- but the resolved path differs). The clock
+            pairs mtime with ctime (Claude Q3 L1): ctime is
+            owner-unrewritable, so a rename-away-and-restore
+            plus utime still drifts. Enumerated directories
             sample alongside the lexical anchors: the helper
             enumerates beside the RESOLVED base/parent, so a
             rewrite arriving beside a symlink's target bumps a
-            clock no lexical parent owns. Unresolvable bases skip
-            their enumerated entry (the helper faults on them,
-            which the exit precedence routes). None when any
-            sampled directory is unresolvable or unstatable (fail
-            closed). Never raises.
+            clock no lexical parent owns. Each enumerated
+            directory's ancestor chain up to the counters root
+            samples too (Codex R56-1): a rename-away-and-restore
+            of any ancestor below root leaves resolutions and
+            the directory's own clock unchanged, so only the
+            renamed entry's parent clock moves -- without it a
+            transient redirect plus a shared render listing
+            publishes an incomplete preview. Ancestors above
+            the counters root stay unsampled (unrelated box
+            activity must not force re-observation), as does the
+            root's own entry: renaming root away and back moves
+            only root's parent clock, which is deliberately
+            outside the sample (Claude Q3 L1). Unresolvable
+            bases skip their enumerated entry (the helper faults
+            on them, which the exit precedence routes). None when
+            any sampled directory is unresolvable or unstatable
+            (fail closed). Never raises.
             """
             anchors: list[Path | str] = [root, root / REGISTRY_DIRNAME]
             anchors.extend(base.parent for base in bases)
@@ -20570,7 +21087,32 @@ def sweep_orphans(
                     except (OSError, RuntimeError, ValueError):
                         continue
                     anchors.append(os.path.dirname(resolved_base))
-            return _sample_dirs(anchors)
+            try:
+                resolved_root = os.path.realpath(root, strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return None
+            chained: list[Path | str] = list(anchors)
+            for anchor in anchors:
+                try:
+                    current = os.path.realpath(anchor, strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                while True:
+                    parent = os.path.dirname(current)
+                    if parent == current or parent == resolved_root:
+                        break
+                    try:
+                        inside = os.path.commonpath([resolved_root, parent]) == resolved_root
+                    except ValueError:
+                        break
+                    if not inside:
+                        break
+                    chained.append(parent)
+                    current = parent
+            # Deduplicate by spelling (Codex R57 minor): Path
+            # and str keys for the same directory would
+            # otherwise sample twice.
+            return _sample_dirs(dict.fromkeys(os.fspath(anchor) for anchor in chained))
 
         def _verify_singleton(
             path: Path, pair: Literal["body", "name", "none"]
@@ -20996,6 +21538,19 @@ def sweep_orphans(
                 if hit_verdict == "join" and hit_resolved is not None:
                     link_bases.append(hit)
                     adopted_hits.append(hit_resolved)
+                    # Prefix-hit spellings pin their adopted target
+                    # (Codex R52-2): the spelling joined the render
+                    # bases while the target rode only the late set
+                    # comparison, so a redirect through an unsampled
+                    # ancestor during rendering substituted an
+                    # in-root rewrite the post-restore rescan then
+                    # approved. Recording pins the render and arms
+                    # the late re-resolution; the hit recorder
+                    # skips the identity scan (Codex R53-2) but
+                    # keeps exact-key transitions conflicting
+                    # (Codex R54-3).
+                    if _record_hit_identity(os.fspath(hit), hit_resolved):
+                        return False, False
                 elif hit_verdict != "missing":
                     _voice_base_verdict(hit_verdict, hit, hit_resolved, link_root)
                     return False, True
@@ -21241,9 +21796,10 @@ def sweep_orphans(
                     # would rerun forever (their bytes never parse
                     # under the lexical rule), while archiving them
                     # would file healthy evidence as torn. The
-                    # operator fixes the link (or archives the
-                    # targets directly); the listed set archives
-                    # without them.
+                    # operator fixes or removes the link (Codex
+                    # R51-3: archiving a target alone leaves a
+                    # dangling alias the census flags); the listed
+                    # set archives without them.
                     misplaced = ", ".join(
                         f"{key} (target "
                         f"{os.path.basename(member_targets[os.fspath(root / key)] or '')})"
@@ -21294,17 +21850,32 @@ def sweep_orphans(
                         if misplaced_keys
                         else ""
                     )
+                    if member_names:
+                        action = (
+                            "archive the listed members and their rewrite companions "
+                            "after writers and collectors are quiescent (stop all runs "
+                            "and collects on this directory, re-read each listed member "
+                            "and verify it is still torn, re-inventory companions, and "
+                            "move the verified fresh set; listed names are diagnostic "
+                            "only), then collect the probe evidence and rerun (keep "
+                            "the probe: it carries recoverable calls; collect "
+                            f"healed members in place): {named}"
+                        )
+                    else:
+                        # Nothing archivable (all members excluded
+                        # as misplaced): the archive clause would
+                        # instruct archiving an empty list (Claude
+                        # Q3 nit), so the exit names collection
+                        # directly.
+                        action = (
+                            "collect the probe evidence and rerun (keep the "
+                            "probe: it carries recoverable calls; collect "
+                            "healed members in place)"
+                        )
                     warnings.warn(
                         f"{display} shares its probe prefix with torn evidence while "
                         "probe or marker evidence exists under it; retained as ambiguity "
-                        f"evidence; exit: {prerequisite}archive the listed members and "
-                        "their rewrite "
-                        "companions after writers and collectors are quiescent (stop all runs "
-                        "and collects on this directory, re-read each listed member and verify "
-                        "it is still torn, re-inventory companions, and move the verified fresh "
-                        "set; listed names are diagnostic only), then collect the probe evidence "
-                        "and rerun (keep the probe: it carries recoverable calls; collect "
-                        f"healed members in place): {named}",
+                        f"evidence; exit: {prerequisite}{action}",
                         UserWarning,
                         stacklevel=3,
                     )
@@ -21522,6 +22093,31 @@ def sweep_orphans(
                     adopted_identities[lexical] = value
                     identity_conflicted = True
                     return True
+                return False
+
+            def _record_hit_identity(lexical: str, value: str) -> bool:
+                """Record one hit identity; True on exact-key transition.
+
+                Prefix hits store without the identity scan
+                (Codex R53-2: the scan is quadratic over an
+                uncapped listing), but exact-key transitions
+                still conflict (Codex R54-3): dual-shape
+                spellings (journal and rewrite hit at once) can
+                be recorded absent before the prefix listing and
+                present by it. Same conflict semantics as the
+                exact-key arm of :func:`_record_identity`;
+                different-spelling same-file pairs rely on the
+                late re-resolution drift backstop (rewrite-hit
+                shapes never match another record site, but the
+                same string can be recorded twice). Never
+                raises.
+                """
+                nonlocal identity_conflicted
+                if lexical in adopted_identities and adopted_identities[lexical] != value:
+                    adopted_identities[lexical] = value
+                    identity_conflicted = True
+                    return True
+                adopted_identities[lexical] = value
                 return False
 
             registry_verdict, registry_resolved = _verify_singleton(registry_base, "body")
@@ -21894,8 +22490,13 @@ def sweep_orphans(
                     # could name a transient target under a redirect
                     # that its twin record never sees.
                     verified_targets[leg_lexical] = leg_adopted
+            move_drift_marks: list[bool] = []
             move_names, move_verified, move_faulted, _ = _move_rewrite_names(
-                move_bases, frozenset(dependents), verified_targets, absent_legs
+                move_bases,
+                frozenset(dependents),
+                verified_targets,
+                absent_legs,
+                drift_out=move_drift_marks,
             )
             move_verified = move_verified and family_ok
             move_faulted = move_faulted or family_faulted
@@ -22057,7 +22658,10 @@ def sweep_orphans(
             )
             # Proven drift (Codex R45-4): a failed sample is UNKNOWN,
             # not drift -- the fault exit stands unless two successful
-            # observations actually differ.
+            # observations actually differ. Render-time drift marks
+            # ride along (Codex R58-2): a listing mismatch or a
+            # vanish between two live checks outranks co-faults,
+            # mirroring member_drifted on the member arm.
             proven_drift = (
                 (move_before is not None and move_after is not None and move_before != move_after)
                 or (
@@ -22066,6 +22670,7 @@ def sweep_orphans(
                     and early_before != early_after
                 )
                 or identity_conflicted
+                or bool(move_drift_marks)
             )
             bracket_clean = samples_ok and not proven_drift
             move_verified = move_verified and bracket_clean
