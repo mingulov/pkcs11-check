@@ -24,6 +24,10 @@ on:
         required: false
         type: boolean
         default: true
+      expected_sha:
+        description: "Rehearsed main head SHA (required for production runs; dry runs omit it)"
+        required: false
+        type: string
 
 permissions: {}
 
@@ -42,6 +46,25 @@ jobs:
     outputs:
       version: ${{ steps.normalize.outputs.version }}
     steps:
+      - name: Require the rehearsed head SHA on production runs
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry run: expected_sha not required."
+            exit 0
+          fi
+          if [ -z "$EXPECTED_SHA" ]; then
+            echo "::error::production runs require the rehearsed expected_sha input"
+            exit 1
+          fi
+          if [ "$EXPECTED_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::expected_sha $EXPECTED_SHA != dispatched $GITHUB_SHA: main moved since rehearsal"
+            exit 1
+          fi
+          echo "head $GITHUB_SHA matches the rehearsed SHA."
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0

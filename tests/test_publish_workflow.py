@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
@@ -198,3 +201,73 @@ def test_github_release_rerun_verifies_and_heals_assets() -> None:
     # would swallow its failure.
     assert '.state == "uploaded"' in run_body
     assert 'is_draft="$(gh release view' in run_body
+
+
+_EXPECTED_SHA_STEP = "Require the rehearsed head SHA on production runs"
+
+
+def _expected_sha_step() -> dict[str, Any]:
+    verify = _workflow()["jobs"]["verify"]
+    matches = [step for step in verify["steps"] if step.get("name") == _EXPECTED_SHA_STEP]
+    assert len(matches) == 1
+    return cast(dict[str, Any], matches[0])
+
+
+def _posix_shell() -> str | None:
+    for candidate in (shutil.which("sh"), shutil.which("bash")):
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def test_production_runs_require_the_rehearsed_sha_before_tag() -> None:
+    """B9: verify rejects a production dispatch whose head moved since rehearsal."""
+    workflow = _workflow()
+    sha_input = workflow["on"]["workflow_dispatch"]["inputs"]["expected_sha"]
+    assert sha_input["required"] == "false"
+    assert sha_input["type"] == "string"
+    assert "rehearsed" in sha_input["description"].lower()
+
+    step = _expected_sha_step()
+    assert step["env"] == {
+        "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+        "DRY_RUN": "${{ inputs.dry_run }}",
+    }
+    # Fail fast: the gate needs no checkout and runs before anything else in
+    # verify, which the tag job needs -- no tag without a matching SHA.
+    assert workflow["jobs"]["verify"]["steps"][0]["name"] == _EXPECTED_SHA_STEP
+    assert "verify" in workflow["jobs"]["tag"]["needs"]
+    run_body = str(step["run"])
+    assert "::error::production runs require the rehearsed expected_sha input" in run_body
+    assert "main moved since rehearsal" in run_body
+    assert "matches the rehearsed SHA" in run_body
+
+
+@pytest.mark.skipif(_posix_shell() is None, reason="sha gate is shell")
+@pytest.mark.parametrize(
+    ("dry_run", "expected_sha", "github_sha", "want_rc", "want_out"),
+    [
+        ("false", "abc123", "abc123", 0, "matches the rehearsed SHA"),
+        ("false", "", "abc123", 1, "require the rehearsed expected_sha"),
+        ("false", "deadbee", "abc123", 1, "!= dispatched"),
+        ("true", "", "abc123", 0, "not required"),
+    ],
+    ids=["match", "missing", "mismatch", "dry-run-omitted"],
+)
+def test_expected_sha_gate_arms(
+    dry_run: str, expected_sha: str, github_sha: str, want_rc: int, want_out: str
+) -> None:
+    """B9: all four sha-gate arms, executed -- not just pinned as text."""
+    shell = _posix_shell()
+    assert shell is not None
+    body = str(_expected_sha_step()["run"])
+    assert "${{" not in body, "test env must cover every variable in the gate"
+    env = dict(
+        os.environ,
+        EXPECTED_SHA=expected_sha,
+        DRY_RUN=dry_run,
+        GITHUB_SHA=github_sha,
+    )
+    proc = subprocess.run([shell, "-c", body], capture_output=True, text=True, check=False, env=env)
+    assert proc.returncode == want_rc, proc.stdout + proc.stderr
+    assert want_out in proc.stdout + proc.stderr
