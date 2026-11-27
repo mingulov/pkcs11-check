@@ -1584,3 +1584,34 @@ def test_float_following_attempt_does_not_establish_framing(tmp_path: Path) -> N
     assert payload["by_process"] == [
         {"pid": 100, "isolation": "file", "total_calls": 5, "complete": True}
     ]
+
+
+def test_extract_orphan_keys_survive_session_supersession(tmp_path: Path) -> None:
+    # #88R36-6: committed claims route replayed loss through orphan_keys
+    # precisely because the extractor unions them before the
+    # authoritative-session skip -- lost_keys and the scalar below do
+    # not survive, orphan_keys do.
+    session = _session_record(100, 10)
+    session.update({"worker_uuid": "a" * 32, "run_id": _R1})
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            session,
+            {
+                "$report_type": "CallCountersPartial",
+                "worker_uuid": "a" * 32,
+                "truncated": True,
+                "total_calls": 0,
+                "by_module": {},
+                "run_id": _R1,
+                "orphan_keys": [{"parent_uuid": "b" * 32, "probe_seq": 1}],
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["probes_lost"] == 1
+    assert payload["probes_detail"] == [{"worker_uuid": "b" * 32, "probe_seq": 1, "status": "lost"}]
