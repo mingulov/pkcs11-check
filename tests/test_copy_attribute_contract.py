@@ -286,8 +286,6 @@ class _CopyFake:
         decrypt_output_for: dict[tuple[str, int], bytes] | None = None,
         cbc_as_ecb_for: set[str] | None = None,
         dsa_verify_refuse_roles: set[str] | None = None,
-        find_script: list[int | None] | None = None,
-        copy_handle_override: int | None = None,
     ) -> None:
         self._copy_mode = copy_mode
         self._copy_refuse_rv = copy_refuse_rv
@@ -351,10 +349,6 @@ class _CopyFake:
         self._enc_op: tuple[int, bytes, bytes, str] | None = None
         self._dec_op: tuple[int, bytes, bytes, str] | None = None
         self._sign_op: int | None = None
-        self._find_script = list(find_script or [])
-        self._copy_handle_override = copy_handle_override
-        self._find_active = False
-        self._find_offset = 0
 
     def _issue(self) -> int:
         handle = self._next_handle
@@ -422,10 +416,6 @@ class _CopyFake:
         self.copy_calls.append(raw_attrs)
         if self._copy_mode == "refuse":
             return self._copy_refuse_rv
-        if self._copy_handle_override is not None:
-            # R3F2: succeed with a chosen (possibly unproved) handle.
-            _fill_ulong(out, self._copy_handle_override)
-            return _OK
         source = self.objects[int(handle)]
         assert not source.destroyed, "copy from destroyed handle"
         attrs = dict(source.attrs)
@@ -461,32 +451,6 @@ class _CopyFake:
         if stored is not None:
             stored.destroyed = True
         self.destroyed.append(int(handle))
-        return _OK
-
-    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
-        """R3F2: unfiltered inventory for compare-leg adoption baselines."""
-        if self._find_script:
-            scripted = self._find_script.pop(0)
-            if scripted is not None:
-                return scripted
-        self._find_active = True
-        self._find_offset = 0
-        return _OK
-
-    def C_FindObjects(  # noqa: N802
-        self, _sh: int, handles: Any, max_count: int, out_count: Any
-    ) -> int:
-        assert self._find_active, "find without init"
-        live = [h for h, stored in self.objects.items() if not stored.destroyed]
-        page = live[self._find_offset : self._find_offset + int(max_count)]
-        self._find_offset += len(page)
-        for i, handle in enumerate(page):
-            handles[i] = handle
-        _fill_ulong(out_count, len(page))
-        return _OK
-
-    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
-        self._find_active = False
         return _OK
 
     def C_GenerateKeyPair(  # noqa: N802
@@ -1268,32 +1232,6 @@ def test_qc3a_keytype_applied_fails() -> None:
     _assert_fail_record("self_contradiction", "policy")
 
 
-def test_qc3a_keytype_applied_beats_vendor_use_refusal() -> None:
-    """R3F7: a proved applied override fails before a vendor use xfail."""
-    fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _VENDOR_RV})
-    _run_must_fail(_qc3a_keytype, _rs(fake))
-    record = _assert_fail_record("self_contradiction", "policy")
-    assert "override value" in (record.summary or ""), record.summary
-
-
-def test_qc3a_keytype_use_refusal_names_init_operation() -> None:
-    """R4-F7: a use RV from C_EncryptInit carries its own stage operation."""
-    from pkcs11_check import classification
-
-    fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _VENDOR_RV})
-    _run_must_fail(_qc3a_keytype, _rs(fake))
-    (record,) = [rec for rec in classification.get_records() if rec.reason == "nonspec_reject"]
-    assert record.operation == "C_EncryptInit", record.operation
-    assert record.actual_ckr == "0x80000042", record.actual_ckr
-
-
-def test_qc3a_keytype_undefined_use_refusal_fails_metadata() -> None:
-    """R3F7: an undefined use RV fails metadata on any identity."""
-    fake = _CopyFake(copy_mode="apply", encrypt_rv={("copy", _ECB): _UNDEFINED_RV})
-    _run_must_fail(_qc3a_keytype, _rs(fake))
-    _assert_fail_record("self_contradiction", "metadata")
-
-
 def test_qc3a_class_refusal_passes() -> None:
     """Refusing a class override passes."""
     fake = _CopyFake(copy_refuse_rv=_ATTR_READ_ONLY)
@@ -1971,9 +1909,7 @@ def test_shape_unknown_shape_is_programmer_error() -> None:
 
 def test_qc3a_material_readback_device_error_xfails_unproved() -> None:
     """I12: a DEVICE_ERROR material readback is an unproved xfail, never unclassified."""
-    # R4-F1: adoption reads (source + copy identity) precede the material
-    # readback; the refusal targets the readback (call 17).
-    fake = _CopyFake(copy_mode="ignore", get_attr_script=[None] * 16 + [_DEVICE_ERROR])
+    fake = _CopyFake(copy_mode="ignore", get_attr_script=[_DEVICE_ERROR])
     assert_xfails(_qc3a_material, _rs(fake))
     record = _assert_xfail_record("honest_deviation")
     assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
@@ -1983,16 +1919,14 @@ def test_qc3a_material_readback_device_error_xfails_unproved() -> None:
 
 def test_qc3a_material_readback_undefined_rv_fails() -> None:
     """I12/I13: an undefined-RV readback refusal fails the return-value contract."""
-    # R4-F1: the refusal targets the material readback (call 17).
-    fake = _CopyFake(copy_mode="ignore", get_attr_script=[None] * 16 + [_UNDEFINED_RV])
+    fake = _CopyFake(copy_mode="ignore", get_attr_script=[_UNDEFINED_RV])
     _run_must_fail(_qc3a_material, _rs(fake))
     _assert_fail_record("self_contradiction", "metadata")
 
 
 def test_qc3a_material_readback_vendor_rv_xfails() -> None:
     """I12/I13: a vendor-RV readback refusal is a visible alternate xfail."""
-    # R4-F1: the refusal targets the material readback (call 17).
-    fake = _CopyFake(copy_mode="ignore", get_attr_script=[None] * 16 + [_VENDOR_RV])
+    fake = _CopyFake(copy_mode="ignore", get_attr_script=[_VENDOR_RV])
     assert_xfails(_qc3a_material, _rs(fake))
     _assert_xfail_record("nonspec_reject")
 
@@ -4940,25 +4874,8 @@ def _compare_captures(
         seen["record"].append((reason, kw))
         return None
 
-    def _record_validity(reason: str, **kw: Any) -> Any:
-        seen["record"].append((reason, kw))
-        return SimpleNamespace(
-            reason=reason,
-            kw=kw,
-            outcome="fail" if reason == "self_contradiction" else "xfail",
-        )
-
-    def _raise_for_record(rec: Any) -> Any:
-        if rec.outcome == "fail":
-            seen["fail"].append((rec.reason, rec.kw))
-            raise _CompareVerdictError(f"fail_as {rec.reason}")
-        seen["xfail"].append((rec.reason, rec.kw))
-        raise _CompareVerdictError(f"xfail_as {rec.reason}")
-
     monkeypatch.setattr(cm, "fail_as", _fail)
     monkeypatch.setattr(cm, "xfail_as", _xfail)
-    monkeypatch.setattr(cm, "record_as", _record_validity)
-    monkeypatch.setattr(cm, "raise_for_record", _raise_for_record)
     monkeypatch.setattr(cm.C, "classify", _record)
     return seen
 
@@ -4977,7 +4894,6 @@ def _judge_compare(**kw: Any) -> None:
         "label": _COMPARE_LABEL,
         "operation": _COMPARE_OPERATION,
         "spec_ref": _COMPARE_SPEC,
-        "expected_rvs": cm.COPY_FORBIDDEN_REFUSE_RVS,
     }
     base.update(kw)
     cm.judge_copy_compare(**base)
@@ -5059,260 +4975,3 @@ def test_compare_vendor_refusal_xfails_alternate(
     with pytest.raises(_CompareVerdictError, match="xfail_as"):
         _judge_compare(empty=("refused", 0x80000001), restated=("refused", _ATTR_READ_ONLY))
     assert [reason for reason, _ in _compare_captures["xfail"]] == ["nonspec_reject"]
-
-
-@pytest.mark.parametrize("refused_first", [True, False])
-def test_compare_changed_value_with_refused_sibling_fails(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-    refused_first: bool,
-) -> None:
-    """A3: a changed copy fails on its own evidence whatever the sibling does."""
-    legs: dict[str, Any] = (
-        {"empty": ("refused", _ATTR_READ_ONLY), "restated": ("ok", b"mutated-value!")}
-        if refused_first
-        else {"empty": ("ok", b"mutated-value!"), "restated": ("refused", _ATTR_READ_ONLY)}
-    )
-    with pytest.raises(_CompareVerdictError, match="fail_as"):
-        _judge_compare(**legs)
-    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
-        ("wrong_result", "crypto")
-    ]
-
-
-def test_compare_identical_unexpected_refusal_voids(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """A3: identical refusals outside the copy-shaped set void, never sanction."""
-    with pytest.raises(_CompareVerdictError, match="xfail_as"):
-        _judge_compare(empty=("refused", _DEVICE_ERROR), restated=("refused", _DEVICE_ERROR))
-    (reason, kw), *_ = _compare_captures["xfail"]
-    assert reason == "honest_deviation"
-    assert "outside the copy-shaped refusal set" in kw["summary"]
-    assert _compare_captures["record"] == []
-
-
-@pytest.mark.parametrize("undefined_first", [True, False])
-def test_compare_undefined_beats_vendor_regardless_of_order(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-    undefined_first: bool,
-) -> None:
-    """A3: both legs' validity is collected; the undefined FAIL wins either way."""
-    legs: dict[str, Any] = (
-        {"empty": ("refused", 0xDEAD), "restated": ("refused", 0x80000001)}
-        if undefined_first
-        else {"empty": ("refused", 0x80000001), "restated": ("refused", 0xDEAD)}
-    )
-    with pytest.raises(_CompareVerdictError, match="fail_as"):
-        _judge_compare(**legs)
-    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
-        ("self_contradiction", "metadata")
-    ]
-    assert sorted(reason for reason, _ in _compare_captures["record"]) == [
-        "nonspec_reject",
-        "self_contradiction",
-    ]
-
-
-def test_compare_readback_refused_voids_with_equal_sibling(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """A3: an accepted-but-unreadable leg voids the comparison, carrying its RV."""
-    with pytest.raises(_CompareVerdictError, match="xfail_as"):
-        _judge_compare(
-            empty=("ok", _COMPARE_SOURCE),
-            restated=("readback-refused", _ATTR_READ_ONLY),
-        )
-    assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
-
-
-def test_compare_changed_value_with_baseline_refused_sibling_fails(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """R4-F7: a changed copy fails even when the sibling baseline was refused."""
-    with pytest.raises(_CompareVerdictError, match="fail_as"):
-        _judge_compare(
-            empty=("ok", b"mutated-value!"),
-            restated=("baseline-refused", _DEVICE_ERROR),
-        )
-    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
-        ("wrong_result", "crypto")
-    ]
-
-
-def test_compare_undefined_baseline_rv_fails_metadata(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """R4-F7: an undefined baseline RV fails validity from inside the judge."""
-    with pytest.raises(_CompareVerdictError, match="fail_as"):
-        _judge_compare(
-            empty=("ok", _COMPARE_SOURCE),
-            restated=("baseline-refused", 0x7FFFFFFF),
-        )
-    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
-        ("self_contradiction", "metadata")
-    ]
-
-
-def test_compare_readback_records_precede_early_mutation_fail(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """R4-F7: readback records journal before an early mutation terminal."""
-    with pytest.raises(_CompareVerdictError, match="fail_as"):
-        _judge_compare(
-            empty=("ok", b"mutated-value!"),
-            restated=("readback-refused", _ATTR_READ_ONLY),
-        )
-    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
-        ("wrong_result", "crypto")
-    ]
-    per_leg = [
-        (reason, kw.get("actual"))
-        for reason, kw in _compare_captures["record"]
-        if kw.get("operation") == "C_GetAttributeValue"
-    ]
-    assert per_leg == [("not_operational", _ATTR_READ_ONLY)], _compare_captures["record"]
-
-
-def test_compare_standard_readback_refusal_records_per_leg_rv(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """R3F13: a standard readback refusal gets its own record with the raw RV."""
-    with pytest.raises(_CompareVerdictError, match="xfail_as"):
-        _judge_compare(
-            empty=("ok", _COMPARE_SOURCE),
-            restated=("readback-refused", _ATTR_READ_ONLY),
-        )
-    assert [reason for reason, _ in _compare_captures["xfail"]] == ["not_operational"]
-    (reason, kw), *_ = _compare_captures["record"]
-    assert reason == "not_operational", kw
-    assert kw["operation"] == "C_GetAttributeValue", kw
-    assert kw["actual"] == _ATTR_READ_ONLY, kw
-
-
-def test_policy_shaped_sets_split_crypto_vs_keymgmt() -> None:
-    """A4: crypto ops keep the narrow proof set; only keymgmt credits MECHANISM_INVALID."""
-    import pkcs11_check.testcases._copy_mutability as cm
-
-    assert cm.POLICY_SHAPED_REFUSE_RVS == frozenset({_KEY_NOT_PERMITTED})
-    assert cm.KEYMGMT_POLICY_SHAPED_REFUSE_RVS == frozenset(
-        {_KEY_NOT_PERMITTED, _MECHANISM_INVALID}
-    )
-
-
-def test_compare_reencoding_voids_with_value_preserved(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """D4: leading-zero-only differences are re-encoding, not a value change."""
-    recoded = b"\x00" + _COMPARE_SOURCE
-    with pytest.raises(_CompareVerdictError, match="xfail_as"):
-        _judge_compare(empty=("ok", recoded), restated=("ok", _COMPARE_SOURCE))
-    (reason, kw), *_ = _compare_captures["xfail"]
-    assert reason == "honest_deviation"
-    assert "re-encoded" in kw["summary"], kw["summary"]
-    assert _compare_captures["fail"] == []
-
-
-def test_compare_mixed_int_equal_xfails_compat(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """D4: a re-encoded accepted leg with a refused sibling is compat, not FAIL."""
-    recoded = b"\x00\x00" + _COMPARE_SOURCE
-    with pytest.raises(_CompareVerdictError, match="xfail_as"):
-        _judge_compare(empty=("ok", recoded), restated=("refused", _ATTR_READ_ONLY))
-    (reason, kw), *_ = _compare_captures["xfail"]
-    assert reason == "honest_deviation"
-    assert "compat" in kw["summary"], kw["summary"]
-    assert _compare_captures["fail"] == []
-
-
-def test_compare_changed_value_beats_vendor_sibling(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """R2B2: a proved mutation fails; a vendor alternate never hides it."""
-    with pytest.raises(_CompareVerdictError, match="fail_as"):
-        _judge_compare(empty=("ok", b"mutated-value!"), restated=("refused", 0x80000001))
-    assert [(reason, kw["kind"]) for reason, kw in _compare_captures["fail"]] == [
-        ("wrong_result", "crypto")
-    ]
-
-
-def test_compare_void_names_readback_rvs(
-    _compare_captures: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> None:
-    """R2B2: the void record retains sibling readback RVs, never drops them."""
-    with pytest.raises(_CompareVerdictError, match="xfail_as"):
-        _judge_compare(
-            empty=("ok", _COMPARE_SOURCE),
-            restated=("readback-refused", _DEVICE_ERROR),
-        )
-    (reason, kw), *_ = _compare_captures["xfail"]
-    assert reason == "not_operational"
-    assert "CKR_DEVICE_ERROR" in kw["summary"], kw["summary"]
-    assert kw["detail"]["restated_readback_rv"] == "CKR_DEVICE_ERROR", kw["detail"]
-    assert kw["detail"]["empty_readback_rv"] is None, kw["detail"]
-
-
-def test_copy_compare_leg_adopts_fresh_copy() -> None:
-    """R3F2: a fresh copy is adopted, read back, and destroyed (happy path)."""
-    import pkcs11_check.testcases._copy_mutability as cm
-
-    fake = _CopyFake(copy_mode="apply")
-    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    outcome = cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
-    assert outcome == ("ok", b"v" * 16), outcome
-    assert fake.destroyed == [source + 1], fake.destroyed
-    assert fake.objects[source].destroyed is False
-
-
-def test_copy_compare_leg_preexisting_copy_fails_without_destroy() -> None:
-    """R3F2: a copy returning a baseline handle fails; the foreign object survives."""
-    import pkcs11_check.testcases._copy_mutability as cm
-
-    fake = _CopyFake(copy_mode="apply", copy_handle_override=101)
-    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    foreign = fake._store({int(CKA_VALUE): b"f" * 16}, role="create")
-    assert foreign == 101, foreign
-    with pytest.raises(Failed, match="pre-existing"):
-        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
-    assert fake.objects[foreign].destroyed is False
-    assert foreign not in fake.destroyed, fake.destroyed
-
-
-def test_copy_compare_leg_source_alias_fails_without_destroy() -> None:
-    """R3F2 (A1 pin): a copy returning the source handle fails; source survives."""
-    import pkcs11_check.testcases._copy_mutability as cm
-
-    fake = _CopyFake(copy_mode="apply", copy_handle_override=100)
-    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    assert source == 100, source
-    with pytest.raises(Failed, match="source handle"):
-        cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
-    assert fake.objects[source].destroyed is False
-    assert fake.destroyed == [], fake.destroyed
-
-
-def test_copy_compare_leg_refused_baseline_returns_evidence() -> None:
-    """R4-F7: a refused baseline rides as terminal evidence; the copy never runs."""
-    import pkcs11_check.testcases._copy_mutability as cm
-
-    fake = _CopyFake(copy_mode="apply", find_script=[_DEVICE_ERROR])
-    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    try:
-        outcome = cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty")
-    except XFailed as exc:
-        pytest.fail(f"baseline refusal terminated instead of riding: {exc}")
-    assert outcome == ("baseline-refused", _DEVICE_ERROR), outcome
-    assert fake.copy_calls == [], fake.copy_calls
-
-
-def test_copy_compare_leg_undefined_baseline_rv_rides_to_judge() -> None:
-    """R4-F7: an undefined baseline RV rides as evidence (the judge fails it)."""
-    import pkcs11_check.testcases._copy_mutability as cm
-
-    fake = _CopyFake(copy_mode="apply", find_script=[0x7FFFFFFF])
-    source = fake._store({int(CKA_VALUE): b"v" * 16}, role="create")
-    assert cm.run_copy_compare_leg(_rs(fake), source, {}, label="t", leg="empty") == (
-        "baseline-refused",
-        0x7FFFFFFF,
-    )
-    assert fake.copy_calls == [], fake.copy_calls

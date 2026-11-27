@@ -38,10 +38,6 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 
 _EVENT_PREFIX = "ATTRIBUTE_EVENT:"
-# BREAK is terminal like a setup marker: no CKR measurement follows it.
-_BREAK_PREFIX = "BREAK:"
-# A noted deviation is likewise terminal: the child judged without a CKR.
-_DEVIATION_XFAIL_PREFIX = "DEVIATION_XFAIL:"
 _CKR_LINE_RE = re.compile(r"^CKR:0x([0-9a-fA-F]+)$")
 _CKR_HEX_WIDTH = ctypes.sizeof(CK_ULONG) * 2
 _CKR_MAX = (1 << (ctypes.sizeof(CK_ULONG) * 8)) - 1
@@ -449,15 +445,9 @@ def _check_permission_probe(
     # the shared subprocess helper. Do not manufacture missing-event/CKR
     # harness findings for a child that never reached the measurement.
     lines = out.splitlines()
-    setup_lines = [
-        line
-        for line in lines
-        if line.startswith("SETUP_XFAIL:") or line.startswith("SETUP_REFUSED:")
-    ]
+    setup_lines = [line for line in lines if line.startswith("SETUP_XFAIL:")]
     event_lines = [line for line in lines if line.startswith(_EVENT_PREFIX)]
     ckr_lines = [line for line in lines if line.startswith("CKR:")]
-    break_lines = [line for line in lines if line.startswith(_BREAK_PREFIX)]
-    deviation_lines = [line for line in lines if line.startswith(_DEVIATION_XFAIL_PREFIX)]
     if setup_lines and not event_lines and not ckr_lines:
         assert_ckr_subprocess_ok(rc, out, err, context=context)
         return
@@ -466,11 +456,7 @@ def _check_permission_probe(
         label=context,
         operation=operation,
         attribute=attribute,
-        completed=rc == 0
-        and SUBPROCESS_TIMEOUT_MARKER not in err
-        and not setup_lines
-        and not break_lines
-        and not deviation_lines,
+        completed=rc == 0 and SUBPROCESS_TIMEOUT_MARKER not in err and not setup_lines,
     )
     # The child evidence is already recorded. A signal/SEH/timeout is processed
     # next and therefore remains the strongest terminal disposition.

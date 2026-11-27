@@ -1255,7 +1255,7 @@ class TestCensusEngagement:
 
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
-        recorded = tmp_path / "state.json.counters.abcdef12"
+        recorded = tmp_path / "recorded-counters"
         state_file = tmp_path / "state.json"
         save_run_state(
             state_file,
@@ -1330,7 +1330,7 @@ class TestCensusEngagement:
 
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
-        recorded = tmp_path / "state.json.counters.abcdef12"
+        recorded = tmp_path / "recorded-counters"
         seal(recorded, reason="interrupted-run")
         assert is_sealed(recorded) is True
         state_file = tmp_path / "state.json"
@@ -1394,7 +1394,7 @@ class TestCensusEngagement:
 
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
-        recorded = tmp_path / "state.json.counters.abcdef12"
+        recorded = tmp_path / "recorded-counters"
         state_file = tmp_path / "state.json"
         save_run_state(
             state_file,
@@ -1517,7 +1517,7 @@ class TestCensusEngagement:
 
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
-        recorded = tmp_path / "state.json.counters.abcdef12"
+        recorded = tmp_path / "recorded-counters"
         state_file = tmp_path / "state.json"
         save_run_state(
             state_file,

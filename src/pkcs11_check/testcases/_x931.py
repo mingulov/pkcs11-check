@@ -83,19 +83,9 @@ def verify_x931_signature(sig: bytes, e: int, n: int, message: bytes, hash_name:
     Independent oracle for module-produced X9.31 signatures: None when the
     signature is a well-formed X9.31 encoding of the message digest, else a
     reason string.
-
-    Conforming signers may emit min(s, n - s); like OpenSSL
-    ``RSA_padding_check_X931``, the representative whose low nibble is the
-    0xCC trailer's (0xC) is the one to check.
     """
     k = (n.bit_length() + 7) // 8
     if len(sig) != k:
         return f"signature length {len(sig)}, expected modulus size {k}"
-    s = int.from_bytes(sig, "big")
-    if s >= n:
-        return f"representative {s} out of range for modulus {n}"
-    m = pow(s, e, n)
-    if m & 0xF != _FINAL_TRAILER_BYTE & 0xF:
-        m = n - m
-    recovered = m.to_bytes(k, "big")
+    recovered = pow(int.from_bytes(sig, "big"), e, n).to_bytes(k, "big")
     return check_x931_block(recovered, k, message, hash_name)

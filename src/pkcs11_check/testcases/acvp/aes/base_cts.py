@@ -28,7 +28,6 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CTS,
     CKR_DEVICE_ERROR,
     CKR_OK,
-    CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases._operability import (
     Operability,
@@ -360,7 +359,7 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
                     attempted.append(
                         _attempt_detail(
                             stage="operation",
-                            operation=getattr(exc, "operation", None) or "C_Encrypt",
+                            operation="C_Encrypt",
                             key_bits=key_bits,
                             case=case,
                             ckr=exc.rv,
@@ -425,27 +424,10 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
                 detail={"attempts": attempted},
             )
         if operation_attempted:
-            # R9-4: pin the supplying attempt (the detector chose the
-            # operation-stage RV, so reporting must name it even when a
-            # later setup attempt shares the RV).
-            supplying = next(
-                (
-                    attempt
-                    for attempt in reversed(attempted)
-                    if attempt["stage"] == "operation" and attempt["ckr"] == last_operation_error_rv
-                ),
-                None,
-            )
-            result_detail: dict[str, Any] = {"attempts": attempted}
-            if supplying is not None:
-                result_detail["primary_attempt"] = {
-                    "operation": supplying["operation"],
-                    "stage": "operation",
-                }
             return CtsDetectionResult(
                 CtsDetectionStatus.NOT_OPERATIONAL,
                 error_rv=last_operation_error_rv,
-                detail=result_detail,
+                detail={"attempts": attempted},
             )
         if setup_unavailable:
             return CtsDetectionResult(
@@ -484,129 +466,11 @@ def reset_cts_detection_cache() -> None:
     _cts_detection_result = None
 
 
-def _attempt_is_login_caused(attempt: object) -> bool:
-    """Whether one detector attempt is consistent with a logged-out probe (R2-2b)."""
-    if not isinstance(attempt, dict):
-        return False
-    ckr = attempt.get("ckr")
-    if ckr is None:
-        return True
-    try:
-        return int(ckr) == int(CKR_USER_NOT_LOGGED_IN)
-    except (TypeError, ValueError):
-        return False
-
-
-def _selectable_off_contract_ckr(attempt: object) -> int | None:
-    """Nameable off-contract CKR, else None (R5-2: the detector's own contract).
-
-    An attempt is selectable only when the detector would class it
-    off-contract: stage-appropriate listed set exclusion, mirroring the
-    `last_operation_unlisted_rv` / `last_setup_unlisted_rv` tracking.
-    Successes, skips, listed clean refusals, login-caused attempts, and
-    malformed entries are never candidates.
-    """
-    if not isinstance(attempt, dict):
-        return None
-    if _attempt_is_login_caused(attempt):
-        return None
-    raw = attempt.get("ckr")
-    if raw is None:
-        return None
-    try:
-        ckr = int(raw)
-    except (TypeError, ValueError):
-        return None
-    if ckr == int(CKR_OK):
-        return None
-    stage = attempt.get("stage")
-    if stage == "setup":
-        listed = {int(rv) for rv in AES_KEYGEN_RUNTIME_REJECT_RVS}
-    elif stage == "operation":
-        listed = {int(rv) for rv in CIPHER_OP_RUNTIME_REJECT_RVS}
-    else:
-        return None
-    if ckr in listed:
-        return None
-    return ckr
-
-
-def _select_off_contract_attempt(attempts: Any) -> tuple[dict[str, Any], int] | None:
-    """Priority-correct off-contract (attempt, CKR), else None (R5-2, R6-3).
-
-    Operation stage wins over setup (the detector's own priority); last
-    within a stage. Only detector-classified off-contract attempts
-    qualify. The caller pins the winning attempt's operation/stage in
-    the result detail so reporting names it even when another attempt
-    shares its CKR.
-    """
-    fallback: tuple[dict[str, Any], int] | None = None
-    for attempt in reversed(attempts):
-        ckr = _selectable_off_contract_ckr(attempt)
-        if ckr is None:
-            continue
-        if attempt.get("stage") == "operation":
-            return attempt, ckr
-        if fallback is None:
-            fallback = (attempt, ckr)
-    return fallback
-
-
-def get_cts_detection(rs: Any, *, logged_in: bool = True) -> CtsDetectionResult:
-    """Get or detect the structured CTS result, cached within one isolated process.
-
-    S2: a logged-out login refusal is not a provider finding -- the probe
-    never logged in -- so it is converted to not-operational (xfail)
-    BEFORE caching, and every consumer (sentinel, vector guards) sees the
-    converted result. The conversion requires every recorded attempt to be
-    login-caused: a mixed refusal (for example an undefined RV beside a
-    login refusal) stays loud. Callers that know the session is logged in
-    (or predate the discriminator) keep the default, which preserves
-    setup-error.
-    R4-7: a mixed setup-error reports the off-contract attempt's RV as the
-    primary (login-independent): the detector's last-wins primary can name
-    a login refusal while an undefined RV sits in the attempts, and the
-    reporter would then raise for the wrong RV. R5-2: only attempts the
-    detector itself classes off-contract (stage-appropriate listed-set
-    exclusion; never successes) are candidates, operation over setup.
-    """
+def get_cts_detection(rs: Any) -> CtsDetectionResult:
+    """Get or detect the structured CTS result, cached within one isolated process."""
     global _cts_detection_result  # noqa: PLW0603
     if _cts_detection_result is None:
-        result = _detect_cts_variant(rs)
-        attempts = result.detail.get("attempts", []) if result.detail else []
-        all_login_caused = all(_attempt_is_login_caused(a) for a in attempts)
-        if (
-            not logged_in
-            and result.status is CtsDetectionStatus.SETUP_ERROR
-            and result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
-            and all_login_caused
-        ):
-            result = CtsDetectionResult(
-                CtsDetectionStatus.NOT_OPERATIONAL,
-                error_rv=result.error_rv,
-                detail={
-                    **result.detail,
-                    "reason": (
-                        "logged-out probe refused with CKR_USER_NOT_LOGGED_IN; "
-                        "configure a PIN to exercise CTS vectors"
-                    ),
-                },
-            )
-        elif result.status is CtsDetectionStatus.SETUP_ERROR and not all_login_caused:
-            selected = _select_off_contract_attempt(attempts)
-            if selected is not None:
-                attempt, reselected = selected
-                detail = dict(result.detail) if result.detail else {}
-                detail["primary_attempt"] = {
-                    "operation": attempt.get("operation"),
-                    "stage": attempt.get("stage"),
-                }
-                result = CtsDetectionResult(
-                    CtsDetectionStatus.SETUP_ERROR,
-                    error_rv=reselected,
-                    detail=detail,
-                )
-        _cts_detection_result = result
+        _cts_detection_result = _detect_cts_variant(rs)
     return _cts_detection_result
 
 
@@ -634,32 +498,11 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
             detail=result.detail,
         )
     if result.status is CtsDetectionStatus.NOT_OPERATIONAL:
-        # R8-2: name the attempt that supplied the reported RV (a listed
-        # Init refusal is not a C_Encrypt call); bare C_Encrypt only when
-        # no attempt carries it. R9-4: the detector-pinned attempt wins
-        # over last-match when another stage shares the RV.
-        attempts = result.detail.get("attempts", []) if result.detail else []
-        primary = (result.detail or {}).get("primary_attempt")
-        if isinstance(primary, dict) and primary.get("operation") is not None:
-            naming_operation: Any = primary["operation"]
-        else:
-            supplying = next(
-                (
-                    attempt
-                    for attempt in reversed(attempts)
-                    if isinstance(attempt, dict) and attempt.get("ckr") == result.error_rv
-                ),
-                None,
-            )
-            if supplying is not None and supplying.get("operation") is not None:
-                naming_operation = supplying["operation"]
-            else:
-                naming_operation = "C_Encrypt"
         classify(
             "not_operational",
             kind="crypto",
             label=label,
-            operation=naming_operation,
+            operation="C_Encrypt",
             mechanism="CKM_AES_CTS",
             actual=result.error_rv,
             summary=("CKM_AES_CTS advertised but fixed-key variant detection was not operational"),
@@ -693,26 +536,17 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
                 f"CTS detection setup failed: {reason} ({ckr_name(rv)} outside the known contract)",
                 int(rv),
             )
-        # R6-3: the selector-pinned attempt names the finding when present
-        # (it survives same-RV collisions across stages); otherwise the
-        # naming attempt is the last one that recorded this CKR -- not
-        # necessarily the last attempt.
-        primary = (result.detail or {}).get("primary_attempt")
-        if isinstance(primary, dict) and primary.get("operation") is not None:
-            naming_stage = primary.get("stage", "detection")
-            naming_operation = primary["operation"]
-        else:
-            last = next(
-                (attempt for attempt in reversed(attempts) if attempt.get("ckr") == rv),
-                attempts[-1],
-            )
-            naming_stage = last.get("stage", "detection")
-            naming_operation = last.get("operation", "C_CreateObject")
+        # error_rv carries operation priority, so the naming attempt is the
+        # last one that recorded this CKR -- not necessarily the last attempt.
+        last = next(
+            (attempt for attempt in reversed(attempts) if attempt.get("ckr") == rv),
+            attempts[-1],
+        )
         raise CkrAssertionError(
-            f"CTS detection {naming_stage} {naming_operation} rejected with "
+            f"CTS detection {last.get('stage', 'detection')} "
+            f"{last.get('operation', 'C_CreateObject')} rejected with "
             f"{ckr_name(rv)} outside the known contract",
             int(rv),
-            naming_operation,
         )
 
 

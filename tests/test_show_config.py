@@ -143,11 +143,7 @@ class TestResolveConfigRows:
             env={"P11TEST_SLOT": "9"},
             toml={"slot": 7},
         )
-        # S12: still ignored (effective stays the default), but shown, not hidden.
-        assert _row(rows, "slot") == (
-            "0",
-            "cli (default) (ignored: env P11TEST_SLOT=9, toml slot=7)",
-        )
+        assert _row(rows, "slot") == ("0", "cli (default)")
 
         cli = {**_cli_defaults(), "slot": 2}
         rows = resolve_config_rows(cli_values=cli, env={}, toml={})
@@ -172,18 +168,6 @@ class TestResolveConfigRows:
         assert effective == "(no effect)"
         assert source.startswith("env")
 
-    def test_cli_only_key_shows_ignored_env_toml_values(self) -> None:
-        """S12: provided-but-unread slot values show as ignored, not hidden."""
-        rows = resolve_config_rows(
-            cli_values=_cli_defaults(),
-            env={"P11TEST_SLOT": "5"},
-            toml={"slot": 7},
-        )
-        effective, source = _row(rows, "slot")
-        assert effective == "0"
-        assert "P11TEST_SLOT=5" in source
-        assert "slot=7" in source
-
 
 class TestShowConfigCommand:
     def test_show_config_exits_before_everything(self) -> None:
@@ -197,10 +181,7 @@ class TestShowConfigCommand:
         assert result.exit_code == 0, result.output
         assert "slot" in result.output
         assert "key_inject" in result.output
-        # U13: dead keys are documented in docs/configuration.md, not shown here.
-        assert "(no effect)" not in result.output
-        for dead in ("timeout_operation", "timeout_test", "max_sessions", "skip_unsupported"):
-            assert dead not in result.output
+        assert "timeout_test" in result.output
 
     def test_show_config_reflects_cli_env_toml(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -222,70 +203,6 @@ class TestShowConfigCommand:
         assert result.exit_code == 0, result.output
         assert "force-unwrap" in result.output
         assert "CKM_RSA_AES_KEY_WRAP" in result.output
-
-    def test_show_config_keeps_live_row_matching_dead_marker(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """N3: hiding keys on deadness, never on the value text."""
-        from pkcs11_check.cli.app import app
-        from tests._plain_cli_runner import PlainCliRunner
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "pkcs11_check.toml").write_text(
-            'wrap_key_label = "(no effect)"\n', encoding="utf-8"
-        )
-        result = PlainCliRunner().invoke(
-            app, ["test", "--module", str(tmp_path / "x.so"), "--show-config"]
-        )
-        assert result.exit_code == 0, result.output
-        assert "wrap_key_label" in result.output
-
-    def test_show_config_escapes_markup_in_ignored_values(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """R18-4: hostile env values render literally, never crash."""
-        from pkcs11_check.cli.app import app
-        from tests._plain_cli_runner import PlainCliRunner
-
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("P11TEST_SLOT", "[/red]")
-        result = PlainCliRunner().invoke(
-            app, ["test", "--module", str(tmp_path / "x.so"), "--show-config"]
-        )
-        assert result.exit_code == 0, result.output
-        assert "Traceback" not in result.output
-        assert "[/red]" in result.output
-
-    def test_show_config_warns_on_ignored_sessions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """R18-4: report-only path warns about --sessions like real runs."""
-        from pkcs11_check.cli.app import app
-        from tests._plain_cli_runner import PlainCliRunner
-
-        monkeypatch.chdir(tmp_path)
-        result = PlainCliRunner().invoke(
-            app,
-            ["test", "--module", str(tmp_path / "x.so"), "--show-config", "--sessions", "2"],
-        )
-        assert result.exit_code == 0, result.output
-        assert "--sessions is ignored" in result.output
-
-    def test_show_config_warns_on_ignored_settings(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """S12: --show-config emits the same dead-setting warnings as test."""
-        from pkcs11_check.cli.app import app
-        from tests._plain_cli_runner import PlainCliRunner
-
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("P11TEST_SLOT", "5")
-        result = PlainCliRunner().invoke(
-            app, ["test", "--module", str(tmp_path / "x.so"), "--show-config"]
-        )
-        assert result.exit_code == 0, result.output
-        assert "Warning" in result.output
-        assert "P11TEST_SLOT" in result.output
 
     def test_show_config_redacts_secrets(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pkcs11_check.cli.app import app

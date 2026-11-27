@@ -11,7 +11,7 @@ import pytest
 from pkcs11_check.core import _unit_discovery as discovery
 from pkcs11_check.core._run_state import build_policy_fingerprint
 from pkcs11_check.core._run_units import BackendIsolationPolicy
-from pkcs11_check.core.collection import CollectedPytestItem, CollectedSkip
+from pkcs11_check.core.collection import CollectedPytestItem
 
 
 def _uncached_collection_env() -> dict[str, str]:
@@ -43,9 +43,7 @@ def test_fixed_metadata_32_explicit_nodes_expand_once(
     metadata = [
         CollectedPytestItem(nodeid, str(source), ["subprocess_per_test"]) for nodeid in selected
     ]
-    monkeypatch.setattr(
-        discovery, "collect_pytest_items_with_skips", lambda *args, **kwargs: (metadata, [])
-    )
+    monkeypatch.setattr(discovery, "collect_pytest_item_metadata", lambda *args, **kwargs: metadata)
     canonicalized: list[str] = []
     original_absolute_nodeid = discovery._absolute_nodeid
 
@@ -248,9 +246,7 @@ def test_unpromoted_file_mode_keeps_original_selectors(
         CollectedPytestItem(f"{source}::test_one", str(source), []),
         CollectedPytestItem(f"{source}::test_two", str(source), []),
     ]
-    monkeypatch.setattr(
-        discovery, "collect_pytest_items_with_skips", lambda *args, **kwargs: (metadata, [])
-    )
+    monkeypatch.setattr(discovery, "collect_pytest_item_metadata", lambda *args, **kwargs: metadata)
 
     assert discovery.discover_auto_isolation_units(targets, tmp_path, pytest_args=[]) == targets
 
@@ -263,9 +259,7 @@ def test_nonempty_metadata_skips_requested_file_missing_from_collection(
     for source in (first, missing):
         source.write_text("def test_case(): pass\n", encoding="utf-8")
     metadata = [CollectedPytestItem(f"{first}::test_case", str(first), ["subprocess_per_test"])]
-    monkeypatch.setattr(
-        discovery, "collect_pytest_items_with_skips", lambda *args, **kwargs: (metadata, [])
-    )
+    monkeypatch.setattr(discovery, "collect_pytest_item_metadata", lambda *args, **kwargs: metadata)
     monkeypatch.setattr(discovery, "load_promoted_files", lambda *args, **kwargs: {str(missing)})
 
     units = discovery.discover_auto_isolation_units(
@@ -282,9 +276,7 @@ def test_empty_metadata_fallback_collects_each_selector_and_unique_additions(
     source.write_text("def test_a(): pass\ndef test_b(): pass\n", encoding="utf-8")
     first = f"{source}::test_a"
     second = f"{source}::test_b"
-    monkeypatch.setattr(
-        discovery, "collect_pytest_items_with_skips", lambda *args, **kwargs: ([], [])
-    )
+    monkeypatch.setattr(discovery, "collect_pytest_item_metadata", lambda *args, **kwargs: [])
     monkeypatch.setattr(discovery, "load_promoted_files", lambda *args, **kwargs: {str(source)})
     fallback_calls: list[list[str]] = []
 
@@ -309,59 +301,3 @@ def test_empty_metadata_fallback_collects_each_selector_and_unique_additions(
     assert fallback_calls == [[first], [second]]
     assert units == [first, second]
     assert Counter(units) == {first: 1, second: 1}
-
-
-def test_auto_discovery_forwards_collection_skips(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """R18-2a: skips_out receives the same pass's skip records (no 2nd pass)."""
-    source = tmp_path / "test_demo.py"
-    source.write_text("def test_one(): pass\n", encoding="utf-8")
-    metadata = [CollectedPytestItem(f"{source}::test_one", str(source), [])]
-    skips = [CollectedSkip(nodeid="test_other.py", reason="vectors not cloned")]
-    calls: list[None] = []
-
-    def fake_collect(
-        *args: object, **kwargs: object
-    ) -> tuple[list[CollectedPytestItem], list[CollectedSkip]]:
-        calls.append(None)
-        return metadata, skips
-
-    monkeypatch.setattr(discovery, "collect_pytest_items_with_skips", fake_collect)
-    collected: list[CollectedPytestItem] = []
-    seen_skips: list[CollectedSkip] = []
-    discovery.discover_auto_isolation_units(
-        [str(source)],
-        tmp_path,
-        pytest_args=[],
-        collected_out=collected,
-        skips_out=seen_skips,
-    )
-    assert calls == [None]
-    assert collected == metadata
-    assert seen_skips == skips
-
-
-def test_test_granularity_forwards_collection_skips(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """R18-2a: test-granularity discovery pairs skips_out with collected_out."""
-    source = tmp_path / "test_demo.py"
-    source.write_text("def test_one(): pass\n", encoding="utf-8")
-    metadata = [CollectedPytestItem(f"{source}::test_one", str(source), [])]
-    skips = [CollectedSkip(nodeid="test_other.py", reason="vectors not cloned")]
-    monkeypatch.setattr(
-        discovery, "collect_pytest_items_with_skips", lambda *a, **k: (metadata, skips)
-    )
-    collected: list[CollectedPytestItem] = []
-    seen_skips: list[CollectedSkip] = []
-    units = discovery.discover_pytest_units(
-        [str(source)],
-        tmp_path,
-        granularity="test",
-        collected_out=collected,
-        skips_out=seen_skips,
-    )
-    assert len(units) == 1
-    assert collected == metadata
-    assert seen_skips == skips

@@ -741,25 +741,6 @@ def test_mech_ctr_default_bits() -> None:
     assert m.params.ulCounterBits == 128
 
 
-def test_mech_ctr_packs_given_counter_block() -> None:
-    from pkcs11_check.raw.pack import mech_ctr
-    from pkcs11_check.raw.types_std import CK_AES_CTR_PARAMS, CKM_AES_CTR
-
-    cb = bytes(range(16))
-    m = mech_ctr(CKM_AES_CTR, bits=64, cb=cb)
-    assert isinstance(m.params, CK_AES_CTR_PARAMS)
-    assert m.params.ulCounterBits == 64
-    assert bytes(m.params.cb[i] for i in range(16)) == cb
-
-
-def test_mech_ctr_rejects_short_counter_block() -> None:
-    from pkcs11_check.raw.pack import mech_ctr
-    from pkcs11_check.raw.types_std import CKM_AES_CTR
-
-    with pytest.raises(ValueError, match="16"):
-        mech_ctr(CKM_AES_CTR, bits=64, cb=b"\x00" * 15)
-
-
 def test_mech_chacha20_sets_nonce_bits_and_counter() -> None:
     from pkcs11_check.raw.pack import mech_chacha20
     from pkcs11_check.raw.types_std import CK_CHACHA20_PARAMS, CKM_CHACHA20

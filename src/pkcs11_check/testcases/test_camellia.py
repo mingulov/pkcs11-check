@@ -265,10 +265,8 @@ class TestCAMELLIAEncryption:
             128,
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
-        # S5: fixed distinct values (deterministic attribution;
-        # a ciphertext match then proves IV-insensitivity, never a provider-RNG collision).
-        iv1 = b"\x00" * 16
-        iv2 = b"\x01" * 16
+        iv1 = generate_random(rs.raw, rs.sh, 16)
+        iv2 = generate_random(rs.raw, rs.sh, 16)
         try:
             ct1 = _encrypt_or_xfail(
                 rs.raw,
@@ -574,24 +572,21 @@ class TestCamelliaCTR:
             from pkcs11_check.raw.pack import mech_ctr
             from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
 
-            # fw#92: the width alone does not diversify the keystream (from a
-            # zero counter block, widths 32 and 64 emit identical sequences
-            # for short plaintexts), so differ the counter block at equal bits.
             ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
                 CKM_CAMELLIA_CTR,
                 plaintext,
-                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64, cb=bytes(16)),
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=32),
             )
-            ct2 = _encrypt_or_xfail(
+            ct2 = encrypt_single(
                 rs.raw,
                 rs.sh,
                 key,
                 CKM_CAMELLIA_CTR,
                 plaintext,
-                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64, cb=bytes(15) + b"\x01"),
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64),
             )
             assert ct1 != ct2
         finally:

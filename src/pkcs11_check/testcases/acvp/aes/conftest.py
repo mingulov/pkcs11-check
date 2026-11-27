@@ -21,7 +21,6 @@ import pytest
 
 from pkcs11_check.raw.recipes import ImplausibleModuleLengthError
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
-from pkcs11_check.raw.types_std import CKR_USER_NOT_LOGGED_IN
 from pkcs11_check.testcases.acvp.aes.base_cts import (
     CtsDetectionResult as _CtsDetectionResult,
 )
@@ -42,20 +41,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     # Classify CTS variant test items
     cts_variant_items: dict[str, list[pytest.Item]] = {}
-    sentinel_selected = False
     for item in items:
         nodeid = item.nodeid
         if "test_cts.py" not in nodeid:
-            continue
-        if nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected":
-            sentinel_selected = True
             continue
         for v in ("1", "2", "3"):
             if f"_cs{v}_" in nodeid:
                 cts_variant_items.setdefault(v, []).append(item)
                 break
 
-    if not cts_variant_items and not sentinel_selected:
+    if not cts_variant_items:
         return
 
     detection = _probe_cts_variant(config)
@@ -67,6 +62,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         # detection-failure classification.  The sentinel is skipped only when
         # it is actually part of this selection; never assume pytest selected a
         # sibling test or add one to the run.
+        sentinel_selected = any(
+            item.nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected"
+            for item in items
+        )
         if sentinel_selected:
             # Detection failed: skip all CS variant tests.  The selected
             # sentinel remains the sole reporter.
@@ -114,15 +113,6 @@ def _detection_skip_reason(detection: _CtsDetectionResult) -> str:
         return (
             f"CKM_AES_CTS variant detection failed with {ckr}; "
             "the selected CTS reporter records the provider finding"
-        )
-    if (
-        detection.status is _CtsDetectionStatus.NOT_OPERATIONAL
-        and detection.error_rv is not None
-        and int(detection.error_rv) == int(CKR_USER_NOT_LOGGED_IN)
-    ):
-        return (
-            "probe ran logged out (no PIN configured) and the module refused "
-            "with CKR_USER_NOT_LOGGED_IN; configure a PIN to exercise CTS vectors"
         )
     return (
         "CKM_AES_CTS variant detection failed; the selected CTS reporter records "
@@ -191,15 +181,12 @@ class _MinimalSession:
 
 def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     """Load module, open session, detect CTS variant, clean up."""
-    from tomllib import TOMLDecodeError
-
     from pkcs11_check.core.loader import load_module
     from pkcs11_check.raw.bootstrap import (
         close_session_quietly,
         get_slot_ids,
         login_user,
         logout_quietly,
-        resolve_slot_id,
     )
     from pkcs11_check.raw.bootstrap import open_session as raw_open_session
     from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
@@ -215,39 +202,19 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     from pkcs11_check.testcases.acvp.aes.base_cts import get_cts_detection
 
     module_path = config.getoption("p11_module")
-    # Resolve settings through the same CLI > env > TOML merge the runtime
-    # session fixtures use (#89, #88R32-6): the probe predicts the runtime
-    # session, so reading raw CLI options here logs the probe out whenever
-    # the pin comes from P11TEST_PIN or pkcs11_check.toml (FreeHSM then
-    # refuses the probe import with CKR_USER_NOT_LOGGED_IN and every vector
-    # skips). The module stays CLI-only by design (fixtures skip without
-    # --p11-module). Only forwarding a subset would leak env/TOML values
-    # that CLI overrides at runtime, so the full shared resolver runs.
-    from pydantic import ValidationError
-
-    from pkcs11_check.fixtures import resolve_cli_settings
-
-    try:
-        merged = resolve_cli_settings(Path(module_path), config.getoption)
-    except (ValidationError, TOMLDecodeError) as exc:
-        raise pytest.UsageError(f"invalid pkcs11-check configuration: {exc}") from exc
-    # The interface arrives validated and normalized (the resolver owns
-    # it for both paths); the pin unwraps only when configured.
-    interface = merged.interface
-    pin = merged.pin.get_secret_value() if merged.pin else None
+    # The plugin default is None ("auto" is only documentation); every other
+    # consumer coerces None, so do the same instead of crashing load_module.
+    interface = config.getoption("p11_interface", default="auto") or "auto"
+    slot_opt = config.getoption("p11_slot", default=None)
+    pin = config.getoption("p11_pin", default=None)
 
     p11 = load_module(Path(module_path), interface=interface)
     raw = p11.raw
     slots = get_slot_ids(raw)
     if not slots:
         pytest.skip("module exposes no PKCS#11 slots")
-    try:
-        slot_id = resolve_slot_id(slots, merged.slot)
-    except (IndexError, ValueError) as exc:
-        # An operator-named slot that runtime would reject must fail here
-        # too (#88R32-5): silently remapping would probe (and log in to)
-        # a token the operator never asked for.
-        raise pytest.UsageError(str(exc)) from exc
+    slot_idx = slot_opt if slot_opt is not None else 0
+    slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
 
     # Build mechanism name set
     mechs = get_mechanism_list(raw, slot_id)
@@ -291,9 +258,8 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
         rs = _MinimalSession(raw, sh, frozenset(names))
         # Use the structured process cache so the selected sentinel/vector
         # runtime guard reuses this collection result instead of touching the
-        # provider a second time. The probe threads its login state so a
-        # logged-out login refusal converts before caching (S2).
-        return get_cts_detection(rs, logged_in=logged_in)
+        # provider a second time.
+        return get_cts_detection(rs)
     finally:
         if logged_in:
             logout_quietly(raw, sh)

@@ -15,7 +15,6 @@ import json
 import os
 import subprocess
 import sys
-import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -23,12 +22,6 @@ from pkcs11_check.core.crash_codes import (
     crash_detail_name,
     ctypes_access_violation_code,
     is_crash_returncode,
-)
-from pkcs11_check.core.preflight import (
-    PreflightCounters,
-    append_preflight_evidence,
-    collect_preflight_counters,
-    preflight_child_env,
 )
 
 
@@ -40,7 +33,6 @@ class LoginProbe:
         str  # ok | pin_incorrect | pin_locked | token_not_recognized | error | crashed | timeout
     )
     detail: str = ""
-    returncode: int | None = None
 
 
 def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginProbe:
@@ -103,66 +95,11 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
             pass  # finalize is best-effort during a probe
 
 
-def _scrub_pin(data: bytes, pin: bytes) -> bytes:
-    """Redact the PIN from raw child pipe bytes (R24-2).
-
-    Runs BEFORE text decoding: decoding first would mangle the evidence
-    (universal newlines rewrite carriage returns, errors=replace swaps
-    invalid bytes for U+FFFD), letting fragments of an exotic PIN leak
-    past an exact match. An empty or blank PIN scrubs nothing (no-op,
-    never corrupts or mangles).
-    """
-    if not pin or pin.isspace():
-        return data
-    if pin in data:
-        return data.replace(pin, b"[redacted]")
-    return data
-
-
-def _scrub_pin_text(detail: str, pin: bytes) -> str:
-    """Redact the PIN from a decoded JSON detail (R25-1).
-
-    Stdout parses intact (bytes-scrubbing it would rewrite JSON
-    structure, including the verdict status itself); the decoded
-    diagnostic detail is scrubbed over every spelling the PIN bytes can
-    take as text (plain, errors=replace, surrogateescape), since
-    JSON-escaped bytes reappear decoded. Defense in depth: today's
-    child details are our own static strings.
-    """
-    if not pin or pin.isspace():
-        return detail
-    seen: set[str] = set()
-    for errors in ("strict", "replace", "surrogateescape"):
-        try:
-            spelling = pin.decode("utf-8", errors=errors)
-        except UnicodeDecodeError:
-            continue
-        # Dedupe identical spellings: reprocessing would nest markers
-        # ("a" also matches inside "[redacted]").
-        if spelling and spelling not in seen and spelling in detail:
-            seen.add(spelling)
-            detail = detail.replace(spelling, "[redacted]")
-    return detail
-
-
 def run_login_probe_subprocess(
-    module: Path,
-    *,
-    interface: str,
-    slot: int,
-    pin: bytes,
-    timeout: int,
-    counters: PreflightCounters | None = None,
+    module: Path, *, interface: str, slot: int, pin: bytes, timeout: int
 ) -> LoginProbe:
-    """Run the login probe in a fresh subprocess (crash survival).
-
-    ``counters`` engages counter collection for the probe child (the
-    test-path U1 probe, preflight unit / attempt 1); ``None`` (doctor)
-    keeps today's uncounted behavior with a scrubbed child env.
-    Collection never alters the returned verdict and never raises:
-    evidence failures warn.
-    """
-    env = preflight_child_env(counters)
+    """Run the login probe in a fresh subprocess (crash survival)."""
+    env = dict(os.environ)
     env["P11TEST_PIN"] = pin.decode("utf-8", "surrogateescape")
     cmd = [
         sys.executable,
@@ -175,97 +112,33 @@ def run_login_probe_subprocess(
         "--slot",
         str(slot),
     ]
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-    )
-    raw_pid = getattr(process, "pid", None)
-    child_pid = raw_pid if isinstance(raw_pid, int) else None
     try:
-        raw_out, raw_err = process.communicate(timeout=timeout)
-        returncode: int | None = process.returncode
-        timed_out = False
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            # F18: provider bytes on the pipe must not lose the login verdict.
+            errors="replace",
+            timeout=timeout,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
-        # Reap without draining: wait() cannot hang on grandchildren-held
-        # pipes the way a second communicate() could (R18-5 hang class).
-        process.kill()
-        returncode = process.wait()
-        raw_out, raw_err = b"", b""
-        timed_out = True
-    except KeyboardInterrupt:
-        # run() parity: Ctrl-C kills the direct child instead of orphaning
-        # it; the interrupt propagates (no verdict on an aborted probe).
-        process.kill()
-        process.wait()
-        raise
-    # Binary pipes: stderr is scrubbed as raw bytes first (decoding
-    # would mangle exotic PINs past exact-match); stdout parses intact
-    # (scrubbing it would rewrite JSON structure, including the verdict
-    # status) and only its diagnostic detail is scrubbed after parsing.
-    # Both decode lossily so provider bytes never lose the verdict (F18).
-    out = raw_out.decode("utf-8", errors="replace")
-    err = _scrub_pin(raw_err, pin).decode("utf-8", errors="replace")
-
-    def _retain(status: str, reason: str | None) -> None:
-        # Mirror of run_preflight_subprocess._retain (kept local so the
-        # shipped manifest flow stays untouched); keep in sync.
-        if counters is None:
-            return
-        try:
-            records, commit = collect_preflight_counters(
-                counters,
-                child_pid=child_pid,
-                returncode=returncode,
-                timed_out=timed_out,
-                manifest_status=status,
-                manifest_reason=reason,
-            )
-        except Exception as exc:  # noqa: BLE001 -- counters never fail the probe; warn
-            warnings.warn(
-                f"login probe counter evidence not collected: {exc}",
-                UserWarning,
-                stacklevel=2,
-            )
-            return
-        try:
-            append_preflight_evidence(counters.evidence_path, records)
-        except OSError as exc:
-            warnings.warn(
-                f"login probe counter evidence not retained: {exc}",
-                UserWarning,
-                stacklevel=2,
-            )
-            return
-        commit()
-
-    if timed_out:
-        # Our own format string (ints only): nothing to scrub, and scrubbing
-        # here would redact the timeout seconds on a numeric-PIN collision.
-        detail = f"login probe timed out after {timeout}s"
-        _retain("timeout", detail)
-        return LoginProbe("timeout", detail, returncode)
-    assert returncode is not None
-    if is_crash_returncode(returncode):
-        detail = f"login probe crashed ({crash_detail_name(returncode)})"
-        _retain("crashed", detail)
-        return LoginProbe("crashed", detail, returncode)
-    for line in reversed(out.strip().splitlines()):
+        return LoginProbe("timeout", f"login probe timed out after {timeout}s")
+    if is_crash_returncode(completed.returncode):
+        return LoginProbe(
+            "crashed", f"login probe crashed ({crash_detail_name(completed.returncode)})"
+        )
+    out = completed.stdout.strip().splitlines()
+    for line in reversed(out):
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict) and "status" in payload:
-            _retain("ok", None)
-            return LoginProbe(
-                str(payload["status"]),
-                _scrub_pin_text(str(payload.get("detail", "")), pin),
-                returncode,
-            )
-    detail = err.strip()[-200:] or "no probe result"
-    _retain("error", detail)
-    return LoginProbe("error", detail, returncode)
+            return LoginProbe(str(payload["status"]), str(payload.get("detail", "")))
+    return LoginProbe("error", completed.stderr.strip()[-200:] or "no probe result")
 
 
 def _parse_args() -> argparse.Namespace:

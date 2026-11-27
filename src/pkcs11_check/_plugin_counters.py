@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check._plugin_state import _is_testcase_item
-from pkcs11_check.core._counters_durability import durability_dir, reject_reserved_run_id
+from pkcs11_check.core._counters_durability import reject_reserved_run_id
 from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_PROPERTY,
     CALL_COUNTERS_REPORT_TYPE,
@@ -156,36 +156,15 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Any:
     """Attach the stashed per-test entry to the report before serialization."""
+    if item.config.getoption("p11_module", default=None) is None:
+        result = yield
+        return result
+    if not _is_testcase_item(item):
+        result = yield
+        return result
     report = yield
-    if item.config.getoption("p11_module", default=None) is not None and _is_testcase_item(item):
-        attach_call_counters(item, report)
-    _abort_on_persistence_fault(call)
+    attach_call_counters(item, report)
     return report
-
-
-def _abort_on_persistence_fault(call: pytest.CallInfo[Any]) -> None:
-    """Abort the session on an uncaught counter-persistence fault (F11).
-
-    A CounterPersistenceError escaping a test means evidence recording is
-    broken run-wide (disk full, unwritable dir, stale seal): continuing
-    would flood per-test tracebacks that read as provider findings. Abort
-    once, loudly, as a harness error (exit 2) instead. Only fires while
-    counters are engaged; fault-injection tests asserting the raise (caught,
-    so no failure) and disengaged runs never trip it.
-    """
-    excinfo = getattr(call, "excinfo", None)
-    exc = excinfo.value if excinfo is not None else None
-    if not isinstance(exc, CounterPersistenceError):
-        return
-    if durability_dir() is None:
-        return
-    pytest.exit(
-        f"counter persistence failed: {exc}; provider calls can no longer be "
-        "counted -- aborting this pytest session "
-        "(harness error, not a provider finding). "
-        "Check disk space and counters-dir writability.",
-        returncode=2,
-    )
 
 
 def attach_call_counters(item: pytest.Item, report: Any) -> None:

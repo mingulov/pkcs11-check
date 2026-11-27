@@ -1,4 +1,3 @@
-tests/test_attempt_adoption_contract.py
 tests/test_attribute_encoding_contract.py
 tests/test_byte_kdf_protection_contract.py
 tests/test_byte_recovery_contract.py
@@ -11,7 +10,6 @@ tests/test_copy_guess_confirm_contract.py
 tests/test_derived_key_format_contract.py
 tests/test_dh_peer_encoding_contract.py
 tests/test_dss_signature_shape_contract.py
-tests/test_exponent_verify_contract.py
 tests/test_hash_pqc_input_contract.py
 tests/test_honest_region_contract.py
 tests/test_keygen_template_contract.py

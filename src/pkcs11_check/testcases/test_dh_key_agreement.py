@@ -88,7 +88,6 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._copy_mutability import (
-    COPY_FORBIDDEN_REFUSE_RVS,
     classify_rv_validity_or_none,
     judge_copy_compare,
     run_copy_compare_leg,
@@ -2398,7 +2397,6 @@ class TestDHPublicCopyCompare:
                 label=label,
                 operation="C_CopyObject",
                 spec_ref=_DH_PUBLIC_VALUE_COPY_CITATION,
-                expected_rvs=COPY_FORBIDDEN_REFUSE_RVS,
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

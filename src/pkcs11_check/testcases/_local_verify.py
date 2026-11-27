@@ -181,49 +181,6 @@ def ecdsa_local(
         return False
 
 
-def ecdsa_der_local_prehashed(
-    pub: ec.EllipticCurvePublicKey,
-    digest: bytes,
-    sig_der: bytes,
-    hash_alg: hashes.HashAlgorithm,
-) -> bool:
-    """Verify a DER ECDSA signature over an already-hashed *digest*.
-
-    The CKM_ECDSA-style confusion arm: a module that signs the supplied
-    digest bytes directly (no hash step, PKCS#11 v3.2 §6.3.1) escapes
-    the hashing oracle, which hashes the digest a second time. Only
-    callers whose input length equals the digest size may use this arm;
-    anything else is not a digest and stays with the hashing oracle.
-    Unparseable bytes verify as False, mirroring :func:`ecdsa_der_local`.
-    """
-    try:
-        pub.verify(sig_der, digest, ec.ECDSA(utils.Prehashed(hash_alg)))
-        return True
-    except (InvalidSignature, ValueError):
-        return False
-
-
-def ecdsa_local_prehashed(
-    pub: ec.EllipticCurvePublicKey,
-    digest: bytes,
-    sig_raw: bytes,
-    hash_alg: hashes.HashAlgorithm,
-    coord_len: int,
-) -> bool:
-    """Verify a raw (r || s) ECDSA signature over an already-hashed *digest*.
-
-    Same contract as :func:`ecdsa_der_local_prehashed` for raw-encoded
-    signatures; malformed coordinate splits propagate like :func:`ecdsa_local`.
-    """
-    r, s = split_raw_ecdsa(sig_raw, coord_len)
-    der = utils.encode_dss_signature(r, s)
-    try:
-        pub.verify(der, digest, ec.ECDSA(utils.Prehashed(hash_alg)))
-        return True
-    except InvalidSignature:
-        return False
-
-
 def verify_roundtrip(
     rs: Any,
     *,

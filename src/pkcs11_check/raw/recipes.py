@@ -7,10 +7,8 @@ PKCS#11 operations. A recipe must be mentally expandable to its raw calls.
 from __future__ import annotations
 
 import ctypes
-import hashlib
 import os
 import sys
-import warnings
 from collections.abc import Callable, Iterable, Mapping
 from ctypes import byref
 from dataclasses import dataclass
@@ -164,10 +162,9 @@ def _max_module_output_bytes() -> int:
     """Return the effective module-output allocation cap in bytes.
 
     ``PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES`` (plain integer bytes) overrides the
-    1 GiB default for deployments with genuinely huge outputs. A missing or
-    empty value quietly means the default; an unparsable or non-positive
-    value warns loudly (S14, mirroring the counters flush-K knob) and fails
-    closed to the default: a typo'd override must not silently disable the cap.
+    1 GiB default for deployments with genuinely huge outputs. A missing, empty,
+    unparsable, or non-positive value fails closed to the default: a typo'd
+    override must not silently disable the cap.
     """
     raw_value = os.environ.get(MAX_MODULE_OUTPUT_BYTES_ENV)
     if raw_value is None or not raw_value.strip():
@@ -175,14 +172,8 @@ def _max_module_output_bytes() -> int:
     try:
         parsed = int(raw_value.strip())
     except ValueError:
-        parsed = 0
+        return DEFAULT_MAX_MODULE_OUTPUT_BYTES
     if parsed <= 0:
-        warnings.warn(
-            f"invalid {MAX_MODULE_OUTPUT_BYTES_ENV}={raw_value.strip()!r}: "
-            "expected a positive int; falling back to 1 GiB",
-            UserWarning,
-            stacklevel=2,
-        )
         return DEFAULT_MAX_MODULE_OUTPUT_BYTES
     return parsed
 
@@ -394,7 +385,7 @@ def _two_call_output(
             out_buf = _alloc_module_output(size, what=call_fn)
             out_len = CK_ULONG(size)
             rv = fn(*args, out_buf, byref(out_len))
-        expect_rv(rv, CKR_OK, context=call_fn, operation=call_fn)
+        expect_rv(rv, CKR_OK, context=call_fn)
         if out_len.value > len(out_buf):
             # N-003: CKR_OK claiming more bytes than capacity -- malformed
             # provider output. Surface it typed (with both lengths) instead
@@ -406,7 +397,7 @@ def _two_call_output(
     # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
-    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL, context=f"{call_fn} size query", operation=call_fn)
+    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL, context=f"{call_fn} size query")
     size = out_len.value
     out_buf = _alloc_module_output(size, what=call_fn)
     out_len = CK_ULONG(size)
@@ -418,7 +409,7 @@ def _two_call_output(
         out_buf = _alloc_module_output(size, what=call_fn)
         out_len = CK_ULONG(size)
         rv = fn(*args, out_buf, byref(out_len))
-    expect_rv(rv, CKR_OK, context=call_fn, operation=call_fn)
+    expect_rv(rv, CKR_OK, context=call_fn)
     if out_len.value > len(out_buf):
         # N-003: CKR_OK claiming more bytes than capacity -- malformed
         # provider output. Surface it typed (with both lengths) instead
@@ -924,25 +915,15 @@ def create_object(
     return handle.value
 
 
-def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> int | None:
-    """Destroy an object, returning the raw CK_RV (R3F2, R4-F2).
-
-    Still ignores clean teardown errors and surfaces provider faults;
-    returning the RV (instead of discarding it) lets owned-handle
-    cleanup observe a refused destroy rather than leak silently. A
-    harness-side failure (dead binding, bad handle shape -- anything
-    that never produced a provider RV) returns None, distinct from
-    every CK_RV: inventing CKR_FUNCTION_FAILED for it would report a
-    returned refusal the provider never made.
-    """
+def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> None:
+    """Destroy an object, ignoring clean teardown errors but surfacing provider faults."""
     try:
-        return int(raw.C_DestroyObject(session, handle))
+        raw.C_DestroyObject(session, handle)
     except OSError as exc:
         if ctypes_access_violation_code(exc) is not None:
             raise
-        return None
     except (AttributeError, ctypes.ArgumentError):
-        return None
+        pass
 
 
 def encrypt_single(
@@ -977,7 +958,7 @@ def encrypt_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_EncryptInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK, context="C_EncryptInit", operation="C_EncryptInit")
+    expect_rv(rv, CKR_OK, context="C_EncryptInit")
     in_buf = to_ubyte_buf(plaintext)
     hint = output_size_hint or ((len(plaintext) + output_overhead) if output_overhead > 0 else 0)
     try:
@@ -1016,7 +997,7 @@ def sign_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK, operation="C_SignInit")
+    expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
     try:
         return _two_call_output(
@@ -1059,7 +1040,7 @@ def decrypt_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_DecryptInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK, context="C_DecryptInit", operation="C_DecryptInit")
+    expect_rv(rv, CKR_OK, context="C_DecryptInit")
     in_buf = to_ubyte_buf(ciphertext)
     try:
         return _two_call_output(
@@ -1217,32 +1198,10 @@ class AttrRefusal:
     to collapse them into one undifferentiated omission.
 
     ``leaked_len`` is not ``None`` when the module answered with a refusal
-    CKR but *also* wrote real attribute data into the template -- a
-    self-contradiction worth recording. It counts proven-changed bytes (a
-    lower bound: zero-writes are invisible against zeroed allocation), so
-    a retained length alone never counts as a write. The decoded bytes
+    CKR but *also* wrote ``leaked_len`` bytes of real attribute data into the
+    template -- a self-contradiction worth recording. The decoded bytes
     themselves are never carried here or anywhere derived from this class;
     only the length is bounded metadata.
-
-    ``malformed`` marks a refusal that retained a finite length without
-    writing anything (R8-1): sloppy but not a leak -- the refusal is
-    honored (no value is surfaced), yet the length field contradicts it.
-    Report as malformed, never as clean and never as leaked.
-
-    ``reported_len`` is the provider's own finite length alongside the
-    refusal, kept distinct from the proven ``leaked_len`` (R9-1): the two
-    agree except when the write contains canary bytes or the length was
-    resized after writing. ``None`` when no finite length was reported
-    (sentinel-shaped refusals).
-
-    ``capacity`` is set only for an overrun withheld under an aggregate
-    multi-attribute refusal (R17-1): the allocated buffer size the
-    ``reported_len`` exceeded. The ``ckr`` on such a refusal is the
-    aggregate call RV -- contextual call evidence, never this
-    attribute's attributed cause (per-attribute cause stays the
-    documented residual gap); the overrun itself (own length vs own
-    buffer) is per-attribute proven, and the value is withheld, never
-    a sliced prefix.
 
     Whether a given refusal is *conformant* (the attribute may legitimately
     be sensitive, e.g. a private-key component) or a *defect* (refused an
@@ -1254,9 +1213,6 @@ class AttrRefusal:
 
     ckr: int
     leaked_len: int | None = None
-    malformed: bool = False
-    reported_len: int | None = None
-    capacity: int | None = None
 
 
 class AttrReadResult(dict[int, Any]):
@@ -1270,19 +1226,15 @@ class AttrReadResult(dict[int, Any]):
     :class:`AttrRefusal` describing the module's refusal, *when one was
     actually observed*. ``unavailable_without_ckr`` holds attribute types for
     which the CK_UNAVAILABLE_INFORMATION sentinel was observed but no refusal
-    CKR was -- CKR_OK with no value delivered. ``unproved_delivery`` holds
-    attribute types whose read claimed success over an untouched fill
-    pattern (R11-2): delivery unproved, never a value and never silent.
-    An attribute type absent from the mapping and all channels is a plain
-    absence with nothing observed for it at all -- callers must never
-    invent a CKR for that case.
+    CKR was -- CKR_OK with no value delivered. An attribute type absent from
+    the mapping and both channels is a plain absence with nothing observed
+    for it at all -- callers must never invent a CKR for that case.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.refusals: dict[int, AttrRefusal] = {}
         self.unavailable_without_ckr: set[int] = set()
-        self.unproved_delivery: set[int] = set()
 
 
 # CK_RVs that mean "this attribute's value was not returned", per spec --
@@ -1302,74 +1254,11 @@ def _is_unavailable_length(val: int) -> bool:
     return val in (int(CK_UNAVAILABLE_INFORMATION), int(CK_UNAVAILABLE_INFORMATION_32))
 
 
-#: Fill pattern prefilling single-attribute read buffers (R11-2). Position
-#: dependent with period 256 (dividing the 64 KiB chunk size, so every
-#: chunk is phase-aligned): untouched allocation is exactly the pattern,
-#: while any genuine value -- even sixteen ``0xA5`` bytes -- differs from
-#: it somewhere. Byte 0 is non-boolean (distinct from FALSE and canonical
-#: TRUE) so single-byte flag reads stay sound.
-_PATTERN_PERIOD = 256
-_PATTERN_CHUNK = _PATTERN_PERIOD * 256
-_PATTERN_BLOCK = bytes((0xA5 + i) & 0xFF for i in range(_PATTERN_CHUNK))
-_PATTERN_BLOCK_ALT = bytes(b ^ 0xFF for b in _PATTERN_BLOCK)
-
-
-def _fill_pattern(buf: Any, size: int, *, alternate: bool = False) -> None:
-    """Fill ``buf[0:size]`` with the pattern in bounded chunks (R11-2)."""
-    block = _PATTERN_BLOCK_ALT if alternate else _PATTERN_BLOCK
-    base = ctypes.addressof(buf)
-    for off in range(0, size, _PATTERN_CHUNK):
-        clen = min(_PATTERN_CHUNK, size - off)
-        ctypes.memmove(base + off, block, clen)
-
-
-def _changed_byte_count(buf: Any, size: int, *, alternate: bool = False) -> int:
-    """Bytes in ``buf[0:size]`` differing from the fill (R9-1b, R11-2).
-
-    Chunked raw reads: bounded space regardless of buffer size (no
-    snapshot, no full copy, no int list). The range clamps to the
-    allocation; a lower bound, since fill-matching bytes are invisible.
-    Call only for filled single-attribute buffers, with the matching
-    ``alternate`` selection.
-    """
-    block = _PATTERN_BLOCK_ALT if alternate else _PATTERN_BLOCK
-    bound = min(size, len(buf))
-    base = ctypes.addressof(buf)
-    changed = 0
-    for off in range(0, bound, _PATTERN_CHUNK):
-        clen = min(_PATTERN_CHUNK, bound - off)
-        chunk = ctypes.string_at(base + off, clen)
-        want = block[:clen]
-        if chunk != want:
-            changed += sum(1 for a, b in zip(chunk, want) if a != b)
-    return changed
-
-
-def _digest_range(buf: Any, size: int) -> bytes:
-    """SHA-256 over ``buf[0:size]`` in bounded chunks (R12-3).
-
-    O(1) space regardless of buffer size. Used to compare a retried
-    read against its baseline without retaining either buffer.
-    """
-    digest = hashlib.sha256()
-    bound = min(size, len(buf))
-    base = ctypes.addressof(buf)
-    for off in range(0, bound, _PATTERN_CHUNK):
-        clen = min(_PATTERN_CHUNK, bound - off)
-        digest.update(ctypes.string_at(base + off, clen))
-    return digest.digest()
-
-
 def read_attributes(
     raw: RawPKCS11,
     session: int,
     handle: int,
     attr_types: list[int] | tuple[int, ...] | set[int] | frozenset[int],
-    *,
-    raw_bool: bool = False,
-    verify_delivery: bool = False,
-    _alternate_fill: bool = False,
-    _baseline: tuple[bytes, int] | None = None,
 ) -> AttrReadResult:
     """Read attribute values from an object.
 
@@ -1378,9 +1267,7 @@ def read_attributes(
     to its value. Uses the generated ATTR_VALUE_TYPES table for
     spec-correct decoding: bool attrs as bool, ulong attrs as int, str attrs
     as str, date attrs as 'YYYYMMDD' str, ulong_array attrs as list[int],
-    template and unknown attrs as bytes. With ``raw_bool``, bool attrs come
-    back as the raw byte instead, so callers needing canonical-TRUE proof
-    (the sign-probe twin check) can require exactly ``0x01``.
+    template and unknown attrs as bytes.
 
     An attribute type that the module refused (CKR_ATTRIBUTE_SENSITIVE or
     CKR_ATTRIBUTE_TYPE_INVALID) is never a key in the returned mapping, and
@@ -1389,26 +1276,6 @@ def read_attributes(
     sensitive" from "unrecognised attribute type" instead of seeing one
     undifferentiated omission. A plain absence with no CKR observed for that
     attribute carries no ``refusals`` entry.
-
-    Single-attribute buffers prefill with a position-dependent pattern
-    (R11-2): refusal-with-data claims are proven by changed bytes, and a
-    success whose returned range matches the pattern omits the key onto
-    the ``unproved_delivery`` channel (delivery unproved -- never a
-    value, never silent). Genuine values always differ from the pattern
-    somewhere, so they still decode. Never hand fill bytes back as data.
-
-    With ``verify_delivery``, a success the fill cannot fully prove --
-    some bytes match the fill, or all of them do (R12-3, R13-2) -- retries
-    once with the alternate fill: a tail that follows the fill confirms
-    unproved delivery, while byte-stable content proves genuine (compared
-    by digest, so stable genuine data with coincidental fill bytes still
-    decodes cleanly). The retry supersedes the first read and never
-    re-triggers, and it releases the first attempt's buffers before
-    allocating its own (R13-3); anything but a length- and content-stable
-    retry stays marked, and a retry refusal after a first-read success
-    stays marked too (R13-1). ``_alternate_fill`` and ``_baseline`` are
-    internal retry machinery, not caller knobs. Opt in at callers whose
-    verdicts must not rest on partially proven bytes.
 
     Returns `dict[int, Any]`-shaped values (not a precise union) because
     callers typically know the expected attribute type and call
@@ -1434,23 +1301,9 @@ def read_attributes(
             buffers.append(None)
             continue
         buf = _alloc_module_output(size, what="C_GetAttributeValue")
-        # R13-3: take the address, never ctypes.cast: cast() plants a
-        # self-cycle in the buffer's _objects keep-alive dict, which pins
-        # the allocation until the cyclic GC runs. The plain address keeps
-        # no keeper, so dropping our names below frees deterministically
-        # (the buffers list owns the memory across the provider call).
-        tmpl[i].pValue = ctypes.addressof(buf)
+        tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
         tmpl[i].ulValueLen = size
         buffers.append(buf)
-        # R11-2: pattern-fill single-attribute buffers so untouched
-        # allocation is exactly the pattern while any genuine value --
-        # even FALSE/zero bytes or sixteen 0xA5 bytes -- differs from it
-        # somewhere. No snapshot is stored: comparisons run against the
-        # known pattern in bounded chunks. Multi-attribute reads keep
-        # today's zero-fill (their refusal attribution stays the
-        # documented residual gap below).
-        if count == 1 and size > 0:
-            _fill_pattern(buf, size, alternate=_alternate_fill)
 
     # Second call: read values
     rv2 = raw.C_GetAttributeValue(session, handle, tmpl, count)
@@ -1467,149 +1320,38 @@ def read_attributes(
     result = AttrReadResult()
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
-        buf = buffers[i]
-        if (
-            rv2 == CKR_OK
-            and buf is not None
-            and not _is_unavailable_length(size)
-            and size > len(buf)
-        ):
-            # R16-1/R16-2 (N-003): a successful data call claiming more
-            # bytes than the buffer holds is malformed provider output --
-            # fail closed with both lengths instead of hashing or
-            # decoding a clamped prefix. Checked for every attribute on
-            # the data call's own RV (not the cached size-query CKR), so
-            # a size-query refusal can never route an overrun into the
-            # refusal branches below.
-            raise OutputLengthOverrunError(
-                call="C_GetAttributeValue", capacity=len(buf), reported=size
-            )
-        # Whole-allocation change count, single-attribute filled reads only.
-        changed_all = (
-            _changed_byte_count(buf, len(buf), alternate=_alternate_fill)
-            if count == 1 and buf is not None
-            else 0
-        )
-        if _is_unavailable_length(size) or buf is None:
+        if _is_unavailable_length(size) or buffers[i] is None:
             # Attribute sensitive or type invalid, correctly signalled via the
             # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
             # record a refusal when one was actually observed on this call.
             if _observed_refusal_ckr is not None:
-                # R8-1: a write proven by changed bytes counts even when the
-                # module hid behind the sentinel afterwards.
-                result.refusals[at] = AttrRefusal(
-                    ckr=_observed_refusal_ckr, leaked_len=changed_all or None
-                )
+                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr)
             else:
                 # F20: the sentinel was observed but the calls returned CKR_OK --
                 # success claimed, no value delivered. No CKR is invented, but
                 # the observation is kept so attr_or_record can tell this
                 # spec-shape deviation from a plain omission.
                 result.unavailable_without_ckr.add(at)
-            if _baseline is not None:
-                # R13-1: a baseline exists only when the first attempt was a
-                # success for this attribute, so a retry ending at the
-                # sentinel contradicts it -- the delivery stays marked and
-                # can never read as silent capability absence downstream.
-                result.unproved_delivery.add(at)
             continue
+        raw_bytes = bytes(buffers[i][:size])
         if _observed_refusal_ckr is not None and count == 1:
             # This is the sole requested attribute, so an observed refusal CKR is
             # unambiguously about it -- even though the module used a real
             # length/buffer instead of the CK_UNAVAILABLE_INFORMATION sentinel.
             # Never surface this as a present value (that would hand back
-            # material the module just declared sensitive/invalid). R8-1: a
-            # leak needs proven-changed bytes (never a bare length); a
-            # retained finite length without a write is malformed, not a
-            # leak. With multiple requested attributes this per-attribute
+            # material the module just declared sensitive/invalid); when the
+            # module also wrote real bytes (size > 0) that is itself a
+            # self-contradiction worth recording (bounded length only, never
+            # the bytes). With multiple requested attributes this per-attribute
             # attribution is not reliable from the overall rv alone, so it is
             # intentionally left as a residual gap (documented, not guessed at).
-            if changed_all:
-                result.refusals[at] = AttrRefusal(
-                    ckr=_observed_refusal_ckr,
-                    leaked_len=changed_all,
-                    reported_len=size,
-                )
-            else:
-                result.refusals[at] = AttrRefusal(
-                    ckr=_observed_refusal_ckr, malformed=True, reported_len=size
-                )
-            if _baseline is not None:
-                # R13-1: the first attempt observed a success (that is the
-                # only way a baseline exists), so a retry refusal
-                # contradicts it -- keep the refusal, and mark the delivery
-                # so strict callers stay loud instead of skipping.
-                result.unproved_delivery.add(at)
-            continue
-        if count != 1 and buf is not None and not _is_unavailable_length(size) and size > len(buf):
-            # R17-1: an overrun under an aggregate multi-attribute refusal.
-            # Success-claimed overruns never reach here (raised above), so
-            # the data call refused: withhold this attribute from decoding
-            # (never a silently sliced prefix) and retain capacity +
-            # reported length + the aggregate call RV. The RV stays
-            # explicitly aggregate (see AttrRefusal.capacity): no
-            # per-attribute cause is guessed. Bounded peers keep decoding
-            # below; single-attribute shapes never reach here.
             result.refusals[at] = AttrRefusal(
-                ckr=int(_observed_refusal_ckr) if _observed_refusal_ckr is not None else int(rv2),
-                malformed=True,
-                reported_len=size,
-                capacity=len(buf),
+                ckr=_observed_refusal_ckr, leaked_len=size if size > 0 else None
             )
             continue
-        # R14-3: a retry runs the stability check at every length --
-        # including zero, which always contradicts a positive baseline.
-        if _observed_refusal_ckr is None and count == 1 and (size > 0 or _baseline is not None):
-            changed = _changed_byte_count(buf, size, alternate=_alternate_fill)
-            if changed < size and verify_delivery and not _alternate_fill:
-                # R12-3/R13-2: unproven success on a verified read -- a
-                # partial write, an untouched buffer, or a wholly
-                # fill-matching one: one retry with the alternate fill
-                # distinguishes an unwritten tail (which follows the fill)
-                # from genuine content (which stays stable). The retry
-                # supersedes this read and never re-triggers; the baseline
-                # digest lets it recognize byte-stable genuine content.
-                # R13-3: release this attempt's buffers before the retry
-                # allocates its own -- the template holds only addresses,
-                # so dropping these names frees the provider buffer and the
-                # retry never holds two at once.
-                _retry_baseline = (_digest_range(buf, size), size)
-                del buf, buffers, tmpl, result
-                return read_attributes(
-                    raw,
-                    session,
-                    handle,
-                    attr_types,
-                    raw_bool=raw_bool,
-                    verify_delivery=False,
-                    _alternate_fill=True,
-                    _baseline=_retry_baseline,
-                )
-            stable = (
-                _baseline is not None
-                and changed > 0
-                and size == _baseline[1]
-                and _digest_range(buf, size) == _baseline[0]
-            )
-            if (changed < size or _baseline is not None) and not stable:
-                # Delivery not fully proven: intact fill, or a partial
-                # write the caller did not ask to verify (or that proved
-                # unstable on retry). On a retry anything but a stable
-                # match stays marked -- even fully changed bytes, which
-                # then disagree with the first read. Mark it; bools
-                # additionally omit (flags fail closed -- a fabricated
-                # True must never read as enabled), while other types
-                # decode below with the mark riding for strict callers.
-                # Byte-stable retries skip the mark: identical bytes under
-                # both fills are proven genuine.
-                result.unproved_delivery.add(at)
-                vtype = ATTR_VALUE_TYPES.get(at, "bytes")
-                if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
-                    continue
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
-        raw_bytes = bytes(buffers[i][:size])
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
-            result[at] = raw_bytes[0] if raw_bool else raw_bytes[0] != 0
+            result[at] = raw_bytes[0] != 0
         elif vtype == "ulong" and size == ctypes.sizeof(CK_ULONG):
             result[at] = int.from_bytes(raw_bytes, byteorder=sys.byteorder)
         elif vtype == "str":
@@ -2268,7 +2010,7 @@ def sign_multipart(
     """Sign data in multiple parts. Returns signature."""
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_SignInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK, operation="C_SignInit")
+    expect_rv(rv, CKR_OK)
     for chunk in chunks:
         in_buf = to_ubyte_buf(chunk)
         rv = raw.C_SignUpdate(session, in_buf, len(chunk))

@@ -37,7 +37,6 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_SESSION_HANDLE,
     CK_ULONG,
-    CK_UNAVAILABLE_INFORMATION,
     CKA_BASE,
     CKA_CLASS,
     CKA_EC_PARAMS,
@@ -56,7 +55,6 @@ from pkcs11_check.raw.types_std import (
     CKK_X9_42_DH,
     CKM_AES_KEY_GEN,
     CKO_PUBLIC_KEY,
-    CKR_ATTRIBUTE_SENSITIVE,
     CKR_FUNCTION_FAILED,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
@@ -1589,146 +1587,6 @@ def test_dsa_exact_search_incoherent_import_never_searches(
     _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
 
 
-def _dsa_public_session() -> Any:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "DSA")
-
-
-def test_dsa_public_staging_imports_public_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2-A3: public-only staging never imports the private half."""
-    purposes: list[str] = []
-
-    def _create(_rs: Any, _attrs: Any, *, purpose: str) -> int:
-        purposes.append(purpose)
-        return _QC6_PUB
-
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", _create)
-    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
-    assert dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True) == _QC6_PUB
-    assert purposes == ["QC6b fixed DSA-2048 public-only import"], purposes
-
-
-def test_dsa_public_staging_ignores_encoding_divergence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R2-A3: no byte-identical coherence gate on the public-only path."""
-
-    def _boom(*_args: Any, **_kwargs: Any) -> Any:
-        raise AssertionError("public-only staging must not read back for coherence")
-
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", lambda *_a, **_k: _QC6_PUB)
-    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
-    monkeypatch.setattr(dsa_case, "read_attributes", _boom)
-    assert dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True) == _QC6_PUB
-
-
-def test_dsa_public_staging_refusal_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2-A3/R3-A3: every import RV grades at source; DSA-less surfaces as refusal."""
-    from pkcs11_check.raw.rv import CkrAssertionError
-    from pkcs11_check.raw.types_std import CKR_PIN_INCORRECT, CKR_TEMPLATE_INCONSISTENT
-
-    def _refuse(*_args: Any, **kwargs: Any) -> int:
-        raise CkrAssertionError("refused", int(CKR_TEMPLATE_INCONSISTENT))
-
-    def _fail(*_args: Any, **kwargs: Any) -> int:
-        raise CkrAssertionError("failed", int(CKR_PIN_INCORRECT))
-
-    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", _refuse)
-    with pytest.raises(XFailed):
-        dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True)
-    # R3-A3: an unlisted standard refusal xfails unexpected-but-clean (no raw raise).
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", _fail)
-    with pytest.raises(XFailed):
-        dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True)
-    # R3-A3: no CKM_DSA gate -- a DSA-less provider surfaces as the graded refusal.
-    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: False)
-    with pytest.raises(XFailed):
-        dsa_case._stage_fixed_dsa_public(rs, copyable=True)
-
-
-def test_dsa_public_staging_vendor_refusal_xfails_alternate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R3-A3: a vendor import refusal xfails as the visible alternate."""
-    from pkcs11_check.raw.rv import CkrAssertionError
-
-    def _vendor(*_args: Any, **kwargs: Any) -> int:
-        raise CkrAssertionError("vendor refused", 0x80000001)
-
-    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", _vendor)
-    with pytest.raises(XFailed) as exc_info:
-        dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True)
-    assert type(exc_info.value) is XFailed
-    (record,) = [rec for rec in get_records() if rec.outcome == "xfail"]
-    assert record.reason == "nonspec_reject", record.summary
-
-
-def test_dsa_public_staging_undefined_refusal_fails_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R3-A3: an undefined import RV fails the metadata contract."""
-    from _pytest.outcomes import Failed
-
-    from pkcs11_check.raw.rv import CkrAssertionError
-
-    def _undefined(*_args: Any, **kwargs: Any) -> int:
-        raise CkrAssertionError("undefined", 0x7FFFFFFF)
-
-    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", _undefined)
-    with pytest.raises(Failed) as exc_info:
-        dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True)
-    assert type(exc_info.value) is Failed
-    (record,) = [rec for rec in get_records() if rec.outcome == "fail"]
-    assert record.reason == "self_contradiction", record.summary
-    assert record.kind == "metadata", record.summary
-
-
-def test_dsa_public_staging_non_ckr_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3-A3: a non-CKR fixture bug reraises untouched (never graded)."""
-    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
-
-    def _bug(*_args: Any, **kwargs: Any) -> int:
-        raise AssertionError("fixture bug")
-
-    monkeypatch.setattr(dsa_case, "create_object_negotiated", _bug)
-    with pytest.raises(AssertionError, match="fixture bug"):
-        dsa_case._stage_fixed_dsa_public(_dsa_public_session(), copyable=True)
-
-
-def test_dsa_compare_node_stages_public_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2-A3: the compare node stages, compares, and destroys one handle."""
-    seen: dict[str, Any] = {}
-
-    def _stage(_rs: Any, **kwargs: Any) -> int:
-        seen["stage_kwargs"] = dict(kwargs)
-        return 777
-
-    def _leg(_rs: Any, handle: int, _template: Any, **kwargs: Any) -> Any:
-        seen.setdefault("legs", []).append((handle, kwargs.get("leg")))
-        return ("ok", b"Y")
-
-    def _judge(**kwargs: Any) -> None:
-        seen["judged"] = True
-
-    def _destroy(_raw: Any, _sh: int, handle: int) -> None:
-        seen.setdefault("destroyed", []).append(handle)
-
-    monkeypatch.setattr(dsa_case, "_stage_fixed_dsa_public", _stage)
-    monkeypatch.setattr(dsa_case, "_read_dsa_public_value_or_void", lambda *_a, **_k: b"Y")
-    monkeypatch.setattr(dsa_case, "run_copy_compare_leg", _leg)
-    monkeypatch.setattr(dsa_case, "judge_copy_compare", _judge)
-    monkeypatch.setattr(dsa_case, "destroy_quietly", _destroy)
-    dsa_case.TestDSAPublicCopyCompare().test_fixed_dsa_public_copy_empty_vs_restated(
-        SimpleNamespace(raw=object(), sh=1)
-    )
-    assert seen["stage_kwargs"] == {"copyable": True}, seen
-    assert seen["legs"] == [(777, "empty"), (777, "restated")], seen
-    assert seen.get("judged") is True, seen
-    assert seen["destroyed"] == [777], seen
-
-
 _EC_PUB = 11
 _EC_PRIV = 12
 _EC_DERIVED = 21
@@ -2082,55 +1940,30 @@ def test_reuse_fresh_final_failure_preserves_resurrection_fail_p5(
 
 
 class _ScriptedFindRaw:
-    """Find surface scripted by searched template: pages keyed by (attr, value).
-
-    Each Init validates the FULL template (class, key type, value attr)
-    and serves the next scripted page for THAT (attr, value) pair; a
-    search for an unscripted pair fails loud, so a template mixup in the
-    source cannot go green. ``refuse_after`` scripts a Find RV for the
-    call after the served page, modelling a mid-search refusal.
-    """
+    """Find surface scripted by Init order: one handle page per search leg."""
 
     # noqa comments below: raw PKCS#11 entry-point names are mandated.
 
-    def __init__(
-        self,
-        pages: dict[tuple[int, bytes], list[tuple[int, ...]]],
-        refuse_after: dict[tuple[int, bytes], int] | None = None,
-        *,
-        sticky: bool = False,
-    ) -> None:
-        self._pages = {key: list(value) for key, value in pages.items()}
-        self._refuse_after = dict(refuse_after or {})
-        self._sticky = sticky
+    def __init__(self, pages: list[tuple[int, ...]]) -> None:
+        self._pages = list(pages)
         self.inits = 0
-        self.searched: list[tuple[int, bytes]] = []
         self._page: tuple[int, ...] = ()
         self._served = True
-        self._tail_rv: int | None = None
 
-    def C_FindObjectsInit(self, _sh: int, tmpl: Any, count: int) -> int:  # noqa: N802
+    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
         self.inits += 1
-        sought = _searched_template_key(tmpl, int(count))
-        self.searched.append(sought)
-        assert sought in self._pages, f"search for unscripted template {sought!r}"
-        assert self._pages[sought], f"no page left for {sought!r}"
-        self._page = self._pages[sought].pop(0)
+        self._page = self._pages.pop(0)
         self._served = False
-        self._tail_rv = self._refuse_after.pop(sought, None)
         return _OK
 
     def C_FindObjects(  # noqa: N802
         self, _sh: int, handles: Any, _max_count: int, found_ptr: Any
     ) -> int:
-        if self._served and not self._sticky:
-            if self._tail_rv is not None:
-                rv, self._tail_rv = self._tail_rv, None
-                return rv
+        if self._served:
             page: tuple[int, ...] = ()
         else:
             page = self._page
-            self._served = not self._sticky
+            self._served = True
         for i, handle in enumerate(page):
             handles[i] = handle
         ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = len(page)
@@ -2140,43 +1973,6 @@ class _ScriptedFindRaw:
         return _OK
 
 
-def _searched_template_key(tmpl: Any, count: int) -> tuple[int, bytes]:
-    """Decode and validate a search template: (value-attr type, value bytes).
-
-    The class/key-type scope is asserted (the production legs always
-    search public EC keys); only the value attribute varies per leg.
-    The ENTIRE template is checked (R3F10): exactly one value
-    predicate besides the scope, so a production leg searching extra
-    (or missing) attributes cannot hide behind first-predicate
-    matching.
-    """
-    seen_class = False
-    seen_key_type = False
-    for i in range(count):
-        attr_type = int(tmpl[i].type)
-        if attr_type == int(CKA_CLASS):
-            seen_class = True
-            length = int(tmpl[i].ulValueLen)
-            value = int.from_bytes(bytes(ctypes.string_at(tmpl[i].pValue, length)), "little")
-            assert value == int(CKO_PUBLIC_KEY), value
-        elif attr_type == int(CKA_KEY_TYPE):
-            seen_key_type = True
-            length = int(tmpl[i].ulValueLen)
-            value = int.from_bytes(bytes(ctypes.string_at(tmpl[i].pValue, length)), "little")
-            assert value == int(CKK_EC), value
-    assert seen_class and seen_key_type, "search template misses class/key-type scope"
-    values = [
-        i for i in range(count) if int(tmpl[i].type) not in (int(CKA_CLASS), int(CKA_KEY_TYPE))
-    ]
-    assert len(values) == 1, f"search template must carry exactly one value attr, got {len(values)}"
-    i = values[0]
-    attr_type = int(tmpl[i].type)
-    length = int(tmpl[i].ulValueLen)
-    if tmpl[i].pValue is None or length == 0:
-        return (attr_type, b"")
-    return (attr_type, bytes(ctypes.string_at(tmpl[i].pValue, length)))
-
-
 _SEP_DERIVED = 101
 _SEP_ORIGINAL = 102
 _SEP_BYTES = b"shared-provider-bytes"
@@ -2184,37 +1980,18 @@ _SEP_BYTES_D = b"derived-provider-bytes"
 _SEP_BYTES_O = b"original-provider-bytes"
 
 
-def _sep_records(
-    pages: dict[bytes, list[tuple[int, ...]]],
-    *,
-    attr: int | None = None,
-    attr_name: str = "params",
-    refuse_after: dict[bytes, int] | None = None,
-    **kw: Any,
-) -> list[Any]:
+def _sep_records(pages: list[tuple[int, ...]], **kw: Any) -> list[Any]:
     from pkcs11_check.testcases._exact_search import separate_search_records
 
-    resolved = int(CKA_EC_PARAMS) if attr is None else int(attr)
-    keyed = {(resolved, value): list(served) for value, served in pages.items()}
-    tails = {(resolved, value): rv for value, rv in (refuse_after or {}).items()}
-    raw = _ScriptedFindRaw(keyed, refuse_after=tails)
+    raw = _ScriptedFindRaw(pages)
     rs = SimpleNamespace(raw=raw, sh=1)
-    return separate_search_records(rs, attr=resolved, attr_name=attr_name, **kw)
-
-
-def _flipped(value: bytes) -> bytes:
-    from pkcs11_check.testcases._exact_search import flip_last_byte
-
-    return flip_last_byte(value)
+    return separate_search_records(rs, attr=int(CKA_EC_PARAMS), attr_name="params", **kw)
 
 
 def test_separate_search_agreeing_bytes_both_present_passes() -> None:
     """Shared bytes returning both handles produce no records."""
     records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
-            _flipped(_SEP_BYTES): [()],
-        },
+        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL), ()],
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2225,10 +2002,7 @@ def test_separate_search_agreeing_bytes_both_present_passes() -> None:
 def test_separate_search_agreeing_bytes_derived_missing_fails() -> None:
     """Shared bytes hiding the derived key fail (the #58.2 defect)."""
     records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_ORIGINAL,), (_SEP_DERIVED, _SEP_ORIGINAL)],
-            _flipped(_SEP_BYTES): [()],
-        },
+        [(_SEP_ORIGINAL,), (_SEP_DERIVED, _SEP_ORIGINAL), ()],
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2242,10 +2016,7 @@ def test_separate_search_agreeing_bytes_derived_missing_fails() -> None:
 def test_separate_search_agreeing_bytes_cross_missing_fails() -> None:
     """The cross leg fails when the sibling search hides a shared-bytes key."""
     records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_ORIGINAL,)],
-            _flipped(_SEP_BYTES): [()],
-        },
+        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_ORIGINAL,), ()],
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2259,10 +2030,7 @@ def test_separate_search_agreeing_bytes_cross_missing_fails() -> None:
 def test_separate_search_changed_match_fails() -> None:
     """A changed-value search returning a staged key fails."""
     records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
-            _flipped(_SEP_BYTES): [(_SEP_DERIVED,)],
-        },
+        [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED,)],
         derived=(_SEP_DERIVED, _SEP_BYTES),
         original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
@@ -2274,513 +2042,24 @@ def test_separate_search_changed_match_fails() -> None:
 
 
 def test_separate_search_diverging_bytes_self_present_passes() -> None:
-    """Diverging bytes with reciprocal exclusion produce no records."""
+    """Diverging bytes need only per-key membership (no cross assertion)."""
     records = _sep_records(
-        {
-            _SEP_BYTES_D: [(_SEP_DERIVED,)],
-            _SEP_BYTES_O: [(_SEP_ORIGINAL,)],
-            _flipped(_SEP_BYTES_D): [()],
-            _flipped(_SEP_BYTES_O): [()],
-        },
+        [(_SEP_DERIVED,), (_SEP_ORIGINAL,), (), ()],
         derived=(_SEP_DERIVED, _SEP_BYTES_D),
         original=(_SEP_ORIGINAL, _SEP_BYTES_O),
-        label="sep",
-    )
-    assert records == [None] * 8
-
-
-def test_separate_search_diverging_bytes_self_missing_fails() -> None:
-    """A key missing from its own-bytes search fails."""
-    records = _sep_records(
-        {
-            _SEP_BYTES_D: [()],
-            _SEP_BYTES_O: [(_SEP_ORIGINAL,)],
-            _flipped(_SEP_BYTES_D): [()],
-            _flipped(_SEP_BYTES_O): [()],
-        },
-        derived=(_SEP_DERIVED, _SEP_BYTES_D),
-        original=(_SEP_ORIGINAL, _SEP_BYTES_O),
-        label="sep",
-    )
-    fails = [record for record in records if record is not None]
-    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
-    assert fails[0].reason == "self_contradiction"
-
-
-def test_separate_search_diverging_bytes_cross_hit_fails() -> None:
-    """C2: an exact search returning both handles on diverging bytes fails."""
-    records = _sep_records(
-        {
-            _SEP_BYTES_D: [(_SEP_DERIVED, _SEP_ORIGINAL)],
-            _SEP_BYTES_O: [(_SEP_ORIGINAL,)],
-            _flipped(_SEP_BYTES_D): [()],
-            _flipped(_SEP_BYTES_O): [()],
-        },
-        derived=(_SEP_DERIVED, _SEP_BYTES_D),
-        original=(_SEP_ORIGINAL, _SEP_BYTES_O),
-        label="sep",
-    )
-    fails = [record for record in records if record is not None]
-    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
-    assert fails[0].reason == "self_contradiction"
-    assert "cross" in (fails[0].summary or "")
-
-
-def test_separate_search_unscripted_template_fails_loud() -> None:
-    """C2: a search for bytes the test never scripted fails the fake, never passes."""
-    with pytest.raises(AssertionError, match="unscripted template"):
-        _sep_records(
-            {_SEP_BYTES_D: [(_SEP_DERIVED,)]},
-            derived=(_SEP_DERIVED, _SEP_BYTES_D),
-            original=(_SEP_ORIGINAL, _SEP_BYTES_O),
-            label="sep",
-        )
-
-
-def test_separate_search_point_leg_agreeing_bytes_passes() -> None:
-    """R2B5: the production point leg runs under the same contract."""
-    records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
-            _flipped(_SEP_BYTES): [()],
-        },
-        attr=int(CKA_EC_POINT),
-        attr_name="point",
-        derived=(_SEP_DERIVED, _SEP_BYTES),
-        original=(_SEP_ORIGINAL, _SEP_BYTES),
         label="sep",
     )
     assert records == [None] * 6
 
 
-def test_searched_template_key_rejects_extra_predicate() -> None:
-    """R3F10: the fake checks the entire template, not just the first value attr."""
-    from pkcs11_check.raw.pack import template_from_dict
-
-    tmpl = template_from_dict(
-        {
-            int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-            int(CKA_KEY_TYPE): int(CKK_EC),
-            int(CKA_EC_PARAMS): b"params",
-            int(CKA_LABEL): b"extra",
-        }
-    )
-    with pytest.raises(AssertionError, match="exactly one value attr"):
-        _searched_template_key(tmpl.ptr, tmpl.count)
-
-
-def test_separate_search_params_point_legs_distinguished() -> None:
-    """R2B5: pages scripted for params never serve the point leg."""
-    with pytest.raises(AssertionError, match="unscripted template"):
-        _sep_records(
-            {
-                _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
-                _flipped(_SEP_BYTES): [()],
-            },
-            attr=int(CKA_EC_POINT),
-            attr_name="point",
-            derived=(_SEP_DERIVED, _SEP_BYTES_D),
-            original=(_SEP_ORIGINAL, _SEP_BYTES_D),
-            label="sep",
-        )
-
-
-def test_separate_search_changed_hit_before_refusal_fails() -> None:
-    """R2B5: a forbidden hit on a delivered page fails despite a later refusal."""
+def test_separate_search_diverging_bytes_self_missing_fails() -> None:
+    """A key missing from its own-bytes search fails."""
     records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
-            _flipped(_SEP_BYTES): [(_SEP_DERIVED,)],
-        },
-        refuse_after={_flipped(_SEP_BYTES): int(CKR_FUNCTION_FAILED)},
-        derived=(_SEP_DERIVED, _SEP_BYTES),
-        original=(_SEP_ORIGINAL, _SEP_BYTES),
+        [(), (_SEP_ORIGINAL,), (), ()],
+        derived=(_SEP_DERIVED, _SEP_BYTES_D),
+        original=(_SEP_ORIGINAL, _SEP_BYTES_O),
         label="sep",
     )
-    fails = [record for record in records if record is not None and record.outcome == "fail"]
-    assert len(fails) == 1, [(r.reason, r.summary) for r in records if r is not None]
-    # R3F14: the terminal states the proved hit, never a later refusal or cause.
-    assert "on a successfully delivered page" in (fails[0].summary or ""), fails[0].summary
-    assert "refused" not in (fails[0].summary or ""), fails[0].summary
-    assert "ignored" not in (fails[0].summary or ""), fails[0].summary
-    assert fails[0].actual_ckr == "CKR_OK", fails[0].summary
-    assert fails[0].detail is not None and _SEP_DERIVED in fails[0].detail["partial_handles"]
-
-
-def test_changed_hit_on_capped_search_states_proved_hit() -> None:
-    """R3F14: a cap-ended all-OK search with a delivered hit fails without refusal language."""
-    from pkcs11_check.testcases._exact_search import expected_not_among_record, observe_exact_search
-
-    raw = _ScriptedFindRaw({(int(CKA_EC_PARAMS), _SEP_BYTES): [(_SEP_DERIVED,)]}, sticky=True)
-    rs = SimpleNamespace(raw=raw, sh=1)
-    obs = observe_exact_search(
-        rs,
-        {CKA_CLASS: CKO_PUBLIC_KEY, CKA_KEY_TYPE: CKK_EC, CKA_EC_PARAMS: _SEP_BYTES},
-        label="cap",
-    )
-    assert obs.handles is None, obs
-    record = expected_not_among_record(obs, _SEP_DERIVED, label="cap")
-    assert record is not None and record.outcome == "fail"
-    assert "on a successfully delivered page" in (record.summary or ""), record.summary
-    assert "refused" not in (record.summary or ""), record.summary
-    assert record.actual_ckr == "CKR_OK", record.summary
-
-
-def test_separate_search_changed_miss_before_refusal_keeps_refusal() -> None:
-    """R2B5: absence from a partial set stays unproved and keeps the defect."""
-    records = _sep_records(
-        {
-            _SEP_BYTES: [(_SEP_DERIVED, _SEP_ORIGINAL), (_SEP_DERIVED, _SEP_ORIGINAL)],
-            _flipped(_SEP_BYTES): [(999,)],
-        },
-        refuse_after={_flipped(_SEP_BYTES): int(CKR_FUNCTION_FAILED)},
-        derived=(_SEP_DERIVED, _SEP_BYTES),
-        original=(_SEP_ORIGINAL, _SEP_BYTES),
-        label="sep",
-    )
-    pending = [record for record in records if record is not None]
-    assert pending, "the refusal must surface"
-    assert all(record.outcome == "xfail" for record in pending)
-    assert all(record.reason == "not_operational" for record in pending)
-
-
-def test_observe_exact_search_bounded_unfinished_is_inconclusive() -> None:
-    """R2B5: a search filling the paging bound is inconclusive, not a defect."""
-    from pkcs11_check.testcases import _exact_search as exact
-
-    pages = [(tuple(range(n * 16 + 1, n * 16 + 17))) for n in range(exact.MAX_PAGES)]
-
-    class _BoundedRaw:
-        def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
-            self._pages = list(pages)
-            return int(CKR_OK)
-
-        def C_FindObjects(  # noqa: N802
-            self, _sh: int, handles: Any, _max_count: int, found_ptr: Any
-        ) -> int:
-            page = self._pages.pop(0)
-            for i, handle in enumerate(page):
-                handles[i] = handle
-            ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = len(page)
-            return int(CKR_OK)
-
-        def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
-            return int(CKR_OK)
-
-    rs = SimpleNamespace(raw=_BoundedRaw(), sh=1)
-    obs = observe_exact_search(rs, {int(CKA_EC_PARAMS): b"v"}, label="bounded")
-    assert obs.handles is None
-    assert obs.record is not None and obs.record.outcome == "xfail"
-    assert obs.record.reason == "not_operational", obs.record.summary
-    assert "inconclusive" in (obs.record.summary or ""), obs.record.summary
-    assert obs.record.detail is not None
-    assert obs.record.detail["repeated_pages"] is False
-    assert len(obs.partial) == exact.MAX_PAGES * exact.PAGE_SIZE
-
-
-def test_observe_exact_search_stuck_cursor_flagged_in_detail() -> None:
-    """R2B5: a bound-filling search repeating pages flags repetition."""
-
-    class _StuckRaw:
-        def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
-            return int(CKR_OK)
-
-        def C_FindObjects(  # noqa: N802
-            self, _sh: int, handles: Any, _max_count: int, found_ptr: Any
-        ) -> int:
-            for i in range(16):
-                handles[i] = 7
-            ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = 16
-            return int(CKR_OK)
-
-        def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
-            return int(CKR_OK)
-
-    rs = SimpleNamespace(raw=_StuckRaw(), sh=1)
-    obs = observe_exact_search(rs, {int(CKA_EC_PARAMS): b"v"}, label="stuck")
-    assert obs.record is not None and obs.record.outcome == "xfail"
-    assert obs.record.detail is not None
-    assert obs.record.detail["repeated_pages"] is True
-    assert obs.record.detail["unique_handles"] == 1
-
-
-def test_adopt_derived_pub_clean_returns_candidate() -> None:
-    """R2B5: a fresh handle adopts without records."""
-    assert derive_case._adopt_derived_pub(55, pub_a=11, priv_a=12, label="t") == 55
-    assert get_records() == []
-
-
-def test_adopt_derived_pub_zero_fails_classified() -> None:
-    """R3F10: a null derive output is a classified CKR_OK contradiction."""
-    from _pytest.outcomes import Failed
-
-    with pytest.raises(Failed, match="handle 0"):
-        derive_case._adopt_derived_pub(0, pub_a=11, priv_a=12, label="t")
-    (record,) = [rec for rec in get_records() if rec.outcome == "fail"]
-    assert record.reason == "self_contradiction", record.summary
-    assert record.kind == "policy", record.summary
-
-
-def test_adopt_derived_pub_public_alias_fails() -> None:
-    """R2B5: adopting the comparison handle fails before adoption."""
-    from _pytest.outcomes import Failed
-
-    with pytest.raises(Failed, match="vacuo-pass"):
-        derive_case._adopt_derived_pub(11, pub_a=11, priv_a=12, label="t")
-    (record,) = [rec for rec in get_records() if rec.outcome == "fail"]
-    assert "comparison public" in (record.summary or ""), record.summary
-
-
-def test_adopt_derived_pub_input_alias_fails() -> None:
-    """R2B5: adopting the derive input handle fails before adoption."""
-    from _pytest.outcomes import Failed
-
-    with pytest.raises(Failed, match="vacuo-pass"):
-        derive_case._adopt_derived_pub(12, pub_a=11, priv_a=12, label="t")
-    (record,) = [rec for rec in get_records() if rec.outcome == "fail"]
-    assert "derive input" in (record.summary or ""), record.summary
-
-
-def _p256_point_bytes() -> bytes:
-    """A real P-256 public point (raw uncompressed; the parser checks the curve)."""
-    key = ec.generate_private_key(ec.SECP256R1())
-    return key.public_key().public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
-    )
-
-
-class _SepNodeRaw:
-    """Full-node fake for the derived-EC separate-search node (R3F10).
-
-    Serves keygen (101/102), PUB_KEY_FROM_PRIV_KEY derive (103),
-    point/params readbacks with per-handle refusal scripting, paged
-    Finds keyed by the entire template, and destroys. Search pages
-    and read refusals are scripted per test.
-    """
-
-    def __init__(
-        self,
-        *,
-        point_d: bytes,
-        point_o: bytes,
-        params_d: bytes,
-        params_o: bytes,
-        pages: dict[tuple[int, bytes], list[tuple[int, ...]]],
-        point_refuse: dict[int, int] | None = None,
-        params_refuse: dict[int, int] | None = None,
-    ) -> None:
-        self._point = {101: point_o, 103: point_d}
-        self._params = {101: params_o, 103: params_d}
-        self._point_refuse = dict(point_refuse or {})
-        self._params_refuse = dict(params_refuse or {})
-        self._pages = {key: list(value) for key, value in pages.items()}
-        self._page: tuple[int, ...] = ()
-        self._served = True
-        self.searched: list[tuple[int, bytes]] = []
-        self.reads: list[tuple[int, int]] = []
-        self.destroyed: list[int] = []
-        self.inits = 0
-
-    def C_GenerateKeyPair(  # noqa: N802
-        self,
-        _sh: int,
-        _mech: Any,
-        _pub_tmpl: Any,
-        _pub_count: int,
-        _priv_tmpl: Any,
-        _priv_count: int,
-        pub_ptr: Any,
-        priv_ptr: Any,
-    ) -> int:
-        ctypes.cast(pub_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 101
-        ctypes.cast(priv_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 102
-        return int(CKR_OK)
-
-    def C_DeriveKey(  # noqa: N802
-        self, _sh: int, _mech: Any, _base: int, _tmpl: Any, _count: int, handle_ptr: Any
-    ) -> int:
-        ctypes.cast(handle_ptr, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 103
-        return int(CKR_OK)
-
-    def C_GetAttributeValue(  # noqa: N802
-        self, _sh: int, handle: int, tmpl: Any, count: int
-    ) -> int:
-        assert int(count) == 1, "node reads one attribute at a time"
-        attr = int(tmpl[0].type)
-        self.reads.append((int(handle), attr))
-        if attr == int(CKA_EC_POINT):
-            if int(handle) in self._point_refuse:
-                # R4-F10: ABI-faithful refusal (RV plus sentinel, as
-                # production receives it -- never a bare RV alone).
-                tmpl[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
-                return self._point_refuse[int(handle)]
-            value = self._point[int(handle)]
-        elif attr == int(CKA_EC_PARAMS):
-            if int(handle) in self._params_refuse:
-                tmpl[0].ulValueLen = int(CK_UNAVAILABLE_INFORMATION)
-                return self._params_refuse[int(handle)]
-            value = self._params[int(handle)]
-        else:
-            raise AssertionError(f"node fake serves only point/params, got {attr:#x}")
-        if tmpl[0].pValue is None:
-            tmpl[0].ulValueLen = len(value)
-        else:
-            ctypes.memmove(tmpl[0].pValue, value, len(value))
-            tmpl[0].ulValueLen = len(value)
-        return int(CKR_OK)
-
-    def C_FindObjectsInit(self, _sh: int, tmpl: Any, count: int) -> int:  # noqa: N802
-        self.inits += 1
-        sought = _searched_template_key(tmpl, int(count))
-        self.searched.append(sought)
-        assert sought in self._pages, f"search for unscripted template {sought!r}"
-        assert self._pages[sought], f"no page left for {sought!r}"
-        self._page = self._pages[sought].pop(0)
-        self._served = False
-        return int(CKR_OK)
-
-    def C_FindObjects(  # noqa: N802
-        self, _sh: int, handles: Any, _max_count: int, found_ptr: Any
-    ) -> int:
-        page = () if self._served else self._page
-        self._served = True
-        for i, handle in enumerate(page):
-            handles[i] = handle
-        ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = len(page)
-        return int(CKR_OK)
-
-    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
-        return int(CKR_OK)
-
-    def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
-        self.destroyed.append(int(handle))
-        return int(CKR_OK)
-
-
-def _run_sep_node(fake: _SepNodeRaw) -> None:
-    rs = SimpleNamespace(
-        raw=fake,
-        sh=1,
-        has_mechanism=lambda name: name in {"EC_KEY_PAIR_GEN", "PUB_KEY_FROM_PRIV_KEY"},
-    )
-    node = derive_case.TestDerivedECPublicSearch()
-    node.test_derived_ec_public_search_by_separate_params_and_point(rs)
-
-
-_SEP_PARAMS = b"params-separate-bytes"
-
-
-def _sep_healthy_pages(point: bytes) -> dict[tuple[int, bytes], list[tuple[int, ...]]]:
-    from pkcs11_check.testcases._exact_search import flip_last_byte
-
-    return {
-        (int(CKA_EC_PARAMS), _SEP_PARAMS): [(101, 103), (101, 103)],
-        (int(CKA_EC_PARAMS), flip_last_byte(_SEP_PARAMS)): [()],
-        (int(CKA_EC_POINT), point): [(101, 103), (101, 103)],
-        (int(CKA_EC_POINT), flip_last_byte(point)): [()],
-    }
-
-
-def test_sep_node_healthy_passes() -> None:
-    """R3F10: the driven node passes with both legs running and cleaned up."""
-    point = _p256_point_bytes()
-    fake = _SepNodeRaw(
-        point_d=point,
-        point_o=point,
-        params_d=_SEP_PARAMS,
-        params_o=_SEP_PARAMS,
-        pages=_sep_healthy_pages(point),
-    )
-    assert _run_sep_node(fake) is None
-    assert fake.inits == 6, fake.searched
-    assert {key[0] for key in fake.searched} == {int(CKA_EC_PARAMS), int(CKA_EC_POINT)}
-    assert fake.destroyed == [101, 102, 103], fake.destroyed
-
-
-def test_sep_node_point_search_miss_fails() -> None:
-    """R3F10: a point search hiding the derived key fails (the point leg runs)."""
-    point = _p256_point_bytes()
-    pages = _sep_healthy_pages(point)
-    pages[(int(CKA_EC_POINT), point)] = [(101,), (101, 103)]
-    fake = _SepNodeRaw(
-        point_d=point,
-        point_o=point,
-        params_d=_SEP_PARAMS,
-        params_o=_SEP_PARAMS,
-        pages=pages,
-    )
-    with pytest.raises(Failed, match="point") as exc_info:
-        _run_sep_node(fake)
-    assert type(exc_info.value) is Failed, exc_info.value
-    assert any(key[0] == int(CKA_EC_POINT) for key in fake.searched), fake.searched
-
-
-def test_sep_node_point_refused_params_fail_wins() -> None:
-    """R3F10: a refused point read voids only point legs; the params fail wins."""
-    point = _p256_point_bytes()
-    pages = _sep_healthy_pages(point)
-    pages[(int(CKA_EC_PARAMS), _SEP_PARAMS)] = [(101,), (101, 103)]
-    fake = _SepNodeRaw(
-        point_d=point,
-        point_o=point,
-        params_d=_SEP_PARAMS,
-        params_o=_SEP_PARAMS,
-        pages=pages,
-        point_refuse={103: int(CKR_ATTRIBUTE_SENSITIVE)},
-    )
-    with pytest.raises(Failed, match="params") as exc_info:
-        _run_sep_node(fake)
-    assert type(exc_info.value) is Failed, exc_info.value
-    assert all(key[0] != int(CKA_EC_POINT) for key in fake.searched), fake.searched
-    assert (103, int(CKA_EC_POINT)) in fake.reads, fake.reads
-    # R4-F10: the params failure wins, but the point refusal RV survives
-    # alongside it (both records journaled, refusal carries its CKR).
-    point_records = [
-        rec for rec in get_records() if rec.outcome == "xfail" and "EC_POINT" in (rec.summary or "")
-    ]
-    assert len(point_records) == 1, [(rec.reason, rec.summary) for rec in get_records()]
-    assert point_records[0].reason == "not_operational", point_records[0].summary
-    assert point_records[0].actual_ckr == "CKR_ATTRIBUTE_SENSITIVE", point_records[0].summary
-
-
-def test_sep_node_params_refused_point_fail_wins() -> None:
-    """R3F10: a refused params read voids only params legs; the point fail wins."""
-    point = _p256_point_bytes()
-    pages = _sep_healthy_pages(point)
-    pages[(int(CKA_EC_POINT), point)] = [(101,), (101, 103)]
-    # The params search never runs; drop its pages so any attempt errors.
-    pages = {key: value for key, value in pages.items() if key[0] != int(CKA_EC_PARAMS)}
-    fake = _SepNodeRaw(
-        point_d=point,
-        point_o=point,
-        params_d=_SEP_PARAMS,
-        params_o=_SEP_PARAMS,
-        pages=pages,
-        params_refuse={103: int(CKR_ATTRIBUTE_SENSITIVE)},
-    )
-    with pytest.raises(Failed, match="point") as exc_info:
-        _run_sep_node(fake)
-    assert type(exc_info.value) is Failed, exc_info.value
-    assert all(key[0] != int(CKA_EC_PARAMS) for key in fake.searched), fake.searched
-
-
-def test_sep_node_point_mismatch_fails() -> None:
-    """R3F10: derived/original point mismatch fails even with passing searches."""
-    from pkcs11_check.testcases._exact_search import flip_last_byte
-
-    point_d = _p256_point_bytes()
-    point_o = _p256_point_bytes()
-    pages = _sep_healthy_pages(point_d)
-    pages[(int(CKA_EC_POINT), point_d)] = [(103,)]
-    pages[(int(CKA_EC_POINT), flip_last_byte(point_d))] = [()]
-    pages[(int(CKA_EC_POINT), point_o)] = [(101,)]
-    pages[(int(CKA_EC_POINT), flip_last_byte(point_o))] = [()]
-    fake = _SepNodeRaw(
-        point_d=point_d,
-        point_o=point_o,
-        params_d=_SEP_PARAMS,
-        params_o=_SEP_PARAMS,
-        pages=pages,
-    )
-    with pytest.raises(Failed, match="does not equal"):
-        _run_sep_node(fake)
+    fails = [record for record in records if record is not None]
+    assert len(fails) == 1, [(record.reason, record.summary) for record in fails]
+    assert fails[0].reason == "self_contradiction"

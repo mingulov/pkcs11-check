@@ -9,7 +9,7 @@ default; secret-safe by construction.
 ## Context
 
 The suite already funnels every `C_*` call through a single choke point:
-`RawPKCS11._call(name, *args)` (`raw/api.py`). It increments
+`RawPKCS11._call(name, *args)` at `raw/api.py:302-314`. It increments
 `self._call_log[name]`, extracts the mechanism id for mechanism-bearing
 functions (`args[1]._obj.mechanism`), and the **raw integer RV is right there**
 at `int(func(*args))` - *before* `_to_ckr()`, which is naming only, not
@@ -19,19 +19,17 @@ place, before any test-level "accept any of these codes" logic.
 The report pipeline preserves arbitrary `user_properties` for free:
 pytest `_report_to_json` copies the field untouched (`_pytest/reports.py:597`),
 reportlog `json.dumps` it (`pytest_reportlog/plugin.py:71-77`), and the pooled
-shard merge is a byte-for-byte `shutil.copyfileobj` (`core/merge.py`, in
-`_concat_jsonl`). A native list-of-dicts of primitives serializes to clean
-nested JSON; a non-serializable value would be `str()`-ed rather than crash,
-but every field here is `int`/`str`/`null`, so it is safe. `user_properties`
-already carries counter windows and session records
-(`call-counters-design.md`), so the trace is one more entry type sharing the
-field rather than its sole occupant.
+shard merge is a byte-for-byte `shutil.copyfileobj` (`core/merge.py:48-73`). A
+native list-of-dicts of primitives serializes to clean nested JSON; a
+non-serializable value would be `str()`-ed rather than crash, but every field
+here is `int`/`str`/`null`, so it is safe. `user_properties` is currently always
+`[]`, so nothing competes.
 
 The per-test bookkeeping seam also already exists: `call_log`,
 `used_mechanisms`, and `mechanism_counts` are instance attributes on the
 session-scoped `RawPKCS11`, reset per test in the three session fixtures
-(at the `reset_call_log()` sites in `fixtures.py` - *after* bootstrap
-and `C_Login`) and drained at `pytest_runtest_teardown` (`plugin.py`).
+(`fixtures.py:99, 238, 392`, at the `reset_call_log()` sites - *after* bootstrap
+and `C_Login`) and drained at `pytest_runtest_teardown` (`plugin.py:542-584`).
 The RV trace is a fourth sibling of that family.
 
 ## Goals
