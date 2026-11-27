@@ -4175,15 +4175,18 @@ def _rows_exit_total(rows: list[Any]) -> int:
     return total
 
 
-def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
+def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int, int | None] | None:
     """Validate one flat counter row (mirrors the live ingest parser)."""
     if not isinstance(row, (list, tuple)):
         return None
+    mech: Any = None
     if len(row) == 3:
         module: Any = UNKNOWN_MODULE
         fn, rv, count = row[0], row[1], row[2]
     elif len(row) == 4:
         module, fn, rv, count = row[0], row[1], row[2], row[3]
+    elif len(row) == 5:
+        module, fn, rv, count, mech = row[0], row[1], row[2], row[3], row[4]
     else:
         return None
     if not isinstance(module, str):
@@ -4194,7 +4197,9 @@ def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
         return None
     if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
         return None
-    return (module, fn, rv, count)
+    if mech is not None and (not isinstance(mech, int) or isinstance(mech, bool) or mech < 0):
+        return None
+    return (module, fn, rv, count, mech)
 
 
 def _probe_rows_to_block(rows: list[Any]) -> dict[str, Any] | None:
@@ -4207,18 +4212,26 @@ def _probe_rows_to_block(rows: list[Any]) -> dict[str, Any] | None:
     mirrors the live ingest parser (garbage rows skipped, never fatal);
     None when no row parses.
     """
+    from pkcs11_check.raw.api import ckm_name
     from pkcs11_check.raw.rv import ckr_name
 
     entries: dict[tuple[str, str], int] = {}
     exits: dict[tuple[str, str, int], int] = {}
+    entry_mech: dict[tuple[str, str, int], int] = {}
+    exit_mech: dict[tuple[str, str, int, int], int] = {}
     for row in rows:
         parsed = _parse_probe_flat_row(row)
         if parsed is None:
             continue
-        module, fn, rv, count = parsed
+        module, fn, rv, count, mech = parsed
         entries[(module, fn)] = entries.get((module, fn), 0) + count
         if rv is not None:
             exits[(module, fn, rv)] = exits.get((module, fn, rv), 0) + count
+        if mech is not None:
+            entry_mech[(module, fn, mech)] = entry_mech.get((module, fn, mech), 0) + count
+            if rv is not None:
+                key = (module, fn, rv, mech)
+                exit_mech[key] = exit_mech.get(key, 0) + count
     if not entries:
         return None
     modules: dict[str, dict[str, Any]] = {}
@@ -4232,6 +4245,20 @@ def _probe_rows_to_block(rows: list[Any]) -> dict[str, Any] | None:
         leaf = by_rv.get(str(rv))
         if leaf is None:
             by_rv[str(rv)] = {"name": ckr_name(rv), "count": count}
+        else:
+            leaf["count"] += count
+    for (module, fn, mech), calls in entry_mech.items():
+        target = modules[module]["test"]["by_fn"][fn]
+        by_mech = target.setdefault("by_mechanism", {})
+        by_mech[f"0x{mech:08x}"] = {"name": ckm_name(mech), "calls": calls, "by_rv": {}}
+    for (module, fn, rv, mech), count in exit_mech.items():
+        target = modules[module]["test"]["by_fn"][fn]
+        entry = target.setdefault("by_mechanism", {}).setdefault(
+            f"0x{mech:08x}", {"name": ckm_name(mech), "calls": 0, "by_rv": {}}
+        )
+        leaf = entry["by_rv"].get(str(rv))
+        if leaf is None:
+            entry["by_rv"][str(rv)] = {"name": ckr_name(rv), "count": count}
         else:
             leaf["count"] += count
     uniform = {module: ensure_five_buckets(buckets) for module, buckets in modules.items()}
@@ -4457,7 +4484,7 @@ def _suppressed_volumes_uncovered(
         parsed = _parse_probe_flat_row(row)
         if parsed is None:
             continue
-        module, fn, rv, count = parsed
+        module, fn, rv, count, _mech = parsed
         entry_key = (module, fn)
         suppressed_entries[entry_key] = suppressed_entries.get(entry_key, 0) + count
         if rv is not None:
@@ -4617,7 +4644,7 @@ def _probe_rows_groups(rows: list[Any]) -> dict[tuple[str, str], dict[str, Any]]
         parsed = _parse_probe_flat_row(row)
         if parsed is None:
             continue
-        module, fn, rv, count = parsed
+        module, fn, rv, count, _mech = parsed
         group = groups.setdefault((module, fn), {"entries": 0, "exits": {}})
         group["entries"] += count
         if rv is not None:
@@ -5033,7 +5060,7 @@ def _rows_returns_diff(merged: list[Any], own: list[Any]) -> dict[tuple[str, ...
         parsed = _parse_probe_flat_row(row)
         if parsed is None:
             continue
-        module, fn, rv, count = parsed
+        module, fn, rv, count, _mech = parsed
         if rv is not None:
             own_exits[(module, fn, rv)] = own_exits.get((module, fn, rv), 0) + count
     merged_exits: dict[tuple[str, str, int], int] = {}
@@ -5041,7 +5068,7 @@ def _rows_returns_diff(merged: list[Any], own: list[Any]) -> dict[tuple[str, ...
         parsed = _parse_probe_flat_row(row)
         if parsed is None:
             continue
-        module, fn, rv, count = parsed
+        module, fn, rv, count, _mech = parsed
         if rv is not None:
             merged_exits[(module, fn, rv)] = merged_exits.get((module, fn, rv), 0) + count
     for key, merged_count in merged_exits.items():
@@ -16673,6 +16700,12 @@ def _replay_tmp_returns(
                             "name": tmp_item.get("name") if isinstance(tmp_item, dict) else None,
                             "count": tmp_count,
                         }
+                # The tmp snapshot is newer (superset returns), so its
+                # mechanism detail supersedes too; when it carries none the
+                # committed detail stands (never destroyed by a replay).
+                tmp_mech = tmp_leaf.get("by_mechanism")
+                if isinstance(tmp_mech, dict):
+                    own_leaf["by_mechanism"] = copy.deepcopy(tmp_mech)
                 if judged is not None:
                     leaf_eligibility[judged] = not refused_item
     merged = dict(committed)
