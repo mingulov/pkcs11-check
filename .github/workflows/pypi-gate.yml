@@ -163,6 +163,21 @@ jobs:
                   return response.read().decode("utf-8", "replace")
 
 
+          class _NoAuthRedirect(urllib.request.HTTPRedirectHandler):
+              """Follow redirects without forwarding Authorization (R6).
+
+              The archive download 302s to a signed blob URL: stock urllib
+              would carry the bearer to the storage host. The signed URL
+              needs no auth, so strip it on every redirect.
+              """
+
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  fresh = super().redirect_request(req, fp, code, msg, headers, newurl)
+                  if fresh is not None:
+                      fresh.remove_header("Authorization")
+                  return fresh
+
+
           def triggering_binding() -> dict[str, object]:
               """Version + rehearsal bit recorded by the triggering publish run.
 
@@ -184,6 +199,7 @@ jobs:
                       "re-dispatch with an explicit version"
                   )
               listing_url = f"{api_root}/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+              opener = urllib.request.build_opener(_NoAuthRedirect)
 
               def api_read(url: str) -> bytes:
                   request = urllib.request.Request(
@@ -195,7 +211,7 @@ jobs:
                       },
                   )
                   try:
-                      with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response:
+                      with opener.open(request, timeout=READ_TIMEOUT) as response:
                           return response.read()
                   except Exception as exc:
                       raise SystemExit(
@@ -219,12 +235,18 @@ jobs:
                   blob = api_read(matches[0]["archive_download_url"])
                   binding = json.loads(zipfile.ZipFile(io.BytesIO(blob)).read("gate-binding.json"))
                   version_text = binding.get("version", "")
+                  dry_run = binding.get("dry_run", False)
                   if not isinstance(version_text, str) or not version_text.strip():
                       raise SystemExit(
                           "cannot bind gate version: binding has no version; "
                           "re-dispatch with an explicit version"
                       )
-                  return {"version": version_text.strip(), "dry_run": bool(binding.get("dry_run", False))}
+                  if not isinstance(dry_run, bool):
+                      raise SystemExit(
+                          "cannot bind gate version: binding dry_run is not a boolean; "
+                          "re-dispatch with an explicit version"
+                      )
+                  return {"version": version_text.strip(), "dry_run": dry_run}
               except SystemExit:
                   raise
               except Exception as exc:
@@ -443,7 +465,7 @@ jobs:
           # (wheel vs sdist URL), never by pip flags. R4-2: point pip at an
           # empty config so a pip.conf extra index cannot join either (the
           # null device is spelled per-OS; --isolated does not cover files).
-          PIP_CONFIG_FILE="$(python -c 'import os; print(os.devnull)')" \
+          PIP_CONFIG_FILE="$(python -c 'import os,sys; sys.stdout.write(os.devnull)')" \
             python -m pip install \
             --index-url https://pypi.org/simple/ \
             "$ARTIFACT_URL"

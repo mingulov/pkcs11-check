@@ -187,9 +187,12 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     assert "urlopen" not in install_run
     assert "findall" not in install_run
     # R4-2: pip gets an empty config file (per-OS null device), so no
-    # pip.conf extra index can join the explicit prod index.
+    # pip.conf extra index can join the explicit prod index. R6: emitted
+    # without a newline -- print() on Windows yields "NUL\r", which pip
+    # would not recognize as the null device.
     assert "PIP_CONFIG_FILE=" in install_run
-    assert "os.devnull" in install_run
+    assert "sys.stdout.write(os.devnull)" in install_run
+    assert "print(os.devnull)" not in install_run
     install_step = next(s for s in steps if "from the pinned index" in str(s.get("name", "")))
     assert install_step["env"]["ARTIFACT_URL"] == "${{ steps.await.outputs.artifact_url }}"
     # R3-3: pip merges an inherited PIP_EXTRA_INDEX_URL alongside the
@@ -391,6 +394,8 @@ def test_gate_runs_bind_version_to_triggering_record() -> None:
     assert "def triggering_binding()" in run_body
     assert "/actions/runs/" in run_body and "/artifacts?per_page=100" in run_body
     assert '"gate-binding"' in run_body
+    assert "_NoAuthRedirect" in run_body
+    assert 'remove_header("Authorization")' in run_body
     assert "archive_download_url" in run_body
     assert "cannot bind gate version" in run_body
     assert "re-dispatch with an explicit version" in run_body
@@ -504,7 +509,18 @@ def _exec_prepare(
             self.full_url = url
             self.headers = headers or {}
 
-    fake_urllib_request = SimpleNamespace(urlopen=_fake_urlopen, Request=_FakeRequest)
+    class _FakeOpener:
+        def open(self, url: object, timeout: object = None) -> _FakeResponse:
+            return _fake_urlopen(url, timeout)
+
+    import urllib.request as _real_request
+
+    fake_urllib_request = SimpleNamespace(
+        urlopen=_fake_urlopen,
+        Request=_FakeRequest,
+        build_opener=lambda *handlers: _FakeOpener(),
+        HTTPRedirectHandler=_real_request.HTTPRedirectHandler,
+    )
     fake_urllib = SimpleNamespace(request=fake_urllib_request)
     monkeypatch.setitem(sys.modules, "urllib", fake_urllib)
     monkeypatch.setitem(sys.modules, "urllib.request", fake_urllib_request)
@@ -523,9 +539,10 @@ def _exec_prepare(
         monkeypatch.setenv(key, env.get(key, ""))
     buffer = io.StringIO()
     raised: str | None = None
+    namespace: dict[str, object] = {}
     try:
         with contextlib.redirect_stdout(buffer):
-            exec(compile(_prepare_script(), "<gate-prepare>", "exec"), {})  # noqa: S102
+            exec(compile(_prepare_script(), "<gate-prepare>", "exec"), namespace)  # noqa: S102
     except SystemExit as exc:
         raised = str(exc.code)
     outputs = dict(
@@ -533,7 +550,7 @@ def _exec_prepare(
         for line in output_path.read_text(encoding="utf-8").splitlines()
         if "=" in line
     )
-    return _PrepareResult(raised=raised, output=buffer.getvalue(), outputs=outputs)
+    return _PrepareResult(raised=raised, output=buffer.getvalue(), outputs=outputs, ns=namespace)
 
 
 _RELEASE_BASE = {
@@ -701,6 +718,74 @@ def test_prepare_explicit_version_skips_binding(
     assert result.outputs["version"] == "1.2.3"
     assert "requested version: 1.2.3" in result.output
     assert "bound to triggering publish" not in result.output
+
+
+def test_prepare_rejects_non_boolean_rehearsal_bit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R6: a synthetic string dry_run must not read as a rehearsal."""
+    result = _exec_prepare(
+        monkeypatch,
+        tmp_path,
+        env=_RELEASE_BASE,
+        artifacts=[_live_binding_artifact()],
+        download=_binding_zip({"version": "9.9.9", "dry_run": "false"}),
+    )
+    assert result.raised is not None and "not a boolean" in result.raised
+    assert result.outputs == {}
+
+
+def test_prepare_redirect_handler_strips_bearer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R6: the shipped redirect handler keeps the bearer off blob hosts."""
+    import threading
+    import urllib.request as real_request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen: dict[str, str | None] = {}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/start":
+                self.send_response(302)
+                self.send_header("Location", "/land")
+                self.end_headers()
+            else:
+                seen["auth"] = self.headers.get("Authorization")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # Run the shipped script once (explicit version: no binding I/O) to
+        # capture its namespace, then drive its redirect handler for real.
+        result = _exec_prepare(
+            monkeypatch,
+            tmp_path,
+            env={"REQUESTED": "1.2.3"},
+            latest="9.9.9",
+            page_version="1.2.3",
+        )
+        assert result.raised is None, result.output
+        handler_cls = result.ns["_NoAuthRedirect"]
+
+        opener = real_request.build_opener(handler_cls())
+        request = real_request.Request(
+            f"http://127.0.0.1:{server.server_port}/start",
+            headers={"Authorization": "Bearer SECRET"},
+        )
+        assert opener.open(request, timeout=10).read() == b"ok"
+        assert seen.get("auth") is None
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
 
 
 def _exec_await(
