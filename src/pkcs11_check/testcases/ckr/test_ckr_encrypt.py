@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_ctr, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
 )
@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
+    CKM_AES_CTR,
     CKM_AES_ECB,
     CKM_RSA_PKCS,
     CKM_SHA256,
@@ -198,6 +199,37 @@ class TestEncryptDataErrors:
                     summary=f"Should have rejected {size}-byte ECB data",
                 )
             assert_ckr(CKR_ENCRYPT["data_len_range"], rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_ctr_counter_overflow(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+        """AES-CTR whose counter would wrap -> CKR_DATA_LEN_RANGE."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
+            pytest.skip("AES_CTR not supported")
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-CTR overflow setup")
+        try:
+            # Counter at max with two blocks of data: every increment
+            # convention wraps, so refusal is unambiguous.
+            mech = mech_ctr(CKM_AES_CTR, 128, cb=b"\xff" * 16)
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
+                pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
+            data = (ctypes.c_ubyte * 32)(*([0xAA] * 32))
+            out_len = CK_ULONG(48)
+            out_buf = (ctypes.c_ubyte * 48)()
+            rv = rs.raw.C_Encrypt(rs.sh, data, 32, out_buf, byref(out_len))
+            if rv == CKR_OK:
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Encrypt:AES-CTR-counter-overflow",
+                    operation="C_Encrypt",
+                    mechanism="CKM_AES_CTR",
+                    actual=rv,
+                    summary="Should have refused data past counter max",
+                )
+            assert_ckr(CKR_ENCRYPT["ctr_counter_overflow"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
