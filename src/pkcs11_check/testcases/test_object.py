@@ -6,7 +6,7 @@ key pair attributes, and object lifecycle.
 
 from __future__ import annotations
 
-from typing import Any, NoReturn
+from typing import Any
 
 import pytest
 
@@ -50,8 +50,6 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_MONTGOMERY,
     CKK_ML_DSA,
     CKK_RSA,
-    CKM_EC_EDWARDS_KEY_PAIR_GEN,
-    CKM_EC_KEY_PAIR_GEN,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_ML_KEM_KEY_PAIR_GEN,
@@ -70,10 +68,8 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import (
     MISSING_ATTRIBUTE,
     attr_or_record,
-    delivery_unproved,
     refusal_rv_for,
 )
-from pkcs11_check.testcases._ec_export import SECP256R1_ORDER
 from pkcs11_check.testcases._rsa_export import rsa_public_key_from_attrs_or_xfail
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
@@ -644,13 +640,7 @@ def _qc7_detail(attr: int, *, producer_operation: str, **extra: Any) -> dict[str
 
 
 def _qc7_read_single(
-    rs: Any,
-    handle: int,
-    attr: int,
-    *,
-    label: str,
-    producer_operation: str,
-    pass_on_absence: bool = False,
+    rs: Any, handle: int, attr: int, *, label: str, producer_operation: str
 ) -> tuple[str, Any, list[C.Classification]]:
     """Single-attribute read with inverse-oracle-safe polarity.
 
@@ -659,17 +649,9 @@ def _qc7_read_single(
     ``missing`` (nothing observed), or ``error`` (already recorded).
     A correct TYPE_INVALID produces no record -- ``attr_or_record``
     would record it as a deviation, which is the wrong polarity here.
-    A sentinel-shaped absence returns its recorded deviation (R6-2) so
-    callers judge it instead of minting a second record with an
-    unobserved CKR -- unless ``pass_on_absence`` marks absence itself
-    as the asserted property (inverse-oracle checks), where the global
-    evidence stays but nothing is raised.
-    Reads verify delivery and judge strictly (R12-2): unproved bytes
-    are never analyzed as data, and unproved absence never silently
-    passes -- not even for inverse-oracle callers.
     """
     try:
-        attrs = read_attributes(rs.raw, rs.sh, handle, [attr], verify_delivery=True)
+        attrs = read_attributes(rs.raw, rs.sh, handle, [attr])
     except CkrAssertionError as exc:
         reason = (
             "not_operational"
@@ -688,31 +670,10 @@ def _qc7_read_single(
             summary=f"{label}: attribute read returned {ckr_name(exc.rv)}",
         )
         return "error", None, [record]
+    if attr in attrs:
+        return "present", attrs[attr], []
     clean_rv = refusal_rv_for(attrs, attr)
     if clean_rv is not None:
-        if delivery_unproved(attrs, attr):
-            # R14-1: the retry contradicted a successful first read, so
-            # this refusal proves nothing -- no absence or sensitivity
-            # credit. The observed RV rides on the deviation (never
-            # invented: it came from the retry's own calls).
-            record = C.record_as(
-                "honest_deviation",
-                kind="metadata",
-                label=label,
-                operation="C_GetAttributeValue",
-                inherit_mechanism=False,
-                actual=clean_rv,
-                detail=_qc7_detail(
-                    attr,
-                    producer_operation=producer_operation,
-                    unproved_delivery=True,
-                ),
-                summary=(
-                    f"{label}: attribute delivery unproved (retry refused "
-                    f"with {ckr_name(clean_rv)} after a successful first read)"
-                ),
-            )
-            return "error", None, [record]
         if int(clean_rv) == int(CKR_ATTRIBUTE_TYPE_INVALID):
             return "absent", None, []
         if int(clean_rv) == int(CKR_ATTRIBUTE_SENSITIVE):
@@ -729,44 +690,31 @@ def _qc7_read_single(
         )
         return "error", None, [record]
     # No clean refusal from a real read_attributes result can only be a
-    # present value, a refusal-with-data, the CKR_OK-plus-sentinel shape,
-    # or unproved delivery (a plain omission always carries one of those
-    # channels). refusal_rv_for deliberately hides leaked_len, so compose
-    # with attr_or_record and sniff its just-emitted records (the
-    # documented composition; the optional_if_absent escape hatch is
-    # scoped to KCV and not used): a leaked refusal records
-    # self_contradiction, the sentinel shape an honest deviation kept as
-    # evidence while judged absent here, and unproved delivery is judged
-    # strictly (R12-2: never analyzed as data). Present values come back
-    # directly with nothing recorded.
+    # refusal-with-data or the CKR_OK-plus-sentinel shape (a plain
+    # omission always carries one of those two channels). refusal_rv_for
+    # deliberately hides leaked_len, so compose with attr_or_record and
+    # sniff its just-emitted records (the documented composition; the
+    # optional_if_absent escape hatch is scoped to KCV and not used): a
+    # leaked refusal records self_contradiction, the sentinel shape an
+    # honest deviation kept as evidence while judged absent here.
     before = len(C.get_records())
-    value = attr_or_record(
+    attr_or_record(
         attrs,
         attr,
         label=label,
         reason="honest_deviation",
         kind="metadata",
         inherit_mechanism=False,
-        strict_delivery=True,
     )
-    if value is not MISSING_ATTRIBUTE:
-        return "present", value, []
     added = C.get_records()[before:]
-    for record in added:
-        if record.detail is None:
-            record.detail = {}
-        record.detail.setdefault("producer_operation", producer_operation)
     if any(record.reason == "self_contradiction" for record in added):
+        for record in added:
+            if record.detail is None:
+                record.detail = {}
+            record.detail.setdefault("producer_operation", producer_operation)
         return "error", None, added
     if added:
-        # R6-2: the sentinel deviation is evidence the caller must judge
-        # (returned, not just global), so no second record with an
-        # invented CKR is minted downstream. Inverse-oracle callers keep
-        # the old pass shape via pass_on_absence -- except for unproved
-        # delivery (R12-2), which no absence assertion may silently pass.
-        if pass_on_absence and not delivery_unproved(attrs, attr):
-            return "absent", None, []
-        return "absent", None, added
+        return "absent", None, []
     return "missing", None, []
 
 
@@ -799,83 +747,6 @@ def _qc7_record_wrong_value(
     )
 
 
-_P256_SCALAR_WIDTH = 32
-
-
-def _qc7_ec_scalar_equal(value: bytes, expected: bytes) -> bool:
-    """EC scalar equality by integer value (fw#95): minimal-or-full width.
-
-    Minimal-encoding providers return P-256 scalars without leading-zero
-    padding. Widths stay pinned to 1..32 so SEC1/PKCS#8 containers (and any
-    overlong blob) can never compare equal.
-    """
-    if not value or len(value) > _P256_SCALAR_WIDTH or len(expected) > _P256_SCALAR_WIDTH:
-        return False
-    return int.from_bytes(value, "big") == int.from_bytes(expected, "big")
-
-
-def _qc7_is_p256_scalar(blob: bytes) -> bool:
-    """Whether blob is a raw P-256 private scalar: 1..32 bytes below the order."""
-    return (
-        isinstance(blob, bytes)
-        and 1 <= len(blob) <= _P256_SCALAR_WIDTH
-        and 0 < int.from_bytes(blob, "big") < SECP256R1_ORDER
-    )
-
-
-def _qc7_scalar_point_binding_record(
-    generated: bytes, point: bytes | None, *, label: str
-) -> C.Classification | None:
-    """Wrong-value record unless the scalar derives the generated point (F8).
-
-    A module reporting one key's scalar for another keypair's point is key
-    confusion the scalar-only legs cannot see. Points parse leniently (raw
-    uncompressed or DER-wrapped compressed/uncompressed SEC1) and compare
-    as public numbers, so encodings never cause false mismatches. Absent
-    points skip binding silently (point readability is other tests'
-    property, pinned by the no-point equivalence test); present but
-    undecodable points fail (garbage is assessed broken, matching the
-    import/export suites).
-    """
-    from cryptography.hazmat.primitives.asymmetric import ec
-
-    from pkcs11_check.testcases._ec_export import (
-        InvalidProviderECPointError,
-        ProviderECPointEncodingError,
-        parse_provider_ec_point,
-    )
-
-    if not isinstance(point, bytes):
-        return None
-    try:
-        parsed = parse_provider_ec_point(point, ec.SECP256R1(), label=label)
-    except (InvalidProviderECPointError, ProviderECPointEncodingError):
-        return _qc7_record_wrong_value(
-            CKA_EC_POINT,
-            label=label,
-            producer_operation="C_GenerateKeyPair",
-            summary=f"{label}: generated public point is not valid P-256 SEC1",
-            expected_len=65,
-            actual_len=len(point),
-        )
-    reported = parsed.public_key.public_numbers()
-    derived = (
-        ec.derive_private_key(int.from_bytes(generated, "big"), ec.SECP256R1())
-        .public_key()
-        .public_numbers()
-    )
-    if (derived.x, derived.y) != (reported.x, reported.y):
-        return _qc7_record_wrong_value(
-            CKA_VALUE,
-            label=label,
-            producer_operation="C_GenerateKeyPair",
-            summary=f"{label}: generated scalar does not derive the generated public point",
-            expected_len=32,
-            actual_len=len(generated),
-        )
-    return None
-
-
 def _qc7_is_der_public_key(blob: bytes) -> bool:
     try:
         from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -888,12 +759,7 @@ def _qc7_is_der_public_key(blob: bytes) -> bool:
 
 def _qc7_check_public_value_absent(rs: Any, pub: int, *, label: str) -> list[C.Classification]:
     status, value, records = _qc7_read_single(
-        rs,
-        pub,
-        CKA_VALUE,
-        label=label,
-        producer_operation="C_GenerateKeyPair",
-        pass_on_absence=True,
+        rs, pub, CKA_VALUE, label=label, producer_operation="C_GenerateKeyPair"
     )
     if status == "present":
         value_len = len(value) if isinstance(value, (bytes, bytearray)) else None
@@ -989,178 +855,6 @@ def _import_or_xfail(attempt: Any, *, purpose: str) -> int:
         raise
 
 
-def _baseline_raw_gen(rs: Any, family: str, ec_params: bytes) -> tuple[int, int]:
-    """One bare generation on the requested curve; typed refusal (R4-6).
-
-    Raw calls, never the keygen wrappers: no multi-curve retries, no
-    skip/xfail outcomes, exactly one attempt. Montgomery generates only
-    the requested curve (X25519 vs X448 are independently supportable).
-    """
-    if family == "montgomery":
-        return gen_keypair(
-            rs.raw,
-            rs.sh,
-            int(CKM_EC_MONTGOMERY_KEY_PAIR_GEN),
-            pub_base=[attr_bytes(CKA_EC_PARAMS, ec_params)],
-            priv_base=[],
-            public_attrs={CKA_TOKEN: False, CKA_DERIVE: True},
-            private_attrs={CKA_TOKEN: False, CKA_DERIVE: True},
-            pub_skip={CKA_EC_PARAMS},
-        )
-    if family == "edwards":
-        mechanism = int(CKM_EC_EDWARDS_KEY_PAIR_GEN)
-    elif family == "ec":
-        mechanism = int(CKM_EC_KEY_PAIR_GEN)
-    else:
-        raise ValueError(f"unknown QC7a private family: {family}")
-    return gen_keypair(
-        rs.raw,
-        rs.sh,
-        mechanism,
-        pub_base=[attr_bytes(CKA_EC_PARAMS, ec_params)],
-        priv_base=[],
-        public_attrs={CKA_VERIFY: True},
-        private_attrs={CKA_SIGN: True},
-        pub_skip={CKA_EC_PARAMS},
-    )
-
-
-def _baseline_gen_mechanisms(family: str) -> tuple[str, ...]:
-    """Generation mechanisms proving the import baseline can run (R5-3).
-
-    Mirrors the keygen wrappers' advertised-capability strings: without
-    one of these, dispatching C_GenerateKeyPair manufactures a refusal
-    (MECHANISM_INVALID) the baseline must not judge.
-    """
-    if family == "ec":
-        return ("EC_KEY_PAIR_GEN", "ECDSA_KEY_PAIR_GEN")
-    if family == "edwards":
-        return ("EC_EDWARDS_KEY_PAIR_GEN",)
-    if family == "montgomery":
-        return ("EC_MONTGOMERY_KEY_PAIR_GEN",)
-    raise ValueError(f"unknown QC7a private family: {family}")
-
-
-def _baseline_curve_gen_or_skip(
-    rs: Any, family: str, ec_params: bytes, exc: CkrAssertionError
-) -> NoReturn:
-    """Same-curve generation baseline for import curve refusals (R2-6).
-
-    A refusal is attributable to the curve only when a bare generation on
-    the same curve refuses too; a working baseline means the refusal is
-    template-specific and stays loud. Baseline keys are destroyed.
-    R4-5: entry and skip eligibility gate on the explicit curve set --
-    any other primary RV re-raises without consulting, and an unexpected
-    baseline RV re-raises as its own finding, never a skip.
-    R5-3: unadvertised generation cannot run the baseline; the import
-    refusal is inconclusive (xfail), never absence and never a finding
-    manufactured from the baseline's own refusal.
-    """
-    if not is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
-        raise exc
-    if not any(rs.has_mechanism(name) for name in _baseline_gen_mechanisms(family)):
-        C.xfail_as(
-            "not_operational",
-            label=f"QC7a {family} private import",
-            operation="C_CreateObject",
-            expected=CKR_OK,
-            actual=exc.rv,
-            summary=(
-                f"QC7a {family} private import ({exc}); generation mechanism "
-                "unadvertised, baseline cannot run; import support inconclusive"
-            ),
-        )
-    try:
-        pub, priv = _baseline_raw_gen(rs, family, ec_params)
-    except CkrAssertionError as bexc:
-        if not is_known_error(bexc, EC_CURVE_UNSUPPORTED_RVS):
-            raise bexc from exc
-        pytest.skip(
-            f"QC7a {family} private import not supported ({exc}); "
-            f"baseline generation refused: {ckr_name(bexc.rv)}"
-        )
-    try:
-        raise CkrAssertionError(
-            f"{exc} (baseline generation on the same curve succeeded)",
-            exc.rv,
-            getattr(exc, "operation", None),
-        ) from exc
-    finally:
-        destroy_quietly(rs.raw, rs.sh, pub)
-        destroy_quietly(rs.raw, rs.sh, priv)
-
-
-def _baseline_mldsa_import_or_skip(rs: Any, exc: CkrAssertionError) -> NoReturn:
-    """Minimal-template baseline for ML-DSA import refusals (R2-6).
-
-    Retries without CKA_SIGN and the seal attributes: success proves the
-    refusal is template-specific (loud); an explicit refusal concedes
-    absence (skip naming the baseline RV). The baseline key is destroyed.
-    R4-5: entry and skip eligibility gate on the explicit RV -- any other
-    primary RV re-raises without consulting, an unexpected baseline RV
-    re-raises as its own finding, and a baseline that cannot run is
-    inconclusive (xfail), never absence.
-    """
-    from pkcs11_check.testcases.test_sensitivity import _MATRIX_MLDSA44_SK
-
-    if not is_known_error(exc, (CKR_ATTRIBUTE_TYPE_INVALID,)):
-        raise exc
-    try:
-        baseline = create_object_negotiated(
-            rs,
-            {
-                CKA_CLASS: CKO_PRIVATE_KEY,
-                CKA_KEY_TYPE: CKK_ML_DSA,
-                CKA_TOKEN: False,
-                CKA_PARAMETER_SET: int(CKP_ML_DSA_44),
-                CKA_VALUE: _MATRIX_MLDSA44_SK,
-            },
-            purpose="QC7a ML-DSA-44 private import (minimal baseline)",
-            preserve_policy_attrs=True,
-        )
-    except pytest.skip.Exception as exc2:
-        C.xfail_as(
-            "not_operational",
-            label="QC7a ML-DSA-44 private import",
-            operation="C_CreateObject",
-            expected=CKR_OK,
-            actual=exc.rv,
-            summary=(
-                f"QC7a ML-DSA-44 private import ({exc}); minimal-template baseline "
-                f"unavailable: {exc2}; import support inconclusive"
-            ),
-        )
-    except CkrAssertionError as bexc:
-        if not is_known_error(bexc, (CKR_ATTRIBUTE_TYPE_INVALID,)):
-            raise bexc from exc
-        pytest.skip(
-            f"QC7a ML-DSA-44 private import not supported ({exc}); "
-            f"baseline minimal import refused: {ckr_name(bexc.rv)}"
-        )
-    try:
-        raise CkrAssertionError(
-            f"{exc} (baseline minimal import succeeded)",
-            exc.rv,
-            getattr(exc, "operation", None),
-        ) from exc
-    finally:
-        destroy_quietly(rs.raw, rs.sh, baseline)
-
-
-def _qc7_skip_unless_family_import_supported(rs: Any, family: str) -> None:
-    """Skip a family import when no family mechanism is advertised (fw#93).
-
-    Mirrors the matrix import pre-gate: import cells only need the module
-    to handle the family's key type.
-    """
-    from pkcs11_check.testcases.test_sensitivity import _matrix_import_mechanisms
-
-    matrix_family = {"ml_dsa_44": "mldsa"}.get(family, family)
-    mechs = _matrix_import_mechanisms(matrix_family)
-    if not any(rs.has_mechanism(name) for name in mechs):
-        pytest.skip(f"QC7a {family} private import: no {family} mechanism advertised")
-
-
 def _qc7_prove_unsealed(
     rs: Any, handle: int, *, label: str, producer_operation: str
 ) -> tuple[bool, list[C.Classification]]:
@@ -1219,31 +913,27 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
     from cryptography.hazmat.primitives.asymmetric import ec, ed25519, x25519
 
     skip_unless_create_object_supported(rs)
-    _qc7_skip_unless_family_import_supported(rs, family)
     if family == "ml_dsa_44":
         from pkcs11_check.testcases.test_sensitivity import _MATRIX_MLDSA44_SK
 
-        try:
-            handle = _import_or_xfail(
-                lambda: create_object_negotiated(
-                    rs,
-                    {
-                        CKA_CLASS: CKO_PRIVATE_KEY,
-                        CKA_KEY_TYPE: CKK_ML_DSA,
-                        CKA_TOKEN: False,
-                        CKA_PARAMETER_SET: int(CKP_ML_DSA_44),
-                        CKA_VALUE: _MATRIX_MLDSA44_SK,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_SIGN: True,
-                    },
-                    purpose="QC7a ML-DSA-44 private import",
-                    preserve_policy_attrs=True,
-                ),
+        handle = _import_or_xfail(
+            lambda: create_object_negotiated(
+                rs,
+                {
+                    CKA_CLASS: CKO_PRIVATE_KEY,
+                    CKA_KEY_TYPE: CKK_ML_DSA,
+                    CKA_TOKEN: False,
+                    CKA_PARAMETER_SET: int(CKP_ML_DSA_44),
+                    CKA_VALUE: _MATRIX_MLDSA44_SK,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SIGN: True,
+                },
                 purpose="QC7a ML-DSA-44 private import",
-            )
-        except CkrAssertionError as exc:
-            _baseline_mldsa_import_or_skip(rs, exc)
+                preserve_policy_attrs=True,
+            ),
+            purpose="QC7a ML-DSA-44 private import",
+        )
         return handle, _MATRIX_MLDSA44_SK, None
 
     der_format = serialization.PrivateFormat.PKCS8
@@ -1274,21 +964,18 @@ def _import_unsealed_private_or_xfail(rs: Any, family: str) -> tuple[int, bytes,
     else:
         raise ValueError(f"unknown QC7a private family: {family}")
     der = key.private_bytes(serialization.Encoding.DER, der_format, serialization.NoEncryption())
-    try:
-        handle = _import_or_xfail(
-            lambda: import_ec_private_key_negotiated(
-                rs,
-                ec_params=ec_params,
-                value=raw,
-                key_type=key_type,
-                attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
-                purpose=f"QC7a {family} private import",
-                preserve_policy_attrs=True,
-            ),
+    handle = _import_or_xfail(
+        lambda: import_ec_private_key_negotiated(
+            rs,
+            ec_params=ec_params,
+            value=raw,
+            key_type=key_type,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
             purpose=f"QC7a {family} private import",
-        )
-    except CkrAssertionError as exc:
-        _baseline_curve_gen_or_skip(rs, family, ec_params, exc)
+            preserve_policy_attrs=True,
+        ),
+        purpose=f"QC7a {family} private import",
+    )
     return handle, raw, der
 
 
@@ -1582,11 +1269,7 @@ class TestAttributeValueEncodings:
                     )
                 )
             elif status == "present":
-                if family == "ec":
-                    match = isinstance(value, bytes) and _qc7_ec_scalar_equal(value, expected)
-                else:
-                    match = isinstance(value, bytes) and value == expected
-                if not match:
+                if not isinstance(value, bytes) or value != expected:
                     records.append(
                         _qc7_record_wrong_value(
                             CKA_VALUE,
@@ -1616,9 +1299,8 @@ class TestAttributeValueEncodings:
     def test_private_value_generated_imported_equivalent(self, p11_raw_session: Any) -> None:
         """Same P-256 material reads identically generated and imported.
 
-        GENERATED leg must first be a raw P-256 scalar: 1..32 bytes below
-        the curve order (a SEC1/PKCS#8 container fails here before any
-        re-import is attempted).
+        GENERATED leg must first be a 32-byte raw scalar (a SEC1/PKCS#8
+        container fails here before any re-import is attempted).
         """
         rs = p11_raw_session
         skip_unless_create_object_supported(rs)
@@ -1668,48 +1350,17 @@ class TestAttributeValueEncodings:
                     )
                 _qc7_raise_strongest(records)
                 return
-            if not _qc7_is_p256_scalar(generated):
+            if len(generated) != 32:
                 records.append(
                     _qc7_record_wrong_value(
                         CKA_VALUE,
                         label=label,
                         producer_operation="C_GenerateKeyPair",
-                        summary=(
-                            f"{label}: generated value is not a raw P-256 scalar "
-                            "(1..32 bytes below the curve order)"
-                        ),
+                        summary=f"{label}: generated value is not a 32-byte raw scalar",
                         expected_len=32,
                         actual_len=len(generated),
                     )
                 )
-                _qc7_raise_strongest(records)
-                return
-            status_p, point, point_records = _qc7_read_single(
-                rs, pub, CKA_EC_POINT, label=label, producer_operation="C_GenerateKeyPair"
-            )
-            records.extend(point_records)
-            if status_p != "present" and not point_records:
-                # R4-8: generation must contribute CKA_EC_POINT to the
-                # public object (PKCS#11 v3.2 section 6.3.9); an unreadable
-                # point is a structured deviation, never a silent binding
-                # skip. The value legs below still run, and any stronger
-                # readback finding wins via _qc7_raise_strongest. R6-2: a
-                # sentinel absence arrives via point_records (shared fix),
-                # so this branch only mints clean-TYPE_INVALID (observed),
-                # missing, or sensitive shapes -- never an invented CKR.
-                records.append(
-                    _qc7_record_missing(
-                        CKA_EC_POINT,
-                        label=label,
-                        producer_operation="C_GenerateKeyPair",
-                        status=status_p,
-                    )
-                )
-            binding = _qc7_scalar_point_binding_record(
-                generated, point if status_p == "present" else None, label=label
-            )
-            if binding is not None:
-                records.append(binding)
                 _qc7_raise_strongest(records)
                 return
             imported = _import_or_xfail(
@@ -1751,10 +1402,7 @@ class TestAttributeValueEncodings:
                         )
                     )
                 elif status2 == "present":
-                    if not (
-                        isinstance(imported_value, bytes)
-                        and _qc7_ec_scalar_equal(imported_value, generated)
-                    ):
+                    if imported_value != generated:
                         records.append(
                             _qc7_record_wrong_value(
                                 CKA_VALUE,

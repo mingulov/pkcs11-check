@@ -1148,7 +1148,7 @@ class TestCheckValue:
         try:
             attrs: dict[int, Any]
             try:
-                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE], verify_delivery=True)
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
             except CkrAssertionError as exc:
                 if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     attrs = {}
@@ -1166,7 +1166,6 @@ class TestCheckValue:
                 kind="metadata",
                 inherit_mechanism=False,
                 optional_if_absent=True,
-                strict_delivery=True,
             )
             if kcv is MISSING_ATTRIBUTE:
                 _raise_strongest(classification.get_records()[record_count:])
@@ -1201,7 +1200,7 @@ class TestCheckValue:
         try:
             attrs: dict[int, Any]
             try:
-                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE], verify_delivery=True)
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
             except CkrAssertionError as exc:
                 if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     attrs = {}
@@ -1219,7 +1218,6 @@ class TestCheckValue:
                 kind="metadata",
                 inherit_mechanism=False,
                 optional_if_absent=True,
-                strict_delivery=True,
             )
             if kcv is MISSING_ATTRIBUTE:
                 _raise_strongest(classification.get_records()[record_count:])
@@ -1281,9 +1279,7 @@ class TestCheckValue:
             try:
                 attrs: dict[int, Any]
                 try:
-                    attrs = read_attributes(
-                        rs.raw, rs.sh, key, [CKA_CHECK_VALUE], verify_delivery=True
-                    )
+                    attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
                 except CkrAssertionError as exc:
                     attrs = {}
                     if not is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -1303,7 +1299,6 @@ class TestCheckValue:
                         kind="metadata",
                         inherit_mechanism=False,
                         optional_if_absent=True,
-                        strict_delivery=True,
                     )
                     hard_results.extend(classification.get_records()[record_count:])
 
@@ -1387,9 +1382,7 @@ class TestCheckValue:
         try:
             attrs1: dict[int, Any]
             try:
-                attrs1 = read_attributes(
-                    rs.raw, rs.sh, key1, [CKA_CHECK_VALUE], verify_delivery=True
-                )
+                attrs1 = read_attributes(rs.raw, rs.sh, key1, [CKA_CHECK_VALUE])
             except CkrAssertionError as exc:
                 attrs1 = {}
                 if not is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -1409,7 +1402,6 @@ class TestCheckValue:
                     kind="metadata",
                     inherit_mechanism=False,
                     optional_if_absent=True,
-                    strict_delivery=True,
                 )
                 hard_results.extend(classification.get_records()[record_count:])
             if kcv1 is not MISSING_ATTRIBUTE and (not isinstance(kcv1, bytes) or len(kcv1) != 3):
@@ -1437,9 +1429,7 @@ class TestCheckValue:
         try:
             attrs2: dict[int, Any]
             try:
-                attrs2 = read_attributes(
-                    rs.raw, rs.sh, key2, [CKA_CHECK_VALUE], verify_delivery=True
-                )
+                attrs2 = read_attributes(rs.raw, rs.sh, key2, [CKA_CHECK_VALUE])
             except CkrAssertionError as exc:
                 attrs2 = {}
                 if not is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -1459,7 +1449,6 @@ class TestCheckValue:
                     kind="metadata",
                     inherit_mechanism=False,
                     optional_if_absent=True,
-                    strict_delivery=True,
                 )
                 hard_results.extend(classification.get_records()[record_count:])
             if kcv2 is not MISSING_ATTRIBUTE and (not isinstance(kcv2, bytes) or len(kcv2) != 3):

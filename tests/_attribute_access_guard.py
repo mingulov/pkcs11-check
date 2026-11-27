@@ -3064,26 +3064,11 @@ class _Analyzer:
                     elif module == _ATTRIBUTE_HELPER_MODULE:
                         if alias.name == "attr_or_record":
                             bindings[bound] = "helper"
-                        elif alias.name in {"refusal_rv_for", "refusal_for"}:
-                            # refusal_for() surfaces the same channel
-                            # as refusal_rv_for() plus leaked_len (an
-                            # int): no provider bytes, untainted result.
-                            bindings[bound] = "refusal-rv"
-                        elif alias.name == "delivery_unproved":
-                            # R12-1: bool membership test over the
-                            # additive channel: no provider bytes,
-                            # untainted result.
+                        elif alias.name == "refusal_rv_for":
                             bindings[bound] = "refusal-rv"
                         elif alias.name == "MISSING_ATTRIBUTE":
                             bindings[bound] = "sentinel"
-                    elif module == _CLASSIFICATION_MODULE and alias.name in {
-                        "fail_as",
-                        "xfail_as",
-                        # R3F7: raise_for_record() is NoReturn (raises
-                        # Failed/XFailed, else ValueError), so it
-                        # terminates like fail_as/xfail_as.
-                        "raise_for_record",
-                    }:
+                    elif module == _CLASSIFICATION_MODULE and alias.name in {"fail_as", "xfail_as"}:
                         bindings[bound] = "terminal"
                     elif module == _CLASSIFICATION_MODULE and alias.name == "record_as":
                         bindings[bound] = "record"
@@ -4564,18 +4549,11 @@ class _Analyzer:
                 elif module == _ATTRIBUTE_HELPER_MODULE:
                     if alias.name == "attr_or_record":
                         state.bindings[bound] = "helper"
-                    elif alias.name in {"refusal_rv_for", "refusal_for"}:
-                        state.bindings[bound] = "refusal-rv"
-                    elif alias.name == "delivery_unproved":
+                    elif alias.name == "refusal_rv_for":
                         state.bindings[bound] = "refusal-rv"
                     elif alias.name == "MISSING_ATTRIBUTE":
                         state.bindings[bound] = "sentinel"
-                elif module == _CLASSIFICATION_MODULE and alias.name in {
-                    "fail_as",
-                    "xfail_as",
-                    # R3F7: raise_for_record() is NoReturn (see above).
-                    "raise_for_record",
-                }:
+                elif module == _CLASSIFICATION_MODULE and alias.name in {"fail_as", "xfail_as"}:
                     state.bindings[bound] = "terminal"
                 elif module == _CLASSIFICATION_MODULE and alias.name == "record_as":
                     state.bindings[bound] = "record"
@@ -4704,20 +4682,11 @@ class _Analyzer:
                 return _Value(callable_kind="direct")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "attr_or_record":
                 return _Value(callable_kind="helper")
-            if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr in {
-                "refusal_rv_for",
-                "refusal_for",
-                "delivery_unproved",
-            }:
+            if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "refusal_rv_for":
                 return _Value(callable_kind="refusal-rv")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "MISSING_ATTRIBUTE":
                 return _Value(callable_kind="sentinel")
-            if module_name == _CLASSIFICATION_MODULE and node.attr in {
-                "fail_as",
-                "xfail_as",
-                # R3F7: raise_for_record() is NoReturn (see above).
-                "raise_for_record",
-            }:
+            if module_name == _CLASSIFICATION_MODULE and node.attr in {"fail_as", "xfail_as"}:
                 return _Value(callable_kind="terminal")
             if module_name == _CLASSIFICATION_MODULE and node.attr == "record_as":
                 return _Value(callable_kind="record")

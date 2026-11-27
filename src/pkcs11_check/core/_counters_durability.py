@@ -40,12 +40,10 @@ This module imports only stdlib plus ``counters_schema`` and
 
 from __future__ import annotations
 
-import copy
 import errno
 import hashlib
 import json
 import os
-import select
 import signal
 import sys
 import time
@@ -615,82 +613,6 @@ def _is_transient_write_error(exc: OSError) -> bool:
     return sys.platform == "win32" and exc.errno in _WIN32_TRANSIENT_WRITE_ERRNOS
 
 
-#: Errnos that trigger the rename-over-existing fallback (M7): vboxsf-class
-#: filesystems refuse atomic replace with EPERM/EACCES instead of renaming.
-_REPLACE_FALLBACK_ERRNOS = frozenset({errno.EPERM, errno.EACCES})
-
-_replace_fallback_warned = False
-
-
-def _warn_replace_fallback_once(path: Path | str) -> None:
-    """Warn once per process that atomic replace fell back (nonstandard FS)."""
-    global _replace_fallback_warned
-    if _replace_fallback_warned:
-        return
-    _replace_fallback_warned = True
-    warnings.warn(
-        f"counters persistence {path}: atomic replace refused; "
-        "using fallback writes; prefer a native filesystem for counter durability",
-        UserWarning,
-        stacklevel=3,
-    )
-
-
-def _replace_with_fallback(tmp: Path | str, resolved: Path | str, text: str) -> bool:
-    """Land tmp onto resolved despite rename-over-existing refusal (M7).
-
-    Tries unlink+replace (atomicity preserved: a crash leaves resolved
-    missing, which readers treat as absent), then a direct plain write
-    (torn-on-crash, likewise fail-visible). The committed bytes are
-    stashed first and restored best-effort when nothing lands, so total
-    failure preserves the old snapshot instead of deleting it. A present
-    but unstashable destination refuses the destructive path outright.
-    Returns True when the payload landed; False leaves tmp for the
-    caller to clean and the original error to raise. Callers warn on
-    success.
-    """
-    tmp_path = Path(tmp)
-    resolved_path = Path(resolved)
-    try:
-        old = resolved_path.read_bytes()
-    except FileNotFoundError:
-        old = None
-    except OSError:
-        # Present but unstashable (or unreadable): refuse the destructive
-        # path rather than risk an unrestorable delete (F2b). Only
-        # FileNotFoundError counts as absence; any other read error --
-        # including a stat this probe never performs -- refuses, so the
-        # caller raises CounterPersistenceError and cleans the tmp.
-        return False
-    try:
-        resolved_path.unlink()
-    except OSError:
-        pass
-    else:
-        try:
-            os.replace(tmp_path, resolved_path)
-        except OSError:
-            pass
-        else:
-            return True
-    try:
-        with open(resolved_path, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-    except OSError:
-        if old is not None:
-            try:
-                resolved_path.write_bytes(old)
-            except OSError:
-                pass
-        return False
-    try:
-        tmp_path.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return True
-
-
 def append_journal(path: Path | str, record: dict[str, Any]) -> None:
     """Append one window record to a journal (no fsync by design).
 
@@ -750,9 +672,7 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
 
     A crash lands the old or the new content, never a mix; readers treat a
     torn file as absent. Transient write errors retry boundedly (each attempt
-    cleans its tmp first), then raise. Rename-over-existing refusal (EPERM /
-    EACCES, vboxsf-class filesystems) falls back to unlink+replace, then a
-    direct plain write, warning once per process.
+    cleans its tmp first), then raise.
 
     Raises:
         CounterPersistenceError: When the payload cannot be encoded or written.
@@ -768,25 +688,9 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(text)
                 fh.flush()
-        except OSError as exc:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
-                raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
-            time.sleep(_WRITE_RETRY_BACKOFF_S)
-            continue
-        try:
             os.replace(tmp, resolved)
             return
         except OSError as exc:
-            if exc.errno in _REPLACE_FALLBACK_ERRNOS and (
-                attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc)
-            ):
-                if _replace_with_fallback(tmp, resolved, text):
-                    _warn_replace_fallback_once(resolved)
-                    return
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
@@ -794,7 +698,6 @@ def write_sidecar_atomic(path: Path | str, payload: dict[str, Any]) -> None:
             if attempt + 1 >= _WRITE_RETRY_ATTEMPTS or not _is_transient_write_error(exc):
                 raise CounterPersistenceError(f"cannot write sidecar {resolved}: {exc}") from exc
             time.sleep(_WRITE_RETRY_BACKOFF_S)
-            continue
 
 
 def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> FenceOutcome:
@@ -804,15 +707,8 @@ def fence_producer(registry: dict[str, Any], *, timeout_s: float = 5.0) -> Fence
     need no signal. Only a pid whose live birth matches the registry is ever
     signaled, through an incarnation-pinning handle (pidfd on Linux, process
     handle on Windows); the birth is re-verified immediately before the
-    signal closes the TOCTOU window. SECURITY (M8 residual): the pinning
-    verifies the victim, not the registry -- a planted registry naming a
-    live (pid, birth) pair still signals it, so resume trusts the counters
-    dir it was pointed at (which M8 confines to allocated sibling forms).
-    Ancestry gating cannot fix this (crashed runs' orphans are reparented);
-    a future hardening is refusing pids whose birth predates the state
-    file.
-    Unverifiable producers (unknown platform, unreadable birth) report
-    ``unresolved`` with a warning and are
+    signal closes the TOCTOU window. Unverifiable producers (unknown
+    platform, unreadable birth) report ``unresolved`` with a warning and are
     never signaled; resume must skip their conflicting reruns.
     """
     verdict = verify_producer(registry)
@@ -866,32 +762,32 @@ def _terminate_verified(pid: int, birth: int, timeout_s: float) -> bool:
     return False
 
 
-def _pidfd_exited(fd: int, timeout_s: float) -> bool:
-    """Whether a pidfd reports its pinned process exited in time (#88R3).
-
-    A pidfd becomes readable exactly when its process exits (zombies
-    included: they hold no writers, so they are quiescent). No /proc
-    consult, so permission faults can never masquerade as death. Any
-    poll failure or unmet wait reads unresolved (False).
-    """
+def _linux_terminated(pid: int, birth: int) -> bool:
+    """Whether a Linux pid is provably not the registered incarnation anymore."""
     try:
-        poller = select.poll()
-        poller.register(fd, select.POLLIN)
-        return bool(poller.poll(max(int(timeout_s * 1000), 0)))
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            data = fh.read()
     except (OSError, ValueError):
-        return False
+        return True
+    tail = data[data.rfind(")") + 1 :].split()
+    if len(tail) < 20:
+        return True
+    if tail[0] == "Z":
+        return True
+    try:
+        return int(tail[19]) != birth
+    except ValueError:
+        return True
 
 
 def _terminate_pidfd(pid: int, birth: int, timeout_s: float) -> bool:
-    """SIGKILL through a pidfd (pins the incarnation) and wait for exit.
+    """SIGKILL through a pidfd (pins the incarnation) and poll for death.
 
     The birth is re-read after the open: the fd pins the open-time
     occupant, so a starttime mismatch proves the claimed incarnation died
     and the pid was recycled between verification and open (close, no
     signal, fenced). Only a lookup failure proves death at the excepts;
     permission/syscall failures are unresolved, never assumed quiescent.
-    The post-signal wait polls the pidfd itself for exit readiness
-    (never /proc, whose faults must not masquerade as death).
 
     Tick-granularity residual: starttime ticks in jiffies, so two
     incarnations forked within one tick of the same pid slot share a
@@ -920,7 +816,13 @@ def _terminate_pidfd(pid: int, birth: int, timeout_s: float) -> bool:
             return True
         except OSError:
             return False
-        return _pidfd_exited(fd, timeout_s)
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        while True:
+            if _linux_terminated(pid, birth):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
     finally:
         try:
             os.close(fd)
@@ -1302,23 +1204,12 @@ def write_probe_sidecar(
     if not finalized:
         payload["finalized"] = False
     tmp = f"{path}.tmp-{os.getpid()}"
-    text = json.dumps(payload)
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(text)
+            json.dump(payload, fh)
             fh.flush()
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    try:
         os.replace(tmp, path)
-    except OSError as exc:
-        if exc.errno in _REPLACE_FALLBACK_ERRNOS and _replace_with_fallback(tmp, path, text):
-            _warn_replace_fallback_once(Path(path))
-            return
+    except (OSError, TypeError, ValueError):
         try:
             os.unlink(tmp)
         except OSError:
@@ -1346,23 +1237,6 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
     try:
         os.replace(path, marked)
     except OSError as exc:
-        if exc.errno in _REPLACE_FALLBACK_ERRNOS:
-            try:
-                stale = marked.read_bytes() if marked.exists() else None
-            except OSError:
-                stale = None
-            try:
-                marked.unlink(missing_ok=True)
-                os.replace(path, marked)
-            except OSError:
-                if stale is not None:
-                    try:
-                        marked.write_bytes(stale)
-                    except OSError:
-                        pass
-            else:
-                _warn_replace_fallback_once(marked)
-                return marked
         raise CounterPersistenceError(f"cannot mark probe sidecar consumed: {exc}") from exc
     return marked
 
@@ -1562,107 +1436,6 @@ def _durable_receipts(sidecar: Any | None, journal_lines: list[str]) -> set[tupl
     return keys
 
 
-def _merge_probe_tmp_rows(own: list[Any], tmp: list[Any]) -> list[list[Any]]:
-    """Merge a same-probe rewrite tmp's returns into orphan rows (#88).
-
-    Keyed returns-only merge per (module, fn): tmp exit rows replay as
-    the max against the orphan's, capped so merged exits never exceed
-    the orphan's entries for that key (counts are not attributable per
-    call, so excess returns keep the orphan's rows and stay named
-    in-flight downstream). Tmp entry rows (rv None) never transfer: a
-    tmp holding newer entries is an uncommitted admission snapshot.
-    Keys present only in the tmp are skipped (their entries are
-    unproved). Garbage rows on either side are skipped, never fatal.
-    """
-    own_groups: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in own:
-        parsed = _parse_probe_flat_row(row)
-        if parsed is None:
-            continue
-        module, fn, rv, count = parsed
-        group = own_groups.setdefault((module, fn), {"entries": 0, "exits": {}})
-        group["entries"] += count
-        if rv is not None:
-            group["exits"][rv] = group["exits"].get(rv, 0) + count
-    tmp_exits: dict[tuple[str, str], dict[int, int]] = {}
-    for row in tmp:
-        parsed = _parse_probe_flat_row(row)
-        if parsed is None:
-            continue
-        module, fn, rv, count = parsed
-        if rv is None:
-            continue
-        keyed = tmp_exits.setdefault((module, fn), {})
-        keyed[rv] = keyed.get(rv, 0) + count
-    merged: list[list[Any]] = []
-    for (module, fn), group in own_groups.items():
-        exits = dict(group["exits"])
-        for rv, count in tmp_exits.get((module, fn), {}).items():
-            if count > exits.get(rv, 0):
-                exits[rv] = count
-        if sum(exits.values()) > group["entries"]:
-            exits = group["exits"]
-        for rv in sorted(exits):
-            merged.append([module, fn, rv, exits[rv]])
-        unreturned = group["entries"] - sum(exits.values())
-        if unreturned > 0:
-            merged.append([module, fn, None, unreturned])
-    merged.sort(key=lambda item: (item[0], item[1], item[2] is None, item[2] or 0))
-    return merged
-
-
-def _replay_probe_tmp_rows(
-    path: Path,
-    child_uuid: str,
-    seq: int,
-    identity: dict[str, Any],
-    counters: list[Any],
-) -> list[Any]:
-    """Replay the best same-probe rewrite tmp into orphan rows (#88).
-
-    A probe return flush that dies inside ``os.replace`` leaves the
-    new snapshot in a complete ``{probe}.tmp-{pid}`` while the orphan
-    sidecar stays pre-return. A candidate must parse, bind to the
-    probe run (child uuid, probe seq, and the F2 parent when both
-    sides state it), and carry a row list; the largest snapshot (by
-    parsed call volume) replays returns-only onto the orphan's rows.
-    Torn, foreign, or row-less tmps read as absent. The orphan's own
-    loss keys/scalar always win (a tmp's marginal loss evidence stays
-    dropped, as before -- counters-only replay).
-    """
-    best: list[Any] | None = None
-    best_volume = 0
-    try:
-        candidates = sorted(path.parent.glob(f"{path.name}.tmp-*"))
-    except OSError:
-        return counters
-    own_parent = identity.get("parent_uuid")
-    for tmp in candidates:
-        payload = read_json_file(tmp)
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("worker_uuid") != child_uuid:
-            continue
-        if payload.get("probe_seq") != seq:
-            continue
-        tmp_parent = payload.get("parent_uuid")
-        if tmp_parent is not None and own_parent is not None and tmp_parent != own_parent:
-            continue
-        tmp_counters = payload.get("counters")
-        if not isinstance(tmp_counters, list):
-            continue
-        volume = 0
-        for row in tmp_counters:
-            parsed = _parse_probe_flat_row(row)
-            if parsed is not None:
-                volume += parsed[3]
-        if volume > best_volume:
-            best, best_volume = tmp_counters, volume
-    if best is None:
-        return counters
-    return _merge_probe_tmp_rows(counters, best)
-
-
 def _adopt_probe_orphans(
     root: Path,
     *,
@@ -1840,9 +1613,6 @@ def _adopt_probe_orphans(
                 consumed.append(path)
             continue
         child_uuid, seq, counters, keys, identity, finalized, adopted, vacuous_ok = orphan
-        # #88: a same-probe rewrite tmp replays its returns onto the
-        # orphan's rows before either reunion pass folds them.
-        counters = _replay_probe_tmp_rows(path, child_uuid, seq, identity, counters)
         parent_claim = identity.get("parent_uuid")
         if parent_claim is not None and parent_claim != worker_uuid:
             continue  # Another producer's pass owns it (content-exact).
@@ -2018,39 +1788,9 @@ def _journal_for_sidecar(sidecar_path: Path) -> Path:
     return sidecar_path.with_name(stem + JOURNAL_SUFFIX)
 
 
-def _deletion_refused(root: Path | str, path: Path | str, *, verb: str) -> bool:
-    """Whether deleting path is refused: not inside the counters root (M8).
-
-    The parent chain resolves (a lexical check misses intermediate links);
-    the final component stays unresolved so inside symlinks unlink safely
-    as links. Refusals warn loudly and retain the evidence; extractor
-    dedup keeps retention exact. Never raises.
-    """
-    try:
-        root_resolved = Path(root).resolve()
-        parent_resolved = Path(path).parent.resolve()
-    except OSError:
-        refused = True
-    else:
-        refused = not (parent_resolved == root_resolved or root_resolved in parent_resolved.parents)
-    if refused:
-        warnings.warn(
-            f"refused to {verb} {path}: not inside the counters root; evidence retained",
-            UserWarning,
-            stacklevel=3,
-        )
-    return refused
-
-
-def _consume_producer_files(paths: list[Path], *, root: Path | str) -> None:
-    """Delete collected/committed evidence files (best effort, never raises).
-
-    M8: paths resolving outside root are retained with a loud warning (a
-    planted registry must never delete outside the counters dir).
-    """
+def _consume_producer_files(paths: list[Path]) -> None:
+    """Delete collected/committed evidence files (best effort, never raises)."""
     for path in paths:
-        if _deletion_refused(root, path, verb="consume"):
-            continue
         try:
             path.unlink(missing_ok=True)
         except OSError:
@@ -2087,14 +1827,12 @@ def _partial_record(
     lost_keys: list[dict[str, Any]] | None = None,
     orphan_keys: list[dict[str, Any]] | None = None,
     recovered_keys: list[dict[str, Any]] | None = None,
-    in_flight: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a ``CallCountersPartial`` record (schema-valid).
 
     Gap-only for dead producers, zero-call loss-only when only a loss
     scalar/keys survive, claim-only when only adopted-orphan evidence
-    rides along. ``in_flight`` names entries without returns (#88);
-    omitted when empty.
+    rides along.
     """
     record: dict[str, Any] = {
         "$report_type": "CallCountersPartial",
@@ -2126,8 +1864,6 @@ def _partial_record(
         record["orphan_keys"] = orphan_keys
     if recovered_keys:
         record["recovered_keys"] = recovered_keys
-    if in_flight:
-        record["in_flight"] = in_flight
     return record
 
 
@@ -2275,18 +2011,6 @@ def collect_unit(
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
         if content is None:
-            # #88R2: an I/O-failed read is unreadable, never torn: reserve
-            # the filename uuid so the torn-sidecar sweep cannot adopt a
-            # live producer's evidence (and name false losses) this pass.
-            reserved = _unreadable_registry_uuid(registry_path)
-            if reserved is not None:
-                warnings.warn(
-                    f"unreadable registry {registry_path.name} retained "
-                    "(I/O failure, not torn content; its sidecar waits a later pass)",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                seen_sidecar_uuids.add(reserved)
             _reap_torn_registry(root, registry_path)
             continue
         uuid = content["worker_uuid"]
@@ -2304,8 +2028,8 @@ def collect_unit(
             )
             if _append_collected(child_path, claim_records):
                 appended.extend(claim_records)
-                _consume_producer_files(_producer_files(content, registry_path), root=root)
-                _consume_producer_files(consumed, root=root)
+                _consume_producer_files(_producer_files(content, registry_path))
+                _consume_producer_files(consumed)
             continue
         if verify_producer(content) != "dead":
             continue
@@ -2321,18 +2045,13 @@ def collect_unit(
         )
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files(_producer_files(content, registry_path), root=root)
-            _consume_producer_files(consumed, root=root)
+            _consume_producer_files(_producer_files(content, registry_path))
+            _consume_producer_files(consumed)
     for sidecar_path in sorted(root.glob(f"*{SIDECAR_SUFFIX}")):
         adopted = _adopt_orphan_sidecar(sidecar_path, seen_sidecar_uuids)
         if adopted is None:
             continue
         uuid, sidecar = adopted
-        if _registry_claims_orphan(reg_dir, uuid):
-            # A registry that appeared or healed after the main loop owns
-            # this sidecar: skip it this pass (the next pass routes it by
-            # its registry instead of adopting it as an orphan).
-            continue
         # A registryless sidecar from another unit or run is stale evidence
         # (its barrier owns prior runs): skip it loudly, never misfold it.
         # Live-registry uuids never reach here (``seen_sidecar_uuids`` holds
@@ -2412,8 +2131,8 @@ def collect_unit(
                 )
             if _append_collected(child_path, records):
                 appended.extend(records)
-                _consume_producer_files([sidecar_path, journal_path], root=root)
-                _consume_producer_files(consumed, root=root)
+                _consume_producer_files([sidecar_path, journal_path])
+                _consume_producer_files(consumed)
             continue
         block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
         scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -2451,7 +2170,6 @@ def collect_unit(
                     lost_keys=_keys_to_wire(gap_keys),
                     orphan_keys=_keys_to_wire(orphan_keys),
                     recovered_keys=_keys_to_wire(set(recovered)),
-                    in_flight=_in_flight_rows(block),
                 )
             )
         lost = _lost_record(
@@ -2468,8 +2186,8 @@ def collect_unit(
             records.append(lost)
         if _append_collected(child_path, records):
             appended.extend(records)
-            _consume_producer_files([sidecar_path, _journal_for_sidecar(sidecar_path)], root=root)
-            _consume_producer_files(consumed, root=root)
+            _consume_producer_files([sidecar_path, _journal_for_sidecar(sidecar_path)])
+            _consume_producer_files(consumed)
             # The twin funnels through the reaper (valid content and
             # I/O failure retain; only provably-torn content reaps),
             # exactly like the sweep and the main loop (codex R7-F2).
@@ -2505,12 +2223,8 @@ def _reap_torn_registry(root: Path, registry_path: Path) -> bool:
     caller's read and this one must not delete a healthy record).
     Returns True when the file was unlinked. All registry deletion
     funnels through here (collection and sweep alike) so the triage
-    cannot be bypassed. Registry paths resolving outside the counters
-    root (for example through a linked registrations dir) are retained
-    with a loud warning instead (M8/F1).
+    cannot be bypassed.
     """
-    if _deletion_refused(root, registry_path, verb="reap"):
-        return False
     try:
         raw: str | None = registry_path.read_text(encoding="utf-8")
     except OSError:
@@ -2564,236 +2278,6 @@ def _sidecar_run(sidecar: dict[str, Any]) -> str:
     return _UNKNOWN_RUN
 
 
-def _adopt_orphan_tmp_payload(
-    sidecar_path: Path,
-    committed: dict[str, Any] | None,
-    *,
-    uuid: str,
-    run_id: str,
-    unit: str,
-    attempt: int,
-    pid: int,
-) -> dict[str, Any] | None:
-    """Select the newest same-window rewrite tmp for a dead producer (#88).
-
-    A K=1 return flush that dies inside ``os.replace`` leaves the new
-    payload in a complete orphan tmp while the committed sidecar stays
-    pre-return. A candidate must parse as a sidecar, bind to the
-    producer's full identity (uuid, run, unit, attempt, pid), hold a
-    valid in-progress block, and carry the committed window mark: the
-    in-progress totals reset at every journal boundary, so only
-    same-window snapshots are comparable (an older window's larger
-    total must never displace the current tail, and a newer window's
-    tail belongs to entries the journal has not published). Torn,
-    foreign, stale-window, or mark-less tmps read as absent, as does
-    every tmp when the committed sidecar itself is missing or
-    mark-less (a first-flush tmp is an uncommitted entry snapshot,
-    never replayable). Only called for dead-or-fenced producers.
-    """
-    if not isinstance(committed, dict):
-        return None
-    committed_seq = committed.get("journal_seq")
-    if not _is_nonneg_int(committed_seq):
-        return None
-    best: dict[str, Any] | None = None
-    best_total = -1
-    try:
-        candidates = sorted(sidecar_path.parent.glob(f"{sidecar_path.name}.tmp-*"))
-    except OSError:
-        return None
-    for tmp in candidates:
-        payload = read_json_file(tmp)
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("worker_uuid") != uuid:
-            continue
-        if payload.get("run_id") != run_id:
-            continue
-        if payload.get("unit") != unit:
-            continue
-        if payload.get("attempt") != attempt:
-            continue
-        if payload.get("pid") != pid:
-            continue
-        tmp_seq = payload.get("journal_seq")
-        if not _is_nonneg_int(tmp_seq) or tmp_seq != committed_seq:
-            continue
-        in_progress = payload.get("in_progress")
-        if not is_module_first_block(in_progress):
-            continue
-        total = in_progress["total_calls"]
-        if total > best_total:
-            best, best_total = payload, total
-    return best
-
-
-def _replay_tmp_returns(committed: dict[str, Any], tmp: dict[str, Any]) -> dict[str, Any]:
-    """Replay a same-window tmp's returns onto committed entries (#88).
-
-    Entries are NEVER adopted: a tmp holding newer entry counts is an
-    uncommitted admission snapshot (at K=1 its provider never ran --
-    the failed flush rolls back and blocks dispatch), so adopting it
-    would report calls that never happened. Returns replay per leaf
-    as the max of committed and tmp counts, so a same-window older
-    snapshot can never erase a committed return; a leaf replays only
-    when the merged returns fit its committed entries (counts are not
-    attributable per call, so excess returns -- corrupt at K=1, K-loss
-    tradeoff beyond -- keep the committed leaf untouched and stay
-    named in-flight). Receipts, consumed
-    probes, and loss keys union (same-window cumulative sets; dropping
-    the tmp's would double-fold absorbed probes) and the loss scalar
-    takes the max when both sides type-check. The window mark is
-    preserved, so the gap arms treat the replayed sidecar exactly as
-    the committed one. Returns ``committed`` unchanged when its
-    in-progress block is invalid (the gap arms conflict on it as
-    before); callers pass a validated tmp.
-    """
-    in_progress = committed.get("in_progress")
-    if not is_module_first_block(in_progress):
-        return committed
-    tmp_progress = tmp.get("in_progress")
-    if not is_module_first_block(tmp_progress):
-        return committed
-    merged_prog: dict[str, Any] = copy.deepcopy(in_progress)
-    for module, tmp_module in tmp_progress["by_module"].items():
-        own_module = merged_prog["by_module"].get(module)
-        if not isinstance(own_module, dict):
-            continue
-        for bucket, tmp_bucket in tmp_module.get("buckets", {}).items():
-            own_bucket = own_module.get("buckets", {}).get(bucket)
-            if not isinstance(own_bucket, dict):
-                continue
-            for fn, tmp_leaf in tmp_bucket.get("by_fn", {}).items():
-                own_leaf = own_bucket.get("by_fn", {}).get(fn)
-                if not isinstance(own_leaf, dict):
-                    continue
-                own_rv = own_leaf.get("by_rv")
-                tmp_rv = tmp_leaf.get("by_rv") if isinstance(tmp_leaf, dict) else None
-                if not isinstance(own_rv, dict) or not isinstance(tmp_rv, dict):
-                    continue
-                own_calls = own_leaf.get("calls")
-                if not _is_nonneg_int(own_calls):
-                    continue
-                assert isinstance(own_calls, int)
-                merged_counts: dict[str, int] = {}
-                for rv, own_item in own_rv.items():
-                    own_count = own_item.get("count") if isinstance(own_item, dict) else None
-                    if _is_nonneg_int(own_count):
-                        assert isinstance(own_count, int)
-                        merged_counts[rv] = own_count
-                    else:
-                        merged_counts[rv] = 0
-                for rv, tmp_item in tmp_rv.items():
-                    tmp_count = tmp_item.get("count") if isinstance(tmp_item, dict) else None
-                    if not _is_nonneg_int(tmp_count):
-                        continue
-                    assert isinstance(tmp_count, int)
-                    if tmp_count > merged_counts.get(rv, 0):
-                        merged_counts[rv] = tmp_count
-                if sum(merged_counts.values()) > own_calls:
-                    continue
-                for rv, count in merged_counts.items():
-                    own_item = own_rv.get(rv)
-                    if isinstance(own_item, dict):
-                        own_item["count"] = count
-                    else:
-                        tmp_item = tmp_rv.get(rv)
-                        own_rv[rv] = {
-                            "name": tmp_item.get("name") if isinstance(tmp_item, dict) else None,
-                            "count": count,
-                        }
-    merged = dict(committed)
-    merged["in_progress"] = merged_prog
-    for key in ("receipts", "consumed_probes", "lost_keys"):
-        own_items = committed.get(key)
-        tmp_items = tmp.get(key)
-        if not isinstance(own_items, list) or not isinstance(tmp_items, list):
-            continue
-        merged[key] = [*own_items, *[item for item in tmp_items if item not in own_items]]
-    own_lost = committed.get("probes_lost")
-    tmp_lost = tmp.get("probes_lost")
-    if _is_nonneg_int(own_lost) and _is_nonneg_int(tmp_lost):
-        assert isinstance(own_lost, int) and isinstance(tmp_lost, int)
-        merged["probes_lost"] = max(own_lost, tmp_lost)
-    return merged
-
-
-def _in_flight_rows(block: dict[str, Any]) -> list[dict[str, Any]]:
-    """Name every (module, bucket, fn) with entries but no return (#88).
-
-    Sorted for determinism. Malformed leaves are skipped defensively
-    (callers pass gap blocks, already valid); a lone return without
-    an entry never rows (negative gaps are a different anomaly).
-    """
-    rows: list[dict[str, Any]] = []
-    by_module = block.get("by_module")
-    if not isinstance(by_module, dict):
-        return []
-    for module in sorted(key for key in by_module if isinstance(key, str)):
-        module_block = by_module[module]
-        buckets = module_block.get("buckets") if isinstance(module_block, dict) else None
-        if not isinstance(buckets, dict):
-            continue
-        for bucket in sorted(key for key in buckets if isinstance(key, str)):
-            bucket_block = buckets[bucket]
-            by_fn = bucket_block.get("by_fn") if isinstance(bucket_block, dict) else None
-            if not isinstance(by_fn, dict):
-                continue
-            for fn in sorted(key for key in by_fn if isinstance(key, str)):
-                leaf = by_fn[fn]
-                if not isinstance(leaf, dict):
-                    continue
-                calls = leaf.get("calls")
-                by_rv = leaf.get("by_rv")
-                if not _is_nonneg_int(calls) or not isinstance(by_rv, dict):
-                    continue
-                assert isinstance(calls, int)
-                returned = 0
-                for item in by_rv.values():
-                    count = item.get("count") if isinstance(item, dict) else None
-                    if _is_nonneg_int(count):
-                        assert isinstance(count, int)
-                        returned += count
-                if calls - returned > 0 and bucket and fn:
-                    # The module keeps the unknown-module sentinel ("")
-                    # when the call carried no handle (issue #87 item 6).
-                    rows.append(
-                        {"module": module, "bucket": bucket, "fn": fn, "count": calls - returned}
-                    )
-    return rows
-
-
-def _unreadable_registry_uuid(registry_path: Path) -> str | None:
-    """Return the filename uuid when a registry read fails I/O-side (#88R2).
-
-    Permission and other OS read errors are unreadable, never torn: the
-    caller reserves the uuid so the torn-sidecar sweep cannot adopt a
-    live producer's evidence this pass. Missing files, undecodable
-    bytes, and readable content all return None (gone, torn, or owned
-    -- none of which reserve).
-    """
-    try:
-        Path(registry_path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except ValueError:
-        return None
-    except OSError:
-        return parse_registry_filename(Path(registry_path).name)
-    return None
-
-
-def _registry_claims_orphan(reg_dir: Path, uuid: str) -> bool:
-    """Whether a registry file currently owns one uuid (#88R2).
-
-    The adoption-time probe against mid-pass races (a registry that
-    appeared or healed after the main loop): present-and-parsing
-    means owned, never orphan. Anything else (missing, torn,
-    unreadable) leaves the torn path to decide.
-    """
-    return read_registry_file(reg_dir / f"{uuid}.json") is not None
-
-
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
     """Adopt a sidecar with no live registry via its carried identity."""
     sidecar = read_json_file(sidecar_path)
@@ -2805,16 +2289,6 @@ def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict
     assert isinstance(uuid, str)
     if not isinstance(sidecar.get("unit"), str) or not sidecar.get("unit"):
         return None
-    pid = sidecar.get("pid")
-    if _is_nonneg_int(pid):
-        # Quiescence (#88R2): a provably alive pid may still be the
-        # producer, so the sidecar retains for a later pass instead of
-        # folding (and naming losses) under a live writer. An unreadable
-        # birth (dead pid, recycled slot, or a platform without a birth
-        # source) cannot prove aliveness, so adoption proceeds.
-        assert isinstance(pid, int)
-        if birth_token_for_pid(pid) is not None:
-            return None
     return (uuid, sidecar)
 
 
@@ -2846,23 +2320,6 @@ def _collect_dead_producer(
     sidecar_raw = str(content.get("sidecar", ""))
     sidecar_path = Path(sidecar_raw)
     sidecar = read_json_file(sidecar_path) if sidecar_raw else None
-    if sidecar_raw:
-        # #88: a same-window orphan rewrite tmp replays the return its
-        # death orphaned (dead-or-fenced producers only; torn, foreign,
-        # or stale-window tmps read as absent). Returns merge onto
-        # committed entries; entry counts are never adopted (a tmp
-        # holding newer entries is an uncommitted admission snapshot).
-        adopted = _adopt_orphan_tmp_payload(
-            sidecar_path,
-            sidecar if isinstance(sidecar, dict) else None,
-            uuid=uuid,
-            run_id=content["run_id"],
-            unit=content["unit"],
-            attempt=content["attempt"],
-            pid=content["pid"],
-        )
-        if adopted is not None and isinstance(sidecar, dict):
-            sidecar = _replay_tmp_returns(sidecar, adopted)
     journal_lines = _read_journal_lines(_journal_for_sidecar(sidecar_path)) if sidecar_raw else []
     block, receipts, conflict = _gap_for_producer(sidecar, journal_lines, entries, uuid)
     scalar = sidecar.get("probes_lost") if isinstance(sidecar, dict) else None
@@ -2921,7 +2378,6 @@ def _collect_dead_producer(
                 lost_keys=_keys_to_wire(gap_keys),
                 orphan_keys=_keys_to_wire(orphan_keys),
                 recovered_keys=_keys_to_wire(set(recovered)),
-                in_flight=_in_flight_rows(block),
             )
         )
     lost = _lost_record(
@@ -3066,9 +2522,6 @@ def sweep_orphans(
     def _remove(paths: list[Path]) -> None:
         nonlocal removed, retained
         for path in paths:
-            if _deletion_refused(root, path, verb="remove"):
-                retained += 1
-                continue
             if not path.exists() and not path.is_symlink():
                 continue
             try:
@@ -3287,18 +2740,6 @@ def prepare_resume(
     for registry_path in sorted(reg_dir.glob("*.json")):
         content = read_registry_file(registry_path)
         if content is None:
-            # #88R2: unreadable is never torn (see collect_unit): reserve
-            # the filename uuid so the torn-sidecar sweep cannot adopt a
-            # live producer's evidence this pass.
-            reserved = _unreadable_registry_uuid(registry_path)
-            if reserved is not None:
-                warnings.warn(
-                    f"unreadable registry {registry_path.name} retained "
-                    "(I/O failure, not torn content; its sidecar waits a later pass)",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                seen_uuids.add(reserved)
             _reap_torn_registry(root, registry_path)
             continue
         uuid = content["worker_uuid"]
@@ -3369,10 +2810,6 @@ def prepare_resume(
         if adopted is None:
             continue
         uuid, sidecar = adopted
-        if _registry_claims_orphan(reg_dir, uuid):
-            # A registry that appeared or healed after the main loop owns
-            # this sidecar: skip it this pass (mirrors collect_unit).
-            continue
         barrier_run = sidecar.get("run_id")
         # Sweep authority needs a genuine stamp: only real strings
         # credit a run ("" included -- live writers emit it when no
@@ -3445,7 +2882,6 @@ def prepare_resume(
                     receipts=receipts,
                     role=barrier_stamp_role,
                     isolation=barrier_stamp_isolation,
-                    in_flight=_in_flight_rows(block),
                 )
             )
         lost = _lost_record(
@@ -3492,7 +2928,7 @@ def prepare_resume(
             )
             plan["barrier_ok"] = False
             return plan
-    _consume_producer_files(to_consume, root=root)
+    _consume_producer_files(to_consume)
     try:
         unseal(root)
     except CounterPersistenceError as exc:

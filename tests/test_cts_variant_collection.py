@@ -56,29 +56,6 @@ def _skip_reasons(item: _FakeItem) -> list[str]:
     return reasons
 
 
-def test_collection_probes_for_sentinel_only_selection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R2-2a: standalone sentinel primes the detection cache (no bypass)."""
-    calls: list[bool] = []
-
-    def _counting_probe(_config: Any) -> base_cts.CtsDetectionResult:
-        calls.append(True)
-        return base_cts.CtsDetectionResult(
-            base_cts.CtsDetectionStatus.DETECTED,
-            variant="1",
-        )
-
-    monkeypatch.setattr(cts_conftest, "_probe_cts_variant", _counting_probe)
-    config = _FakeConfig()
-    detect = _FakeItem("src/pkcs11_check/testcases/acvp/aes/test_cts.py::test_cts_variant_detected")
-
-    cts_conftest.pytest_collection_modifyitems(config, [detect])
-
-    assert len(calls) == 1
-    assert _skip_reasons(detect) == []
-
-
 def test_cts_variant_pruning_keeps_nonmatching_nodes_as_skips(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

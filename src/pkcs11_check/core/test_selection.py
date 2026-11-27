@@ -198,31 +198,6 @@ def build_disabled_selection_plan(
     )
 
 
-def all_matched_items_disabled(
-    collected_items: list[CollectedPytestItem] | None,
-    disabled_nodeids: set[str],
-) -> bool:
-    """True when every collected (post-filter) item is disabled.
-
-    The M3b gate: a selection matched tests, units remain scheduled (a
-    targeted file with zero matched nodes is still a unit), yet the
-    disabled baseline removed everything runnable -- running on would
-    be vacuous. Mirrors the plan builder's normalized raw/canonical
-    comparison exactly; ``None``/empty input (manifest path, no match)
-    is never M3b.
-    """
-    if not collected_items or not disabled_nodeids:
-        return False
-    normalized = {normalize_nodeid(nodeid) for nodeid in disabled_nodeids}
-    for item in collected_items:
-        file_key = str(Path(item.file_path).resolve())
-        raw_nodeid = normalize_nodeid(item.nodeid)
-        canonical_nodeid = normalize_nodeid(_absolute_nodeid(file_key, item.nodeid))
-        if raw_nodeid not in normalized and canonical_nodeid not in normalized:
-            return False
-    return True
-
-
 def _load_report_log_records(path: Path) -> list[dict[str, object]]:
     return list(_iter_report_log_records(path))
 

@@ -9,13 +9,11 @@ single login attempt (only when a PIN is supplied), never echoing the PIN.
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.markup import escape
 
 from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
@@ -29,15 +27,7 @@ _SKIP = "[dim]–[/dim]"
 
 
 def _line(mark: str, label: str, detail: str = "") -> None:
-    # Details carry child bytes (probe stderr, manifest errors) and user
-    # paths: escape unconditionally (no caller passes intentional markup).
-    console.print(f"  {mark} {label}" + (f"  [dim]{escape(detail)}[/dim]" if detail else ""))
-
-
-def _strip_exception_class(message: str) -> str:
-    """U8: drop a leading 'XxxError: ' so users read the message, not the class."""
-    match = re.match(r"[A-Za-z_][A-Za-z0-9_.]*Error: ", message)
-    return message[match.end() :] if match else message
+    console.print(f"  {mark} {label}" + (f"  [dim]{detail}[/dim]" if detail else ""))
 
 
 def doctor_command(
@@ -92,7 +82,7 @@ def doctor_command(
     if manifest.status != "ok":
         ok = False
         err = manifest.error or "unknown error"
-        _line(_BAD, "module load / slots", _strip_exception_class(err))
+        _line(_BAD, "module load / slots", err)
         if "not found" in err and "slot" in err:
             _line(
                 _SKIP,

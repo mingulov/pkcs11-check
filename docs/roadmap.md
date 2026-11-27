@@ -38,12 +38,10 @@ behavior is documented in the README and the rest of `docs/`.
   truncating them; the runner classifies Windows NTSTATUS crash codes; and a
   module's dependent DLLs resolve via `os.add_dll_directory`. Validated under Wine
   (a pywine + SoftHSM2-for-Windows target), which faithfully reproduces the Win64
-  layout/width ABI. CI `windows-latest` legs (`smoke-windows`,
-  `windows-contracts`) cover smoke and contracts; a full real-Windows
-  provider round remains future work. Wine is an ABI reproducer, not a
-  conformance gate.
+  layout/width ABI. Remaining: a real-Windows pass (a VM, or CI `windows-latest`)
+  for final conformance sign-off. Wine is an ABI reproducer, not a conformance gate.
 
-SO login and destructive `CKA_TRUSTED` import coverage require the distinct
+SO login and destructive `CKA_TRUSTED` import coverage ship in v0.1.8. Supply the distinct
 SO PIN through `P11TEST_SO_PIN`; these token-mutating tests still require `--destructive`.
 
 - *Wider interop simulators.* Provider-generated in-band IV profiles,

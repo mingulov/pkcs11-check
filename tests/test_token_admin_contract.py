@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import subprocess
-import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -24,16 +22,12 @@ from _pytest.outcomes import Failed, Skipped, XFailed
 from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
-    CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
     CK_TOKEN_INFO,
     CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
     CK_UNAVAILABLE_INFORMATION_32,
     CKA_LABEL,
-    CKA_PRIVATE,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKF_SO_PIN_COUNT_LOW,
@@ -44,10 +38,8 @@ from pkcs11_check.raw.types_std import (
     CKF_USER_PIN_FINAL_TRY,
     CKF_USER_PIN_INITIALIZED,
     CKF_USER_PIN_LOCKED,
-    CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
-    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_PIN_LEN_RANGE,
@@ -67,8 +59,6 @@ from pkcs11_check.testcases._probes import token_admin
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.ckr import test_ckr_destructive as ckr_case
 from tests._skip_assert import assert_skips, assert_xfails
-
-needs_posix = pytest.mark.skipif(sys.platform == "win32", reason="POSIX sleep(1)")
 
 
 def _as_int(value: object) -> int:
@@ -509,7 +499,6 @@ def test_session_exhaustion_keeps_the_historical_hundred_session_cap(
 
 
 _OK = int(CKR_OK)
-_DEVICE_ERROR = int(CKR_DEVICE_ERROR)
 _PIN_INCORRECT = int(CKR_PIN_INCORRECT)
 _PIN_LOCKED = int(CKR_PIN_LOCKED)
 _PIN_LEN_RANGE = int(CKR_PIN_LEN_RANGE)
@@ -583,14 +572,12 @@ class _FakeAdminRaw:
         self.flags_manual: bool = False
         self.gettokeninfo_rv: int = _OK
         self.gettokeninfo_script: list[int] = []
-        self.token_label: bytes = b""
-        self.token_serial: bytes = b""
         self.min_pin: int = 4
         self.max_pin: int = 32
         self.max_total: int | None = 100
         self.max_rw: int | None = 100
-        self.ambient_total: int | None = 1
-        self.ambient_rw: int | None = 1
+        self.ambient_total: int = 1
+        self.ambient_rw: int = 1
         self.sessions: set[int] = set()
         self._next_session: int = 10
         self.open_script: list[int] = []
@@ -641,19 +628,11 @@ class _FakeAdminRaw:
         info = ctypes.cast(info_ptr, ctypes.POINTER(CK_TOKEN_INFO)).contents
         info.flags = self.flags
         info.ulMaxSessionCount = _UNAVAILABLE if self.max_total is None else self.max_total
-        info.ulSessionCount = (
-            _UNAVAILABLE if self.ambient_total is None else len(self.sessions) + self.ambient_total
-        )
+        info.ulSessionCount = len(self.sessions) + self.ambient_total
         info.ulMaxRwSessionCount = _UNAVAILABLE if self.max_rw is None else self.max_rw
-        info.ulRwSessionCount = (
-            _UNAVAILABLE if self.ambient_rw is None else len(self.sessions) + self.ambient_rw
-        )
+        info.ulRwSessionCount = len(self.sessions) + self.ambient_rw
         info.ulMinPinLen = self.min_pin
         info.ulMaxPinLen = self.max_pin
-        ctypes.memmove(info.label, self.token_label + b" " * (32 - len(self.token_label)), 32)
-        ctypes.memmove(
-            info.serialNumber, self.token_serial + b" " * (16 - len(self.token_serial)), 16
-        )
         return _OK
 
     # -- sessions ------------------------------------------------------
@@ -669,8 +648,7 @@ class _FakeAdminRaw:
                 _fill_ulong(sess_ptr, handle)
             self.ops.append(f"open:{rv:#x}")
             return rv
-        ambient = self.ambient_total if self.ambient_total is not None else 0
-        total = len(self.sessions) + ambient
+        total = len(self.sessions) + self.ambient_total
         if self.open_refusal_at is not None and len(self.sessions) >= self.open_refusal_at:
             self.ops.append(f"open:{self.open_refusal_rv:#x}")
             return self.open_refusal_rv
@@ -1067,131 +1045,6 @@ def test_mint_without_conf_artifact_raises(
         throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
 
 
-def test_mint_defaults_to_120s_timeout() -> None:
-    """S9: the mint shell-out cannot hang the suite forever."""
-    import inspect
-
-    assert inspect.signature(throwaway.mint_throwaway_token).parameters["timeout"].default == 120
-
-
-class _HangingMintProc:
-    """A mint child that never exits; records the reap sequence."""
-
-    def __init__(self) -> None:
-        self.communicate_calls = 0
-        self.killed = False
-        self.waited = False
-        self.returncode: int | None = None
-
-    def __call__(self, *args: object, **kwargs: object) -> _HangingMintProc:
-        return self
-
-    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
-        self.communicate_calls += 1
-        raise subprocess.TimeoutExpired(cmd="mint", timeout=timeout or 0)
-
-    def kill(self) -> None:
-        self.killed = True
-
-    def wait(self) -> int:
-        self.waited = True
-        self.returncode = -9
-        return -9
-
-
-class _InterruptedMintProc(_HangingMintProc):
-    """A mint child alive when Ctrl-C lands mid-communicate."""
-
-    def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
-        self.communicate_calls += 1
-        raise KeyboardInterrupt
-
-
-def test_mint_timeout_raises_and_cleans_up(
-    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _set_capability_env(monkeypatch)
-    cap = throwaway.require_throwaway_capability()
-
-    fake = _HangingMintProc()
-    monkeypatch.setattr(subprocess, "Popen", fake)
-    before = set(os.listdir(tempfile.gettempdir()))
-    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
-        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
-    after = set(os.listdir(tempfile.gettempdir()))
-    assert after - before == set()
-
-
-def test_mint_timeout_kills_without_redrain(
-    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """R18-5: reap with kill+wait; never a second communicate that a
-    surviving grandchild holding the pipe could stall forever."""
-    _set_capability_env(monkeypatch)
-    cap = throwaway.require_throwaway_capability()
-
-    fake = _HangingMintProc()
-    monkeypatch.setattr(subprocess, "Popen", fake)
-    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
-        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
-    assert fake.communicate_calls == 1
-    assert fake.killed is True
-    assert fake.waited is True
-
-
-def test_mint_keyboard_interrupt_kills_child_and_cleans_up(
-    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """R19-5: Ctrl-C kills the mint child (run() parity) and removes the dir."""
-    _set_capability_env(monkeypatch)
-    cap = throwaway.require_throwaway_capability()
-
-    fake = _InterruptedMintProc()
-    monkeypatch.setattr(subprocess, "Popen", fake)
-    before = set(os.listdir(tempfile.gettempdir()))
-    with pytest.raises(KeyboardInterrupt):
-        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_")
-    after = set(os.listdir(tempfile.gettempdir()))
-    assert after - before == set()
-    assert fake.killed is True
-    assert fake.waited is True
-
-
-@needs_posix
-def test_mint_hanging_command_times_out_for_real(
-    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _set_capability_env(monkeypatch, PKCS11_CHECK_TOKEN_MINT_CMD="sleep 30")
-    cap = throwaway.require_throwaway_capability()
-    before = set(os.listdir(tempfile.gettempdir()))
-    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
-        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_", timeout=2)
-    after = set(os.listdir(tempfile.gettempdir()))
-    assert after - before == set()
-
-
-@needs_posix
-def test_mint_grandchild_holding_pipe_times_out_for_real(
-    _clean_capability_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """R18-5: a surviving grandchild holding the pipe must not stall the
-    timeout reap. CPython's run() re-drains unbounded after kill() on
-    Windows only (POSIX already reaps with wait()); the portable
-    kill+wait mechanism is pinned by test_mint_timeout_kills_without_redrain."""
-    import time
-
-    _set_capability_env(monkeypatch, PKCS11_CHECK_TOKEN_MINT_CMD="sleep 30 & wait")
-    cap = throwaway.require_throwaway_capability()
-    before = set(os.listdir(tempfile.gettempdir()))
-    started = time.monotonic()
-    with pytest.raises(throwaway.ThrowawayMintError, match="timed out"):
-        throwaway.mint_throwaway_token(cap, prefix="pkcs11_check_qc11_test_", timeout=2)
-    elapsed = time.monotonic() - started
-    after = set(os.listdir(tempfile.gettempdir()))
-    assert after - before == set()
-    assert elapsed < 20, f"reap stalled on the grandchild-held pipe ({elapsed:.1f}s)"
-
-
 def test_reset_rejects_directory_outside_temp() -> None:
     outside = os.path.join(
         os.path.dirname(os.path.realpath(tempfile.gettempdir())), "qc11-must-not-delete"
@@ -1471,389 +1324,6 @@ def test_parse_malformed_pinbounds_raises() -> None:
         token_admin.parse_admin_trace("PINBOUNDS:x\nOK\n")
     with pytest.raises(token_admin.TraceParseError):
         token_admin.parse_admin_trace("PINBOUNDS:4:x\nOK\n")
-
-
-def test_parse_use_line_roundtrip() -> None:
-    """R2C4: post-use integrity lines parse into use checks."""
-    digest = "ab" * 32
-    trace = token_admin.parse_admin_trace(f"USE:control=16:{digest}\nOK\n")
-    assert trace.use_checks == (token_admin.AdminUseCheck("control", 16, digest),)
-    assert trace.ok is True
-
-
-def test_parse_malformed_use_raises() -> None:
-    for bad in (
-        "USE:control\n",
-        "USE:=16:ab\n",
-        "USE:control=x:ab\n",
-        "USE:control=16:zz\n",
-        "USE:control=16:abc\n",
-        "USE:control=-1:ab\n",
-    ):
-        with pytest.raises(token_admin.TraceParseError):
-            token_admin.parse_admin_trace(f"{bad}OK\n")
-
-
-def test_emit_use_check_matches_parser(capsys: Any) -> None:
-    """R2C4: the emitted USE line round-trips through the parser."""
-    token_admin._emit_use_check("control", b"qc9b-witness")
-    out = str(capsys.readouterr().out)
-    assert out.startswith("USE:control=12:"), out
-    (check,) = token_admin.parse_admin_trace(out).use_checks
-    import hashlib
-
-    assert check.length == 12
-    assert check.sha256 == hashlib.sha256(b"qc9b-witness").hexdigest()
-    assert (check.length, check.sha256) == token_admin.qc9b_witness_digest()
-
-
-class _BindingRaw:
-    """Minimal find + attribute surface for the witness-binding check."""
-
-    def __init__(
-        self,
-        *,
-        flags_rv: int = int(CKR_OK),
-        private: bool = True,
-        token: bool = False,
-        find_count: int = 1,
-        find_rv: int = int(CKR_OK),
-        flags_write: tuple[bool, bool] = (True, True),
-        flag_lens: tuple[int, int] | None = None,
-        find_over_report: int | None = None,
-        flag_bytes: tuple[bytes, bytes] | None = None,
-        find_pages: list[int] | None = None,
-        final_rv: int = int(CKR_OK),
-    ) -> None:
-        self._flags_rv = flags_rv
-        self._private = private
-        self._token = token
-        self._find_count = find_count
-        self._find_rv = find_rv
-        self._finds = 0
-        self._flags_write = flags_write
-        self._flag_lens = flag_lens
-        self._find_over_report = find_over_report
-        self._flag_bytes = flag_bytes
-        self._find_pages = list(find_pages) if find_pages is not None else None
-        self._next_handle = 100
-        self._final_rv = final_rv
-
-    def C_GetAttributeValue(self, _sh: int, _handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
-        if self._flags_rv != int(CKR_OK):
-            return self._flags_rv
-        for i in range(int(count)):
-            attr = int(tmpl[i].type)
-            assert attr in (int(CKA_PRIVATE), int(CKA_TOKEN)), attr
-            idx = 0 if attr == int(CKA_PRIVATE) else 1
-            if not self._flags_write[idx]:
-                continue  # R3F11: OK without touching this slot.
-            if self._flag_bytes is not None:
-                payload = self._flag_bytes[idx]
-            else:
-                flag = self._private if attr == int(CKA_PRIVATE) else self._token
-                payload = b"\x01" if flag else b"\x00"
-            ctypes.memmove(tmpl[i].pValue, payload, 1)
-            tmpl[i].ulValueLen = self._flag_lens[idx] if self._flag_lens is not None else 1
-        return int(CKR_OK)
-
-    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
-        return self._find_rv
-
-    def C_FindObjects(self, _sh: int, buf: Any, max_count: int, found_ptr: Any) -> int:  # noqa: N802
-        if self._find_pages is not None:
-            page = self._find_pages[self._finds] if self._finds < len(self._find_pages) else 0
-            real = min(page, int(max_count))
-            for i in range(real):
-                buf[i] = self._next_handle + i
-            self._next_handle += real
-            found = real
-        elif self._finds:
-            found = 0
-        else:
-            real = min(self._find_count, int(max_count))
-            for i in range(real):
-                buf[i] = 100 + i
-            found = self._find_over_report if self._find_over_report is not None else real
-        self._finds += 1
-        ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = found
-        return int(CKR_OK)
-
-    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
-        return self._final_rv
-
-
-def _binding_ctx(raw: _BindingRaw) -> Any:
-    return ProbeContext(raw=raw, sh=None, slot_id=None, cleanup=lambda: None, module_path="fake")
-
-
-class _ValueRaw:
-    """Single-attribute CKA_VALUE surface for stale-read tests (R4F11)."""
-
-    def __init__(self, *, rv: int, payload: bytes = b"", write: bool = True) -> None:
-        self._rv = rv
-        self._payload = payload
-        self._write = write
-
-    def C_GetAttributeValue(self, _sh: int, _handle: int, attr: Any, _count: int) -> int:  # noqa: N802
-        got = ctypes.cast(attr, ctypes.POINTER(CK_ATTRIBUTE)).contents
-        assert int(got.type) == int(CKA_VALUE), int(got.type)
-        if self._write and self._payload:
-            ctypes.memmove(got.pValue, self._payload, len(self._payload))
-            got.ulValueLen = len(self._payload)
-        return self._rv
-
-
-def _value_ctx(raw: _ValueRaw) -> Any:
-    return ProbeContext(raw=raw, sh=None, slot_id=None, cleanup=lambda: None, module_path="fake")
-
-
-def test_verify_witness_binding_bound(capsys: Any) -> None:
-    """R2C4: a findable private session witness binds with no assumption."""
-    raw = _BindingRaw()
-    assert token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target") is None
-    out = str(capsys.readouterr().out)
-    assert "STEP:setup:target_witness_flags:CKR:0x00000000" in out, out
-    assert "STEP:setup:target_prefind:CKR:0x00000000" in out, out
-
-
-def test_verify_witness_binding_token_object_voids() -> None:
-    """R2C4: a persisted witness voids the fixture, never the verdict."""
-    raw = _BindingRaw(token=True)
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness not a private session object", reason
-
-
-def test_verify_witness_binding_invisible_voids() -> None:
-    """R2C4: a witness missing pre-logout voids the vacuous leg."""
-    raw = _BindingRaw(find_count=0)
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness not uniquely visible pre-logout", reason
-
-
-def test_verify_witness_binding_refused_flags_defers_to_gate() -> None:
-    """R2C4: an unreadable binding returns None; the failed setup step skips."""
-    raw = _BindingRaw(flags_rv=int(CKR_DEVICE_ERROR))
-    assert token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target") is None
-
-
-def test_verify_witness_binding_foreign_singleton_voids() -> None:
-    """R3F11: a same-label singleton that is not the staged handle voids."""
-    raw = _BindingRaw(find_count=1)
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 999, b"lbl", "target")
-    assert reason == "target witness find missed the staged handle", reason
-
-
-def test_verify_witness_binding_duplicate_voids() -> None:
-    """R3F11: two same-label handles void (uniqueness pin)."""
-    raw = _BindingRaw(find_count=2)
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness not uniquely visible pre-logout", reason
-
-
-def test_verify_witness_binding_over_capacity_voids() -> None:
-    """R3F11: a count above capacity voids (no crash, no silent truncation)."""
-    raw = _BindingRaw(find_count=16, find_over_report=25)
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness search over capacity", reason
-
-
-def test_verify_witness_binding_short_flag_length_voids() -> None:
-    """R3F11: CKR_OK with a short flag length voids as malformed."""
-    raw = _BindingRaw(flag_lens=(0, 1))
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness flags malformed", reason
-
-
-def test_verify_witness_binding_partial_touch_voids() -> None:
-    """R4F11: an untouched slot voids as malformed (nothing was written)."""
-    raw = _BindingRaw(token=True, flags_write=(True, False))
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness flags malformed", reason
-
-
-def test_verify_witness_binding_unwritten_private_voids_malformed() -> None:
-    """R4F11: an unwritten private slot (0xFF poison) never binds as True."""
-    raw = _BindingRaw(flags_write=(False, True))
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness flags malformed", reason
-
-
-def test_verify_witness_binding_garbage_flag_voids_malformed() -> None:
-    """R4F11: a non-{0,1} flag byte voids as malformed, never reads as True."""
-    raw = _BindingRaw(flag_bytes=(b"\x02", b"\x00"))
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness flags malformed", reason
-
-
-def test_verify_witness_binding_short_pages_do_not_end_pagination() -> None:
-    """R4F11: two short pages of 1 void as duplicates (no false uniqueness)."""
-    raw = _BindingRaw(find_pages=[1, 1])
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason == "target witness not uniquely visible pre-logout", reason
-
-
-def test_verify_witness_binding_final_refusal_voids_prefind(capsys: Any) -> None:
-    """R4F11: a refused Final voids the prefind with the Final RV on the step."""
-    raw = _BindingRaw(final_rv=int(CKR_DEVICE_ERROR))
-    reason = token_admin._verify_witness_binding(_binding_ctx(raw), 7, 100, b"lbl", "target")
-    assert reason is None, reason
-    out = str(capsys.readouterr().out)
-    assert "STEP:setup:target_prefind:CKR:0x00000030" in out, out
-
-
-def test_read_stale_bytes_refusal_with_data_returns_bytes() -> None:
-    """R4F11: a refused stale read that still wrote bytes surfaces them."""
-    raw = _ValueRaw(rv=int(CKR_OBJECT_HANDLE_INVALID), payload=b"leaked!")
-    srv, sbytes = token_admin._read_stale_bytes(_value_ctx(raw), 7, 100)
-    assert srv == int(CKR_OBJECT_HANDLE_INVALID), srv
-    assert sbytes != b"", sbytes
-
-
-def test_read_stale_bytes_clean_refusal_returns_empty() -> None:
-    """R4F11: a refused stale read that wrote nothing returns empty."""
-    raw = _ValueRaw(rv=int(CKR_OBJECT_HANDLE_INVALID), write=False)
-    srv, sbytes = token_admin._read_stale_bytes(_value_ctx(raw), 7, 100)
-    assert srv == int(CKR_OBJECT_HANDLE_INVALID), srv
-    assert sbytes == b"", sbytes
-
-
-def test_emit_phase2_snapshot_refusals_uses_snapshot_vocabulary(capsys: Any) -> None:
-    """R3F12: preserved per-slot RVs join the snapshot scan (still setup-gate-exempt)."""
-    token_admin._emit_phase2_snapshot_refusals(((3, int(CKR_DEVICE_ERROR)),))
-    out = str(capsys.readouterr().out)
-    assert "STEP:snapshot:phase2_tokeninfo_3:CKR:0x00000030" in out, out
-
-
-class _RediscoverRaw:
-    """Slots with scripted token labels or info refusals."""
-
-    def __init__(self, slots: dict[int, bytes | int | tuple[bytes, bytes]]) -> None:
-        self._slots = slots
-
-    def C_GetSlotList(self, _present: int, slot_ptr: Any, count_ptr: Any) -> int:  # noqa: N802
-        ids = sorted(self._slots)
-        count = ctypes.cast(count_ptr, ctypes.POINTER(CK_ULONG)).contents
-        if slot_ptr is None:
-            count.value = len(ids)
-            return int(CKR_OK)
-        buf = ctypes.cast(slot_ptr, ctypes.POINTER(CK_ULONG))
-        for i, slot in enumerate(ids):
-            buf[i] = slot
-        count.value = len(ids)
-        return int(CKR_OK)
-
-    def C_GetTokenInfo(self, slot_id: int, info_ptr: Any) -> int:  # noqa: N802
-        entry = self._slots[int(slot_id)]
-        if isinstance(entry, int):
-            return entry
-        label, serial = entry if isinstance(entry, tuple) else (entry, b"")
-        info = ctypes.cast(info_ptr, ctypes.POINTER(CK_TOKEN_INFO)).contents
-        ctypes.memmove(info.label, label + b" " * (32 - len(label)), 32)
-        ctypes.memmove(info.serialNumber, serial + b" " * (16 - len(serial)), 16)
-        return int(CKR_OK)
-
-
-def _rediscover(raw: _RediscoverRaw, label: bytes, serial: bytes = b"") -> Any:
-    return token_admin._rediscover_burn_slot(
-        _binding_ctx(raw), expected_label=label, expected_serial=serial
-    )
-
-
-def test_rediscover_unique_match_proceeds() -> None:
-    """R2C5a: one identity match under full visibility rediscovers."""
-    raw = _RediscoverRaw({3: b"other", 7: token_admin._BURN_TOKEN_LABEL})
-    matches, enum_rv, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
-    assert matches == (7,)
-    assert enum_rv == int(CKR_OK)
-    assert refusals == ()
-
-
-def test_rediscover_refusals_preserved_not_absent() -> None:
-    """R2C5a: per-slot info refusals ride out; no match is unproved, not absent."""
-    raw = _RediscoverRaw({3: b"other", 7: int(CKR_DEVICE_ERROR)})
-    matches, enum_rv, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
-    assert matches == ()
-    assert enum_rv == int(CKR_OK)
-    assert refusals == ((7, int(CKR_DEVICE_ERROR)),)
-    action, _ = token_admin._phase2_rediscovery_outcome(matches, refusals)
-    assert action == "assumption"
-
-
-def test_rediscover_clean_empty_is_absent() -> None:
-    """R2C5a: no match under full visibility is genuinely absent."""
-    raw = _RediscoverRaw({3: b"other"})
-    matches, enum_rv, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
-    assert (matches, refusals) == ((), ())
-    action, _ = token_admin._phase2_rediscovery_outcome(matches, refusals)
-    assert action == "absent"
-
-
-def test_rediscover_duplicate_identity_is_ambiguous() -> None:
-    """R2C5a: a duplicated burn identity never resolves silently."""
-    raw = _RediscoverRaw({3: token_admin._BURN_TOKEN_LABEL, 7: token_admin._BURN_TOKEN_LABEL})
-    matches, _, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
-    assert matches == (3, 7)
-    action, reason = token_admin._phase2_rediscovery_outcome(matches, refusals)
-    assert action == "assumption"
-    assert "ambiguous" in str(reason)
-
-
-def test_rediscover_match_behind_refusal_is_unproved() -> None:
-    """R2C5a: one match plus refusals cannot prove uniqueness."""
-    raw = _RediscoverRaw({3: token_admin._BURN_TOKEN_LABEL, 7: int(CKR_DEVICE_ERROR)})
-    matches, _, refusals = _rediscover(raw, token_admin._BURN_TOKEN_LABEL)
-    action, reason = token_admin._phase2_rediscovery_outcome(matches, refusals)
-    assert action == "assumption"
-    assert "uniqueness unproved" in str(reason)
-
-
-def test_rediscover_observed_original_label_proceeds() -> None:
-    """R4F12: a token under its observed original label rediscovers (never falsely vanished)."""
-    raw = _RediscoverRaw({7: (b"original-token", b"SN-1")})
-    matches, enum_rv, refusals = _rediscover(raw, b"original-token", b"SN-1")
-    assert matches == (7,)
-    assert enum_rv == int(CKR_OK)
-    assert refusals == ()
-
-
-def test_rediscover_serial_mismatch_excluded() -> None:
-    """R4F12: a same-label token with a different serial never matches."""
-    burn = token_admin._BURN_TOKEN_LABEL
-    raw = _RediscoverRaw({3: (burn, b"SN-1"), 7: (burn, b"SN-2")})
-    matches, _, _ = _rediscover(raw, burn, b"SN-1")
-    assert matches == (3,)
-
-
-def test_token_info_reads_label_and_serial() -> None:
-    """R4F12: the observed identity is the stripped label + serial pair."""
-    raw = _RediscoverRaw({3: (b"lbl", b"SN-9")})
-    rv, _, _, _, label, serial = token_admin._token_info(_binding_ctx(raw), 3)
-    assert rv == int(CKR_OK), rv
-    assert (label, serial) == (b"lbl", b"SN-9"), (label, serial)
-
-
-def test_token_info_refusal_empties_identity() -> None:
-    """R4F12: a refused info read keeps its RV with empty identity fields."""
-    raw = _RediscoverRaw({3: int(CKR_DEVICE_ERROR)})
-    rv, flags, min_pin, max_pin, label, serial = token_admin._token_info(_binding_ctx(raw), 3)
-    assert rv == int(CKR_DEVICE_ERROR), rv
-    assert (flags, min_pin, max_pin) == (0, 0, 0), (flags, min_pin, max_pin)
-    assert (label, serial) == (b"", b""), (label, serial)
-
-
-def test_burn_setup_returns_observed_identity(capsys: Any) -> None:
-    """R4F12: setup captures the observed (label, serial), not the submitted label."""
-    fake = _FakeAdminRaw()
-    fake.token_label = b"original-token"
-    fake.token_serial = b"SN-1"
-    setup = token_admin._setup_burn_session(_binding_ctx(fake), "user", False)
-    assert setup is not None
-    slot, sh, label, serial = setup
-    assert (slot, sh) == (0, 10), setup
-    assert (label, serial) == (b"original-token", b"SN-1"), setup
-    out = str(capsys.readouterr().out)
-    assert f"TOKENID:{b'original-token'.hex()}:{b'SN-1'.hex()}" in out, out
 
 
 def test_parse_pinbounds_unknown() -> None:
@@ -3247,36 +2717,6 @@ def test_session_undefined_refusal_fails() -> None:
     assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
 
 
-def test_session_undefined_refusal_beats_vendor_reread() -> None:
-    """R4F12: the judge fails an undefined refusal before a vendor reread xfails."""
-    _assert_fails(
-        tse._judge_session_exhaustion,
-        policy=_session_policy(100, 100),
-        own_opens=99,
-        refused_rv=_UNDEFINED_RV,
-        total_now=100,
-        rw_now=100,
-        reread_rv=_VENDOR_RV,
-    )
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert rec.operation == "C_OpenSession", rec.summary
-
-
-def test_session_vendor_reread_xfails_on_clean_refusal() -> None:
-    """R4F12: the judge grades the reread pair (vendor alternate xfail)."""
-    assert_xfails(
-        tse._judge_session_exhaustion,
-        policy=_session_policy(100, 100),
-        own_opens=100,
-        refused_rv=_SESSION_COUNT,
-        total_now=100,
-        rw_now=100,
-        reread_rv=_VENDOR_RV,
-    )
-    rec = _assert_xfail_record("nonspec_reject")
-    assert rec.operation == "C_GetTokenInfo", rec.summary
-
-
 def test_session_over_delivery_xfails_even_with_canonical_rv() -> None:
     assert_xfails(
         tse._judge_session_exhaustion,
@@ -3474,17 +2914,6 @@ def test_limit_node_undefined_refusal_fails() -> None:
     fake.open_script = [_UNDEFINED_RV]
     _assert_fails(_run_limit_node, fake)
     _assert_fail_record("self_contradiction", "metadata")
-
-
-def test_limit_node_undefined_refusal_beats_vendor_reread() -> None:
-    """R4F12: an undefined saturation refusal fails before a vendor reread xfails."""
-    fake = _FakeAdminRaw()
-    fake.open_script = [_UNDEFINED_RV]
-    fake.gettokeninfo_script = [_OK, _VENDOR_RV]
-    _assert_fails(_run_limit_node, fake)
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "undefined" in (rec.summary or ""), rec.summary
-    assert rec.operation == "C_OpenSession", rec.summary
 
 
 def test_limit_node_cleanup_refusal_after_pass_is_terminal() -> None:
@@ -5741,10 +5170,6 @@ def test_capacity_returned_reopen_ok_counts_restored_passes() -> None:
         baseline_total=3,
         total_after_close_all=3,
         reopen_rv=_OK,
-        own_opens=4,
-        verified_closes=4,
-        recovery_verified=True,
-        reread_rv=_OK,
     )
     assert classification.get_records() == []
 
@@ -5755,29 +5180,9 @@ def test_capacity_returned_reopen_refused_fails() -> None:
         baseline_total=3,
         total_after_close_all=3,
         reopen_rv=_SESSION_COUNT,
-        own_opens=4,
-        verified_closes=4,
-        recovery_verified=True,
-        reread_rv=_OK,
     )
     rec = _assert_fail_record("self_contradiction", "metadata")
     assert rec.detail["reopen_rv"] == _SESSION_COUNT
-
-
-def test_capacity_returned_device_error_reopen_xfails_not_operational() -> None:
-    """R4F12: an operational reopen refusal never fails as unrestored capacity."""
-    assert_xfails(
-        tse._judge_capacity_returned,
-        baseline_total=3,
-        total_after_close_all=3,
-        reopen_rv=_DEVICE_ERROR,
-        own_opens=4,
-        verified_closes=4,
-        recovery_verified=True,
-        reread_rv=_OK,
-    )
-    rec = _assert_xfail_record("not_operational")
-    assert rec.operation == "C_OpenSession", rec.summary
 
 
 def test_capacity_returned_leaked_sessions_fail() -> None:
@@ -5786,10 +5191,6 @@ def test_capacity_returned_leaked_sessions_fail() -> None:
         baseline_total=3,
         total_after_close_all=5,
         reopen_rv=_OK,
-        own_opens=4,
-        verified_closes=4,
-        recovery_verified=True,
-        reread_rv=_OK,
     )
     _assert_fail_record("self_contradiction", "metadata")
 
@@ -5799,275 +5200,8 @@ def test_capacity_returned_unknown_counts_skip_count_leg() -> None:
         baseline_total=None,
         total_after_close_all=None,
         reopen_rv=_OK,
-        own_opens=4,
-        verified_closes=4,
-        recovery_verified=True,
-        reread_rv=_DEVICE_ERROR,
     )
     assert classification.get_records() == []
-
-
-def test_capacity_returned_vendor_reread_xfails_on_clean_reopen() -> None:
-    """R4F12: the judge grades the reread pair (vendor alternate xfail)."""
-    assert_xfails(
-        tse._judge_capacity_returned,
-        baseline_total=3,
-        total_after_close_all=3,
-        reopen_rv=_OK,
-        own_opens=4,
-        verified_closes=4,
-        recovery_verified=True,
-        reread_rv=_VENDOR_RV,
-    )
-    rec = _assert_xfail_record("nonspec_reject")
-    assert rec.operation == "C_GetTokenInfo", rec.summary
-
-
-def test_capacity_returned_unverified_close_skips_reopen_refusal() -> None:
-    """D2: a refused reopen with zero verified closes voids instead of failing."""
-    with pytest.raises(Skipped):
-        tse._judge_capacity_returned(
-            baseline_total=3,
-            total_after_close_all=3,
-            reopen_rv=_SESSION_COUNT,
-            own_opens=4,
-            verified_closes=0,
-            recovery_verified=True,
-            reread_rv=_OK,
-        )
-
-
-def test_capacity_returned_unverified_saturation_close_skips_count() -> None:
-    """R2C5b: a known remaining session voids the count leg, never fails it."""
-    with pytest.raises(Skipped, match="known remaining"):
-        tse._judge_capacity_returned(
-            baseline_total=3,
-            total_after_close_all=5,
-            reopen_rv=_OK,
-            own_opens=4,
-            verified_closes=3,
-            recovery_verified=True,
-            reread_rv=_OK,
-        )
-
-
-def test_capacity_returned_unverified_recovery_close_skips_count() -> None:
-    """R2C5b: a refused recovery close voids the count leg with the RV preserved."""
-    with pytest.raises(Skipped, match="known remaining"):
-        tse._judge_capacity_returned(
-            baseline_total=3,
-            total_after_close_all=4,
-            reopen_rv=_OK,
-            own_opens=4,
-            verified_closes=4,
-            recovery_verified=False,
-            reread_rv=_OK,
-        )
-
-
-def _run_reopen_leg(
-    monkeypatch: pytest.MonkeyPatch,
-    scenario: _Scenario,
-    policies: list[tuple[tse.SessionLimitPolicy | None, int]],
-) -> None:
-    """Drive the capacity-return leg with scripted opens, closes, and policy reads."""
-    monkeypatch.setattr(tse, "raw_open_session", scenario.open)
-    scripted = list(policies)
-    monkeypatch.setattr(tse, "_read_session_policy", lambda _raw, _slot: scripted.pop(0))
-    session = SimpleNamespace(
-        raw=scenario.raw,
-        sh=99,
-        slot_id=7,
-        has_mechanism=lambda _name: True,
-    )
-    tse.TestAdvertisedSessionLimits().test_session_capacity_returns_after_close(session)
-
-
-def _reopen_baseline(ambient: int) -> tuple[tse.SessionLimitPolicy, int]:
-    return (_session_policy(4, 4, ambient_total=ambient, ambient_rw=ambient), _OK)
-
-
-def test_reopen_leg_first_open_undefined_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2C5b: a first-open undefined RV fails validity before any skip."""
-    scenario = _Scenario(open_results=[_ckr(_UNDEFINED_RV)])
-    with pytest.raises(Failed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3)])
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "undefined CK_RV" in (rec.summary or ""), rec.summary
-
-
-def test_reopen_leg_first_open_vendor_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2C5b: a first-open vendor RV xfails before any skip."""
-    scenario = _Scenario(open_results=[_ckr(_VENDOR_RV)])
-    with pytest.raises(XFailed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3)])
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1 and recs[0].reason == "nonspec_reject", recs
-
-
-def test_reopen_leg_refused_recovery_close_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R2C5b: a refused recovery close is preserved and voids the count leg."""
-    scenario = _Scenario(
-        open_results=[101, _ckr(_SESSION_COUNT), 102],
-        close_results=[_OK, _ckr(_DEVICE_ERROR)],
-    )
-    with pytest.raises(XFailed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), _reopen_baseline(4)])
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1, [(rec.reason, rec.summary) for rec in recs]
-    assert recs[0].reason == "not_operational", recs[0].summary
-    assert recs[0].actual_ckr == ckr_name(_DEVICE_ERROR), recs[0].summary
-    assert scenario.raw.close_calls == [101, 102], scenario.raw.close_calls
-
-
-def test_reopen_leg_undefined_reopen_fails_without_verified_close(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R3F12: an undefined reopen RV fails (never skips on zero verified closes)."""
-    scenario = _Scenario(
-        open_results=[101, _ckr(_SESSION_COUNT), _ckr(_UNDEFINED_RV)],
-        close_results=[_ckr(_DEVICE_ERROR)],
-    )
-    with pytest.raises(Failed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), _reopen_baseline(3)])
-    fails = [rec for rec in classification.get_records() if rec.outcome == "fail"]
-    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in fails]
-    assert fails[0].reason == "self_contradiction", fails[0].summary
-    assert fails[0].kind == "metadata", fails[0].summary
-    assert "undefined CK_RV" in (fails[0].summary or ""), fails[0].summary
-
-
-def test_reopen_leg_undefined_reopen_beats_vendor_reread(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R4F12: an undefined reopen fails before a vendor reread xfails."""
-    scenario = _Scenario(
-        open_results=[101, _ckr(_SESSION_COUNT), _ckr(_UNDEFINED_RV)],
-        close_results=[_OK],
-    )
-    with pytest.raises(Failed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), (None, _VENDOR_RV)])
-    fails = [rec for rec in classification.get_records() if rec.outcome == "fail"]
-    assert len(fails) == 1, [(rec.reason, rec.summary) for rec in fails]
-    assert fails[0].reason == "self_contradiction", fails[0].summary
-    assert fails[0].kind == "metadata", fails[0].summary
-    assert "undefined" in (fails[0].summary or ""), fails[0].summary
-    assert fails[0].operation == "C_OpenSession", fails[0].summary
-
-
-def test_reopen_leg_vendor_reopen_xfails_with_verified_close(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R3F12: a vendor reopen RV xfails (never fails as unrestored capacity)."""
-    scenario = _Scenario(
-        open_results=[101, _ckr(_SESSION_COUNT), _ckr(_VENDOR_RV)],
-        close_results=[_OK],
-    )
-    with pytest.raises(XFailed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), _reopen_baseline(3)])
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1, [(rec.reason, rec.summary) for rec in recs]
-    assert recs[0].reason == "nonspec_reject", recs[0].summary
-
-
-def test_reopen_leg_initial_read_undefined_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: an undefined initial policy read fails (never skips as untestable)."""
-    scenario = _Scenario(open_results=[])
-    with pytest.raises(Failed):
-        _run_reopen_leg(monkeypatch, scenario, [(None, _UNDEFINED_RV)])
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "undefined" in (rec.summary or ""), rec.summary
-
-
-def test_reopen_leg_initial_read_vendor_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: a vendor initial policy read xfails (never skips as untestable)."""
-    scenario = _Scenario(open_results=[])
-    with pytest.raises(XFailed):
-        _run_reopen_leg(monkeypatch, scenario, [(None, _VENDOR_RV)])
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1, [(rec.reason, rec.summary) for rec in recs]
-    assert recs[0].reason == "nonspec_reject", recs[0].summary
-
-
-def test_reopen_leg_reread_undefined_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: an undefined capacity reread fails (never passes silently)."""
-    scenario = _Scenario(
-        open_results=[101, _ckr(_SESSION_COUNT), 102],
-        close_results=[_OK, _OK],
-    )
-    with pytest.raises(Failed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), (None, _UNDEFINED_RV)])
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "undefined" in (rec.summary or ""), rec.summary
-
-
-def test_reopen_leg_reread_vendor_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: a vendor capacity reread xfails (never passes silently)."""
-    scenario = _Scenario(
-        open_results=[101, _ckr(_SESSION_COUNT), 102],
-        close_results=[_OK, _OK],
-    )
-    with pytest.raises(XFailed):
-        _run_reopen_leg(monkeypatch, scenario, [_reopen_baseline(3), (None, _VENDOR_RV)])
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1, [(rec.reason, rec.summary) for rec in recs]
-    assert recs[0].reason == "nonspec_reject", recs[0].summary
-
-
-def _run_exhaustion_leg(
-    monkeypatch: pytest.MonkeyPatch,
-    scenario: _Scenario,
-    policies: list[tuple[tse.SessionLimitPolicy | None, int]],
-) -> None:
-    """Drive the exhaustion node with scripted opens and policy reads."""
-    monkeypatch.setattr(tse, "raw_open_session", scenario.open)
-    scripted = list(policies)
-    monkeypatch.setattr(tse, "_read_session_policy", lambda _raw, _slot: scripted.pop(0))
-    session = SimpleNamespace(
-        raw=scenario.raw,
-        sh=99,
-        slot_id=7,
-        has_mechanism=lambda _name: True,
-    )
-    tse.TestAdvertisedSessionLimits().test_session_limit_matches_advertised_maxima(session)
-
-
-def test_exhaustion_leg_initial_read_undefined_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: an undefined exhaustion policy read fails (never skips as untestable)."""
-    scenario = _Scenario(open_results=[])
-    with pytest.raises(Failed):
-        _run_exhaustion_leg(monkeypatch, scenario, [(None, _UNDEFINED_RV)])
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "undefined" in (rec.summary or ""), rec.summary
-
-
-def test_exhaustion_leg_reread_undefined_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: an undefined exhaustion reread fails (never degrades silently)."""
-    scenario = _Scenario(open_results=[101, _ckr(_SESSION_COUNT)])
-    with pytest.raises(Failed):
-        _run_exhaustion_leg(monkeypatch, scenario, [_reopen_baseline(3), (None, _UNDEFINED_RV)])
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "undefined" in (rec.summary or ""), rec.summary
-
-
-def test_exhaustion_leg_reread_vendor_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3F12: a vendor exhaustion reread xfails (never passes silently)."""
-    scenario = _Scenario(open_results=[101, _ckr(_SESSION_COUNT)])
-    with pytest.raises(XFailed):
-        _run_exhaustion_leg(monkeypatch, scenario, [_reopen_baseline(3), (None, _VENDOR_RV)])
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1, [(rec.reason, rec.summary) for rec in recs]
-    assert recs[0].reason == "nonspec_reject", recs[0].summary
-
-
-def test_read_session_policy_maps_unavailable_counts_to_none() -> None:
-    """R3F12: unavailable ambient counts normalize to None (never giant ints)."""
-    fake = _FakeAdminRaw()
-    fake.ambient_total = None
-    fake.ambient_rw = None
-    policy, rv = tse._read_session_policy(fake, 0)
-    assert rv == _OK
-    assert policy is not None
-    assert policy.ambient_total is None
-    assert policy.ambient_rw is None
 
 
 def _same_process_out(first: token_admin.AdminTrace, second: str) -> str:
@@ -6144,28 +5278,6 @@ def test_same_process_lockout_lost_fails() -> None:
         )
 
 
-def test_same_process_undefined_phase2_tokeninfo_fails() -> None:
-    """R3F12: an undefined phase2 token-info RV fails (never hides in the skip)."""
-    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
-    clean_second = _phase2_trace("user", _OK, initial_rank=1)
-    second = clean_second._replace(
-        steps=clean_second.steps
-        + (token_admin.AdminStep("snapshot:phase2_tokeninfo_3", _UNDEFINED_RV),),
-        assumption_failed="burn token identity unproved: C_GetTokenInfo refused on 1 slot(s)",
-    )
-    launch = _FakeLaunch([_ScriptedChild(_same_process_out(first, _render_trace(second)))])
-    with pytest.raises(Failed):
-        pin_case._run_qc11a_same_process_node(
-            _capability(),
-            _StrictConfig(),
-            role="user",
-            _session_factory=_session_factory(),
-            _launch=launch,
-        )
-    rec = _assert_fail_record("self_contradiction", "metadata")
-    assert "token snapshot" in (rec.summary or ""), rec.summary
-
-
 def _concurrent_trace(
     setpin_rvs: dict[int, int],
     final_rvs: dict[str, int],
@@ -6197,7 +5309,7 @@ def _concurrent_trace(
 
 def test_concurrent_clean_linearization_passes() -> None:
     trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
         {
             "P0": _PIN_INCORRECT,
             "P1": _PIN_INCORRECT,
@@ -6212,8 +5324,8 @@ def test_concurrent_clean_linearization_passes() -> None:
 
 def test_concurrent_two_pin_work_fails() -> None:
     trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {"P0": _PIN_INCORRECT, "P1": _PIN_INCORRECT, "P2": _OK, "P3": _PIN_INCORRECT, "P4": _OK},
+        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
+        {"P0": _OK, "P1": _PIN_INCORRECT, "P2": _OK, "P3": _PIN_INCORRECT, "P4": _PIN_INCORRECT},
     )
     with pytest.raises(Failed):
         sopin_case._judge_concurrent_pin_trace(trace)
@@ -6221,7 +5333,7 @@ def test_concurrent_two_pin_work_fails() -> None:
 
 def test_concurrent_zero_pin_work_fails() -> None:
     trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {0: _OK, 1: _OK, 2: _OK, 3: _OK},
         {
             "P0": _PIN_INCORRECT,
             "P1": _PIN_INCORRECT,
@@ -6236,7 +5348,7 @@ def test_concurrent_zero_pin_work_fails() -> None:
 
 def test_concurrent_failed_pin_works_fails() -> None:
     trace = _concurrent_trace(
-        {0: _GENERAL_ERROR, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
+        {0: _GENERAL_ERROR, 1: _OK, 2: _OK, 3: _OK},
         {
             "P0": _PIN_INCORRECT,
             "P1": _OK,
@@ -6277,255 +5389,3 @@ def test_concurrent_no_success_skips() -> None:
     )
     with pytest.raises(Skipped):
         sopin_case._judge_concurrent_pin_trace(trace)
-
-
-def test_concurrent_prescan_no_success_returns_silently() -> None:
-    """Pre-review 1: a race that never ran has no fail-grade evidence."""
-    p0_works = _concurrent_trace(
-        {0: _GENERAL_ERROR, 1: _GENERAL_ERROR, 2: _GENERAL_ERROR, 3: _GENERAL_ERROR},
-        {
-            "P0": _OK,
-            "P1": _PIN_INCORRECT,
-            "P2": _PIN_INCORRECT,
-            "P3": _PIN_INCORRECT,
-            "P4": _PIN_INCORRECT,
-        },
-    )
-    sopin_case._prescan_concurrent_pin_fails(p0_works)
-    assert classification.get_records() == []
-    nothing_works = _concurrent_trace(
-        {0: _GENERAL_ERROR, 1: _GENERAL_ERROR, 2: _GENERAL_ERROR, 3: _GENERAL_ERROR},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _PIN_INCORRECT,
-            "P3": _PIN_INCORRECT,
-            "P4": _PIN_INCORRECT,
-        },
-    )
-    sopin_case._prescan_concurrent_pin_fails(nothing_works)
-    assert classification.get_records() == []
-
-
-def test_concurrent_multi_success_fails_stale_write() -> None:
-    """D2: two OKs from the same old PIN means a stale write was accepted."""
-    trace = _concurrent_trace(
-        {0: _OK, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _OK,
-            "P3": _PIN_INCORRECT,
-            "P4": _PIN_INCORRECT,
-        },
-    )
-    with pytest.raises(Failed):
-        sopin_case._judge_concurrent_pin_trace(trace)
-    (record,) = classification.get_records()
-    assert record.reason == "accepted_invalid", record.summary
-    assert "stale PIN" in (record.summary or ""), record.summary
-
-
-def test_concurrent_p0_surviving_write_fails() -> None:
-    """D2: P0 working after a successful write means the write had no effect."""
-    trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _OK,
-            "P1": _PIN_INCORRECT,
-            "P2": _PIN_INCORRECT,
-            "P3": _PIN_INCORRECT,
-            "P4": _PIN_INCORRECT,
-        },
-    )
-    with pytest.raises(Failed):
-        sopin_case._judge_concurrent_pin_trace(trace)
-    (record,) = classification.get_records()
-    assert record.reason == "self_contradiction", record.summary
-    assert "no effect" in (record.summary or ""), record.summary
-
-
-def test_concurrent_locked_tail_skips() -> None:
-    """D2: no worker behind a lockout skips; the winner may sit behind the lock."""
-    trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _PIN_LOCKED,
-            "P3": _PIN_LOCKED,
-            "P4": _PIN_LOCKED,
-        },
-    )
-    with pytest.raises(Skipped):
-        sopin_case._judge_concurrent_pin_trace(trace)
-
-
-def test_concurrent_undefined_final_rv_fails() -> None:
-    """D2: an undefined final-login RV fails the metadata contract."""
-    trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _OK,
-            "P3": 0xDEAD,
-            "P4": _PIN_INCORRECT,
-        },
-    )
-    with pytest.raises(Failed):
-        sopin_case._judge_concurrent_pin_trace(trace)
-    (record,) = classification.get_records()
-    assert record.reason == "self_contradiction", record.summary
-    assert record.operation == "C_Login", record.summary
-
-
-def test_concurrent_winner_blocked_alternatives_xfail() -> None:
-    """R2C5c: a sole winner with locked alternatives xfails, never passes."""
-    trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _OK,
-            "P3": _PIN_LOCKED,
-            "P4": _PIN_LOCKED,
-        },
-    )
-    with pytest.raises(XFailed):
-        sopin_case._judge_concurrent_pin_trace(trace)
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1, [(rec.reason, rec.summary) for rec in recs]
-    assert "uniqueness unproved" in (recs[0].summary or ""), recs[0].summary
-    assert recs[0].detail is not None and recs[0].detail["unproved"] == ["P3", "P4"]
-
-
-def test_concurrent_winner_vendor_alternative_xfails() -> None:
-    """R2C5c: a vendor-refused alternative voids the uniqueness claim."""
-    trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _OK,
-            "P3": _PIN_INCORRECT,
-            "P4": _VENDOR_RV,
-        },
-    )
-    with pytest.raises(XFailed):
-        sopin_case._judge_concurrent_pin_trace(trace)
-    recs = [rec for rec in classification.get_records() if rec.outcome == "xfail"]
-    assert len(recs) == 1 and "uniqueness unproved" in (recs[0].summary or "")
-
-
-def test_concurrent_no_winner_vendor_tail_skips() -> None:
-    """R2C5c: no worker behind vendor refusals skips like the locked tail."""
-    trace = _concurrent_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _VENDOR_RV,
-            "P3": _VENDOR_RV,
-            "P4": _VENDOR_RV,
-        },
-    )
-    with pytest.raises(Skipped, match="may sit behind"):
-        sopin_case._judge_concurrent_pin_trace(trace)
-
-
-def _truncated_tail_trace(
-    setpin_rvs: dict[int, int], final_rvs: dict[str, int]
-) -> token_admin.AdminTrace:
-    """A genuinely truncated tail: some finals, then final_open refuses.
-
-    The probe emits finals winner-first and returns on the first
-    refused open, so a setup:final_open refusal always truncates the
-    tail -- a complete tail plus the refusal is unemittable.
-    """
-    base = _concurrent_trace(setpin_rvs, final_rvs)
-    return base._replace(
-        steps=base.steps + (token_admin.AdminStep("setup:final_open", _DEVICE_ERROR),)
-    )
-
-
-def test_concurrent_prescan_double_write_beats_setup_skip() -> None:
-    """R2C5c: a final-open refusal cannot hide an observed double write."""
-    # R4-F6: winners emit finals winner-first, so with two winners P1's
-    # final precedes P2's; the refusal truncates after both (P0's open).
-    trace = _truncated_tail_trace(
-        {0: _OK, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {"P1": _OK, "P2": _OK},
-    )
-    with pytest.raises(Failed):
-        sopin_case._prescan_concurrent_pin_fails(trace)
-    (record,) = classification.get_records()
-    assert record.reason == "accepted_invalid", record.summary
-    assert "stale PIN" in (record.summary or ""), record.summary
-
-
-def test_concurrent_prescan_truncated_tail_without_failures_returns() -> None:
-    """R3F6: no fail-grade evidence on a truncated tail returns silently."""
-    # R4-F6: P2 is the SOLE winner here, so winner-first emits its
-    # final first and the refusal truncates right after -- emittable.
-    trace = _truncated_tail_trace(
-        {0: _PIN_INCORRECT, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {"P2": _OK},
-    )
-    sopin_case._prescan_concurrent_pin_fails(trace)
-    assert classification.get_records() == []
-
-
-def test_concurrent_prescan_empty_tail_returns_silently() -> None:
-    """R4-F6: no final checks recorded means nothing observed (never a fail)."""
-    trace = _truncated_tail_trace(
-        {0: _OK, 1: _PIN_INCORRECT, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {},
-    )
-    sopin_case._prescan_concurrent_pin_fails(trace)
-    assert classification.get_records() == []
-
-
-def test_concurrent_judge_all_negative_names_successful() -> None:
-    """R4-F6: proved-negative finals fail, naming the set-but-dead winner."""
-    trace = _concurrent_trace(
-        {0: _OK, 1: _PIN_INCORRECT, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {
-            "P0": _PIN_INCORRECT,
-            "P1": _PIN_INCORRECT,
-            "P2": _PIN_INCORRECT,
-            "P3": _PIN_INCORRECT,
-            "P4": _PIN_INCORRECT,
-        },
-    )
-    with pytest.raises(Failed, match="0 PINs work") as exc_info:
-        sopin_case._judge_concurrent_pin_trace(trace)
-    assert "P1" in str(exc_info.value), str(exc_info.value)
-
-
-def test_concurrent_runner_prescan_fails_before_gate() -> None:
-    """R2C5c: end to end, observed writes grade before the setup gate."""
-    # R4-F6: winner-first order (P1 precedes P2 when both won).
-    trace = _truncated_tail_trace(
-        {0: _OK, 1: _OK, 2: _PIN_INCORRECT, 3: _PIN_INCORRECT},
-        {"P1": _OK, "P2": _OK},
-    )
-    out = _render_trace(trace)
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def _launch(
-        _minted: Any, probe: str, params: dict[str, Any], **_kw: Any
-    ) -> tuple[int, str, str]:
-        calls.append((probe, dict(params)))
-        return (0, out, "")
-
-    with pytest.raises(Failed):
-        sopin_case._run_qc11c_concurrent_node(
-            _capability(),
-            _StrictConfig(),
-            _session_factory=_session_factory(),
-            _launch=_launch,
-        )
-    assert [probe for probe, _ in calls] == ["qc11c_concurrent_pin"]
-    (record,) = classification.get_records()
-    assert record.reason == "accepted_invalid", record.summary

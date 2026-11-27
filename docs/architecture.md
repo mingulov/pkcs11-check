@@ -20,11 +20,11 @@
 - `core/preflight.py` - collection-safe capability probe written through a helper subprocess manifest
 - `core/collection.py` - pytest item metadata collection for marker-aware isolation planning
 - `core/report_log.py` - shared pytest-reportlog JSONL reader (record iterator, outcome mapper, user_property helpers)
-- `config.py` - four-layer config: CLI > env > TOML > defaults (some keys CLI-only, a few dead - see `configuration.md`)
+- `config.py` - four-layer config: CLI > env > TOML > defaults
 - `plugin.py` - pytest11 entry point, registers markers, fixtures, collection hooks
 - `fixtures.py` - p11_raw_session / p11_session (function-scoped, fresh session per test), p11_module_session (module-scoped, self-healing for fast verification tests), p11_module, p11_config, p11_interface_version
 - `testcases/conftest.py` - shared fixture and provider-operation helpers, including `get_pin_bytes()`
-- `testcases/ckr/` - CKR error coverage tests (~100 tests across ~20 files). Pass `--ckr-strict` for exact spec compliance (bare `pytest` flag, e.g. `uv run pytest src/pkcs11_check/testcases/ckr/ --ckr-strict --p11-module <module>`; not a `pkcs11-check test` option)
+- `testcases/ckr/` - CKR error coverage tests (~100 tests across ~20 files). Use `--ckr-strict` for exact spec compliance
 
 ## Raw PKCS#11 access (`pkcs11_check.raw`)
 

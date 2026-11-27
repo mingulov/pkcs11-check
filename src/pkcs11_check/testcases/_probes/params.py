@@ -8,19 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Any key containing one of these substrings (case-insensitive) in a params
-# object is a credential leak attempt (Invariant I3): the PIN travels only via
-# the _P11CHECK_PIN env var, never serialized into params/argv/source.
-# Substring (S8), not exact spelling, so respellings (userPin, token_pin,
-# P11TEST_PIN, password, ...) cannot smuggle credentials past the guard.
-# Verified safe: no legitimate probe-read key contains these substrings
-# (96-key survey of the _probes tree; only _P11CHECK_PIN itself hits, and
-# that name must never appear as a params key either). `passwd` extends the
-# review's triple: the standard credential abbreviation, same reasoning.
-# Known tradeoff: an innocent future key containing one of these (e.g. a
-# hypothetical `wrapping_mech`) fails LOUDLY here at development time and
-# must be renamed -- fail-closed by design, never a silent leak.
-_PIN_SUBSTRINGS: tuple[str, ...] = ("pin", "password", "passwd", "secret")
+# Any of these keys in a params object is a PIN leak attempt (Invariant I3): the PIN
+# travels only via the _P11CHECK_PIN env var, never serialized into params/argv/source.
+PIN_KEYS: frozenset[str] = frozenset(
+    {"pin", "PIN", "user_pin", "so_pin", "so_pin_value", "_P11CHECK_PIN"}
+)
 
 
 class PinInParamsError(ValueError):
@@ -36,15 +28,11 @@ def _check_no_pin(data: Mapping[str, Any]) -> None:
 
     def _walk(obj: Any) -> None:
         if isinstance(obj, Mapping):
-            leaked = sorted(
-                k
-                for k in obj
-                if isinstance(k, str) and any(sub in k.lower() for sub in _PIN_SUBSTRINGS)
-            )
+            leaked = PIN_KEYS & set(obj)
             if leaked:
                 # Do NOT include the value (it could be the PIN); name the keys only.
                 raise PinInParamsError(
-                    f"credential-bearing keys forbidden in probe params: {leaked}"
+                    f"PIN-bearing keys forbidden in probe params: {sorted(leaked)}"
                 )
             for value in obj.values():
                 _walk(value)

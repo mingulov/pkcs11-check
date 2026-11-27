@@ -42,10 +42,8 @@ from pkcs11_check.raw.types_std import (
 
 #: Handles requested per C_FindObjects call (label-scoped searches are tiny).
 PAGE_SIZE = 16
-#: Paging bound: PAGE_SIZE * MAX_PAGES handles without an empty page is a
-#: bounded, unfinished search (inconclusive), not an absence proof and not
-#: a provider defect on its own -- an unscoped value search can legally
-#: fill it.
+#: Exhaustion bound: PAGE_SIZE * MAX_PAGES handles without an empty page is
+#: a non-terminating search, not an absence proof.
 MAX_PAGES = 128
 
 
@@ -56,16 +54,13 @@ class ExactSearchObservation:
     ``handles`` is set only when the Find loop exhausted cleanly, so a
     membership verdict can be evaluated even when ``final_record`` carries
     a separate ``C_FindObjectsFinal`` defect. ``record`` carries the
-    strongest verdict for an incomplete search. ``partial`` holds the
-    handles from successfully delivered pages before the defect: a
-    forbidden hit among them is proved (it fails) even when a later
-    page refuses, while absence from a partial set stays unproved.
+    strongest verdict for an incomplete search, whose handles stay
+    unevaluated.
     """
 
     handles: tuple[int, ...] | None
     record: C.Classification | None
     final_record: C.Classification | None = None
-    partial: tuple[int, ...] = ()
 
 
 def flip_last_byte(value: bytes) -> bytes:
@@ -205,9 +200,8 @@ def observe_exact_search(
                 break
             found.extend(int(handles[i]) for i in range(raw_count))
         else:
-            unique = len(set(found))
             record = C.record_as(
-                "not_operational",
+                "self_contradiction",
                 kind="metadata",
                 label=label,
                 operation="C_FindObjects",
@@ -216,16 +210,9 @@ def observe_exact_search(
                 actual=f"{MAX_PAGES} non-empty pages",
                 summary=(
                     f"{label}: C_FindObjects never reported an empty page within "
-                    f"{MAX_PAGES * PAGE_SIZE} handles; bounded search unfinished "
-                    "(inconclusive)"
+                    f"{MAX_PAGES * PAGE_SIZE} handles; absence is unproven"
                 ),
-                detail={
-                    "session": int(rs.sh),
-                    "pages": MAX_PAGES,
-                    "handles_seen": len(found),
-                    "unique_handles": unique,
-                    "repeated_pages": unique < len(found),
-                },
+                detail={"session": int(rs.sh), "pages": MAX_PAGES},
             )
     finally:
         try:
@@ -240,19 +227,13 @@ def observe_exact_search(
             detail={"session": int(rs.sh), "handles_seen": found},
         )
     if record is not None:
-        # Incomplete search: full membership stays unevaluated, but the
-        # delivered pages are preserved for proved-hit checks. Preserve
-        # the stronger verdict (P5): a Final FAIL outranks a Find xfail;
-        # an existing FAIL -- or the first xfail -- stands.
+        # Incomplete search: handles stay unevaluated. Preserve the
+        # stronger verdict (P5): a Final FAIL outranks a Find xfail; an
+        # existing FAIL -- or the first xfail -- stands.
         strongest = record
         if final_record is not None and final_record.outcome == "fail" and record.outcome != "fail":
             strongest = final_record
-        return ExactSearchObservation(
-            handles=None,
-            record=strongest,
-            final_record=final_record,
-            partial=tuple(found),
-        )
+        return ExactSearchObservation(handles=None, record=strongest, final_record=final_record)
     # Exhausted search: keep the result set evaluable even when Final
     # failed, so a membership FAIL is not displaced by the Final record.
     return ExactSearchObservation(handles=tuple(found), record=None, final_record=final_record)
@@ -294,35 +275,8 @@ def expected_not_among_record(
     *,
     label: str,
 ) -> C.Classification | None:
-    """Record a fail if *expected_handle* matches the changed-value template.
-
-    A forbidden hit on a successfully delivered page is proved even when
-    a later page refuses: the refusal cannot un-return it. Absence from
-    a partial set stays unproved and keeps the defect record.
-    """
+    """Record a fail if *expected_handle* matches the changed-value template."""
     if observation.handles is None:
-        if expected_handle in observation.partial:
-            return C.record_as(
-                # R3F14: state only the proved result -- a partial
-                # search can end by cap or malformed count with all-OK
-                # pages, so no later refusal and no ignored attribute
-                # may be claimed. The delivering page succeeded.
-                "self_contradiction",
-                kind="metadata",
-                label=label,
-                operation="C_FindObjects",
-                inherit_mechanism=False,
-                expected="expected object absent from changed-value search results",
-                actual=int(CKR_OK),
-                summary=(
-                    f"{label}: changed-value search returned the staged object "
-                    f"{expected_handle} on a successfully delivered page"
-                ),
-                detail={
-                    "expected_handle": expected_handle,
-                    "partial_handles": list(observation.partial),
-                },
-            )
         return observation.record
     if expected_handle not in observation.handles:
         return observation.final_record or observation.record
@@ -392,14 +346,10 @@ def separate_search_records(
     ]
     if derived_bytes == original_bytes:
         records.append(
-            expected_among_record(
-                exact_d, original_handle, label=f"{label}:{attr_name}:cross:original-in-derived"
-            )
+            expected_among_record(exact_d, original_handle, label=f"{label}:{attr_name}:cross")
         )
         records.append(
-            expected_among_record(
-                exact_o, derived_handle, label=f"{label}:{attr_name}:cross:derived-in-original"
-            )
+            expected_among_record(exact_o, derived_handle, label=f"{label}:{attr_name}:cross")
         )
         changed_legs = [
             (
@@ -412,35 +362,17 @@ def separate_search_records(
             )
         ]
     else:
-        records.append(
-            expected_not_among_record(
-                exact_d,
-                original_handle,
-                label=f"{label}:{attr_name}:cross:original-not-in-derived",
+        changed_legs = [
+            (
+                observe_exact_search(
+                    rs,
+                    {**base, attr: flip_last_byte(key_bytes)},
+                    label=f"{label}:{attr_name}:changed:{role}",
+                ),
+                role,
             )
-        )
-        records.append(
-            expected_not_among_record(
-                exact_o,
-                derived_handle,
-                label=f"{label}:{attr_name}:cross:derived-not-in-original",
-            )
-        )
-        changed_legs = []
-        for role, key_bytes in (("derived", derived_bytes), ("original", original_bytes)):
-            flipped = flip_last_byte(key_bytes)
-            if flipped in (derived_bytes, original_bytes):
-                continue  # degenerate: no valid control exists for this key
-            changed_legs.append(
-                (
-                    observe_exact_search(
-                        rs,
-                        {**base, attr: flipped},
-                        label=f"{label}:{attr_name}:changed:{role}",
-                    ),
-                    role,
-                )
-            )
+            for role, key_bytes in (("derived", derived_bytes), ("original", original_bytes))
+        ]
     for obs, role in changed_legs:
         records.append(
             expected_not_among_record(

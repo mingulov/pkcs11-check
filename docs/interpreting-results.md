@@ -21,9 +21,9 @@ A pkcs11-check release is gated on reporting integrity and safe continuation, no
 `unclassified` results are a separate matter and are **not** claimed to be absent. A test whose
 provider finding is reported by a bare `AssertionError` arrives as `unclassified` at `fail`/`HIGH`
 with its assertion text intact: the observation is retained, counted, and explained by its own
-message -- it simply has not yet been migrated to a structured reason and kind. Migration of the
-remainder is tracked as follow-up work; `unclassified` is reserved for the runtime gate and is
-never itself a release gate.
+message -- it simply has not yet been migrated to a structured reason and kind. The v0.2.0 confirm
+round carried 125 such records across 115 node-ids. Migration of the remainder is tracked for
+v0.2.1; `unclassified` is reserved for the runtime gate and is never itself a release gate.
 
 Strict conformance tests retain provider deviations as independent results. Operational tests may continue through capability gaps or non-standard representations only when that behavior is explicitly validated and the separate conformance evidence is not erased.
 

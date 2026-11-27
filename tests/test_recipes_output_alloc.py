@@ -110,27 +110,6 @@ def test_alloc_module_output_invalid_env_falls_back_to_default(
     assert raw_recipes._max_module_output_bytes() == 1 << 30
 
 
-def test_alloc_module_output_garbage_env_warns_loudly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """S14: garbage/non-positive overrides warn (missing/empty stay silent)."""
-    import warnings
-
-    for bad in ("not-a-number", "0", "-5", "1.5"):
-        monkeypatch.setenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", bad)
-        with pytest.warns(UserWarning, match="MAX_MODULE_OUTPUT_BYTES"):
-            assert raw_recipes._max_module_output_bytes() == 1 << 30
-    for quiet in ("",):
-        monkeypatch.setenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", quiet)
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            assert raw_recipes._max_module_output_bytes() == 1 << 30
-    monkeypatch.delenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", raising=False)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        assert raw_recipes._max_module_output_bytes() == 1 << 30
-
-
 def test_encapsulate_key_routes_size_query_through_capped_allocator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -20,7 +20,6 @@ import pytest
 import typer
 from pydantic import SecretStr
 from rich.console import Console
-from rich.markup import escape
 from rich.table import Table
 
 from pkcs11_check import provenance as provenance_mod
@@ -28,7 +27,6 @@ from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.config_layers import (
     find_ignored_settings,
-    is_dead_config_key,
     read_toml_settings,
     resolve_config_rows,
 )
@@ -52,11 +50,7 @@ from pkcs11_check.core.call_counters import (
     RUN_ID_ENV,
     CounterPersistenceError,
 )
-from pkcs11_check.core.collection import (
-    CollectedPytestItem,
-    CollectedSkip,
-    collect_pytest_items_with_skips,
-)
+from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
     ensure_failed_collection_report,
@@ -67,14 +61,12 @@ from pkcs11_check.core.disabled_baseline import (
     format_disabled_baseline_banner,
     resolve_disabled_nodeids,
 )
-from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
 from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
     _collection_failure_reporting_copy,
     _emit_external_provision_banner,
-    _is_owned_counters_dir,
     _reset_fresh_run_artifacts,
     _resume_exit_code,
     _run_artifact_guard_paths,
@@ -108,7 +100,6 @@ from pkcs11_check.core.test_selection import (
     CaseSelection,
     DisabledSelectionPlan,
     _resolve_candidate_file,
-    all_matched_items_disabled,
     build_disabled_selection_plan,
     get_testcases_root,
     load_case_selection,
@@ -145,49 +136,8 @@ def _print_show_config(cli_values: dict[str, Any]) -> None:
     table.add_column("Effective value")
     table.add_column("Source")
     for row in rows:
-        # U13: dead keys live in docs/configuration.md, not in this table.
-        # N3: keyed on deadness, never on the value text.
-        if is_dead_config_key(row.key):
-            continue
-        # R18-4: rows are data, never markup -- a hostile value like
-        # "[/red]" must render literally, never crash the table.
-        table.add_row(escape(row.key), escape(row.effective), escape(row.source))
+        table.add_row(row.key, row.effective, row.source)
     Console().print(table)
-
-
-def _unit_display_quiet(verbose: bool) -> bool:
-    """U6: hide per-unit chatter unless verbose or DEBUG logging."""
-    if verbose:
-        return False
-    return logging.getLogger().getEffectiveLevel() > logging.DEBUG
-
-
-def _warn_ignored_sessions(sessions: int, isolation: str) -> None:
-    """U13/N5: --sessions is dead in every mode; warn wherever passed."""
-    if sessions != 1:
-        console.print(
-            f"[yellow]Warning:[/yellow] --sessions is ignored in --isolation {isolation} mode"
-        )
-
-
-def _print_run_totals(state_file: Path) -> None:
-    """U5: end a text-mode run with unit totals (README 'Saving a report').
-
-    Best-effort console line only: any state problem (missing, unreadable,
-    or malformed) skips silently rather than disturbing the run verdict or
-    exit path.
-    """
-    try:
-        state = load_run_state(state_file)
-        if state is None or not state.results:
-            return
-        counts: dict[str, int] = {}
-        for result in state.results:
-            counts[result.status] = counts.get(result.status, 0) + 1
-        parts = ", ".join(f"{n} {status}" for status, n in sorted(counts.items()))
-        console.print(f"Totals: {parts} ({len(state.results)} total)", markup=False)
-    except Exception:  # noqa: BLE001  # M2: best-effort line must never mask the run exit
-        return
 
 
 def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
@@ -300,81 +250,6 @@ def _evidence_counters(evidence_path: Path | None) -> dict[str, Any] | None:
     except OSError:
         return None
     return extract_call_counters_from_jsonl(evidence_path)
-
-
-def _write_early_failure_results(
-    *,
-    output: str,
-    output_file: str | None,
-    module: Path,
-    status: str,
-    legacy_returncode: int,
-    observation: dict[str, Any] | None,
-    case_selection: CaseSelection | None,
-    preflight_evidence_path: Path | None,
-) -> None:
-    """Write results.json for a JSON run dead on arrival (exit 1), else nothing.
-
-    Shared by the manifest-preflight and login-probe crash/timeout exits:
-    exit 1 claims something happened, so the requested report must exist,
-    marked incomplete, with the retained counter evidence folded in. Text
-    mode and usage errors (exit 2) write nothing, as before.
-    """
-    if output != "json":
-        return
-    results_path = Path(output_file or "pkcs11-check-results.json")
-    result = FileRunResult(
-        target=str(module),
-        status=status,
-        returncode=legacy_returncode,
-        duration_s=0.0,
-    )
-    state = FileRunState(
-        units=[str(module)],
-        fingerprint="",
-        results=[result],
-        process_observations=[observation] if isinstance(observation, dict) else [],
-    )
-    payload = write_isolated_json_report(
-        results_path,
-        state,
-        selection=case_selection,
-        call_counters=_evidence_counters(preflight_evidence_path),
-    )
-    payload["summary"]["incomplete"] = True
-    results_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-
-
-def _retain_early_failure_evidence(
-    *,
-    output: str,
-    output_file: str | None,
-    preflight_evidence_path: Path | None,
-    console: Console,
-) -> None:
-    """Retain counter-only JSONL evidence next to the results, else nothing.
-
-    A dead-on-arrival JSON run keeps its counts-or-loss evidence even when
-    no results file is written (plain error manifests); text mode and usage
-    errors write nothing, as before.
-    """
-    if output != "json" or preflight_evidence_path is None:
-        return
-    try:
-        blob = preflight_evidence_path.read_bytes()
-    except OSError:
-        blob = b""
-    if blob.strip():
-        report_path = Path(output_file or "pkcs11-check-results.json").parent
-        report_path.mkdir(parents=True, exist_ok=True)
-        try:
-            (report_path / "report.jsonl").write_bytes(blob)
-        except OSError as exc:
-            console.print(
-                f"[yellow]Warning:[/yellow] preflight counter evidence not retained: {exc}"
-            )
 
 
 def _fold_preflight_evidence(
@@ -757,38 +632,13 @@ def _assemble_json_artifacts_from_jsonl(
     return results_payload
 
 
-def _validated_recorded_counters_dir(state_file: Path, recorded: str) -> Path:
-    """Resolve a recorded counters dir, refusing non-allocated forms (M8).
-
-    Resume reuses the state's recorded dir for evidence continuity, but a
-    restored/planted state must never divert collection, sweep, and fence
-    authority to an arbitrary directory: the recorded path must resolve to
-    a sibling of the state file in an allocated counters-dir form
-    (canonical or nonce-suffixed, same rule as fresh-run cleanup).
-    """
-    candidate = Path(recorded)
-    resolved = candidate.resolve()
-    if resolved.parent != state_file.resolve().parent or not _is_owned_counters_dir(
-        state_file.name, resolved.name
-    ):
-        raise ValueError(
-            f"recorded counters dir {recorded} is not an allocated counters dir "
-            f"for state {state_file}"
-        )
-    return resolved
-
-
 def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
     interface: InterfaceChoice = typer.Option(
         "auto", "--interface", "-i", help="Interface version"
     ),
     sessions: int = typer.Option(
-        1,
-        "--sessions",
-        "-s",
-        help="Concurrent sessions (U13: dead knob, ignored; kept so old scripts still parse)",
-        hidden=True,
+        1, "--sessions", "-s", help="Concurrent sessions", rich_help_panel="Advanced"
     ),
     timeout: int = typer.Option(180, "--timeout", "-t", help="Per-test timeout (seconds)"),
     category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
@@ -982,10 +832,6 @@ def test_command(
         # H-10: report-only; exits before validation, module checks, preflight.
         # log_level belongs to the global callback, so read back its effective
         # value from the root logger the callback already configured.
-        # S12: same dead-setting warnings as a real run (parity, not silence).
-        for ignored in find_ignored_settings(env=os.environ, toml=read_toml_settings()):
-            console.print(f"[yellow]Warning:[/yellow] {ignored}")
-        _warn_ignored_sessions(sessions, isolation)
         _print_show_config(
             {
                 "module": str(module),
@@ -1304,17 +1150,7 @@ def test_command(
                     stored = getattr(prior_counters_state, "counters_dir", None)
                     recorded_counters_dir = stored if isinstance(stored, str) else None
             if recorded_counters_dir:
-                try:
-                    counters_root = _validated_recorded_counters_dir(
-                        state_file, recorded_counters_dir
-                    )
-                except ValueError as exc:
-                    console.print(
-                        f"[red]Error:[/red] refusing to resume: {exc}; re-run "
-                        "without --resume for a fresh run (or restore the original directory)"
-                    )
-                    setup_exit_code = _resume_exit_code(state_file, 2)
-                    raise typer.Exit(code=setup_exit_code) from exc
+                counters_root = Path(recorded_counters_dir)
             else:
                 # Fresh series (including resume-without-state): a new
                 # run-specific dir, never a reused one (N-C3).
@@ -1342,8 +1178,7 @@ def test_command(
                 if not counters_barrier_plan.get("barrier_ok", False):
                     console.print(
                         "[red]Error:[/red] counter resume barrier failed; "
-                        "refusing to run without proven quiescence "
-                        "(re-run without --resume for a fresh series)"
+                        "refusing to run without proven quiescence"
                     )
                     setup_exit_code = _resume_exit_code(state_file, 2)
                     raise typer.Exit(code=setup_exit_code)
@@ -1403,7 +1238,8 @@ def test_command(
             console.print(
                 f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}"
             )
-            if manifest.status in {"crashed", "timeout"}:
+            if output == "json" and manifest.status in {"crashed", "timeout"}:
+                results_path = Path(output_file or "pkcs11-check-results.json")
                 observation = manifest.process_observation
                 raw_code = (
                     observation.get("termination", {}).get("raw_code")
@@ -1416,22 +1252,47 @@ def test_command(
                     if manifest.status == "timeout"
                     else (int(raw_code) if isinstance(raw_code, int) else 1)
                 )
-                _write_early_failure_results(
-                    output=output,
-                    output_file=output_file,
-                    module=module,
+                result = FileRunResult(
+                    target=str(module),
                     status=manifest.status,
-                    legacy_returncode=legacy_returncode,
-                    observation=observation if isinstance(observation, dict) else None,
-                    case_selection=case_selection,
-                    preflight_evidence_path=preflight_evidence_path,
+                    returncode=legacy_returncode,
+                    duration_s=0.0,
                 )
-            _retain_early_failure_evidence(
-                output=output,
-                output_file=output_file,
-                preflight_evidence_path=preflight_evidence_path,
-                console=console,
-            )
+                state = FileRunState(
+                    units=[str(module)],
+                    fingerprint="",
+                    results=[result],
+                    process_observations=[observation] if isinstance(observation, dict) else [],
+                )
+                payload = write_isolated_json_report(
+                    results_path,
+                    state,
+                    selection=case_selection,
+                    call_counters=_evidence_counters(preflight_evidence_path),
+                )
+                payload["summary"]["incomplete"] = True
+                results_path.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                )
+            if output == "json" and preflight_evidence_path is not None:
+                # Failed preflights still retain their counter-only JSONL
+                # evidence (counts or identity-bearing loss) next to the
+                # results; plain error manifests write no results file (as
+                # before), only this evidence.
+                try:
+                    blob = preflight_evidence_path.read_bytes()
+                except OSError:
+                    blob = b""
+                if blob.strip():
+                    report_path = Path(output_file or "pkcs11-check-results.json").parent
+                    report_path.mkdir(parents=True, exist_ok=True)
+                    try:
+                        (report_path / "report.jsonl").write_bytes(blob)
+                    except OSError as exc:
+                        console.print(
+                            "[yellow]Warning:[/yellow] "
+                            f"preflight counter evidence not retained: {exc}"
+                        )
             if manifest.status in {"crashed", "timeout"}:
                 preflight_exit_code = 1
             elif manifest.reason == "module_unloadable":
@@ -1442,83 +1303,10 @@ def test_command(
                 preflight_exit_code = _resume_exit_code(state_file, preflight_exit_code)
             raise typer.Exit(code=preflight_exit_code)
 
-        # U1: fail fast on a wrong PIN (one login probe, one message) instead
-        # of per-test login tracebacks. Only when a PIN was actually supplied
-        # (CLI flag or env); other probe outcomes proceed to the run.
-        effective_pin = pin or os.environ.get("P11TEST_PIN")
-        if effective_pin:
-            # Attempt 1 of the preflight unit: the same counters dir/run as
-            # the manifest preflight (attempt 0), same evidence file, so the
-            # probe's 8 calls join the session instead of vanishing.
-            probe_counters = PreflightCounters(
-                counters_dir=counters_root,
-                run_id=os.environ[RUN_ID_ENV],
-                unit=PREFLIGHT_UNIT,
-                attempt=1,
-                evidence_path=preflight_evidence_path,
-            )
-            login_probe = run_login_probe_subprocess(
-                module,
-                interface=interface,
-                slot=slot,
-                pin=effective_pin.encode("utf-8", "surrogateescape"),
-                timeout=max(10, min(timeout, 60)),
-                counters=probe_counters,
-            )
-            if login_probe.status == "pin_incorrect":
-                console.print(
-                    f"[red]✗[/red] PIN incorrect for slot {slot} — run `pkcs11-check doctor`"
-                )
-                raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2)
-            if login_probe.status in {"crashed", "timeout"}:
-                # A provider that dies or hangs on a single login cannot
-                # produce a meaningful suite result; refusing to run beats a
-                # green public-only finish that hides the crash. Omit --pin
-                # to run login-independent tests without this gate.
-                console.print(
-                    f"[red]✗[/red] login probe {login_probe.status} for slot {slot}"
-                    f" ({escape(login_probe.detail)}) — refusing to run the suite"
-                )
-                # Exit 1 claims something happened: the requested JSON report
-                # must exist (R19-1), mirroring the manifest-crash artifacts.
-                probe_returncode = (
-                    124
-                    if login_probe.status == "timeout"
-                    else (login_probe.returncode if isinstance(login_probe.returncode, int) else 1)
-                )
-                _write_early_failure_results(
-                    output=output,
-                    output_file=output_file,
-                    module=module,
-                    status=login_probe.status,
-                    legacy_returncode=probe_returncode,
-                    observation=None,
-                    case_selection=case_selection,
-                    preflight_evidence_path=preflight_evidence_path,
-                )
-                _retain_early_failure_evidence(
-                    output=output,
-                    output_file=output_file,
-                    preflight_evidence_path=preflight_evidence_path,
-                    console=console,
-                )
-                raise typer.Exit(code=_resume_exit_code(state_file, 1) if resume else 1)
-            if login_probe.status == "error":
-                # The detail can carry child stderr (provider bytes): escape
-                # it like every other hostile value (R18-4 class).
-                console.print(
-                    "[yellow]Warning:[/yellow] login probe inconclusive "
-                    f"({escape(login_probe.detail)}) — proceeding anyway"
-                )
-
         assert manifest_path is not None
         run_provenance = _build_run_provenance(manifest, resolve_data_dir())
         fw = run_provenance.get("framework") or {}
         fw_version = fw.get("version") or "?"
-        if fw.get("source") == "git-describe":
-            # U4: the describe suffix is truthful (computed live from this
-            # checkout) but cryptic -- say once, in one clause, what it is.
-            fw_version = f"{fw_version} (dev checkout)"
         prov_info = run_provenance.get("provider") or {}
         if prov_info.get("name"):
             commit_short = (prov_info.get("commit") or "")[:8]
@@ -1600,22 +1388,22 @@ def test_command(
             setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
             raise typer.Exit(code=setup_exit_code) from exc
 
-        _warn_ignored_sessions(sessions, isolation)
         if isolation in {"auto", "file", "test"}:
             collection_phase = True
+            if sessions != 1:
+                console.print(
+                    "[yellow]Warning:[/yellow] "
+                    f"--sessions is ignored in --isolation {isolation} mode"
+                )
 
             try:
                 collected_items = None
-                collection_skips: list[CollectedSkip] | None = None
                 auto_collected: list[CollectedPytestItem] | None = None
                 if isolation == "auto":
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
                         units = prior_state.units
-                        collected_items, prior_skips = collect_pytest_items_with_skips(
-                            target_args, pytest_args
-                        )
-                        collection_skips = prior_skips
+                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
                         auto_collected = collected_items
                         collection_phase = False
                         validate_subprocess_per_test_expansion(
@@ -1628,25 +1416,19 @@ def test_command(
                         # discovery so we don't run a second identical
                         # --collect-only pass below for the disabled plan.
                         auto_collected = []
-                        auto_skips: list[CollectedSkip] = []
                         units = discover_auto_isolation_units(
                             target_args,
                             Path(_TESTCASES_DIR),
                             pytest_args=pytest_args,
                             policy_file=policy_file,
                             collected_out=auto_collected,
-                            skips_out=auto_skips,
                         )
                         collected_items = auto_collected
-                        collection_skips = auto_skips
                     runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
                 else:
                     isolated_mode = cast(Literal["file", "test"], isolation)
                     explicit_collected: list[CollectedPytestItem] | None = (
                         [] if isolated_mode == "test" and disabled_nodeids else None
-                    )
-                    explicit_skips: list[CollectedSkip] | None = (
-                        [] if explicit_collected is not None else None
                     )
                     if explicit_collected is None:
                         units = discover_pytest_units(
@@ -1656,33 +1438,25 @@ def test_command(
                             pytest_args=pytest_args,
                         )
                     else:
-                        assert explicit_skips is not None
                         units = discover_pytest_units(
                             target_args,
                             Path(_TESTCASES_DIR),
                             granularity=isolated_mode,
                             pytest_args=pytest_args,
                             collected_out=explicit_collected,
-                            skips_out=explicit_skips,
                         )
                     if explicit_collected is not None:
                         collected_items = explicit_collected
-                        collection_skips = explicit_skips
                     runner_granularity = isolated_mode
                 if disabled_nodeids:
                     if isolation == "auto":
-                        if auto_collected is not None:
-                            collected_items = auto_collected
-                        else:
-                            collected_items, plan_skips = collect_pytest_items_with_skips(
-                                target_args, pytest_args
-                            )
-                            collection_skips = plan_skips
-                    elif runner_granularity == "file":
-                        collected_items, plan_skips = collect_pytest_items_with_skips(
-                            target_args, pytest_args
+                        collected_items = (
+                            auto_collected
+                            if auto_collected is not None
+                            else collect_pytest_item_metadata(target_args, pytest_args)
                         )
-                        collection_skips = plan_skips
+                    elif runner_granularity == "file":
+                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
                     collection_phase = False
                     selection_plan = build_disabled_selection_plan(
                         units=units,
@@ -1724,79 +1498,6 @@ def test_command(
                                 excluded_units=excluded_units,
                             ),
                         )
-                # U11: fail fast on an empty selection, before any unit runs.
-                # Only when the user actually selected something (flags,
-                # targets, or a selection manifest); full runs never probe.
-                # Reuse already-collected metadata when the discovery path
-                # produced it, else collect once here. M4: skip_slow /
-                # only_slow count as selection (they can match nothing),
-                # so filtered file/test runs pay one extra collection pass;
-                # its only side effect is better unit timeouts (counts can
-                # only raise the per-unit budget, never lower it).
-                has_selection = bool(
-                    match
-                    or category
-                    or marker
-                    or skip_slow
-                    or only_slow
-                    or targets
-                    or case_selection is not None
-                )
-                selected_count: int | None = None
-                if has_selection:
-                    if case_selection is not None:
-                        selected_count = len(case_selection.nodeids)
-                    elif collected_items is not None:
-                        selected_count = len(collected_items)
-                    else:
-                        collected_items, gate_skips = collect_pytest_items_with_skips(
-                            target_args, pytest_args
-                        )
-                        collection_skips = gate_skips
-                        selected_count = len(collected_items)
-                if (
-                    selected_count == 0
-                    or (not selection_plan.units and has_selection)
-                    or (
-                        bool(selected_count)
-                        and bool(selection_plan.units)
-                        and all_matched_items_disabled(collected_items, disabled_nodeids)
-                    )
-                ):
-                    if selected_count and not selection_plan.units:
-                        # M3: tests matched but every unit was excluded
-                        # (e.g. the disabled baseline) -- say so exactly.
-                        console.print(
-                            "[red]Error:[/red] "
-                            f"{selected_count} tests matched but all units were "
-                            "excluded (nothing to run)"
-                        )
-                    elif selected_count and selection_plan.units:
-                        # M3b: tests matched but the baseline excluded every
-                        # matched node while a zero-match target file stayed
-                        # scheduled -- running on would be vacuous.
-                        console.print(
-                            "[red]Error:[/red] "
-                            f"{selected_count} tests matched but every matched test "
-                            "was excluded (nothing to run)"
-                        )
-                    else:
-                        console.print(
-                            "[red]Error:[/red] 0 tests matched the selection (nothing to run)"
-                        )
-                        if collection_skips:
-                            for skip in collection_skips[:10]:
-                                console.print(
-                                    f"  {escape(skip.nodeid)}: skipped at collection: "
-                                    f"{escape(skip.reason)}"
-                                )
-                            if len(collection_skips) > 10:
-                                console.print(
-                                    f"  ...and {len(collection_skips) - 10} more "
-                                    "skipped at collection"
-                                )
-                    empty_exit_code = _resume_exit_code(state_file, 2) if resume else 2
-                    raise typer.Exit(code=empty_exit_code)
                 collection_phase = False
                 try:
                     recovery_config = build_recovery_config(
@@ -1828,7 +1529,6 @@ def test_command(
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
-                    quiet_unit_display=_unit_display_quiet(verbose),
                     deselect_by_file=selection_plan.deselect_by_file,
                     baseline_fingerprint=selection_plan.baseline_fingerprint,
                     timeout=timeout,
@@ -1846,8 +1546,6 @@ def test_command(
                     **runner_kwargs,
                 )
                 _fold_preflight_evidence(report_config, preflight_evidence_path, output, console)
-                if output != "json":
-                    _print_run_totals(state_file)
             except (FileNotFoundError, ValueError, CounterPersistenceError) as exc:
                 if collection_phase:
                     _persist_collection_failure(

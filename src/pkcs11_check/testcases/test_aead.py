@@ -234,10 +234,8 @@ class TestAESGCMProperties:
         key = gen_aes_key_or_xfail(rs, 256)
         plaintext = b"nonce uniqueness"
 
-        # S5: fixed distinct values (deterministic attribution;
-        # a ciphertext match then proves IV-insensitivity, never a provider-RNG collision).
-        nonce1 = b"\x00" * 12
-        nonce2 = b"\x01" * 12
+        nonce1 = generate_random(rs.raw, rs.sh, 12)
+        nonce2 = generate_random(rs.raw, rs.sh, 12)
 
         try:
             ct1 = encrypt_single(

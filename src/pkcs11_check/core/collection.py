@@ -6,14 +6,11 @@ import argparse
 import hashlib
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Generator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TypeGuard
 
 import pytest
 
@@ -31,7 +28,7 @@ from pkcs11_check.core.nodeids import item_nodeid
 # drop or alter a test. The cache lives in a private owner-only dir (never /tmp,
 # which is world-writable) and is stored as plain JSON (no code-object surface).
 # Disable with PKCS11_CHECK_NO_COLLECTION_CACHE=1.
-_CACHE_FORMAT = 5
+_CACHE_FORMAT = 4
 _PACKAGE_DIR = Path(__file__).resolve().parents[1]
 # pytest args that name a per-run temp file and do NOT affect which items are
 # collected (the manifest is only consulted at runtime, never during
@@ -93,103 +90,10 @@ def _iter_input_files(data_dir_override: str | None = None) -> list[Path]:
     return files
 
 
-# Collection-affecting files pytest loads above a target: conftest.py at
-# every level plus the rootdir config files (markers, options). Walked per
-# target so an edit above an external target invalidates the cache (R20-2);
-# in-tree files duplicate the package walk harmlessly (same key material).
-# The config names mirror pytest's own locate_config list exactly (R21-2).
-_COLLECTION_CONFIG_NAMES: tuple[str, ...] = (
-    "conftest.py",
-    "pytest.toml",
-    ".pytest.toml",
-    "pytest.ini",
-    ".pytest.ini",
-    "pyproject.toml",
-    "tox.ini",
-    "setup.cfg",
-)
-
-
-def _iter_target_files(targets: list[str]) -> list[Path]:
-    """Target files whose content affects collection (R19-2).
-
-    The package walk covers in-tree targets only; an edited external
-    target otherwise reuses a stale cache entry (M3b then refuses a
-    runnable test). Directories contribute their ``*.py`` files, nodeids
-    their file part; missing targets contribute nothing (their path
-    string already keys them, and collection fails loudly). Ancestor
-    conftest/config files ride along: pytest loads them above the target,
-    so editing one must rekey just like editing the target itself.
-    """
-    files: list[Path] = []
-    for target in targets:
-        candidate = Path(target.split("::", 1)[0])
-        try:
-            if candidate.is_dir():
-                files.extend(p for p in candidate.rglob("*.py") if p.is_file())
-                anchor = candidate
-            elif candidate.is_file():
-                files.append(candidate)
-                anchor = candidate.parent
-            else:
-                continue
-            resolved_anchor = anchor.resolve()
-        except OSError:
-            continue
-        for directory in (resolved_anchor, *resolved_anchor.parents):
-            for name in _COLLECTION_CONFIG_NAMES:
-                conf = directory / name
-                if conf.is_file():
-                    files.append(conf)
-    return files
-
-
-def _iter_config_flag_files(args: list[str]) -> list[Path]:
-    """Config files named by -c/--config-file flags (R22-2).
-
-    Mirrors argparse store semantics: `-c PATH`, `-cPATH`, `-c=PATH`,
-    `--config-file PATH`, `--config-file=PATH`, plus combined shorts
-    with a c-taking-value (`-qc PATH`, `-qcPATH`; R23-2). Deliberately
-    overcollects (a -k value resembling a flag only adds harmless key
-    material, never a stale hit); combined forms never consume the next
-    token, so a `-kc`-style false positive cannot swallow a real flag.
-    Missing files contribute nothing (collection fails loudly before
-    anything is cached). Long-flag prefix abbreviations (`--config …`)
-    are not covered (vanishingly rare in practice).
-    """
-    files: list[Path] = []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        values: list[str] = []
-        if arg == "-c" or arg == "--config-file":
-            if index + 1 < len(args):
-                values.append(args[index + 1])
-                index += 1
-        elif arg.startswith("--config-file="):
-            values.append(arg.split("=", 1)[1])
-        elif arg.startswith("-") and not arg.startswith("--") and len(arg) > 2:
-            pos = arg.find("c", 1)
-            if pos != -1:
-                rest = arg[pos + 1 :]
-                if rest:
-                    values.append(rest[1:] if rest.startswith("=") else rest)
-                elif index + 1 < len(args):
-                    values.append(args[index + 1])
-        for value in values:
-            if value:
-                candidate = Path(value)
-                if candidate.is_file():
-                    files.append(candidate)
-        index += 1
-    return files
-
-
 def _collection_inputs_digest(
     targets: list[str],
     pytest_args: list[str],
     data_dir_override: str | None = None,
-    pytest_addopts: str = "",
 ) -> str | None:
     """Digest every input that affects collection, or None to bypass the cache.
 
@@ -197,15 +101,8 @@ def _collection_inputs_digest(
     digest runs in the parent while collection runs in the child, so without
     it two children with different data dirs would alias to one cache entry
     (stale fetch-then-test ordering). The override string itself is digested
-    so distinct-but-empty dirs still key apart. `pytest_addopts` is the
-    child's PYTEST_ADDOPTS for the same reason (it injects -k/-m/-c and
-    more); its -c file's contents ride along, since flag text alone would
-    miss an edited config (R22-2). Unparseable addopts bypass the cache.
+    so distinct-but-empty dirs still key apart.
     """
-    try:
-        addopts_args = shlex.split(pytest_addopts) if pytest_addopts else []
-    except ValueError:
-        return None
     try:
         from pkcs11_check import __version__ as pkg_version
 
@@ -217,20 +114,11 @@ def _collection_inputs_digest(
             f"targets={sorted(str(Path(t)) for t in targets)}",
             f"args={_digest_args(pytest_args)}",
             f"data_dir={data_dir_override or ''}",
-            f"addopts={pytest_addopts}",
         ]
         stats: list[str] = []
         for path in _iter_input_files(data_dir_override):
             st = path.stat()
             stats.append(f"{path}:{st.st_mtime_ns}:{st.st_size}")
-        for path in _iter_target_files(targets):
-            resolved = path.resolve()
-            st = resolved.stat()
-            stats.append(f"{resolved}:{st.st_mtime_ns}:{st.st_size}")
-        for path in _iter_config_flag_files([*pytest_args, *addopts_args]):
-            resolved = path.resolve()
-            st = resolved.stat()
-            stats.append(f"config:{resolved}:{st.st_mtime_ns}:{st.st_size}")
         stats.sort()
         parts.extend(stats)
     except OSError:
@@ -269,25 +157,10 @@ class CollectedPytestItem:
     markers: list[str]
 
 
-@dataclass(frozen=True)
-class CollectedSkip:
-    """A collector (usually a module) skipped during ``--collect-only``."""
-
-    nodeid: str
-    reason: str
-
-
-def save_collection_manifest(
-    path: Path,
-    items: list[CollectedPytestItem],
-    skips: Sequence[CollectedSkip] = (),
-) -> None:
+def save_collection_manifest(path: Path, items: list[CollectedPytestItem]) -> None:
     """Persist collected pytest item metadata as JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "items": [asdict(item) for item in items],
-        "collection_skips": [asdict(skip) for skip in skips],
-    }
+    payload = {"items": [asdict(item) for item in items]}
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -298,19 +171,6 @@ def load_collection_manifest(path: Path) -> list[CollectedPytestItem]:
     reads as a miss and triggers fresh collection; for fresh helper output it
     fails collection visibly. Unknown extra keys stay tolerated for
     forward compatibility.
-    """
-    items, _ = load_collection_manifest_with_skips(path)
-    return items
-
-
-def load_collection_manifest_with_skips(
-    path: Path,
-) -> tuple[list[CollectedPytestItem], list[CollectedSkip]]:
-    """Load collected items plus collection-skip records from JSON.
-
-    Items stay strict (F-016); skips are advisory and fail just as
-    loudly when malformed, but a missing ``collection_skips`` key (old
-    manifests and cache entries) simply means no skips.
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw_items = raw.get("items", raw) if isinstance(raw, dict) else raw
@@ -355,32 +215,7 @@ def load_collection_manifest_with_skips(
                 markers=list(markers),
             )
         )
-    skips: list[CollectedSkip] = []
-    if isinstance(raw, dict) and "collection_skips" in raw:
-        raw_skips = raw["collection_skips"]
-        if not isinstance(raw_skips, list):
-            msg = f"invalid collection manifest skips in {path}"
-            raise ValueError(msg)
-        for index, skip in enumerate(raw_skips):
-            if not isinstance(skip, dict):
-                raise ValueError(
-                    f"invalid collection manifest skip #{index} in {path}: "
-                    f"expected an object, got {type(skip).__name__}"
-                )
-            skip_nodeid = skip.get("nodeid")
-            reason = skip.get("reason")
-            if not isinstance(skip_nodeid, str):
-                raise ValueError(
-                    f"invalid collection manifest skip #{index} in {path}: "
-                    f"nodeid must be a string, got {type(skip_nodeid).__name__}"
-                )
-            if not isinstance(reason, str):
-                raise ValueError(
-                    f"invalid collection manifest skip #{index} in {path}: "
-                    f"reason must be a string, got {type(reason).__name__}"
-                )
-            skips.append(CollectedSkip(nodeid=skip_nodeid, reason=reason))
-    return items, skips
+    return items
 
 
 def collect_pytest_item_metadata(
@@ -394,22 +229,6 @@ def collect_pytest_item_metadata(
     Backed by a content-addressed cache (see module docstring): on a digest hit
     the ~13-18s --collect-only pass is skipped. Set
     PKCS11_CHECK_NO_COLLECTION_CACHE=1 to bypass it entirely.
-    """
-    items, _ = collect_pytest_items_with_skips(targets, pytest_args, env=env)
-    return items
-
-
-def collect_pytest_items_with_skips(
-    targets: list[str],
-    pytest_args: list[str],
-    *,
-    env: dict[str, str] | None = None,
-) -> tuple[list[CollectedPytestItem], list[CollectedSkip]]:
-    """Collect pytest item metadata plus collection-skip records.
-
-    Same cache contract as :func:`collect_pytest_item_metadata`; a cache
-    hit carries no skips (only non-empty collections are cached, and
-    skips only matter when nothing was collected).
     """
     effective_env = env if env is not None else os.environ
     cache_enabled = effective_env.get("PKCS11_CHECK_NO_COLLECTION_CACHE") not in {"1", "true"}
@@ -438,12 +257,7 @@ def collect_pytest_items_with_skips(
     cache_usable = cache_enabled and not drops_data_override and not shifts_home_root
     cache_dir = _collection_cache_dir() if cache_usable else None
     digest = (
-        _collection_inputs_digest(
-            targets,
-            pytest_args,
-            effective_env.get("PKCS11_CHECK_DATA_DIR"),
-            effective_env.get("PYTEST_ADDOPTS", ""),
-        )
+        _collection_inputs_digest(targets, pytest_args, effective_env.get("PKCS11_CHECK_DATA_DIR"))
         if cache_dir is not None
         else None
     )
@@ -451,7 +265,7 @@ def collect_pytest_items_with_skips(
     if cache_path is not None:
         cached = _read_collection_cache(cache_path)
         if cached is not None:
-            return cached, []
+            return cached
 
     input_fd, input_raw_path = tempfile.mkstemp(
         prefix="pkcs11-check-collect-input-",
@@ -503,214 +317,22 @@ def collect_pytest_items_with_skips(
             )
 
         if not output_path.exists():
-            return [], []
+            return []
 
-        items, skips = load_collection_manifest_with_skips(output_path)
+        items = load_collection_manifest(output_path)
         if cache_path is not None and items:
             _write_collection_cache(cache_path, items)
-        return items, skips
+        return items
     finally:
         input_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
 
 
-def _ignore_hookcall(hook_name: str, hook_impls: Any, kwargs: Any) -> None:
-    """No-op before-tracer (monitoring requires both callbacks)."""
-
-
-def _stamp_report(collector: object, report: object) -> None:
-    """Stamp a report with (collector path, is-session) (R24-1/R30-1).
-
-    The kind travels with the path: session skips resolve to a conftest
-    longrepr when one names the raising hook, and to the session path
-    otherwise; file/dir stamps resolve to their own path.
-    """
-    collector_path = getattr(collector, "path", None)
-    if collector_path is None:
-        return
-    mark = (str(collector_path), isinstance(collector, pytest.Session))
-    report._p11c_nodeid = mark  # type: ignore[attr-defined]
-
-
-def _stamp_make_collect_report(result: Any, hook_name: str, hook_impls: Any, kwargs: Any) -> None:
-    """Stamp a made collect report via hook-call monitoring (R24-1/R27-1).
-
-    Monitoring observes the FINAL result -- whatever wrappers ran, in
-    whatever order or priority, including replacements. It registers at
-    collection entry (see below), which also survives startup tracing
-    teardown. Only make_collect_report calls are stamped; the stamp
-    rides the report object into pytest_collectreport. Complements the
-    tryfirst wrapper below, which stamps the same way.
-    """
-    if hook_name != "pytest_make_collect_report":
-        return
-    report = result.get_result()
-    if report is None:
-        return
-    _stamp_report(kwargs.get("collector"), report)
-
-
-def _is_path_tuple(longrepr: object) -> TypeGuard[tuple[str, Any, Any]]:
-    """Whether a skip longrepr names a raising file (module-shaped)."""
-    return (
-        isinstance(longrepr, tuple)
-        and len(longrepr) == 3
-        and isinstance(longrepr[0], str)
-        and bool(longrepr[0])
-    )
-
-
-def _names_conftest(longrepr: object) -> TypeGuard[tuple[str, Any, Any]]:
-    """Whether a skip longrepr names a conftest (hook-raised session skip)."""
-    return _is_path_tuple(longrepr) and Path(longrepr[0]).name == "conftest.py"
-
-
-def _skip_path_from_longrepr(longrepr: object) -> str:
-    """Resolve an empty skip nodeid to the raising file, else "".
-
-    A target outside rootpath gets nodeid "" by pytest design
-    (cross-drive on Windows); the report then carries nothing else
-    (fspath/location derive from the nodeid too). But a module-level
-    skip's longrepr is (path, lineno, message) naming the file that
-    raised it -- usually the skipped module itself. Validated is-file:
-    anything else stays empty rather than misattributing. (Pairing via
-    pytest_make_collect_report cannot work: that hook never fires for
-    File collectors -- verified -- and start/report pairing breaks when
-    exact-node selection prunes intermediate reports.)
-    """
-    try:
-        if not _is_path_tuple(longrepr):
-            return ""
-        candidate = Path(longrepr[0])
-        return str(candidate) if candidate.is_file() else ""
-    except (OSError, ValueError):
-        return ""
-
-
 class _CollectionPlugin:
-    """Collect marker metadata for each pytest item, plus collection skips."""
+    """Collect marker metadata for each pytest item."""
 
     def __init__(self) -> None:
         self.items: list[CollectedPytestItem] = []
-        self.skips: list[CollectedSkip] = []
-        self._skip_keys: set[tuple[str, str]] = set()
-        self._file_starts: list[str] = []
-        self._deselected_files: set[str] = set()
-        self._pending: list[tuple[tuple[str, bool] | None, int, object]] = []
-
-    def pytest_collectstart(self, collector: pytest.Collector) -> None:
-        try:
-            is_file = Path(collector.path).is_file()
-        except (OSError, ValueError):
-            is_file = False
-        if is_file:
-            self._file_starts.append(str(collector.path))
-
-    def pytest_deselected(self, items: list[pytest.Item]) -> None:
-        for item in items:
-            item_path = getattr(item, "path", None)
-            if item_path is not None:
-                self._deselected_files.add(os.path.normcase(str(item_path)))
-
-    @pytest.hookimpl(wrapper=True)
-    def pytest_collection(self, session: pytest.Session) -> Generator[Any, Any, Any]:
-        # Register monitoring at collection entry (not configure): a
-        # startup plugin that enables tracing in pytest_configure and
-        # stops it in pytest_sessionstart would otherwise remove it
-        # before the first make call (R31-1). Collection runs after all
-        # startup hooks regardless of their relative order.
-        session.config.pluginmanager.add_hookcall_monitoring(
-            _ignore_hookcall, _stamp_make_collect_report
-        )
-        return (yield)
-
-    @pytest.hookimpl(wrapper=True, tryfirst=True)
-    def pytest_make_collect_report(
-        self, collector: pytest.Collector
-    ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
-        """Stamp made reports (survives monitoring removal) (R30-1)."""
-        report = yield
-        _stamp_report(collector, report)
-        return report
-
-    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
-        if report.outcome != "skipped":
-            return
-        nodeid = str(report.nodeid)
-        if nodeid:
-            self._record_skip(nodeid, report.longrepr)
-        else:
-            # Empty nodeids (cross-rootpath targets) resolve at finish,
-            # when the final item set disambiguates them (R23-1).
-            marked = getattr(report, "_p11c_nodeid", None)
-            if not (isinstance(marked, tuple) and len(marked) == 2):
-                marked = None
-            self._pending.append((marked, len(self._file_starts), report.longrepr))
-
-    def _record_skip(self, nodeid: str, longrepr: object) -> None:
-        if isinstance(longrepr, tuple):
-            reason = str(longrepr[-1])
-        else:
-            reason = str(longrepr)
-        if reason.startswith("Skipped:"):
-            reason = reason[len("Skipped:") :].strip()
-        key = (nodeid, reason)
-        if key in self._skip_keys:
-            return
-        self._skip_keys.add(key)
-        self.skips.append(CollectedSkip(nodeid=nodeid, reason=reason))
-
-    def _resolve_pending(self) -> None:
-        """Attribute deferred empty-nodeid skips (called at finish).
-
-        Reports alone cannot tell two same-helper skips apart (R22-3);
-        eager pairing misattributes once exact-node selection prunes an
-        intermediate passed report (R20-4/R23-1), because items may arrive
-        after the skip. With the FINAL item set the pairing is exact: each
-        pending skip belongs to the nearest preceding file start with no
-        collected or deselected items (a skipped file is always barren;
-        anything completed is a stale top). Unmatched skips fall through
-        to the longrepr path.
-        """
-        completed = {os.path.normcase(item.file_path) for item in self.items}
-        completed |= self._deselected_files
-        consumed: set[int] = set()
-        for marked, seen_count, longrepr in self._pending:
-            if marked is not None:
-                mark_path, mark_is_session = marked
-                if mark_is_session and _names_conftest(longrepr):
-                    self._record_skip(str(Path(longrepr[0])), longrepr)
-                else:
-                    self._record_skip(mark_path, longrepr)
-                continue
-            paired = ""
-            # Pair only module-shaped skips (tuple longrepr naming the
-            # raising file): string longreprs are session-ish and must
-            # never absorb a file start, whatever the hook order (R28-1).
-            # A tuple naming a conftest is a hook-raised session skip, not
-            # a module skip: it skips pairing but still falls through to
-            # the longrepr path, which names the raising conftest
-            # truthfully (R29-1). (A -p plugin hook raising with a tuple
-            # is indistinguishable from a helper-raise via public APIs --
-            # accepted residual; real plugins never do this.)
-            # Completed files are excluded from pairing AND fallback alike:
-            # a file that yielded items cannot have skipped.
-            if _is_path_tuple(longrepr):
-                if not _names_conftest(longrepr):
-                    for index in range(min(seen_count, len(self._file_starts)) - 1, -1, -1):
-                        if index in consumed:
-                            continue
-                        if os.path.normcase(self._file_starts[index]) in completed:
-                            continue
-                        paired = self._file_starts[index]
-                        consumed.add(index)
-                        break
-                if not paired:
-                    candidate = _skip_path_from_longrepr(longrepr)
-                    if candidate and os.path.normcase(candidate) not in completed:
-                        paired = candidate
-            self._record_skip(paired, longrepr)
-        self._pending.clear()
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         for item in session.items:
@@ -727,7 +349,6 @@ class _CollectionPlugin:
                     markers=markers,
                 )
             )
-        self._resolve_pending()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -754,7 +375,7 @@ def main() -> None:
         ],
         plugins=[plugin],
     )
-    save_collection_manifest(Path(args.output), plugin.items, plugin.skips)
+    save_collection_manifest(Path(args.output), plugin.items)
     raise SystemExit(int(exit_code))
 
 

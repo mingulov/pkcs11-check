@@ -71,16 +71,10 @@ exclude = [
     "artifacts/",
     "/artifacts.zip",
     "/*.zip",
-    "*.lock",
     ".worktrees/",
     ".claude/",
     ".serena/",
     ".github/",
-    "audit-*/",
-    ".full-review/",
-    ".hypothesis/",
-    ".pkcs11-check-*",
-    "..pkcs11-check-*",
     "AGENTS.md",
     # The PKCS#11 header is a dev-time codegen input only (see
     # scripts/generate_raw_standard.py); the shipped ctypes bindings are
@@ -133,6 +127,14 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["pkcs11_check.testcases.data.*"]
 ignore_errors = true
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+reportMissingImports = false
+reportAttributeAccessIssue = false
+reportArgumentType = "warning"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
