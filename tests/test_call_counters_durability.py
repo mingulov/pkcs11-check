@@ -45845,6 +45845,7 @@ def test_r44_f3r3_hold_all_retry_never_duplicates(
     assert partials[0]["total_calls"] == 2, "its counts publish exactly once"
 
 
+@needs_posix_quarantine
 def test_r44_f3r3_voice_hold_all_names_quarantined_originals(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -45947,6 +45948,7 @@ def test_r44_f3r3_voice_hold_all_names_quarantined_originals(
     ), texts
 
 
+@needs_posix_quarantine
 def test_r44_f3r4_voice_hold_all_names_fallback_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -46054,6 +46056,7 @@ def test_r44_f3r4_voice_hold_all_names_fallback_pair(
     )
 
 
+@needs_posix_quarantine
 def test_r44_f3r4_voice_hold_all_names_sidecar_tmp_pairs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -46332,6 +46335,7 @@ def test_r44_g10_poisoned_loader_keeps_valid_spends(tmp_path: Path) -> None:
     assert fresh == []
 
 
+@needs_posix_quarantine
 def test_r44_f1a_live_writer_late_swap_retained(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -46477,6 +46481,7 @@ def test_r44_f1b_replay_outside_root_quarantine_refused(tmp_path: Path) -> None:
     assert any("not inside the counters root" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_f9a_stranded_fallback_recognized_without_primary(tmp_path: Path) -> None:
     """#88R44-F9a: a stranded fallback matches even with the primary removed."""
     import warnings
@@ -60156,6 +60161,7 @@ def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
     listings now; a bracket mismatch rebuilds from a bracketed
     scan instead of trusting the mixed view.
     """
+    import time
     from unittest import mock
 
     root = tmp_path / "counters"
@@ -60181,6 +60187,11 @@ def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
     holder: list[Any] = [None]
     memo = durability._refresh_memo(root, holder, lambda: durability._ambiguity_snapshot(root))
     assert memo.probe_names is not None and first_probe.name in memo.probe_names
+    # Straddle the timestamp tick before the bump (Windows
+    # system-clock ticks are ~15ms: a fast fixture lands every
+    # op in one tick, the memo reuses itself, and the arrival
+    # never surfaces).
+    time.sleep(0.05)
     # Bump the clock so the refresh relists (the scratch file
     # matches no evidence pattern).
     (root / "scratch.tmp").write_text("x", encoding="utf-8")
@@ -60193,6 +60204,9 @@ def test_r44_ar22_refresh_brackets_relistings(tmp_path: Path) -> None:
             fired.append(True)
             first_probe.unlink()
             (root / second_name).write_bytes(body)
+            # The bracket mismatch needs a new tick too (same
+            # coarse-clock reason as the bump above).
+            time.sleep(0.05)
         return real_list(directory, prefix, suffix)
 
     with mock.patch.object(durability, "_list_evidence_files", _list_between):
@@ -61930,6 +61944,7 @@ def test_r44_ar8_sweep_run_credit_guards_sidecar_only_collider(tmp_path: Path) -
     assert any("ambiguity evidence" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_ar3_owned_divergent_tmps_voice_checkpoint_cover(tmp_path: Path) -> None:
     """#88R44-[A]r3: owned divergence under checkpoint cover voices its kind.
 
@@ -62000,6 +62015,7 @@ def test_r44_ar3_owned_divergent_tmps_voice_checkpoint_cover(tmp_path: Path) -> 
     assert not any("marker coverage" in text for text in texts), texts
 
 
+@needs_posix_quarantine
 def test_r44_ar3_owned_divergent_tmps_voice_marker_cover(engaged: Path, tmp_path: Path) -> None:
     """#88R44-[A]r3: owned divergence under marker cover keeps the marker voice.
 
