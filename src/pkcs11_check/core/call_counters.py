@@ -47,6 +47,7 @@ import warnings
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from pathlib import Path
 from threading import RLock, local
 from typing import Any
 
@@ -56,8 +57,10 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_ROLE_ENV,
     COUNTERS_UNIT_ENV,
     FLUSH_WINDOW_K,
+    PROBE_PARENT_ENV,
     PROBE_SEQ_ENV,
     PROBE_SIDECAR_ENV,
+    SPAWN_FILE_PREFIX,
     CounterPersistenceError,
     Registration,
     append_journal,
@@ -71,11 +74,13 @@ from pkcs11_check.core._counters_durability import (
 from pkcs11_check.core.counters_schema import (
     UNKNOWN_MODULE,
     ensure_five_buckets,
+    is_birth_token,
     is_lost_key,
     is_module_first_block,
     is_probe_seq,
     is_receipt,
     is_worker_uuid,
+    mint_filename_nonce,
     mint_worker_uuid,
 )
 
@@ -143,6 +148,12 @@ _probe_flush_warned = False
 #: pairs never earn rows.
 _consumed_probes: set[tuple[str, int]] = set()
 _receipts: set[tuple[str, int]] = set()
+#: Launched probe children ``{"probe_seq", "slot", "pid", "birth_token?"}``,
+#: in spawn order. Durable (flushed at spawn): postmortem collection
+#: defers while any entry is unflushed with a live writer, so a first
+#: flush landing between passes cannot fold into a retry whose counts
+#: first-wins already discarded (#88R22-4). Absorbs prune by seq.
+_spawned_children: list[dict[str, Any]] = []
 _probe_seq = 0
 _inprog_entry: Counter[tuple[str, str, str]] = Counter()
 _inprog_exit: Counter[tuple[str, str, str, int]] = Counter()
@@ -299,6 +310,16 @@ def _flush_locked() -> None:
             {"parent_uuid": parent, "probe_seq": seq} for parent, seq in sorted(_lost_keys)
         ],
     }
+    # Birth bind for verified liveness (#88R31-4): the barrier's
+    # unreadable-registry fallback verifies (pid, birth) against the
+    # live process. Omitted when unverifiable (macOS), so legacy
+    # shapes stay byte-identical there; the fallback then refuses
+    # instead of deferring (identity unprovable).
+    birth = birth_token_for_pid(os.getpid())
+    if birth is not None:
+        payload["birth_token"] = birth
+    if _spawned_children:
+        payload["spawned_children"] = [dict(entry) for entry in _spawned_children]
     write_sidecar_atomic(_registration.sidecar_path, payload)
     _dirty = False
     _pending_calls = 0
@@ -1049,6 +1070,110 @@ def note_lost_probe(*, parent_uuid: Any = None, probe_seq: Any = None) -> None:
             raise
 
 
+def note_probe_spawned(
+    *, probe_seq: Any = None, slot: Any = None, pid: Any = None, birth: Any = None
+) -> None:
+    """Record one launched probe child for postmortem outstanding-tracking.
+
+    The record (seq, slot path, pid, birth when known) persists
+    immediately: a supervisor killed before its child flushes must
+    still leave the launch attributable, or a first flush landing
+    between collection passes folds into a retry that discards it
+    (#88R22-4). Malformed arguments raise ``ValueError`` (a dropped
+    record would silently reopen that hole -- fail fast, never
+    degrade). Disengaged processes record nothing. A failed flush
+    retains the record, marks it pending, and raises (the caller
+    must not spawn).
+    """
+    if not is_probe_seq(probe_seq):
+        raise ValueError(f"bad probe_seq for spawn record: {probe_seq!r}")
+    if not isinstance(slot, str) or not slot:
+        raise ValueError(f"bad slot for spawn record: {slot!r}")
+    if type(pid) is not int or pid <= 0:
+        raise ValueError(f"bad pid for spawn record: {pid!r}")
+    if birth is not None and not is_birth_token(birth):
+        raise ValueError(f"bad birth token for spawn record: {birth!r}")
+    assert isinstance(probe_seq, int) and isinstance(slot, str) and isinstance(pid, int)
+    entry: dict[str, Any] = {"probe_seq": probe_seq, "slot": slot, "pid": pid}
+    if birth is not None:
+        entry["birth_token"] = birth
+    global _dirty
+    with _lock:
+        if durability_dir() is None or _registration is None:
+            return
+        _spawned_children.append(entry)
+        _dirty = True
+        try:
+            _flush_locked()
+        except CounterPersistenceError:
+            _set_pending_locked("note")
+            raise
+
+
+def note_own_probe_spawn() -> str | None:
+    """Record this probe child's own launch before it does anything (#88R23-1).
+
+    The child announces itself (parent uuid, assigned seq, slot path,
+    own pid + birth) in an atomic ``spawn-<parent8>-<seq>-<nonce>.json``
+    file next to its slot, FIRST -- before any provider call -- so a
+    supervisor that dies before its parent-side note flushes still
+    leaves the launch attributable: reunion waits for the child
+    instead of publishing through it and stranding its later flush.
+    Returns the record path. Disengaged processes (no probe sidecar
+    env: manual runs, custom probes) record nothing. Malformed spawn
+    env raises ``ValueError`` and a failed write raises
+    ``CounterPersistenceError``: an unrecordable launch must not run
+    (fail closed, loud -- the probe crashes at startup instead of
+    executing unattributed).
+    """
+    slot = os.environ.get(PROBE_SIDECAR_ENV, "")
+    if not slot:
+        return None
+    seq_raw = os.environ.get(PROBE_SEQ_ENV, "")
+    try:
+        seq = int(seq_raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"bad probe_seq for own spawn record: {seq_raw!r}") from None
+    if not is_probe_seq(seq):
+        raise ValueError(f"bad probe_seq for own spawn record: {seq_raw!r}")
+    parent = os.environ.get(PROBE_PARENT_ENV, "")
+    if not is_worker_uuid(parent):
+        raise ValueError(f"bad parent_uuid for own spawn record: {parent!r}")
+    assert isinstance(parent, str)
+    pid = os.getpid()
+    birth = birth_token_for_pid(pid)
+    payload: dict[str, Any] = {
+        "parent_uuid": parent,
+        "probe_seq": seq,
+        "slot": slot,
+        "pid": pid,
+    }
+    if birth is not None:
+        payload["birth_token"] = birth
+    payload.update(probe_sidecar_identity_from_env(os.environ))
+    payload["parent_uuid"] = parent
+    counters_dir = Path(slot).parent
+    nonce = mint_filename_nonce()
+    path = counters_dir / f"{SPAWN_FILE_PREFIX}{parent[:8]}-{seq}-{nonce}.json"
+    write_sidecar_atomic(path, payload)
+    return str(path)
+
+
+def forget_probe_spawn(probe_seq: int) -> None:
+    """Drop spawn records absorbed (or terminally settled) for one seqno.
+
+    Lazy like other prunes: the drop rides the next flush, and a
+    crash before it leaves stale records that the death check still
+    resolves (absorbed children have exited). Never raises.
+    """
+    global _dirty
+    with _lock:
+        kept = [entry for entry in _spawned_children if entry.get("probe_seq") != probe_seq]
+        if len(kept) != len(_spawned_children):
+            _spawned_children[:] = kept
+            _dirty = True
+
+
 def add_lost_probes(n: Any) -> None:
     """Add ``n`` child-side losses propagated through a coverage payload.
 
@@ -1216,6 +1341,7 @@ def reset_for_tests() -> None:
         _lost_keys.clear()
         _unkeyed_lost = 0
         _ingested_sources.clear()
+        _spawned_children.clear()
         _persistence_pending = None
         _worker_uuid = None
         _worker_uuid_pid = None

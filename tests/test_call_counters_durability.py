@@ -156,6 +156,57 @@ def _record_calls(n: int, *, fn: str = "C_Login") -> None:
         call_counters.record_return(fn, 0)
 
 
+def _fake_popen_factory(
+    *,
+    on_spawn: Any = None,
+    stdout: str = "",
+    stderr: str = "",
+    returncode: int = 0,
+    pid: int = 424242,
+) -> Any:
+    """Build a subprocess.Popen double honoring the runner's call shape.
+
+    Runs ``on_spawn(*args, **kwargs)`` at construction (may raise to
+    fail the spawn, like the old ``subprocess.run`` doubles did),
+    then serves ``communicate``/``kill``/``wait``/``poll`` with canned
+    output. Context-manager protocol included (the runner uses ``with``).
+    """
+
+    class _FakePopen:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.pid = pid
+            self.returncode: int | None = None
+            if on_spawn is not None:
+                on_spawn(*args, **kwargs)
+
+        def __enter__(self) -> _FakePopen:
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            self.wait()
+            return False
+
+        def communicate(self, timeout: Any = None) -> tuple[str, str]:
+            if self.returncode is None:
+                self.returncode = returncode
+            return (stdout, stderr)
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout: Any = None) -> int:
+            if self.returncode is None:
+                self.returncode = returncode
+            return self.returncode
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    return _FakePopen
+
+
 # --------------------------------------------------------------------------
 # Registration + admission barrier
 # --------------------------------------------------------------------------
@@ -1505,7 +1556,9 @@ class TestProbeChannel:
         assert len(registries) == 1
         content = json.loads(registries[0].read_text(encoding="utf-8"))
         content["pid"] = pid
-        content["birth_token"] = birth
+        # Birth 0 on unverifiable platforms, like register_worker writes
+        # (a null birth_token is not a valid registry).
+        content["birth_token"] = birth if birth is not None else 0
         registries[0].write_text(json.dumps(content), encoding="utf-8")
         call_counters.reset_for_tests()
         records = _collect_crashed88(engaged, tmp_path / "child.jsonl")
@@ -2139,6 +2192,10 @@ def _plant_producer(
         seq = len(journal or []) if journal_seq == -1 else journal_seq
         if seq is not None:
             sidecar_content["journal_seq"] = seq
+        # Birth bind mirrors production (#88R31-4): omitted when None
+        # (unverifiable platform), so legacy shapes stay byte-identical.
+        if birth is not None:
+            sidecar_content["birth_token"] = birth
         if probes_lost is not None:
             sidecar_content["probes_lost"] = probes_lost
         if lost_keys is not None:
@@ -2222,6 +2279,20 @@ def _dead_pid_with_birth() -> tuple[int, int | None]:
     proc.wait(timeout=30)
     assert proc.poll() is not None
     return pid, birth
+
+
+def _require_dead_producer(planted: dict[str, Any]) -> None:
+    """Skip when a planted dead pid recycled before the pass under test.
+
+    Postmortem/retry tests need a dead producer; on busy CI boxes the
+    just-freed pid can be recycled (on Windows the recycled occupant
+    may even be unqueryable, reading unknown instead of dead). The
+    outcome then would be environmental, not behavioral: skip loudly
+    instead of asserting a premise that no longer holds.
+    """
+    content = json.loads(Path(planted["registry"]).read_text(encoding="utf-8"))
+    if durability.verify_producer(content) != "dead":
+        pytest.skip(f"planted pid {content.get('pid')} recycled before the pass")
 
 
 class TestCollection:
@@ -2631,7 +2702,14 @@ class TestSweepAndFence:
     def test_resume_sweep_keeps_unreadable_evidence(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#88R3F5: an unreadable producer survives its run's sweep."""
+        """#88R3F5 as amended by #88R31-4: a refused barrier strands nothing for the sweep.
+
+        Death behind an unreadable registry is unverifiable, so the
+        barrier refuses (production raises before applying or
+        sweeping); the manual sweep below proves defense in depth --
+        retained evidence survives, and the uncollected sibling the
+        refused barrier never reached survives too.
+        """
         pid, birth = _dead_pid_with_birth()
         retained = _plant_producer(
             engaged,
@@ -2641,7 +2719,7 @@ class TestSweepAndFence:
             run_id="OLD",
             in_progress=_counts_block(5),
         )
-        collected = _plant_producer(
+        unreached = _plant_producer(
             engaged,
             uuid=_UUID_B,
             pid=pid,
@@ -2651,16 +2729,25 @@ class TestSweepAndFence:
         )
         registry_name = Path(retained["registry"]).name
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _eperm_registry(self: Path, *args: Any, **kwargs: Any) -> str:
             if self.name == registry_name:
                 raise PermissionError("injected registry EPERM")
             return real_read_text(self, *args, **kwargs)
 
+        def _eperm_registry_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self.name == registry_name:
+                raise PermissionError("injected registry EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _eperm_registry)
+        monkeypatch.setattr(Path, "read_bytes", _eperm_registry_bytes)
         with pytest.warns(UserWarning, match="unreadable registry"):
             plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is False
         assert plan["retained_uuids"] == [_UUID_A]
+        assert _UUID_A in plan["unresolved"]
         durability.sweep_orphans(
             engaged,
             current_run=_RUN,
@@ -2669,8 +2756,8 @@ class TestSweepAndFence:
         )
         assert Path(retained["registry"]).exists()
         assert Path(retained["sidecar"]).exists()
-        assert not Path(collected["registry"]).exists()
-        assert not Path(collected["sidecar"]).exists()
+        assert Path(unreached["registry"]).exists()
+        assert Path(unreached["sidecar"]).exists()
 
     def test_sweep_skips_healed_retained_uuid(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
@@ -2687,6 +2774,7 @@ class TestSweepAndFence:
         )
         registry_name = Path(planted["registry"]).name
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
         blocked = True
 
         def _flaky_registry(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -2694,7 +2782,13 @@ class TestSweepAndFence:
                 raise PermissionError("injected registry EPERM")
             return real_read_text(self, *args, **kwargs)
 
+        def _flaky_registry_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if blocked and self.name == registry_name:
+                raise PermissionError("injected registry EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _flaky_registry)
+        monkeypatch.setattr(Path, "read_bytes", _flaky_registry_bytes)
         with pytest.warns(UserWarning, match="unreadable registry"):
             plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
         assert plan["retained_uuids"] == [_UUID_A]
@@ -3685,6 +3779,71 @@ class TestSweepAndFence:
         _apply_counters_barrier_plan(state_file, second, ["a.py"], console)
         assert not staging.exists(), "converged cleanup discards its staging"
 
+    def test_deferred_producer_keeps_staging_across_application(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R29-1: an unresolved producer's staging survives application."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        from pkcs11_check.core.file_runner import _apply_counters_barrier_plan
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        import unittest.mock as mock
+
+        parents = {
+            str(Path(planted["registry"])),
+            str(Path(planted["sidecar"])),
+            str(Path(planted["journal"])),
+        }
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            first = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert first["barrier_ok"] is True
+        assert first["cache_records"] == {}
+        sidecar = Path(planted["sidecar"])
+        with sidecar.open("a", encoding="utf-8") as fh:
+            fh.write("\n")
+        second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert second["barrier_ok"] is True
+        assert _UUID_A in second["unresolved"]
+        assert second["cleanup_held"] == []
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        assert staging.exists()
+        state_file = tmp_path / "state.json"
+        console = Console(file=StringIO(), force_terminal=False)
+        with pytest.warns(UserWarning, match="unresolved"):
+            _apply_counters_barrier_plan(state_file, second, ["a.py"], console)
+        assert staging.exists(), "deferral keeps routing memory for the retry"
+
     def test_parentless_probe_adopted_after_parents_gone(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -3856,6 +4015,2634 @@ class TestSweepAndFence:
         assert second["barrier_ok"] is True
         assert second["cache_records"] == first["cache_records"]
         assert probe.exists()
+
+    def test_sweep_journal_shield_survives_lookup_fault(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-3: a faulted sidecar shield lookup retains the journal."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        Path(planted["registry"]).unlink()
+        journal = Path(planted["journal"])
+        sidecar = Path(planted["sidecar"])
+        assert journal.exists() and sidecar.exists()
+        real_glob = Path.glob
+        real_state = durability._path_state
+        fired: list[str] = []
+
+        def _flaky_glob(self: Path, pattern: Any, *args: Any, **kwargs: Any) -> Any:
+            # Pre-fix shield is a literal glob (swallows faults as []).
+            if str(self) == str(engaged) and "*" not in str(pattern) and not fired:
+                fired.append("glob")
+                return iter([])
+            return real_glob(self, pattern, *args, **kwargs)
+
+        def _flaky_state(path: Any) -> Any:
+            # Post-fix shield is an exact tri-state lookup.
+            if str(path) == str(sidecar) and not fired:
+                fired.append("stat")
+                return "unreadable"
+            return real_state(path)
+
+        monkeypatch.setattr(Path, "glob", _flaky_glob)
+        monkeypatch.setattr(durability, "_path_state", _flaky_state)
+        with pytest.warns(UserWarning, match="shielded"):
+            swept = durability.sweep_orphans(engaged, current_run="run-now")
+        assert fired, "the fault must hit the shield lookup"
+        assert swept["retained"] >= 1
+        assert journal.exists(), "an unprovable sidecar shields its journal"
+        assert sidecar.exists()
+
+    def test_terminate_verified_rejects_unrepresentable_pid(self) -> None:
+        """#88R26-4: fencing never feeds an unrepresentable pid to a backend."""
+        assert durability._terminate_verified(2**32, 424243, 0.0) is False
+        assert durability._terminate_verified(2**63, 424243, 0.0) is False
+
+    def test_collect_orphan_unrepresentable_pid_defers(self, engaged: Path) -> None:
+        """#88R26-4: a stamped out-of-range orphan pid defers, never crashes."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=2**32,
+            birth=424243,
+        )
+        assert orphan == slot
+        with pytest.warns(UserWarning):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert durability.is_sealed(engaged) is False
+        assert orphan.exists(), "unfenceable writers defer with evidence kept"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+    def test_staged_target_fifo_carries_without_open(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-6: carry-forward never opens non-regular staged targets."""
+        import json
+
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        fifo = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json.tmp-99"
+        os.mkfifo(fifo)
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(
+            json.dumps(
+                {
+                    "cache_records": {},
+                    "consumed": 1,
+                    "collected_uuids": [_UUID_A],
+                    "cleanup_targets": [{"path": str(fifo), "sha256": "0" * 64}],
+                    "skip_held_uuids": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        real_hash = durability._sha256_file_hex
+        opened: list[str] = []
+
+        def _spy_hash(path: Path) -> Any:
+            # Stand in for the open: with real hashing the pre-fix
+            # code blocks forever inside read_bytes on the FIFO
+            # (reproduced in scratch with a threaded timeout).
+            if str(path) == str(fifo):
+                opened.append(str(path))
+                return "f" * 64
+            return real_hash(path)
+
+        monkeypatch.setattr(durability, "_sha256_file_hex", _spy_hash)
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert opened == [], "carry-forward must not open a FIFO"
+        carried = json.loads(staging.read_text(encoding="utf-8"))["cleanup_targets"]
+        assert str(fifo) in [entry["path"] for entry in carried]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+    def test_staged_target_carries_fifo_branch(self, tmp_path: Path) -> None:
+        """#88R26-6: non-regular staged targets carry blind, unopened."""
+        fifo = tmp_path / "probe-aaaaaaaa-0-feedface.json.tmp-7"
+        os.mkfifo(fifo)
+        assert durability._staged_target_carries(fifo, "0" * 64) is True
+        assert durability._staged_target_carries(tmp_path, "0" * 64) is True
+
+    def test_regular_file_hash_contracts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R27-4: fd-verified hashing binds regular files only."""
+        import hashlib
+        import threading
+
+        plain = tmp_path / "regular.json"
+        plain.write_text("{}", encoding="utf-8")
+        assert durability._sha256_regular_file_hex(plain) == hashlib.sha256(b"{}").hexdigest()
+        assert durability._sha256_regular_file_hex(tmp_path / "gone.json") is None
+        assert durability._sha256_regular_file_hex(tmp_path) is None
+        real_fstat = os.fstat
+
+        def _flaky_fstat(fd: int) -> Any:
+            raise OSError("injected fstat EIO")
+
+        monkeypatch.setattr(os, "fstat", _flaky_fstat)
+        assert durability._sha256_regular_file_hex(plain) is None
+        monkeypatch.setattr(os, "fstat", real_fstat)
+        if sys.platform == "win32":
+            return
+        fifo = tmp_path / "pipe.tmp-1"
+        os.mkfifo(fifo)
+        done: list[bool] = []
+
+        def _hash() -> None:
+            done.append(durability._sha256_regular_file_hex(fifo) is None)
+
+        worker = threading.Thread(target=_hash, daemon=True)
+        worker.start()
+        worker.join(timeout=15)
+        assert done == [True], "hashing a FIFO returns None instead of blocking"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+    def test_carry_ignores_raced_stat(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R27-4: carry never trusts a stat (a swap cannot plant a block)."""
+        import stat
+        import threading
+
+        fifo = tmp_path / "probe-aaaaaaaa-0-feedface.json.tmp-9"
+        os.mkfifo(fifo)
+
+        class _AlwaysRegular:
+            st_mode = stat.S_IFREG | 0o644
+
+        def _lying_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+            return _AlwaysRegular()
+
+        monkeypatch.setattr(os, "stat", _lying_stat)
+        done: list[bool] = []
+
+        def _carry() -> None:
+            done.append(durability._staged_target_carries(fifo, "0" * 64))
+
+        worker = threading.Thread(target=_carry, daemon=True)
+        worker.start()
+        worker.join(timeout=15)
+        assert done == [True], "a stat/open race must not block carry"
+
+    def test_cleanup_only_pass_stages_retry_and_converges(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-7: a recordless pass still stages its held cleanup durably."""
+        import unittest.mock as mock
+        import warnings
+
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+        pid_m, birth_m = _dead_pid_with_birth()
+        marker.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": 0,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": _UUID_A,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "pid": pid_m,
+                    "birth_token": birth_m,
+                    "finalized": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == marker:
+                raise OSError("injected unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}, "committed silence: no records"
+        assert str(marker) in plan1["cleanup_held"]
+        assert staging.exists(), "cleanup-pending passes stage for retry"
+        # Pass 2 without the prior: targeted validation (not the session)
+        # must authorize the adopted retry.
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert not marker.exists(), "the held duplicate converges on retry"
+        assert not any("re-collect as fresh" in str(w.message) for w in seen)
+        # Pass 3: spent staging discards silently instead of alarming.
+        with warnings.catch_warnings(record=True) as seen3:
+            warnings.simplefilter("always")
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert not staging.exists(), "spent staging discards once resolved"
+        assert not any("re-collect as fresh" in str(w.message) for w in seen3)
+
+    def test_cleanup_hint_never_suppresses_producer_collection(self, engaged: Path) -> None:
+        """#88R27-1: cleanup-target validation must not suppress collection."""
+        import hashlib
+
+        uuid_b = "aaaaaaaa" + "b" * 24
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        marker = engaged / f"probe-consumed-{uuid_b}-0-bead99.json"
+        pid_m, birth_m = _dead_pid_with_birth()
+        marker.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": 0,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": uuid_b,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "pid": pid_m,
+                    "birth_token": birth_m,
+                }
+            ),
+            encoding="utf-8",
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(
+            json.dumps(
+                {
+                    "cache_records": {},
+                    "consumed": 1,
+                    "collected_uuids": [_UUID_A],
+                    "cleanup_targets": [
+                        {
+                            "path": str(marker),
+                            "sha256": hashlib.sha256(marker.read_bytes()).hexdigest(),
+                        }
+                    ],
+                    "skip_held_uuids": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        partials = [
+            rec
+            for rec in plan["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 2
+        assert not Path(planted["registry"]).exists()
+        assert marker.exists(), "a foreign-owned marker is not this producer's cleanup"
+
+    def test_held_parent_cleanup_stages_and_retries(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R27-3: held parent files stage as targets and retry to done."""
+        import unittest.mock as mock
+        import warnings
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+        pid_m, birth_m = _dead_pid_with_birth()
+        marker.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": 0,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": _UUID_A,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "pid": pid_m,
+                    "birth_token": birth_m,
+                    "finalized": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        parents = {
+            str(Path(planted["registry"])),
+            str(Path(planted["sidecar"])),
+            str(Path(planted["journal"])),
+        }
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}, "committed silence: no records"
+        assert parents <= set(plan1["cleanup_held"])
+        staged_targets = {
+            entry["path"]
+            for entry in json.loads(staging.read_text(encoding="utf-8"))["cleanup_targets"]
+        }
+        assert parents <= staged_targets, "held parents stage as retry targets"
+        # Pass 2 without the prior: the staged retry consumes the held
+        # parents directly instead of gap re-emitting the producer.
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert plan2["cache_records"] == {}, "retry suppresses, never re-emits"
+        assert not Path(planted["registry"]).exists()
+        assert not Path(planted["sidecar"]).exists()
+        assert not any("re-collect as fresh" in str(w.message) for w in seen)
+        # Pass 3: spent staging retires silently.
+        with warnings.catch_warnings(record=True) as seen3:
+            warnings.simplefilter("always")
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert not staging.exists()
+        assert not any("re-collect as fresh" in str(w.message) for w in seen3)
+
+    def test_incomplete_discovery_defers_legacy_producer(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R27-2: a withheld legacy orphan defers its producer (no stranding)."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        pid_o, birth_o = _dead_pid_with_birth()
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            pid=pid_o,
+            birth=birth_o,
+        )
+        reg_dir = engaged / durability.REGISTRY_DIRNAME
+        real_glob = Path.glob
+        real_scandir = os.scandir
+        fired: list[str] = []
+
+        def _flaky_glob(self: Path, pattern: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(self) == str(reg_dir) and not fired:
+                fired.append(str(self))
+                return iter([])
+            return real_glob(self, pattern, *args, **kwargs)
+
+        def _flaky_scandir(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path) == str(reg_dir) and not fired:
+                fired.append(str(path))
+                raise PermissionError("injected readdir EACCES")
+            return real_scandir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "glob", _flaky_glob)
+        monkeypatch.setattr(os, "scandir", _flaky_scandir)
+        with pytest.warns(UserWarning, match="deferred"):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert fired, "the fault must hit the identity scan"
+        assert plan1["barrier_ok"] is True
+        assert _UUID_A in plan1["unresolved"]
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+        # Pass 2 healed: parent and orphan collect coherently.
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        partials = [
+            rec
+            for rec in plan2["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 3
+        assert not orphan.exists()
+
+    def test_identity_scan_ignores_non_registry_names(self, engaged: Path) -> None:
+        """#88R28-5: entries that cannot validate never poison completeness."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        pid_o, birth_o = _dead_pid_with_birth()
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            pid=pid_o,
+            birth=birth_o,
+        )
+        stray = engaged / durability.REGISTRY_DIRNAME / "stray.json"
+        stray.mkdir()
+        uuids, complete = durability._known_producer_uuids(engaged)
+        assert complete is True
+        assert uuids == {_UUID_A}
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert _UUID_A not in plan["unresolved"]
+        partials = [
+            rec
+            for rec in plan["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 3
+        assert not orphan.exists()
+
+    def test_identity_scan_torn_registry_stays_incomplete(self, engaged: Path) -> None:
+        """#88R28-5: a name-valid but unreadable registry still poisons."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        uuid_b = "aaaaaaaa" + "b" * 24
+        torn = engaged / durability.REGISTRY_DIRNAME / f"{uuid_b}.json"
+        torn.write_text("{torn", encoding="utf-8")
+        uuids, complete = durability._known_producer_uuids(engaged)
+        assert complete is False
+        assert _UUID_A in uuids
+
+    def test_evolved_cleanup_retry_defers_without_session(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R28-2: evolved cleanup evidence waits for its session authority."""
+        import unittest.mock as mock
+        import warnings
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+        pid_m, birth_m = _dead_pid_with_birth()
+        marker.write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_B,
+                    "probe_seq": 0,
+                    "counters": [["m", "C_Digest", 0, 1]],
+                    "parent_uuid": _UUID_A,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "pid": pid_m,
+                    "birth_token": birth_m,
+                    "finalized": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={
+                        "worker_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "receipts": [{"worker_uuid": _UUID_B, "probe_seq": 0}],
+                    },
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        parents = {
+            str(Path(planted["registry"])),
+            str(Path(planted["sidecar"])),
+            str(Path(planted["journal"])),
+        }
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        assert parents <= set(plan1["cleanup_held"])
+        # Pass 2 without the prior: the sidecar evolved and a new
+        # finalized orphan landed. Gap fallback would falsely heal;
+        # the committed disposition defers for its session instead.
+        sidecar = Path(planted["sidecar"])
+        with sidecar.open("a", encoding="utf-8") as fh:
+            fh.write("\n")
+        pid_o, birth_o = _dead_pid_with_birth()
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=1,
+            counters=[["m", "C_Digest", 2, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid_o,
+            birth=birth_o,
+        )
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert _UUID_A in plan2["unresolved"], "no gap fallback on committed silence"
+        assert any("deferred" in str(w.message) for w in seen)
+        assert orphan.exists()
+        assert sidecar.exists()
+        assert not any(rec for rec in plan2["cache_records"].get("a.py", []))
+        # Pass 3 with the prior restored: committed reunion converges.
+        plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan3["barrier_ok"] is True
+        assert _UUID_A not in plan3["unresolved"]
+
+    def test_unreadable_committed_sidecar_defers(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R28-2: committed reunion waits for unreadable coverage evidence."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        sidecar = Path(planted["sidecar"])
+        real_read = Path.read_bytes
+        real_unlink = Path.unlink
+
+        def _flaky_read(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self == sidecar:
+                raise OSError("injected sidecar unreadable")
+            return real_read(self, *args, **kwargs)
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == sidecar:
+                raise OSError("injected sidecar unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        with mock.patch.object(Path, "read_bytes", _flaky_read):
+            with mock.patch.object(Path, "unlink", _flaky_unlink):
+                with pytest.warns(UserWarning, match="deferred"):
+                    plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert _UUID_A in plan1["unresolved"]
+        assert sidecar.exists()
+        assert Path(planted["registry"]).exists()
+        assert not staging.exists(), "nothing decided, nothing staged"
+        # Healed retry converges through the committed route.
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan2["barrier_ok"] is True
+        assert _UUID_A not in plan2["unresolved"]
+        assert plan2["cache_records"] == {}
+        assert not sidecar.exists()
+        assert not Path(planted["registry"]).exists()
+
+    def test_stripped_records_never_suppress_collection(self, engaged: Path) -> None:
+        """#88R28-1/#88R29-1: recordless legacy staging defers, never suppresses."""
+        import hashlib
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        # A staging that claims collection with genuine digests but no
+        # records and no disposition (stripped or foreign): byte
+        # identity alone must not skip collection.
+        targets = []
+        for key in ("registry", "sidecar"):
+            path = Path(planted[key])
+            targets.append(
+                {
+                    "path": str(path),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text(
+            json.dumps(
+                {
+                    "cache_records": {},
+                    "consumed": 1,
+                    "collected_uuids": [_UUID_A],
+                    "cleanup_targets": targets,
+                    "skip_held_uuids": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        # No silent suppression (the R28-1 loss) and no gap fallback
+        # (which would falsely heal committed-legacy evidence): the
+        # producer waits for its authorizing session instead.
+        assert _UUID_A in plan["unresolved"]
+        assert plan["cache_records"] == {}
+        assert Path(planted["registry"]).exists()
+        assert Path(planted["sidecar"]).exists()
+        assert staging.exists(), "deferral preserves staging for the retry"
+
+    def _plant_held_cleanup_pass(self, engaged: Path, tmp_path: Path) -> tuple[Any, Any, Any]:
+        """Pass 1 of the R28-3 dances: committed silence + held parents."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        parents = {
+            str(Path(planted["registry"])),
+            str(Path(planted["sidecar"])),
+            str(Path(planted["journal"])),
+        }
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        assert parents <= set(plan1["cleanup_held"])
+        return planted, prior, parents
+
+    def test_retry_proof_survives_replacement_before_unlink(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R28-3: proved digests seed consume (swaps hold, never delete)."""
+        planted, _, _ = self._plant_held_cleanup_pass(engaged, tmp_path)
+        journal = Path(planted["journal"])
+        real_adopt = durability._adopted_staged_probe_targets
+        swapped: list[str] = []
+
+        def _swap_then_delegate(*args: Any, **kwargs: Any) -> Any:
+            # Between the retry proof (loops) and consume: plant a new
+            # valid window the proof never saw.
+            if not swapped:
+                swapped.append("journal")
+                with journal.open("a", encoding="utf-8") as fh:
+                    fh.write('{"nodeid": "a.py::t2", "block": {}, "receipts": []}\n')
+            return real_adopt(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_adopted_staged_probe_targets", _swap_then_delegate)
+        _require_dead_producer(planted)
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert swapped == ["journal"]
+        assert plan2["barrier_ok"] is True
+        assert journal.exists(), "replacement bytes are held, never deleted"
+        assert str(journal) in plan2["cleanup_held"]
+
+    def test_retry_holds_ghost_at_proved_absent_path(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R28-3: paths proved absent hold ghosts instead of deleting."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        parents = {str(Path(planted["registry"])), str(Path(planted["sidecar"]))}
+        journal = Path(planted["journal"])
+        assert not journal.exists()
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        real_adopt = durability._adopted_staged_probe_targets
+        ghosted: list[str] = []
+
+        def _ghost_then_delegate(*args: Any, **kwargs: Any) -> Any:
+            if not ghosted:
+                ghosted.append("journal")
+                journal.write_text(
+                    '{"nodeid": "x", "block": {}, "receipts": []}\n', encoding="utf-8"
+                )
+            return real_adopt(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_adopted_staged_probe_targets", _ghost_then_delegate)
+        with pytest.warns(UserWarning, match="appeared after being proved absent"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert ghosted == ["journal"]
+        assert plan2["barrier_ok"] is True
+        assert journal.exists(), "a ghost at a proved-absent path is held"
+        assert str(journal) in plan2["cleanup_held"]
+
+    def test_proved_absent_paths_skip_prune_and_unlink(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R30-4: proved-absent paths never prune or unlink (late ghosts survive)."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        parents = {str(Path(planted["registry"])), str(Path(planted["sidecar"]))}
+        journal = Path(planted["journal"])
+        assert not journal.exists()
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        real_path_state = durability._path_state
+        real_consume = durability._consume_producer_files
+        consuming = False
+        ghosted: list[str] = []
+        pruned: list[str] = []
+        unlinked: list[str] = []
+        real_prune = durability._prune_sidecar_tmps
+        real_unlink2 = Path.unlink
+
+        def _consume_then_delegate(*args: Any, **kwargs: Any) -> Any:
+            nonlocal consuming
+            consuming = True
+            try:
+                return real_consume(*args, **kwargs)
+            finally:
+                consuming = False
+
+        def _ghost_after_check(path: Path) -> str:
+            # Simulate a ghost landing after the consume-time absence
+            # check: the check sees "missing" while the bytes exist.
+            if consuming and not ghosted and path == journal:
+                ghosted.append("journal")
+                journal.write_text(
+                    '{"nodeid": "x", "block": {}, "receipts": []}\n', encoding="utf-8"
+                )
+                return "missing"
+            return real_path_state(path)
+
+        def _record_prune(path: Path, *args: Any, **kwargs: Any) -> Any:
+            pruned.append(str(path))
+            return real_prune(path, *args, **kwargs)
+
+        def _record_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            unlinked.append(str(self))
+            return real_unlink2(self, *args, **kwargs)
+
+        monkeypatch.setattr(durability, "_consume_producer_files", _consume_then_delegate)
+        monkeypatch.setattr(durability, "_path_state", _ghost_after_check)
+        monkeypatch.setattr(durability, "_prune_sidecar_tmps", _record_prune)
+        monkeypatch.setattr(Path, "unlink", _record_unlink)
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert ghosted == ["journal"]
+        assert plan2["barrier_ok"] is True
+        assert journal.exists(), "a ghost landing after the proof is never unlinked"
+        assert str(journal) not in pruned, "proved-absent paths are never pruned"
+        assert str(journal) not in unlinked, "proved-absent paths are never unlinked"
+
+    def test_scan_cannot_overwrite_retry_proof(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R28-3: informational scans never overwrite proved digests."""
+        planted, _, _ = self._plant_held_cleanup_pass(engaged, tmp_path)
+        sidecar = Path(planted["sidecar"])
+        real_adopt_sidecar = durability._adopt_orphan_sidecar
+        swapped: list[str] = []
+
+        def _swap_then_delegate(*args: Any, **kwargs: Any) -> Any:
+            # Between the registry-loop proof and the sidecar scan: the
+            # scan must not authorize these replacement bytes.
+            if not swapped:
+                swapped.append("sidecar")
+                payload = json.loads(sidecar.read_text(encoding="utf-8"))
+                payload["in_progress"]["total_calls"] = 99
+                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+            return real_adopt_sidecar(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_adopt_orphan_sidecar", _swap_then_delegate)
+        _require_dead_producer(planted)
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert swapped == ["sidecar"]
+        assert plan2["barrier_ok"] is True
+        assert sidecar.exists(), "replacement bytes are held, never deleted"
+        assert str(sidecar) in plan2["cleanup_held"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+    def test_consume_fifo_target_held_without_blocking(self, tmp_path: Path) -> None:
+        """#88R29-4: final verification never blocks on a swapped-in FIFO."""
+        import threading
+        import warnings
+
+        fifo = tmp_path / "probe-aaaaaaaa-0-feedface.json"
+        os.mkfifo(fifo)
+        done: list[list[Path]] = []
+
+        def _consume() -> None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                done.append(durability._consume_producer_files([fifo], {str(fifo): "0" * 64}))
+
+        worker = threading.Thread(target=_consume, daemon=True)
+        worker.start()
+        worker.join(timeout=15)
+        assert done == [[fifo]], "a FIFO target holds instead of blocking consume"
+
+    def test_skip_held_committed_retry_defers_without_session(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R29-2: skip-held committed evidence waits, never fences blind."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": _UUID_B,
+                        "probe_seq": 0,
+                        "counters": [["m", "C_Digest", 0, 1]],
+                        "parent_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "unit": "a.py",
+                        "pid": proc.pid,
+                        "birth_token": birth,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            prior = _write_jsonl(
+                tmp_path / "prior.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    _session_record(
+                        pid,
+                        _counts_block(2, fn="C_Digest"),
+                        extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                    ),
+                    {"$report_type": "SessionFinish", "exitstatus": 0},
+                ],
+            )
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+            assert plan1["barrier_ok"] is True
+            assert proc.poll() is None, "pass 1 keeps the live writer"
+            staging = engaged / durability.BARRIER_STAGING_FILENAME
+            assert staging.exists()
+            # Pass 2 without the prior: the skip hold must not bypass
+            # the missing-session guard into a fence.
+            with pytest.warns(UserWarning, match="deferred"):
+                plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan2["barrier_ok"] is True
+            assert _UUID_A in plan2["unresolved"]
+            assert proc.poll() is None, "no SIGKILL without reunion authority"
+            assert marker.exists()
+            assert Path(planted["registry"]).exists()
+            assert staging.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_barrier_held_files_survive_sweep(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R29-3: barrier holds carry into sweep as family exclusions."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        sidecar = Path(planted["sidecar"])
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == sidecar:
+                raise OSError("injected sidecar unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert str(sidecar) in plan["cleanup_held"]
+        assert _UUID_A in plan["retained_uuids"], "held files report their family"
+        # Same sweep call file_runner makes: held families are excluded.
+        swept = durability.sweep_orphans(
+            engaged,
+            current_run="run-now",
+            collected_runs=frozenset(plan["collected_runs"]),
+            retain_uuids=frozenset(plan["unresolved"] + plan["retained_uuids"]),
+        )
+        assert swept["removed"] == 0
+        assert sidecar.exists(), "sweep keeps barrier-held evidence"
+
+    def test_unreadable_orphan_sidecar_defers_and_reserves(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R29-6 as amended by #88R30-5: an unreadable registryless sidecar
+        with no trusted unit refuses admission (never silently skips)."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted["registry"]).unlink()
+        sidecar = Path(planted["sidecar"])
+        pid_b, birth_b = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_B,
+            pid=pid_b,
+            birth=birth_b,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        pid_o, birth_o = _dead_pid_with_birth()
+        marker = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid_o,
+            birth=birth_o,
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        real_read_bytes = Path.read_bytes
+        blocked = True
+
+        def _flaky_read(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if blocked and self == sidecar:
+                raise OSError("injected sidecar unreadable")
+            return real_read_bytes(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_bytes", _flaky_read)
+        with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is False
+        assert _UUID_A in plan1["unresolved"]
+        assert sidecar.exists()
+        swept = durability.sweep_orphans(
+            engaged,
+            current_run="run-now",
+            collected_runs=frozenset(plan1["collected_runs"]),
+            retain_uuids=frozenset(plan1["unresolved"] + plan1["retained_uuids"]),
+        )
+        assert sidecar.exists(), "sweep keeps deferred evidence"
+        assert marker.exists()
+        assert swept["removed"] == 0
+        # Healed retry converges through the committed route.
+        blocked = False
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan2["barrier_ok"] is True
+        assert _UUID_A not in plan2["unresolved"]
+
+    def test_strict_retry_holds_replaced_journal(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R30-4: strict retries verify per-path (swaps hold, never delete)."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        journal = Path(planted["journal"])
+        parents = {
+            str(Path(planted["registry"])),
+            str(Path(planted["sidecar"])),
+            str(journal),
+        }
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] != {}
+        real_adopt = durability._adopted_staged_probe_targets
+        swapped: list[str] = []
+
+        def _swap_then_delegate(*args: Any, **kwargs: Any) -> Any:
+            # Between routing and unlink: plant a new valid window the
+            # staged digest never saw.
+            if not swapped:
+                swapped.append("journal")
+                with journal.open("a", encoding="utf-8") as fh:
+                    fh.write('{"nodeid": "a.py::t2", "block": {}, "receipts": []}\n')
+            return real_adopt(*args, **kwargs)
+
+        monkeypatch.setattr(durability, "_adopted_staged_probe_targets", _swap_then_delegate)
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert swapped == ["journal"]
+        assert plan2["barrier_ok"] is True
+        assert journal.exists(), "replacement bytes are held, never deleted"
+        assert str(journal) in plan2["cleanup_held"]
+        assert _UUID_A in plan2["retained_uuids"]
+
+    def test_unreadable_orphan_sidecar_refuses_barrier(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R30-5: an undecidable orphan refuses admission (live unit never eligible)."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=proc.pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            Path(planted["registry"]).unlink()
+            sidecar = Path(planted["sidecar"])
+            with monkeypatch.context() as m:
+                fired = _fault_read_always(m, sidecar)
+                with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+                    plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert fired, "the read fault must engage"
+            assert plan["barrier_ok"] is False
+            assert _UUID_A in plan["unresolved"]
+            assert sidecar.exists(), "undecidable evidence is retained, never consumed"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_unreadable_sidecar_defers_unit_from_registry(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R30-5: a mid-pass registry names the deferred unit (rerun skipped)."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=proc.pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            registry_path = Path(planted["registry"])
+            registry_content = registry_path.read_text(encoding="utf-8")
+            registry_path.unlink()
+            sidecar = Path(planted["sidecar"])
+            real_adopt = durability._adopt_orphan_sidecar
+            rescued: list[str] = []
+
+            def _rescue_then_delegate(*args: Any, **kwargs: Any) -> Any:
+                # A registry landing between the main loop and the
+                # orphan adopt: the adopt still defers (the sidecar is
+                # unreadable) but the unit resolves from the registry.
+                if not rescued:
+                    rescued.append("registry")
+                    registry_path.write_text(registry_content, encoding="utf-8")
+                return real_adopt(*args, **kwargs)
+
+            monkeypatch.setattr(durability, "_adopt_orphan_sidecar", _rescue_then_delegate)
+            with monkeypatch.context() as m:
+                fired = _fault_read_always(m, sidecar)
+                with pytest.warns(UserWarning, match="deferred"):
+                    plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert fired, "the read fault must engage"
+            assert rescued == ["registry"]
+            assert plan["barrier_ok"] is True
+            assert _UUID_A in plan["unresolved"]
+            assert plan["skipped_units"] == ["a.py"]
+            assert sidecar.exists(), "deferred evidence is retained, never consumed"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_deferred_unit_lookup_trusts_only_parsing_registries(self, engaged: Path) -> None:
+        """#88R30-5: the deferral-unit lookup needs a parsing registry with a unit."""
+        reg_dir = engaged / "registrations"
+        reg_dir.mkdir(parents=True, exist_ok=True)
+        assert durability._deferred_unit_from_registry(reg_dir, _UUID_A) is None
+        (reg_dir / f"{_UUID_A}.json").write_text("{torn", encoding="utf-8")
+        assert durability._deferred_unit_from_registry(reg_dir, _UUID_A) is None
+        (reg_dir / f"{_UUID_A}.json").write_text(
+            json.dumps({"worker_uuid": _UUID_A, "unit": ""}), encoding="utf-8"
+        )
+        assert durability._deferred_unit_from_registry(reg_dir, _UUID_A) is None
+        (reg_dir / f"{_UUID_A}.json").write_text(
+            json.dumps(
+                {
+                    "worker_uuid": _UUID_A,
+                    "run_id": _RUN,
+                    "unit": "a.py",
+                    "attempt": 0,
+                    "pid": 1234,
+                    "role": "unit",
+                    "timestamp": 1234.5,
+                    "sidecar": str(engaged / f"{_UUID_A}-nonce1.partial.json"),
+                    "birth_token": 424243,
+                    "isolation": "file",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert durability._deferred_unit_from_registry(reg_dir, _UUID_A) == "a.py"
+
+    def test_healed_unit_leaves_skipped_while_history_reports(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R30-6: skips derive from this pass; staged losses still report."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc_a = _live_sleeper()
+        proc_b = _live_sleeper()
+        try:
+            birth_a = durability.birth_token_for_pid(proc_a.pid)
+            birth_b = durability.birth_token_for_pid(proc_b.pid)
+            if birth_a is None or birth_b is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                unit="a.py",
+                pid=proc_a.pid,
+                birth=birth_a,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            _plant_producer(
+                engaged,
+                uuid=_UUID_B,
+                unit="b.py",
+                pid=proc_b.pid,
+                birth=birth_b,
+                in_progress=_counts_block(3, fn="C_Digest"),
+            )
+            real_birth = durability.birth_token_for_pid
+            faulted = {proc_a.pid, proc_b.pid}
+
+            def _faulty_birth(pid: int) -> int | None:
+                if pid in faulted:
+                    return None
+                return real_birth(pid)
+
+            monkeypatch.setattr(durability, "birth_token_for_pid", _faulty_birth)
+            with pytest.warns(UserWarning, match="unverifiable|unresolved"):
+                plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan1["barrier_ok"] is True
+            assert plan1["skipped_units"] == ["a.py", "b.py"]
+            proc_a.terminate()
+            proc_a.wait(timeout=15)
+            faulted.remove(proc_a.pid)
+            with pytest.warns(UserWarning, match="unverifiable|unresolved"):
+                plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan2["barrier_ok"] is True
+            assert _UUID_A not in plan2["unresolved"]
+            assert _UUID_B in plan2["unresolved"]
+            assert plan2["skipped_units"] == ["b.py"]
+            staged = [
+                rec
+                for rec in plan2["cache_records"]["a.py"]
+                if rec.get("end_state") == "unresolved"
+            ]
+            assert staged, "historical losses still report after the heal"
+            assert any(rec.get("total_calls") == 2 for rec in plan2["cache_records"]["a.py"]), (
+                "the healed producer's calls recover"
+            )
+        finally:
+            for proc in (proc_a, proc_b):
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=15)
+
+    def test_committed_routing_survives_stale_target_rewrites(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R30-2: unresolved routing persists independently of cleanup targets."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted["registry"]).unlink()
+        sidecar = Path(planted["sidecar"])
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == sidecar:
+                raise OSError("injected sidecar unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        assert sidecar.exists(), "pass 1 holds the sidecar for retry"
+        content = json.loads(sidecar.read_text(encoding="utf-8"))
+        content["in_progress"] = _counts_block(9, fn="C_Finalize")
+        sidecar.write_text(json.dumps(content), encoding="utf-8")
+        pid_s, birth_s = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_B,
+            unit="b.py",
+            pid=pid_s,
+            birth=birth_s,
+            in_progress=_counts_block(3, fn="C_Digest"),
+        )
+        with pytest.warns(UserWarning, match="deferred"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert _UUID_A in plan2["unresolved"]
+        assert "a.py" in plan2["skipped_units"]
+        with pytest.warns(UserWarning, match="deferred"):
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert _UUID_A in plan3["unresolved"]
+        plan4 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan4["barrier_ok"] is True
+        assert _UUID_A in plan4["unresolved"], "routing survives target-invalid rewrites"
+        assert "a.py" in plan4["skipped_units"]
+        assert sidecar.exists(), "deferred evidence is never consumed"
+
+    @pytest.mark.parametrize("with_registry", [False, True], ids=["orphan-route", "registry-route"])
+    def test_committed_routing_survives_reunion_deferral_rewrites(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_registry: bool
+    ) -> None:
+        """#88R31-3: committed routing survives reunion deferrals, not just session waits."""
+        uuid_c, uuid_d = "c" * 32, "d" * 32
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["unresolved"] == []
+        assert not Path(planted["registry"]).exists(), "pass 1 consumes the parents"
+        staging_path = engaged / durability.BARRIER_STAGING_FILENAME
+        staged1 = json.loads(staging_path.read_text(encoding="utf-8"))
+        assert staged1["disposition"] == {_UUID_A: "committed"}
+
+        def _sibling(uuid: str, unit: str) -> None:
+            sibling_pid, sibling_birth = _dead_pid_with_birth()
+            _plant_producer(
+                engaged,
+                uuid=uuid,
+                unit=unit,
+                pid=sibling_pid,
+                birth=sibling_birth,
+                in_progress=_counts_block(3, fn="C_Digest"),
+            )
+
+        # A late orphan for A: its parents are gone, its window unflushed.
+        pid_o, _ = _dead_pid_with_birth()
+        orphan = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid_o,
+            birth=424244,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t9", "block": {}, "receipts": []}],
+            journal_seq=0,
+        )
+        orphan_registry = Path(orphan["registry"])
+        if not with_registry:
+            orphan_registry.unlink()
+        orphan_sidecar = Path(orphan["sidecar"])
+        orphan_journal = Path(orphan["journal"])
+
+        _sibling(_UUID_B, "b.py")
+        with pytest.warns(UserWarning, match="deferred"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert _UUID_A in plan2["unresolved"]
+        _sibling(uuid_d, "d.py")
+        with pytest.warns(UserWarning, match="deferred"):
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert _UUID_A in plan3["unresolved"]
+        staged3 = json.loads(staging_path.read_text(encoding="utf-8"))
+        assert _UUID_A not in staged3["collected_uuids"], "stale hints expire from collected"
+        assert staged3["disposition"].get(_UUID_A) == "committed", "R30-2 carries the wait"
+
+        _sibling(uuid_c, "c.py")
+        real_read_bytes = Path.read_bytes
+
+        def _flaky_journal(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self.name == orphan_journal.name:
+                raise PermissionError("injected journal EPERM")
+            return real_read_bytes(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_bytes", _flaky_journal)
+        with pytest.warns(UserWarning, match="deferred"):
+            plan4 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan4["barrier_ok"] is True
+        assert _UUID_A in plan4["unresolved"], "the faulted reunion defers"
+        assert orphan_sidecar.exists(), "deferred evidence is never consumed"
+        staged4 = json.loads(staging_path.read_text(encoding="utf-8"))
+        assert staged4["disposition"].get(_UUID_A) == "committed", (
+            "reunion deferrals carry committed routing through the rewrite"
+        )
+        monkeypatch.setattr(Path, "read_bytes", real_read_bytes)
+        plan5 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan5["barrier_ok"] is True
+        assert _UUID_A in plan5["unresolved"], "the wait re-fires instead of gap-healing"
+        assert orphan_sidecar.exists(), "no gap recovery consumes the orphan"
+        staged5 = json.loads(staging_path.read_text(encoding="utf-8"))
+        assert staged5["disposition"].get(_UUID_A) == "committed"
+
+    def test_validated_committed_retry_defers_without_session(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R30-1: staged publication authority never authorizes a sessionless fence."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": _UUID_B,
+                        "probe_seq": 0,
+                        "counters": [["m", "C_Digest", 0, 1]],
+                        "parent_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "unit": "a.py",
+                        "pid": proc.pid,
+                        "birth_token": birth,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pid_o, birth_o = _dead_pid_with_birth()
+            _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=1,
+                counters=[["m", "C_Digest", 0, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=pid_o,
+                birth=birth_o,
+            )
+            prior = _write_jsonl(
+                tmp_path / "prior.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    _session_record(
+                        pid,
+                        _counts_block(2, fn="C_Digest"),
+                        extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                    ),
+                    {"$report_type": "SessionFinish", "exitstatus": 0},
+                ],
+            )
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+            assert plan1["barrier_ok"] is True
+            assert proc.poll() is None, "pass 1 keeps the live writer"
+            assert any(
+                rec.get("worker_uuid") == _UUID_A for rec in plan1["cache_records"].get("a.py", [])
+            ), "pass 1 stages a claim-only partial"
+            # Pass 2 without the prior: staged publication authority
+            # must not bypass the missing-session guard into a fence.
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan2["barrier_ok"] is True
+            assert _UUID_A in plan2["unresolved"]
+            assert proc.poll() is None, "no SIGKILL without the committed session"
+            assert marker.exists()
+            assert Path(planted["registry"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_validated_committed_orphan_retry_defers_without_session(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R30-1: the registryless retry waits for its session too."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            Path(planted["registry"]).unlink()
+            marker = engaged / f"probe-consumed-{_UUID_A[:8]}-0-feedface.json"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": _UUID_B,
+                        "probe_seq": 0,
+                        "counters": [["m", "C_Digest", 0, 1]],
+                        "parent_uuid": _UUID_A,
+                        "run_id": _RUN,
+                        "unit": "a.py",
+                        "pid": proc.pid,
+                        "birth_token": birth,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pid_o, birth_o = _dead_pid_with_birth()
+            _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=1,
+                counters=[["m", "C_Digest", 0, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=pid_o,
+                birth=birth_o,
+            )
+            prior = _write_jsonl(
+                tmp_path / "prior.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    _session_record(
+                        pid,
+                        _counts_block(2, fn="C_Digest"),
+                        extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                    ),
+                    {"$report_type": "SessionFinish", "exitstatus": 0},
+                ],
+            )
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+            assert plan1["barrier_ok"] is True
+            assert proc.poll() is None, "pass 1 keeps the live writer"
+            assert any(
+                rec.get("worker_uuid") == _UUID_A for rec in plan1["cache_records"].get("a.py", [])
+            ), "pass 1 stages a claim-only partial"
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan2["barrier_ok"] is True
+            assert _UUID_A in plan2["unresolved"]
+            assert proc.poll() is None, "no SIGKILL without the committed session"
+            assert marker.exists()
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_held_journal_pins_family_until_resolved(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R30-3: a held journal keeps its parents; retries re-hold, never orphan."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        journal = Path(planted["journal"])
+        family = {str(registry), str(sidecar), str(journal)}
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in family:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] != {}
+        staging_path = engaged / durability.BARRIER_STAGING_FILENAME
+        staged1 = json.loads(staging_path.read_text(encoding="utf-8"))
+        original = {target["path"]: target["sha256"] for target in staged1["cleanup_targets"]}[
+            str(journal)
+        ]
+        with journal.open("a", encoding="utf-8") as fh:
+            fh.write('{"nodeid": "a.py::t2", "block": {}, "receipts": []}\n')
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert registry.exists(), "held journal pins the registry"
+        assert sidecar.exists(), "held journal pins the sidecar"
+        assert journal.exists(), "evolved bytes are held, never deleted"
+        assert str(journal) in plan2["cleanup_held"]
+        assert _UUID_A in plan2["retained_uuids"]
+        staged2 = json.loads(staging_path.read_text(encoding="utf-8"))
+        restaged = {target["path"]: target["sha256"] for target in staged2["cleanup_targets"]}
+        assert restaged.get(str(journal)) == original, "the exhibit re-stages"
+        swept = durability.sweep_orphans(
+            engaged,
+            current_run="run-now",
+            collected_runs=frozenset(plan2["collected_runs"]),
+            retain_uuids=frozenset(plan2["unresolved"] + plan2["retained_uuids"]),
+        )
+        assert swept["removed"] == 0
+        assert journal.exists(), "sweep keeps the held family"
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert registry.exists() and sidecar.exists() and journal.exists()
+        assert str(journal) in plan3["cleanup_held"], "retries re-hold, never orphan"
+
+    def test_strict_retry_holds_replaced_registry(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R30-4/I1: an evolved registry holds on strict retry (never silently consumed)."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        parents = {str(registry), str(sidecar)}
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        staging_path = engaged / durability.BARRIER_STAGING_FILENAME
+        assert staging_path.exists(), "cleanup-pending staging records the retry"
+        content = json.loads(registry.read_text(encoding="utf-8"))
+        content["timestamp"] = 9999.0
+        registry.write_text(json.dumps(content), encoding="utf-8")
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan2["barrier_ok"] is True
+        assert registry.exists(), "replacement bytes are held, never deleted"
+        assert str(registry) in plan2["cleanup_held"]
+        assert _UUID_A in plan2["retained_uuids"]
+
+    def test_strict_retry_holds_replaced_sidecar_registryless(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R30-4/I1: an evolved sidecar holds on the registryless strict retry."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted["registry"]).unlink()
+        sidecar = Path(planted["sidecar"])
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == sidecar:
+                raise OSError("injected sidecar unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        staging_path = engaged / durability.BARRIER_STAGING_FILENAME
+        assert staging_path.exists(), "cleanup-pending staging records the retry"
+        content = json.loads(sidecar.read_text(encoding="utf-8"))
+        content["in_progress"] = _counts_block(9, fn="C_Finalize")
+        sidecar.write_text(json.dumps(content), encoding="utf-8")
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan2["barrier_ok"] is True
+        assert sidecar.exists(), "replacement bytes are held, never deleted"
+        assert str(sidecar) in plan2["cleanup_held"]
+        assert _UUID_A in plan2["retained_uuids"]
+
+    def test_strict_retry_holds_never_staged_ghost(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R30-4/I2: a ghost under digested staging holds (never legacy-consumed)."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        journal = Path(planted["journal"])
+        assert not journal.exists()
+        parents = {str(registry), str(sidecar)}
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] == {}
+        journal.write_text('{"nodeid": "x", "block": {}, "receipts": []}\n', encoding="utf-8")
+        with pytest.warns(UserWarning, match="never staged; held"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan2["barrier_ok"] is True
+        assert journal.exists(), "an unstaged ghost is held, never consumed"
+        assert str(journal) in plan2["cleanup_held"]
+        assert registry.exists() and sidecar.exists(), "the ghost pins its family"
+        assert _UUID_A in plan2["retained_uuids"]
+        swept = durability.sweep_orphans(
+            engaged,
+            current_run="run-now",
+            collected_runs=frozenset(plan2["collected_runs"]),
+            retain_uuids=frozenset(plan2["unresolved"] + plan2["retained_uuids"]),
+        )
+        assert swept["removed"] == 0
+        assert journal.exists(), "sweep keeps the held ghost family"
+        with pytest.warns(UserWarning, match="never staged; held"):
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan3["barrier_ok"] is True
+        assert journal.exists(), "retries re-hold the ghost"
+        assert str(journal) in plan3["cleanup_held"]
+        assert registry.exists() and sidecar.exists()
+
+    def test_unreadable_registry_defers_live_unit_from_sidecar(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-I3: an unreadable registry defers its live unit via the sidecar."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=proc.pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            registry = Path(planted["registry"])
+            with monkeypatch.context() as m:
+                fired = _fault_read_always(m, registry)
+                with pytest.warns(UserWarning, match="unit resolved from sidecar"):
+                    plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert fired, "the read fault must engage"
+            assert plan["barrier_ok"] is True
+            assert _UUID_A in plan["unresolved"]
+            assert plan["skipped_units"] == ["a.py"]
+            assert plan["skipped_live"] == ["a.py"]
+            assert proc.poll() is None, "deferral never fences"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_unreadable_registry_and_sidecar_refuses(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-I3: no trusted unit anywhere refuses admission."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=proc.pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            registry = Path(planted["registry"])
+            sidecar = Path(planted["sidecar"])
+            with monkeypatch.context() as m:
+                fired_reg = _fault_read_always(m, registry)
+                fired_car = _fault_read_always(m, sidecar)
+                with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+                    plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert fired_reg and fired_car, "both read faults must engage"
+            assert plan["barrier_ok"] is False
+            assert _UUID_A in plan["unresolved"]
+            assert registry.exists() and sidecar.exists()
+            assert proc.poll() is None, "refusal never fences"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_torn_registry_defers_live_unit_from_sidecar(self, engaged: Path) -> None:
+        """#88R31-I3: a torn registry shielding a live sidecar defers its unit."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=proc.pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            Path(planted["registry"]).write_text("{torn", encoding="utf-8")
+            with pytest.warns(UserWarning, match="unit resolved from sidecar"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan["barrier_ok"] is True
+            assert _UUID_A in plan["unresolved"]
+            assert plan["skipped_units"] == ["a.py"]
+            assert proc.poll() is None, "deferral never fences"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_unreadable_registry_dead_producer_refuses(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-4: death behind an unreadable registry is unverifiable; refuse.
+
+        Overrules the R31-I3 fail-open wait: the authoritative liveness
+        record is hidden, so a live producer with stale sidecars is
+        indistinguishable from a dead one -- waiting silently leaves
+        the live unit eligible to rerun.
+        """
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        with monkeypatch.context() as m:
+            fired = _fault_read_always(m, registry)
+            with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert fired, "the read fault must engage"
+        assert plan["barrier_ok"] is False
+        assert _UUID_A in plan["unresolved"]
+        assert plan["skipped_units"] == []
+        assert registry.exists() and sidecar.exists()
+
+    @pytest.mark.parametrize("faults", [1, 2])
+    def test_transient_registry_fault_heals_and_processes(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch, faults: int
+    ) -> None:
+        """#88R31-4: a transient registry fault retries; the producer is never silently skipped."""
+        if not sys.platform.startswith("linux") and sys.platform != "win32":
+            pytest.skip("verified fencing needs pidfd or a process handle")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=proc.pid,
+                birth=birth,
+                in_progress=_counts_block(2, fn="C_Digest"),
+            )
+            registry = Path(planted["registry"])
+            Path(planted["sidecar"]).unlink()
+            real_read_bytes = Path.read_bytes
+            attempts: list[str] = []
+
+            def _flaky_first(self: Path, *args: Any, **kwargs: Any) -> bytes:
+                if str(self) == str(registry) and len(attempts) < faults:
+                    attempts.append("fault")
+                    raise PermissionError("injected transient EACCES")
+                return real_read_bytes(self, *args, **kwargs)
+
+            monkeypatch.setattr(Path, "read_bytes", _flaky_first)
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert attempts == ["fault"] * faults, "the transient fault must engage"
+            assert plan["barrier_ok"] is True
+            assert _UUID_A in plan["fenced"], "the healed producer is processed, never skipped"
+            assert proc.poll() is not None, "a live producer is fenced"
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_unreadable_registry_ignores_foreign_and_stale_sidecars(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-4: impersonating sidecars never supply the deferred unit; refuse."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        registry = Path(planted["registry"])
+        Path(planted["sidecar"]).unlink()
+        proc = _live_sleeper()
+        try:
+            live_birth = durability.birth_token_for_pid(proc.pid)
+            (engaged / f"{_UUID_A}-aaa.partial.json").write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": _UUID_A,
+                        "unit": "b.py",
+                        "pid": pid,
+                        "birth_token": 424243,
+                        "run_id": _RUN,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (engaged / f"{_UUID_A}-zzz.partial.json").write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": "f" * 32,
+                        "unit": "x.py",
+                        "pid": proc.pid,
+                        "birth_token": live_birth,
+                        "run_id": _RUN,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with monkeypatch.context() as m:
+                fired = _fault_read_always(m, registry)
+                with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+                    plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert fired, "the read fault must engage"
+            assert plan["barrier_ok"] is False
+            assert _UUID_A in plan["unresolved"]
+            assert plan["skipped_units"] == [], "no misdirected deferral"
+            assert proc.poll() is None, "refusal never fences"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_torn_registry_with_only_foreign_sidecar_refuses(self, engaged: Path) -> None:
+        """#88R31-4: a torn registry with no attributable sidecar refuses."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted["registry"]).write_text("{torn", encoding="utf-8")
+        Path(planted["sidecar"]).unlink()
+        proc = _live_sleeper()
+        try:
+            live_birth = durability.birth_token_for_pid(proc.pid)
+            (engaged / f"{_UUID_A}-m.partial.json").write_text(
+                json.dumps(
+                    {
+                        "worker_uuid": "f" * 32,
+                        "unit": "x.py",
+                        "pid": proc.pid,
+                        "birth_token": live_birth,
+                        "run_id": _RUN,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert plan["barrier_ok"] is False
+            assert _UUID_A in plan["unresolved"]
+            assert proc.poll() is None, "refusal never fences"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_committed_wait_clears_when_session_appears(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R31-M3d: a late-appearing session releases the committed wait."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted["registry"]).unlink()
+        sidecar = Path(planted["sidecar"])
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == sidecar:
+                raise OSError("injected sidecar unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert sidecar.exists(), "pass 1 holds the sidecar for retry"
+        content = json.loads(sidecar.read_text(encoding="utf-8"))
+        content["in_progress"] = _counts_block(9, fn="C_Finalize")
+        sidecar.write_text(json.dumps(content), encoding="utf-8")
+        with pytest.warns(UserWarning, match="deferred"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert _UUID_A in plan2["unresolved"]
+        assert sidecar.exists(), "the sessionless wait retains evidence"
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan3["barrier_ok"] is True
+        assert _UUID_A not in plan3["unresolved"], "the wait releases, never livelocks"
+        assert "a.py" not in plan3["skipped_units"]
+        assert sidecar.exists(), "authority routes to verification, not deferral"
+        assert str(sidecar) in plan3["cleanup_held"]
+
+    def test_incarnation_dead_pid_unreadable_birth_reads_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-WIN1: without pidfd, a dead pid proves death (birth unreadable)."""
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
+        monkeypatch.setattr(durability, "birth_token_for_pid", lambda pid: None)
+        pid, _ = _dead_pid_with_birth()
+        assert durability._incarnation_alive(pid, 424243) is False
+        assert durability._incarnation_alive(os.getpid(), 424243) is True
+
+    def test_incarnation_dead_pid_matching_birth_reads_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-WIN1: existence short-circuits before the birth compare."""
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
+        monkeypatch.setattr(durability, "birth_token_for_pid", lambda pid: 424243)
+        pid, _ = _dead_pid_with_birth()
+        assert durability._incarnation_alive(pid, 424243) is False
+
+    def test_terminate_verified_dead_pid_without_pinning_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-MAC1: a dead pid needs no signal on any platform."""
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
+        pid, _ = _dead_pid_with_birth()
+        assert durability._terminate_verified(pid, 424243, 0.1) is True
+        assert durability._terminate_verified(os.getpid(), 424243, 0.1) is False
+
+    def test_terminate_verified_io_fault_fences_via_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-5: EIO on kill() never proves death; the backend decides."""
+        if not sys.platform.startswith("linux"):
+            pytest.skip("pidfd backend only")
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            assert birth is not None
+            real_kill = os.kill
+            calls: list[str] = []
+
+            def _eio_once(pid: int, sig: int) -> None:
+                if pid == proc.pid and not calls:
+                    calls.append("kill")
+                    raise OSError(errno.EIO, "injected kill fault")
+                return real_kill(pid, sig)
+
+            monkeypatch.setattr(os, "kill", _eio_once)
+            assert durability._terminate_verified(proc.pid, birth, 5.0) is True
+            assert calls == ["kill"], "the fault must engage"
+            assert proc.poll() is not None, "the backend fences; EIO proves nothing"
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=15)
+
+    def test_incarnation_io_fault_stays_alive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#88R31-5: EIO on kill() reads alive, never dead."""
+        if sys.platform == "win32":
+            pytest.skip("POSIX kill-errno semantics")
+        monkeypatch.setattr(durability, "_pinning_backend", lambda: None)
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("needs a readable birth token")
+            real_kill = os.kill
+            calls: list[str] = []
+
+            def _eio_once(pid: int, sig: int) -> None:
+                if pid == proc.pid and not calls:
+                    calls.append("kill")
+                    raise OSError(errno.EIO, "injected kill fault")
+                return real_kill(pid, sig)
+
+            monkeypatch.setattr(os, "kill", _eio_once)
+            assert durability._incarnation_alive(proc.pid, birth) is True
+            assert calls == ["kill"], "the fault must engage"
+        finally:
+            proc.terminate()
+            proc.wait(timeout=15)
+
+    def test_terminate_verified_invalid_pid_needs_no_signal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-5: an EINVAL pid value proves death (nothing to signal)."""
+        if sys.platform == "win32":
+            pytest.skip("POSIX kill-errno semantics")
+        signals: list[str] = []
+        real_kill = os.kill
+
+        def _einval(pid: int, sig: int) -> None:
+            if pid == 111111:
+                raise OSError(errno.EINVAL, "invalid pid value")
+            return real_kill(pid, sig)
+
+        def _spy_send_signal(*args: Any, **kwargs: Any) -> Any:
+            signals.append("signal")
+            raise AssertionError("must not signal an invalid pid")
+
+        monkeypatch.setattr(os, "kill", _einval)
+        monkeypatch.setattr(signal, "pidfd_send_signal", _spy_send_signal, raising=False)
+        assert durability._terminate_verified(111111, 424243, 0.1) is True
+        assert signals == []
+
+    def test_regular_file_hash_matches_read_bytes_with_crlf(self, tmp_path: Path) -> None:
+        """#88R31-WIN3: fd-verified hashing reads binary (no CRLF translation)."""
+        target = tmp_path / "victim.windows.jsonl"
+        target.write_bytes(b'{"a": 1}\r\n{"b": 2}\r\n')
+        import hashlib
+
+        assert (
+            durability._sha256_regular_file_hex(target)
+            == hashlib.sha256(target.read_bytes()).hexdigest()
+        )
+
+    def test_strict_retry_never_stages_ghost_exhibits(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R31-1: ghost exhibits never stage, and pin their family."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        sidecar = Path(planted["sidecar"])
+        sidecar.unlink()
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(2, fn="C_Digest"),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        registry = Path(planted["registry"])
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == registry:
+                raise OSError("injected registry unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan1["barrier_ok"] is True
+        assert registry.exists(), "pass 1 holds the registry for retry"
+        ghost = {
+            "worker_uuid": _UUID_A,
+            "run_id": _RUN,
+            "unit": "a.py",
+            "attempt": 0,
+            "pid": pid,
+            "role": "unit",
+            "timestamp": 1234.5,
+            "sidecar": str(sidecar),
+            "birth_token": 424243,
+            "isolation": "file",
+            "journal_seq": 0,
+            "in_progress": _counts_block(7, fn="C_Digest"),
+        }
+        sidecar.write_text(json.dumps(ghost), encoding="utf-8")
+        staging_path = engaged / durability.BARRIER_STAGING_FILENAME
+        with pytest.warns(UserWarning, match="never staged; held"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan2["barrier_ok"] is True
+        assert sidecar.exists(), "the ghost is held, never consumed"
+        assert str(sidecar) in plan2["cleanup_held"]
+        assert registry.exists(), "the ghost pins its family"
+        staged2 = json.loads(staging_path.read_text(encoding="utf-8"))
+        staged_paths = {target["path"] for target in staged2["cleanup_targets"]}
+        assert str(sidecar) not in staged_paths, "ghost exhibits never stage"
+        with pytest.warns(UserWarning, match="never staged; held"):
+            plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert plan3["barrier_ok"] is True
+        assert sidecar.exists(), "retries re-hold the ghost, never consume it"
+        assert str(sidecar) in plan3["cleanup_held"]
+        assert registry.exists()
+        for records in plan3["cache_records"].values():
+            assert all(rec.get("total_calls", 0) != 7 for rec in records), (
+                "unadjudicated calls never publish"
+            )
+
+    def test_consume_verifies_journal_before_parents(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R31-2: a journal mutating mid-cleanup holds its whole family."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(4), "receipts": []}],
+        )
+        registry = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        journal = Path(planted["journal"])
+        parents = {str(registry), str(sidecar), str(journal)}
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if str(self) in parents:
+                raise OSError("injected parent unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert plan1["cache_records"] != {}
+        real_prune = durability._prune_sidecar_tmps
+        appended: list[str] = []
+
+        def _append_then_delegate(path: Path, *args: Any, **kwargs: Any) -> Any:
+            # A window landing mid-cleanup, after the journal's
+            # adjudication but before its deletion.
+            if not appended and path == journal:
+                appended.append("window")
+                with journal.open("a", encoding="utf-8") as fh:
+                    fh.write('{"nodeid": "a.py::t2", "block": {}, "receipts": []}\n')
+            return real_prune(path, *args, **kwargs)
+
+        monkeypatch.setattr(durability, "_prune_sidecar_tmps", _append_then_delegate)
+        with pytest.warns(UserWarning, match="changed since adjudication"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert appended == ["window"]
+        assert plan2["barrier_ok"] is True
+        assert journal.exists(), "mutated bytes are held, never deleted"
+        assert str(journal) in plan2["cleanup_held"]
+        assert registry.exists() and sidecar.exists(), "the hold pins the family"
+
+    def test_identity_scan_reports_completeness(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-2: the producer scan reports whether discovery completed."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        uuids, complete = durability._known_producer_uuids(engaged)
+        assert complete is True
+        assert _UUID_A in uuids
+        reg_dir = engaged / durability.REGISTRY_DIRNAME
+        with monkeypatch.context() as m:
+            fired = _fault_scandir_always(m, reg_dir)
+            uuids, complete = durability._known_producer_uuids(engaged)
+        assert fired, "the listing fault must engage"
+        assert complete is False
+
+    def test_incomplete_discovery_withholds_legacy_attribution(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-2/#88R27-2: a faulted scan defers instead of misattributing."""
+        uuid_b = "aaaaaaaa" + "b" * 24
+        pid_a, birth_a = _dead_pid_with_birth()
+        planted_a = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid_a,
+            birth=birth_a,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        pid_b, birth_b = _dead_pid_with_birth()
+        planted_b = _plant_producer(
+            engaged,
+            uuid=uuid_b,
+            pid=pid_b,
+            birth=birth_b,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted_b["sidecar"]).unlink(missing_ok=True)
+        Path(planted_b["journal"]).unlink(missing_ok=True)
+        pid_o, birth_o = _dead_pid_with_birth()
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=uuid_b,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            pid=pid_o,
+            birth=birth_o,
+        )
+        reg_dir = engaged / durability.REGISTRY_DIRNAME
+        real_glob = Path.glob
+        real_scandir = os.scandir
+        fired: list[str] = []
+
+        def _flaky_glob(self: Path, pattern: Any, *args: Any, **kwargs: Any) -> Any:
+            # A readdir EACCES inside glob yields [] (proven against a
+            # chmod-000 dir: glob swallows, iterdir raises). Fault the
+            # identity scan's listing once, whichever lister it uses;
+            # the main inventory still sees the healed dir.
+            if str(self) == str(reg_dir) and not fired:
+                fired.append(str(self))
+                return iter([])
+            return real_glob(self, pattern, *args, **kwargs)
+
+        def _flaky_scandir(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path) == str(reg_dir) and not fired:
+                fired.append(str(path))
+                raise PermissionError("injected readdir EACCES")
+            return real_scandir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "glob", _flaky_glob)
+        monkeypatch.setattr(os, "scandir", _flaky_scandir)
+        with pytest.warns(UserWarning, match="ambiguous|incomplete|deferred"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert fired, "the fault must hit the identity scan"
+        assert plan["barrier_ok"] is True
+        assert _UUID_A in plan["unresolved"], "withhold-then-publish would strand"
+        assert orphan.exists(), "no attribution on incomplete discovery"
+        assert Path(planted_a["registry"]).exists()
+        # Healed retry: the true prefix collision still withholds B's
+        # orphan from A, but A itself collects and converges.
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        partials = [
+            rec
+            for rec in plan2["cache_records"]["a.py"]
+            if rec["$report_type"] == "CallCountersPartial"
+        ]
+        assert sum(rec["total_calls"] for rec in partials) == 2
+        assert not Path(planted_a["registry"]).exists()
+        assert orphan.exists()
 
     def test_quarantined_probe_never_adopted(self, engaged: Path) -> None:
         """#88R10-4c: quarantined forensics survive staged adoption."""
@@ -6148,6 +8935,126 @@ class TestSweepAndFence:
         assert tmp.exists()
         assert Path(planted["sidecar"]).exists(), "the skip holds its sidecar"
 
+    def _plant_unflushed_spawn(self, engaged: Path, planted: dict[str, Any], proc: Any) -> None:
+        """Add a live unflushed spawn record to a planted sidecar (#88R22-4)."""
+        birth = durability.birth_token_for_pid(proc.pid)
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        assert not slot.exists()
+        entry: dict[str, Any] = {"probe_seq": 1, "slot": str(slot), "pid": proc.pid}
+        if birth is not None:
+            entry["birth_token"] = birth
+        sidecar_path = Path(planted["sidecar"])
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        payload["spawned_children"] = [entry]
+        sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_unit_dead_defers_while_child_unflushed(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R22-4: postmortem waits for unflushed children (unit route)."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            self._plant_unflushed_spawn(engaged, planted, proc)
+            child = _write_jsonl(
+                tmp_path / "child.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "a.py::test_first",
+                        "when": "setup",
+                        "outcome": "passed",
+                    },
+                ],
+            )
+            with pytest.warns(UserWarning, match="unflushed"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+                )
+            assert records == []
+            assert proc.poll() is None
+            assert Path(planted["registry"]).exists()
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_registryless_dead_defers_while_child_unflushed(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R22-4: orphan postmortem waits too (unit route)."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            self._plant_unflushed_spawn(engaged, planted, proc)
+            Path(planted["registry"]).unlink()
+            child = _write_jsonl(
+                tmp_path / "child.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "a.py::test_first",
+                        "when": "setup",
+                        "outcome": "passed",
+                    },
+                ],
+            )
+            with pytest.warns(UserWarning, match="unflushed"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+                )
+            assert records == []
+            assert proc.poll() is None
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_barrier_dead_defers_while_child_unflushed(self, engaged: Path) -> None:
+        """#88R22-4: barrier reunion waits for unflushed children."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            self._plant_unflushed_spawn(engaged, planted, proc)
+            with pytest.warns(UserWarning, match="unflushed"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert _UUID_A in plan["unresolved"]
+            assert proc.poll() is None
+            assert Path(planted["registry"]).exists()
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
     def test_registryless_barrier_holds_sidecar_for_unresolved_marker(self, engaged: Path) -> None:
         """#88R20-5: the resume orphan route retains behind a skip."""
         pid, birth = _dead_pid_with_birth()
@@ -6232,10 +9139,13 @@ class TestSweepAndFence:
         assert not Path(planted["registry"]).exists()
         assert not Path(planted["sidecar"]).exists()
 
-    def test_barrier_fenced_retry_publishes_recovery_delta(
+    def test_barrier_fenced_retry_defers_without_session(
         self, engaged: Path, tmp_path: Path
     ) -> None:
-        """#88R20-4: the fenced route deltas like the dead one."""
+        """#88R20-4 as amended by #88R30-1: a sessionless committed retry
+        defers instead of fencing (delta coverage stays with
+        test_barrier_dead_retry_publishes_recovery_delta and
+        test_registryless_barrier_retry_publishes_recovery_delta)."""
         proc = _live_sleeper()
         try:
             birth = durability.birth_token_for_pid(proc.pid)
@@ -6309,17 +9219,16 @@ class TestSweepAndFence:
                     {"$report_type": "SessionFinish", "exitstatus": 0},
                 ],
             )
-            with pytest.warns(UserWarning, match="recovery withheld"):
+            # "deferred:" with colon: the bare word also matches this
+            # test's own name inside tmp paths of unrelated warnings.
+            with pytest.warns(UserWarning, match="deferred:"):
                 second = durability.prepare_resume(engaged, prior_merged_jsonl=prior2)
-            assert proc.wait(timeout=30) is not None, "the retry fences"
-            deltas = [
-                rec for rec in second["cache_records"].get("a.py", []) if rec.get("recovered_keys")
-            ]
-            assert len(deltas) == 1, "the fenced heal publishes once as a delta"
-            assert deltas[0]["recovered_keys"] == [{"parent_uuid": _UUID_A, "probe_seq": 0}]
-            assert deltas[0]["total_calls"] == 0
-            assert not marker.exists()
-            assert not Path(planted["registry"]).exists()
+            assert second["barrier_ok"] is True
+            assert _UUID_A in second["unresolved"]
+            assert "a.py" in second["skipped_units"]
+            assert proc.poll() is None, "no SIGKILL without the committed session"
+            assert marker.exists()
+            assert Path(planted["registry"]).exists()
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -6376,7 +9285,7 @@ class TestSweepAndFence:
         assert not Path(planted["sidecar"]).exists()
 
     def test_reconcile_binds_proof_to_receipt(self, engaged: Path, tmp_path: Path) -> None:
-        """#88R21-1: one slot's proof heals only its own receipt."""
+        """#88R21-1/#88R22-1: aliased slots freeze instead of healing by turns."""
         child_c = "c" * 32
         pid, _ = _dead_pid_with_birth()
         planted = _plant_producer(
@@ -6437,9 +9346,65 @@ class TestSweepAndFence:
             )
         assert records == []
         assert full.exists(), "the foreign receipt borrows no proof"
-        assert not legacy.exists(), "the proved nonfinalized copy still suppresses"
-        assert not baseline.exists()
-        assert not tmp.exists()
+        assert legacy.exists(), "aliased evidence retains for forensics"
+        assert baseline.exists()
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+        with pytest.warns(UserWarning, match="recovery withheld"):
+            retry = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert retry == [], "the freeze is idempotent, never a slow heal"
+        assert full.exists()
+        assert legacy.exists()
+        assert baseline.exists()
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_clean_aliased_markers_freeze_at_finalize(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R22-1: aliased slots freeze even with no rewrite in sight."""
+        child_c = "c" * 32
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        legacy_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            child_uuid=_UUID_B,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        legacy = legacy_src.with_name(legacy_src.name.replace("probe-", "probe-consumed-", 1))
+        legacy_src.rename(legacy)
+        full_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            child_uuid=child_c,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        full = engaged / f"probe-consumed-{_UUID_A}-0-feedface.json"
+        full_src.rename(full)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="another receipt"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert legacy.exists()
+        assert full.exists()
         assert Path(planted["registry"]).exists()
 
     def test_contradictory_live_marker_registers_slot_hold(
@@ -6677,6 +9642,2112 @@ class TestSweepAndFence:
         assert marker.exists()
         assert tmp.exists()
         assert Path(planted["registry"]).exists()
+
+    def test_contradiction_preserves_live_writer_postmortem(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R22-5: contested groups keep their writers and evidence."""
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            pid, _ = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=424243,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            live_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                nonce="aaaa1111",
+                counters=[["m", "C_Digest", None, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=proc.pid,
+                birth=birth,
+            )
+            live = live_src.with_name(live_src.name.replace("probe-", "probe-consumed-", 1))
+            live_src.rename(live)
+            dead_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                nonce="bbbb2222",
+                counters=[["m", "C_Digest", 0, 1]],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=None,
+            )
+            dead = dead_src.with_name(dead_src.name.replace("probe-", "probe-consumed-", 1))
+            dead_src.rename(dead)
+            slot_a = engaged / f"probe-{_UUID_A[:8]}-0-aaaa1111.json"
+            slot_a.write_text("{torn", encoding="utf-8")
+            tmp = _plant_probe_tmp(
+                slot_a, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, 1]])
+            )
+            child = _write_jsonl(
+                tmp_path / "child.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "a.py::test_first",
+                        "when": "setup",
+                        "outcome": "passed",
+                    },
+                ],
+            )
+            with pytest.warns(UserWarning, match="contradictory"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+                )
+            assert [rec["$report_type"] for rec in records] == [
+                "CallCountersPartial",
+                "CallCountersLost",
+            ]
+            assert proc.poll() is None, "contested writers are never fenced"
+            assert live.exists()
+            assert dead.exists()
+            assert slot_a.exists()
+            assert tmp.exists()
+            assert Path(planted["registry"]).exists()
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_garbage_baseline_blocks_suppression_heal(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R22-6: corrupt baselines wait instead of proving recovery."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows] + [["m", "C_Digest", 0, True]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="malformed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert marker.exists()
+        assert baseline.exists(), "the corrupt baseline waits for forensics"
+        assert Path(planted["registry"]).exists()
+
+    def test_garbage_tmp_rewrite_is_refused(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R22-6: malformed rewrites never replay into proof."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        tmp = _plant_probe_tmp(
+            orphan,
+            _probe_tmp_payload(
+                _UUID_B, 0, [list(row) for row in rows] + [["m", "C_Digest", 0, True]]
+            ),
+        )
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="malformed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert marker.exists(), "the refused rewrite blocks the reconcile"
+        assert orphan.exists(), "the refused rewrite holds its baseline"
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_malformed_scalar_breaks_coherence(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R22-6: loss-scalar validity joins the coherence fingerprint."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        clean_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            nonce="aaaa1111",
+            counters=[],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        clean = clean_src.with_name(clean_src.name.replace("probe-", "probe-consumed-", 1))
+        clean_src.rename(clean)
+        midrun = json.loads(clean.read_text(encoding="utf-8"))
+        midrun["finalized"] = False
+        clean.write_text(json.dumps(midrun), encoding="utf-8")
+        dirty_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            nonce="bbbb2222",
+            counters=[],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        dirty = dirty_src.with_name(dirty_src.name.replace("probe-", "probe-consumed-", 1))
+        dirty_src.rename(dirty)
+        payload = json.loads(dirty.read_text(encoding="utf-8"))
+        payload["probes_lost"] = True
+        dirty.write_text(json.dumps(payload), encoding="utf-8")
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="contradictory"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert clean.exists()
+        assert dirty.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_identical_malformed_scalars_never_heal(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R22-6: agreed-invalid scalars still prove nothing."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        for nonce in ("aaaa1111", "bbbb2222"):
+            src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                nonce=nonce,
+                counters=[],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=None,
+            )
+            marker = src.with_name(src.name.replace("probe-", "probe-consumed-", 1))
+            src.rename(marker)
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            payload["probes_lost"] = True
+            marker.write_text(json.dumps(payload), encoding="utf-8")
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="malformed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert records == []
+        assert len(list(engaged.glob("probe-consumed-*.json"))) == 2
+        assert Path(planted["registry"]).exists()
+
+    def test_finalize_sees_post_replay_rewrite(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R22-2: group truth finalizes after orphan reads and replay."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        tmp = _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows]))
+        real_list_tmps = durability._list_tmp_paths
+        calls = 0
+
+        def _hiding_list_tmps(directory: Path, prefix: str) -> list[Path] | None:
+            nonlocal calls
+            if prefix == f"{slot.name}.tmp-":
+                calls += 1
+                if calls <= 3:
+                    return []
+            return real_list_tmps(directory, prefix)
+
+        monkeypatch.setattr(durability, "_list_tmp_paths", _hiding_list_tmps)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="unresolved rewrite"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert calls >= 4, "the rewrite must surface after replay"
+        assert records == []
+        assert marker.exists(), "the late rewrite withholds at finalize"
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_vanished_rewrite_keeps_its_hold(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R22-3: observed return evidence needs a proved disposition."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows]))
+        real_list_tmps = durability._list_tmp_paths
+        calls = 0
+
+        def _vanishing_list_tmps(directory: Path, prefix: str) -> list[Path] | None:
+            nonlocal calls
+            if prefix == f"{slot.name}.tmp-":
+                calls += 1
+                if calls >= 4:
+                    return []
+            return real_list_tmps(directory, prefix)
+
+        monkeypatch.setattr(durability, "_list_tmp_paths", _vanishing_list_tmps)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="recovery withheld"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert calls >= 4, "the rewrite must vanish after adjudication"
+        assert records == []
+        assert marker.exists(), "a vanish is not a proof of landing"
+        assert Path(planted["registry"]).exists()
+
+    def test_early_vanish_withholds_at_withhold_check(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R22-3: a rewrite vanishing mid-turn holds instead of clearing."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        tmp = _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows]))
+        real_list_tmps = durability._list_tmp_paths
+        calls = 0
+
+        def _vanishing_list_tmps(directory: Path, prefix: str) -> list[Path] | None:
+            nonlocal calls
+            if prefix == f"{slot.name}.tmp-":
+                calls += 1
+                if calls >= 2:
+                    return []
+            return real_list_tmps(directory, prefix)
+
+        monkeypatch.setattr(durability, "_list_tmp_paths", _vanishing_list_tmps)
+        child = _committed_child(tmp_path, pid, _counts_block(10))
+        with pytest.warns(UserWarning, match="keeps an unresolved rewrite"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+            )
+        assert calls >= 2, "the rewrite must vanish after coverage"
+        assert records == []
+        assert marker.exists()
+        assert tmp.exists()
+        assert Path(planted["registry"]).exists()
+
+    @pytest.mark.parametrize(
+        "shape, expect_outstanding",
+        [
+            ("flushed_live", False),
+            ("unflushed_live", True),
+            ("unflushed_dead", False),
+            ("unflushed_recycled", False),
+            ("unflushed_birthless_live", True),
+            ("unflushed_birthless_dead", False),
+            ("malformed_entry", True),
+            ("malformed_field", True),
+            ("no_sidecar", False),
+            ("no_field", False),
+        ],
+    )
+    def test_unflushed_live_spawns_table(
+        self, tmp_path: Path, shape: str, expect_outstanding: bool
+    ) -> None:
+        """#88R22-4: only live unflushed spawns defer postmortem."""
+        proc = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(proc.pid)
+            dead, dead_birth = _dead_pid_with_birth()
+            slot = tmp_path / "probe-aaaaaaaa-0-0-feedface.json"
+            entry: Any = {"probe_seq": 0, "slot": str(slot)}
+            if shape == "flushed_live":
+                slot.write_text("{}", encoding="utf-8")
+                entry.update({"pid": proc.pid, "birth_token": birth})
+            elif shape == "unflushed_live":
+                entry.update({"pid": proc.pid, "birth_token": birth})
+            elif shape == "unflushed_dead":
+                entry.update({"pid": dead, "birth_token": dead_birth})
+            elif shape == "unflushed_recycled":
+                entry.update({"pid": proc.pid, "birth_token": (birth or 0) + 1})
+            elif shape == "unflushed_birthless_live":
+                entry.update({"pid": proc.pid})
+            elif shape == "unflushed_birthless_dead":
+                entry.update({"pid": dead})
+            elif shape == "malformed_entry":
+                entry = {"probe_seq": "zero"}
+            if shape == "no_sidecar":
+                sidecar = None
+            elif shape == "malformed_field":
+                sidecar = {"spawned_children": {"nope": True}}
+            elif shape == "no_field":
+                sidecar = {"worker_uuid": _UUID_A}
+            else:
+                sidecar = {"spawned_children": [entry]}
+            if shape == "unflushed_recycled" and birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            outstanding = durability._unflushed_live_spawns(_UUID_A, sidecar, tmp_path)
+            assert (len(outstanding) > 0) == expect_outstanding
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_probe_spawn_recorded_and_forgotten(self, engaged: Path) -> None:
+        """#88R22-4: launches record durable spawn evidence, absorbs prune it."""
+        call_counters.ensure_registered()
+        info = call_counters.registration_info()
+        assert info is not None
+        sidecar_path = Path(info["sidecar_path"])
+        call_counters.note_probe_spawned(
+            probe_seq=0, slot=str(engaged / "probe-x.json"), pid=12345, birth=678
+        )
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        assert payload["spawned_children"] == [
+            {
+                "probe_seq": 0,
+                "slot": str(engaged / "probe-x.json"),
+                "pid": 12345,
+                "birth_token": 678,
+            }
+        ]
+        call_counters.forget_probe_spawn(0)
+        call_counters.record_direct_call("C_Login", 0)
+        repayload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        assert repayload.get("spawned_children", []) == []
+        with pytest.raises(ValueError, match="probe_seq"):
+            call_counters.note_probe_spawned(probe_seq=-1, slot="x", pid=1)
+        call_counters.reset_for_tests()
+        assert call_counters._spawned_children == []
+
+    def test_attach_failure_reaps_without_draining(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R23-6: a failed spawn record kills and reaps, never drains pipes."""
+        from pkcs11_check.testcases._probes import runner as probe_runner
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        calls: list[str] = []
+
+        def _boom(*args: Any, **kwargs: Any) -> None:
+            raise durability.CounterPersistenceError("disk full")
+
+        factory = _fake_popen_factory(returncode=0)
+
+        class _RecordingPopen(factory):  # type: ignore[misc,valid-type]
+            def communicate(self, timeout: Any = None) -> tuple[str, str]:
+                calls.append("communicate")
+                return super().communicate(timeout)
+
+            def kill(self) -> None:
+                calls.append("kill")
+                super().kill()
+
+            def wait(self, timeout: Any = None) -> int:
+                calls.append("wait")
+                return super().wait(timeout)
+
+        monkeypatch.setattr(subprocess, "Popen", _RecordingPopen)
+        monkeypatch.setattr(probe_runner, "note_probe_spawned", _boom)
+        with pytest.raises(durability.CounterPersistenceError, match="disk full"):
+            run_probe("_echo", {"module_path": "/x.so"})
+        # Draining after kill waits for inherited pipes (a grandchild
+        # holding stdout delays EOF past the probe timeout); reaping via
+        # wait() cannot hang on pipes.
+        assert "kill" in calls
+        assert "wait" in calls
+        assert "communicate" not in calls
+
+    def test_birthless_zombie_resolves_via_incarnation(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-7: an exited-but-unreaped child reads dead, never live."""
+        if getattr(os, "pidfd_open", None) is None:
+            pytest.skip("pidfd exit detection is Linux-only")
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        try:
+            # Prove zombie: exited (state Z) but never waited, so the
+            # pid slot is still occupied (kill(pid, 0) succeeds).
+            deadline = time.monotonic() + 30
+            while True:
+                state = (
+                    Path(f"/proc/{proc.pid}/stat")
+                    .read_text(encoding="ascii")
+                    .rsplit(")", 1)[1]
+                    .split()[0]
+                )
+                if state == "Z":
+                    break
+                assert time.monotonic() < deadline, "child never became a zombie"
+                time.sleep(0.01)
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+            )
+            # Birthless record (birth unreadable at spawn) naming the
+            # zombie; no slot file (the child never flushed).
+            slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+            assert not slot.exists()
+            entry: dict[str, Any] = {"probe_seq": 1, "slot": str(slot), "pid": proc.pid}
+            sidecar_path = Path(planted["sidecar"])
+            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            payload["spawned_children"] = [entry]
+            sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
+            child = tmp_path / "child.jsonl"
+            child.write_text("", encoding="utf-8")
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+            assert any(rec.get("$report_type") == "CallCountersPartial" for rec in records)
+            assert not Path(planted["registry"]).exists(), "no defer on a proven exit"
+        finally:
+            proc.wait(timeout=30)
+
+    def test_direct_heal_rechecks_evidence_validity(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-5: replay-discovered garbage stops a direct heal too."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        # A garbage-only rewrite tmp: unparseable rows never hold the
+        # marker turn (they carry no returns), so the marker goes
+        # direct -- but the orphan loop's replay refuses the tmp and
+        # dirties the receipt before finalization runs.
+        _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [["m", "C_Digest", 0, True]]))
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with pytest.warns(UserWarning, match="malformed evidence"):
+            durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert marker.exists(), "a dirtied receipt must not heal direct"
+
+    def test_rewrite_tmp_mistyped_scalar_refuses_replay(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R23-5: a tmp with a corrupt loss scalar replays nothing."""
+        pid, _ = _dead_pid_with_birth()
+        parent_block = _counts_block(3, fn="C_Digest")
+        parent_block["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+            "0": {"name": "CKR_OK", "count": 2}
+        }
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=parent_block,
+        )
+        rows = [["m", "C_Digest", None, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        # Rows identical to the baseline (no advancement, so no
+        # rewrite hold) but a mistyped loss scalar: the tmp is corrupt,
+        # so it must refuse like garbage rows instead of replaying
+        # silently while its scalar drops.
+        tmp_payload = _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows])
+        tmp_payload["probes_lost"] = True
+        _plant_probe_tmp(slot, tmp_payload)
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with pytest.warns(UserWarning, match="malformed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert marker.exists(), "a scalar-tainted tmp must not authorize a heal"
+        for rec in records:
+            if rec.get("$report_type") == "CallCountersPartial":
+                assert rec.get("in_flight") == [
+                    {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 1}
+                ], "refused rows stay pending, never adopted"
+
+    def test_producer_tmp_mistyped_scalar_flags_conflict(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R23-5: a producer tmp with a corrupt scalar replays nothing."""
+        pid, birth = _dead_pid_with_birth()
+        parent_block = _counts_block(3, fn="C_Digest")
+        parent_block["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+            "0": {"name": "CKR_OK", "count": 2}
+        }
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=parent_block,
+        )
+        advanced = _counts_block(3, fn="C_Digest")
+        tmp_payload = _tmp_payload(_UUID_A, advanced, pid=pid)
+        tmp_payload["probes_lost"] = True
+        _plant_tmp(Path(planted["sidecar"]), tmp_payload)
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with pytest.warns(UserWarning, match="malformed loss scalar"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        lost = [rec for rec in records if rec.get("$report_type") == "CallCountersLost"]
+        assert len(lost) == 1
+        assert lost[0]["end_state"] == "conflict", "tainted replay flags conflict"
+        partials = [rec for rec in records if rec.get("$report_type") == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["in_flight"] == [
+            {"module": "m", "bucket": "test", "fn": "C_Digest", "count": 1}
+        ], "committed wins; the tmp's returns stay pending"
+
+    def test_aliased_torn_marker_retained_for_forensics(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R23-3: an undecidable copy of a contested slot is not debris."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        valid_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="a1b2c3",
+        )
+        valid = valid_src.with_name(f"probe-consumed-{_UUID_A}-0-a1b2c3.json")
+        valid_src.rename(valid)
+        torn = engaged / f"probe-consumed-{_UUID_A[:8]}-0-a1b2c3.json"
+        torn.write_text("{not valid json", encoding="utf-8")
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+
+        def _collect() -> list[dict[str, Any]]:
+            with pytest.warns(UserWarning, match="forensics"):
+                return durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+                )
+
+        _collect()
+        assert torn.exists(), "the contested copy must survive pass 1"
+        assert valid.exists(), "the valid copy stays frozen, not healed"
+        _collect()
+        assert torn.exists(), "the contest never clears by deletion"
+        assert valid.exists(), "no silent heal on the emptied slot"
+
+    def test_contested_pair_never_heals_sequentially(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-3: withheld conflicts cannot reconcile-heal one by one."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows1 = [["m", "C_Digest", 0, 1]]
+        rows2 = [["m", "C_Digest", 0, 2]]
+        m1src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows1],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid=_UUID_B,
+        )
+        m1 = m1src.with_name(m1src.name.replace("probe-", "probe-consumed-", 1))
+        m1src.rename(m1)
+        m2src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows2],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid="c" * 32,
+        )
+        m2 = m2src.with_name(f"probe-consumed-{_UUID_A}-0-d4e5f6.json")
+        m2src.rename(m2)
+        # A baseline plus a live rewrite tmp withhold both copies, so
+        # the reconcile (not just direct finalize) must refuse them.
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-d4e5f6.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows1],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid=_UUID_B,
+        )
+        assert baseline == slot
+        _plant_probe_tmp(slot, _probe_tmp_payload(_UUID_B, 0, [list(row) for row in rows1]))
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+
+        def _collect() -> None:
+            with pytest.warns(UserWarning, match="aliased slot"):
+                durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+                )
+
+        _collect()
+        assert m1.exists() and m2.exists(), "pass 1 freezes both copies"
+        _collect()
+        assert m1.exists() and m2.exists(), "pass 2 heals neither copy"
+
+    def test_alias_freeze_flags_conflict_durably(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-3: a frozen contest reads conflict, never clean-complete."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows1 = [["m", "C_Digest", 0, 1]]
+        rows2 = [["m", "C_Digest", 0, 2]]
+        m1src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows1],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid=_UUID_B,
+        )
+        m1 = m1src.with_name(m1src.name.replace("probe-", "probe-consumed-", 1))
+        m1src.rename(m1)
+        m2src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows2],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid="c" * 32,
+        )
+        m2 = m2src.with_name(f"probe-consumed-{_UUID_A}-0-d4e5f6.json")
+        m2src.rename(m2)
+        m3src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=1,
+            counters=[list(row) for row in rows1],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="0a0b0c",
+            child_uuid="d" * 32,
+        )
+        m3 = m3src.with_name(m3src.name.replace("probe-", "probe-consumed-", 1))
+        m3src.rename(m3)
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with pytest.warns(UserWarning, match="forensics"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        # The clean sibling still heals; the contested pair stays frozen.
+        assert not m3.exists()
+        assert m1.exists() and m2.exists()
+        lost = [rec for rec in records if rec.get("$report_type") == "CallCountersLost"]
+        assert len(lost) == 1
+        assert lost[0]["end_state"] == "conflict", (
+            "the freeze must survive in the durable record, not just warnings"
+        )
+
+    def test_alias_freeze_flags_conflict_on_resume(self, engaged: Path) -> None:
+        """#88R23-3: the resume barrier flags a frozen contest too."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        # Registryless route: the sidecar loop (not the registry loop)
+        # must flag the freeze as well.
+        Path(planted["registry"]).unlink()
+        rows1 = [["m", "C_Digest", 0, 1]]
+        rows2 = [["m", "C_Digest", 0, 2]]
+        m1src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows1],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid=_UUID_B,
+        )
+        m1 = m1src.with_name(m1src.name.replace("probe-", "probe-consumed-", 1))
+        m1src.rename(m1)
+        m2src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows2],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid="c" * 32,
+        )
+        m2 = m2src.with_name(f"probe-consumed-{_UUID_A}-0-d4e5f6.json")
+        m2src.rename(m2)
+        with pytest.warns(UserWarning, match="forensics"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert m1.exists() and m2.exists()
+        assert plan["barrier_ok"] is True
+        cached = [
+            rec
+            for records in plan["cache_records"].values()
+            for rec in records
+            if rec.get("$report_type") == "CallCountersLost"
+        ]
+        assert len(cached) == 1
+        assert cached[0]["end_state"] == "conflict"
+
+    def test_alias_freeze_flags_conflict_orphan_sidecar(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R23-3: the orphan-sidecar route flags a frozen contest too."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        Path(planted["registry"]).unlink()
+        rows1 = [["m", "C_Digest", 0, 1]]
+        rows2 = [["m", "C_Digest", 0, 2]]
+        m1src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows1],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid=_UUID_B,
+        )
+        m1 = m1src.with_name(m1src.name.replace("probe-", "probe-consumed-", 1))
+        m1src.rename(m1)
+        m2src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows2],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+            nonce="d4e5f6",
+            child_uuid="c" * 32,
+        )
+        m2 = m2src.with_name(f"probe-consumed-{_UUID_A}-0-d4e5f6.json")
+        m2src.rename(m2)
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with pytest.warns(UserWarning, match="forensics"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert m1.exists() and m2.exists()
+        lost = [rec for rec in records if rec.get("$report_type") == "CallCountersLost"]
+        assert len(lost) == 1
+        assert lost[0]["end_state"] == "conflict"
+
+    def _plant_spawn_file(
+        self,
+        root: Path,
+        *,
+        parent_uuid: str,
+        seq: int,
+        pid: int,
+        birth: int | None,
+        slot: Path | str,
+        nonce: str = "bead01",
+        extra: dict[str, Any] | None = None,
+    ) -> Path:
+        """Plant a child-side spawn record ``spawn-<parent8>-<seq>-<nonce>.json``."""
+        path = root / f"spawn-{parent_uuid[:8]}-{seq}-{nonce}.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": parent_uuid,
+            "probe_seq": seq,
+            "slot": str(slot),
+            "pid": pid,
+        }
+        if birth is not None:
+            payload["birth_token"] = birth
+        if extra:
+            payload.update(extra)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_spawn_file_defers_while_child_unflushed(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-1: a child-side spawn record waits out a live child."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+            )
+            # No parent-side spawn record (the supervisor died before
+            # its note flushed); only the child's own spawn file, whose
+            # slot never landed and whose child is still running.
+            slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+            assert not slot.exists()
+            child_birth = durability.birth_token_for_pid(proc.pid)
+            self._plant_spawn_file(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=1,
+                pid=proc.pid,
+                birth=child_birth,
+                slot=slot,
+            )
+            child = tmp_path / "child.jsonl"
+            child.write_text("", encoding="utf-8")
+            with pytest.warns(UserWarning, match="unflushed"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+                )
+            assert records == [], "a live unflushed child defers reunion"
+            assert (engaged / "registrations" / f"{_UUID_A}.json").exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=30)
+
+    def test_spawn_file_consumed_on_reunion(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-1: a flushed child's spawn file rides the reunion cleanup."""
+        pid, birth = _dead_pid_with_birth()
+        parent_block = _counts_block(3, fn="C_Digest")
+        parent_block["by_module"]["m"]["buckets"]["test"]["by_fn"]["C_Digest"]["by_rv"] = {
+            "0": {"name": "CKR_OK", "count": 2}
+        }
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=parent_block,
+        )
+        rows = [["m", "C_Digest", None, 1]]
+        marker_src = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+        marker_src.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        # No parent-side record; the child's own file names a dead child
+        # whose slot landed (flushed before dying).
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = self._plant_spawn_file(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            pid=dead_pid,
+            birth=dead_birth,
+            slot=slot,
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        assert not marker.exists(), "the receipt heals with the flushed slot"
+        assert not spawn.exists(), "the spawn file reunites with its slot"
+        partials = [rec for rec in records if rec.get("$report_type") == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 3
+
+    def test_spawn_file_absorbed_when_child_dies_unflushed(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R23-1: a dead unflushed child's spawn file absorbs away."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        # No parent-side record; the child's file names a dead child
+        # with no slot file (killed before flushing anything).
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        assert not slot.exists()
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = self._plant_spawn_file(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=1,
+            pid=dead_pid,
+            birth=dead_birth,
+            slot=slot,
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        assert any(rec.get("$report_type") == "CallCountersPartial" for rec in records)
+        assert not spawn.exists(), "an absorbed launch leaves no residue"
+
+    def test_spawn_file_live_defers_despite_absorbed_sidecar(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R23-1: the spawn union is fail-closed OR, never sidecar-wins."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+            )
+            # The sidecar's record already absorbed (dead child, no
+            # slot) while the child's own file names a live child.
+            dead_pid, dead_birth = _dead_pid_with_birth()
+            slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+            sidecar_path = Path(planted["sidecar"])
+            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            payload["spawned_children"] = [
+                {
+                    "probe_seq": 1,
+                    "slot": str(slot),
+                    "pid": dead_pid,
+                    **({"birth_token": dead_birth} if dead_birth is not None else {}),
+                }
+            ]
+            sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
+            child_birth = durability.birth_token_for_pid(proc.pid)
+            self._plant_spawn_file(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=1,
+                pid=proc.pid,
+                birth=child_birth,
+                slot=slot,
+            )
+            child = tmp_path / "child.jsonl"
+            child.write_text("", encoding="utf-8")
+            with pytest.warns(UserWarning, match="unflushed"):
+                records = durability.collect_unit(
+                    engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+                )
+            assert records == [], "either source outstanding defers"
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=30)
+
+    @pytest.mark.parametrize("shape", ["torn", "bad_types", "bad_parent"])
+    def test_spawn_file_malformed_defers(self, engaged: Path, tmp_path: Path, shape: str) -> None:
+        """#88R23-1: an unreadable spawn file fails closed, never skips."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        path = engaged / f"spawn-{_UUID_A[:8]}-1-bead01.json"
+        if shape == "torn":
+            path.write_text("{not valid json", encoding="utf-8")
+        elif shape == "bad_types":
+            path.write_text(
+                json.dumps({"parent_uuid": _UUID_A, "probe_seq": "1", "slot": str(slot), "pid": 1}),
+                encoding="utf-8",
+            )
+        else:
+            path.write_text(
+                json.dumps({"parent_uuid": "zzz", "probe_seq": 1, "slot": str(slot), "pid": 1}),
+                encoding="utf-8",
+            )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with pytest.warns(UserWarning, match="unflushed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert records == [], f"a {shape} spawn file must defer reunion"
+        assert path.exists(), "corrupt spawn evidence is retained, never consumed"
+
+    def test_spawn_file_foreign_ignored(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R23-1: another producer's spawn file never blocks this one."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        self._plant_spawn_file(
+            engaged,
+            parent_uuid=_UUID_B,
+            seq=1,
+            pid=pid,
+            birth=birth,
+            slot=slot,
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        assert any(rec.get("$report_type") == "CallCountersPartial" for rec in records)
+
+    def test_spawn_file_foreign_named_torn_ignored(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R24-2: torn bytes route by filename hint, never block everyone."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        torn = engaged / "spawn-cccccccc-0-feedface.json"
+        torn.write_text("{torn", encoding="utf-8")
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        assert any(rec.get("$report_type") == "CallCountersPartial" for rec in records)
+        assert torn.exists(), "foreign debris is not ours to consume"
+
+    def test_spawn_file_mistyped_parent_scoped_by_filename(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        """#88R24-2: a parent-mute file defers only its filename owner."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        foreign = engaged / "spawn-cccccccc-1-bead01.json"
+        foreign.write_text(
+            json.dumps({"parent_uuid": "zzz", "probe_seq": 1, "slot": str(slot), "pid": 1}),
+            encoding="utf-8",
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+        )
+        assert any(rec.get("$report_type") == "CallCountersPartial" for rec in records)
+        assert foreign.exists()
+
+    def test_staged_spawn_cleanup_retries_on_next_barrier(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-3: a held spawn file is adopted, not dropped, on retry."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-0-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": _UUID_A,
+            "probe_seq": 0,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        real_unlink = Path.unlink
+        fail = True
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if fail and self.name.startswith("spawn-"):
+                raise OSError("injected spawn unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert str(spawn) in plan1["cleanup_held"]
+        assert spawn.exists() and not slot.exists()
+        fail = False
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert not spawn.exists(), "the retry finishes the staged spawn cleanup"
+        assert plan2["cleanup_held"] == []
+
+    def test_sweep_reaps_settled_parentless_spawn(self, engaged: Path) -> None:
+        """#88R24-3: a settled parentless spawn file is sweepable debris."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-1-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": _UUID_A,
+            "probe_seq": 1,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        Path(planted["registry"]).unlink()
+        Path(planted["sidecar"]).unlink()
+        swept = durability.sweep_orphans(engaged, current_run="R1")
+        assert swept["removed"] == 1
+        assert not spawn.exists()
+
+    def test_sweep_retains_live_parentless_spawn(self, engaged: Path) -> None:
+        """#88R24-3: a live parentless spawn file retains loudly, counted."""
+        proc = _live_sleeper()
+        try:
+            (engaged / "registrations").mkdir(parents=True, exist_ok=True)
+            slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+            birth = durability.birth_token_for_pid(proc.pid)
+            spawn = engaged / "spawn-aaaaaaaa-1-bead01.json"
+            payload: dict[str, Any] = {
+                "parent_uuid": _UUID_A,
+                "probe_seq": 1,
+                "slot": str(slot),
+                "pid": proc.pid,
+            }
+            if birth is not None:
+                payload["birth_token"] = birth
+            spawn.write_text(json.dumps(payload), encoding="utf-8")
+            with pytest.warns(UserWarning, match="spawn"):
+                swept = durability.sweep_orphans(engaged, current_run="R1")
+            assert swept["removed"] == 0
+            assert swept["retained"] >= 1
+            assert spawn.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=30)
+
+    def test_sweep_counts_owned_spawn_file(self, engaged: Path) -> None:
+        """#88R24-3: an owned spawn file is visible to the sweep, kept."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-1-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": _UUID_A,
+            "probe_seq": 1,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        swept = durability.sweep_orphans(engaged, current_run="R1")
+        assert swept["removed"] == 0
+        assert swept["retained"] == 3, "registry + sidecar + the owned spawn file"
+        assert spawn.exists()
+
+    def test_staged_probe_live_writer_retains(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-3: a retained probe adoption rides cleanup_held too."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self.name == slot.name:
+                raise OSError("injected orphan unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert str(slot) in plan1["cleanup_held"]
+        monkeypatch.setattr(Path, "unlink", real_unlink)
+        monkeypatch.setattr(durability, "_incarnation_alive", lambda *a: True)
+        with pytest.warns(UserWarning, match="live writer"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert slot.exists()
+        assert str(slot) in plan2["cleanup_held"]
+
+    @pytest.mark.parametrize("bad_parent", [[], {}], ids=["list", "dict"])
+    def test_staged_spawn_malformed_parent_uuid_retained(
+        self, engaged: Path, bad_parent: Any
+    ) -> None:
+        """#88R25-5: unhashable spawn parent_uuid routes by filename, never raises."""
+        import json
+
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        # The malformed record lands after collection: pass 2 replays
+        # staged adoption over it.
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-0-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": bad_parent,
+            "probe_seq": 0,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.warns(UserWarning, match="malformed identity"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert spawn.exists()
+        assert str(spawn) in plan2["cleanup_held"]
+        assert not (engaged / durability.SEAL_FILENAME).exists()
+
+    def test_staged_spawn_foreign_malformed_parent_skipped(self, engaged: Path) -> None:
+        """#88R25-5: malformed spawn identities outside staged parents skip silently."""
+        import json
+
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-bbbbbbbb-0-bead02.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": [],
+            "probe_seq": 0,
+            "slot": str(engaged / "probe-bbbbbbbb-0-feedface.json"),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert spawn.exists()
+        assert str(spawn) not in plan2["cleanup_held"]
+
+    def test_sweep_spawn_unrepresentable_pid_retained(self, engaged: Path) -> None:
+        """#88R25-5: parentless spawn with an unrepresentable pid never reaches kill."""
+        import json
+
+        engaged.mkdir(parents=True, exist_ok=True)
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        parent = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        spawn = engaged / "spawn-bbbbbbbb-0-bead03.json"
+        spawn.write_text(
+            json.dumps(
+                {
+                    "parent_uuid": parent,
+                    "probe_seq": 0,
+                    "slot": str(engaged / "probe-bbbbbbbb-0-gone.json"),
+                    "pid": 2**32,
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.warns(UserWarning, match="unrepresentable pid"):
+            swept = durability.sweep_orphans(engaged, current_run="run-now")
+        assert swept["retained"] >= 1
+        assert spawn.exists()
+
+    def test_staged_spawn_unrepresentable_pid_retained(self, engaged: Path) -> None:
+        """#88R25-5: staged adoption checks pid representability before liveness."""
+        import json
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-0-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": _UUID_A,
+            "probe_seq": 0,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == spawn:
+                raise OSError("injected unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert str(spawn) in plan1["cleanup_held"]
+        payload["pid"] = 2**32
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.warns(UserWarning, match="unrepresentable pid"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert spawn.exists()
+        assert str(spawn) in plan2["cleanup_held"]
+
+    def test_collect_spawn_unrepresentable_pid_no_crash(self, engaged: Path) -> None:
+        """#88R25-5: first-pass reunion never feeds an unrepresentable pid to kill."""
+        import json
+
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        spawn = engaged / "spawn-aaaaaaaa-0-bead04.json"
+        spawn.write_text(
+            json.dumps(
+                {
+                    "parent_uuid": _UUID_A,
+                    "probe_seq": 0,
+                    "slot": str(engaged / "probe-aaaaaaaa-0-missing.json"),
+                    "pid": 2**32,
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is True
+        assert spawn.exists()
+
+    def test_pid_representability_contracts(self) -> None:
+        """#88R25-5: representability bounds + OverflowError-neutral liveness."""
+        assert durability._pid_representable(1) is True
+        assert durability._pid_representable(2**31 - 1) is True
+        assert durability._pid_representable(0) is False
+        assert durability._pid_representable(-1) is False
+        assert durability._pid_representable("123") is False  # type: ignore[arg-type]
+        if sys.platform == "win32":
+            assert durability._pid_representable(2**31) is True
+            assert durability._pid_representable(2**32) is False
+        else:
+            assert durability._pid_representable(2**31) is False
+        assert durability._incarnation_alive(2**63, None) is True
+        assert durability._pid_exists(2**63) is True
+        assert durability.birth_token_for_pid(2**63) is None
+
+    def test_staging_write_refusal_releases_seal(self, engaged: Path) -> None:
+        """#88R25-6: a staging write refusal still releases the barrier seal."""
+        import unittest.mock as mock
+
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        real_replace = os.replace
+
+        def _flaky_replace(src: Any, dst: Any) -> None:
+            if Path(dst).name == durability.BARRIER_STAGING_FILENAME:
+                raise PermissionError("injected staging EACCES")
+            return real_replace(src, dst)
+
+        with mock.patch.object(os, "replace", _flaky_replace):
+            with pytest.warns(UserWarning, match="cannot stage recovery evidence"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is False
+        assert not (engaged / durability.SEAL_FILENAME).exists()
+        assert Path(planted["registry"]).exists()
+        assert slot.exists()
+
+    def test_path_is_dir_follows_symlinks(self, tmp_path: Path) -> None:
+        """#88R25-7: the tri-state dir check follows links (0.3.0 parity)."""
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+        assert durability._path_is_dir(link) == "present"
+        assert durability._path_is_dir(real) == "present"
+        plain = tmp_path / "file.json"
+        plain.write_text("{}", encoding="utf-8")
+        assert durability._path_is_dir(plain) == "missing"
+        file_link = tmp_path / "file-link"
+        file_link.symlink_to(plain)
+        assert durability._path_is_dir(file_link) == "missing"
+        broken = tmp_path / "broken"
+        broken.symlink_to(tmp_path / "absent")
+        assert durability._path_is_dir(broken) == "missing"
+        loop_a = tmp_path / "loop-a"
+        loop_b = tmp_path / "loop-b"
+        loop_a.symlink_to(loop_b)
+        loop_b.symlink_to(loop_a)
+        # ELOOP exists only on POSIX; Windows reports the loop through a
+        # non-missing errno, so the same link reads unreadable there.
+        # Both outcomes are conservative (skip-as-before vs hold/defer).
+        assert durability._path_is_dir(loop_a) == (
+            "missing" if sys.platform != "win32" else "unreadable"
+        )
+
+    def test_symlinked_registrations_dir_collected(self, engaged: Path, tmp_path: Path) -> None:
+        """#88R25-7: a symlinked registrations dir still collects its producers."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        reg_dir = engaged / durability.REGISTRY_DIRNAME
+        moved = engaged / "registrations-real"
+        reg_dir.rename(moved)
+        reg_dir.symlink_to(moved, target_is_directory=True)
+        records = _collect_crashed88(engaged, tmp_path / "child.jsonl")
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["total_calls"] == 2
+
+    def test_staged_target_carry_branches(self, engaged: Path) -> None:
+        """#88R25-4: carry-forward verdicts per target state."""
+        import hashlib
+
+        engaged.mkdir(parents=True, exist_ok=True)
+        target = engaged / "probe-aaaaaaaa-0-feedface.json"
+        target.write_text("{}", encoding="utf-8")
+        digest = hashlib.sha256(b"{}").hexdigest()
+        assert durability._staged_target_carries(target, digest) is True
+        assert durability._staged_target_carries(target, "0" * 64) is False
+        assert durability._staged_target_carries(engaged / "gone.json", digest) is False
+        real_state = durability._path_state
+        durability._path_state = lambda p: (  # type: ignore[method-assign]
+            "unreadable" if p == target else real_state(p)
+        )
+        try:
+            assert durability._staged_target_carries(target, digest) is True
+        finally:
+            durability._path_state = real_state
+        real_sha = durability._sha256_file_hex
+        durability._sha256_file_hex = lambda p: None  # type: ignore[method-assign]
+        try:
+            assert durability._staged_target_carries(target, digest) is True
+        finally:
+            durability._sha256_file_hex = real_sha
+
+    @pytest.mark.parametrize("kind", ["probe", "spawn"])
+    def test_staged_retry_survives_unreadable_pass(self, engaged: Path, kind: str) -> None:
+        """#88R25-4: held targets keep their authority across blind passes."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-0-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": _UUID_A,
+            "probe_seq": 0,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        target = slot if kind == "probe" else spawn
+        # Pass 1: fail only the target's unlink (held + staged).
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == target:
+                raise OSError("injected unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        import unittest.mock as mock
+
+        with mock.patch.object(Path, "unlink", _flaky_unlink):
+            plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert str(target) in plan1["cleanup_held"]
+        assert target.exists()
+        # Pass 2: the target is unreadable (kept staged, not dropped).
+        staged = engaged / durability.BARRIER_STAGING_FILENAME
+        assert staged.exists()
+        real_read = Path.read_bytes
+
+        def _flaky_read(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self == target:
+                raise OSError("injected read failure")
+            return real_read(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_bytes", _flaky_read):
+            with pytest.warns(UserWarning):
+                plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert str(target) in plan2["cleanup_held"]
+        # Pass 3: restored access converges through staged adoption.
+        plan3 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan3["barrier_ok"] is True
+        assert not target.exists(), "staged authority survives a blind pass"
+
+    def test_staged_spawn_live_writer_retains(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-3: staged adoption re-proves quiescence (recycle-safe)."""
+        pid, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert orphan == slot
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        spawn = engaged / "spawn-aaaaaaaa-0-bead01.json"
+        payload: dict[str, Any] = {
+            "parent_uuid": _UUID_A,
+            "probe_seq": 0,
+            "slot": str(slot),
+            "pid": dead_pid,
+        }
+        if dead_birth is not None:
+            payload["birth_token"] = dead_birth
+        spawn.write_text(json.dumps(payload), encoding="utf-8")
+        real_unlink = Path.unlink
+
+        def _flaky_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self.name.startswith("spawn-"):
+                raise OSError("injected spawn unlink failure")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _flaky_unlink)
+        plan1 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan1["barrier_ok"] is True
+        assert str(spawn) in plan1["cleanup_held"]
+        # Pass 2: the unlink works now, but the writer reads live
+        # (simulating a birthless pid recycle the pass-1 absorb could
+        # not see): adoption must retain, not reap.
+        monkeypatch.setattr(Path, "unlink", real_unlink)
+        monkeypatch.setattr(durability, "_incarnation_alive", lambda *a: True)
+        with pytest.warns(UserWarning, match="live writer"):
+            plan2 = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan2["barrier_ok"] is True
+        assert spawn.exists()
+        assert str(spawn) in plan2["cleanup_held"]
+
+    def test_barrier_fenced_defers_while_child_unflushed(self, engaged: Path) -> None:
+        """#88R22-4: fenced reunion still waits for unflushed children."""
+        producer = _live_sleeper()
+        child = _live_sleeper()
+        try:
+            birth = durability.birth_token_for_pid(producer.pid)
+            if birth is None:
+                pytest.skip("birth tokens unavailable on this platform")
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=producer.pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            self._plant_unflushed_spawn(engaged, planted, child)
+            with pytest.warns(UserWarning, match="unflushed"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert _UUID_A in plan["unresolved"]
+            assert producer.wait(timeout=30) is not None, "the producer fences"
+            assert child.poll() is None, "the unflushed child is awaited, not fenced"
+            assert Path(planted["registry"]).exists()
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            for proc in (producer, child):
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=30)
+
+    def test_registryless_barrier_defers_while_child_unflushed(self, engaged: Path) -> None:
+        """#88R22-4: orphan barrier reunion waits too."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            self._plant_unflushed_spawn(engaged, planted, proc)
+            Path(planted["registry"]).unlink()
+            with pytest.warns(UserWarning, match="unflushed"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert _UUID_A in plan["unresolved"]
+            assert proc.poll() is None
+            assert Path(planted["sidecar"]).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_barrier_proceeds_once_child_settles(self, engaged: Path) -> None:
+        """#88R22-4: the outstanding wait converges on death or flush."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            self._plant_unflushed_spawn(engaged, planted, proc)
+            with pytest.warns(UserWarning, match="unflushed"):
+                first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert _UUID_A in first["unresolved"]
+            assert proc.poll() is None
+            proc.kill()
+            assert proc.wait(timeout=30) is not None
+            second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            partials = [
+                rec
+                for rec in second["cache_records"].get("a.py", [])
+                if rec["$report_type"] == "CallCountersPartial"
+            ]
+            assert len(partials) == 1
+            assert partials[0]["total_calls"] == 5
+            assert _UUID_A not in second["unresolved"]
+            assert _UUID_A not in second["retained_uuids"]
+            assert str(Path(planted["registry"])) not in second["cleanup_held"]
+            assert str(Path(planted["sidecar"])) not in second["cleanup_held"]
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_barrier_shortcut_reunites_on_outstanding(self, engaged: Path) -> None:
+        """#88R22-4: staged shortcut yields to unflushed children."""
+        proc = _live_sleeper()
+        try:
+            pid, birth = _dead_pid_with_birth()
+            planted = _plant_producer(
+                engaged,
+                uuid=_UUID_A,
+                pid=pid,
+                birth=birth,
+                in_progress=_counts_block(5),
+                lost_keys=[{"parent_uuid": _UUID_A, "probe_seq": 0}],
+            )
+            rows = [["m", "C_Digest", 0, 1]]
+            marker_src = _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[list(row) for row in rows],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=None,
+            )
+            marker = marker_src.with_name(marker_src.name.replace("probe-", "probe-consumed-", 1))
+            marker_src.rename(marker)
+            _plant_probe_orphan(
+                engaged,
+                parent_uuid=_UUID_A,
+                seq=0,
+                counters=[list(row) for row in rows],
+                identity=_f2_identity(_UUID_A),
+                pid=pid,
+                birth=None,
+            )
+            sidecar_path = Path(planted["sidecar"])
+            saved_sidecar = sidecar_path.read_text(encoding="utf-8")
+            first = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert _UUID_A not in first["unresolved"]
+            assert _UUID_A not in first["retained_uuids"]
+            assert len(first["cache_records"].get("a.py", [])) == 2
+            # Pass-1 consumed everything; restore the prune-held sidecar
+            # shape (registry stays gone so pass-2 routes orphan) with a
+            # live unflushed spawn aboard.
+            payload = json.loads(saved_sidecar)
+            birth = durability.birth_token_for_pid(proc.pid)
+            slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+            assert not slot.exists()
+            entry: dict[str, Any] = {"probe_seq": 1, "slot": str(slot), "pid": proc.pid}
+            if birth is not None:
+                entry["birth_token"] = birth
+            payload["spawned_children"] = [entry]
+            sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
+            with pytest.warns(UserWarning, match="unflushed"):
+                second = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+            assert _UUID_A in second["unresolved"]
+            assert proc.poll() is None
+            assert sidecar_path.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=30)
 
     def test_duplicate_markers_resolve_receipt_together(
         self, engaged: Path, tmp_path: Path
@@ -7850,7 +12921,7 @@ class TestProbeConsumedMarker:
         assert info is not None
         parent_sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
         assert parent_sidecar["in_progress"]["total_calls"] == 5, "1 parent + 4 probe"
-        merged, claimed, consumed, recovered, orphan_keys, adopted, _skipped = (
+        merged, claimed, consumed, recovered, orphan_keys, adopted, _skipped, _froze = (
             durability._adopt_probe_orphans(
                 engaged,
                 worker_uuid=parent_uuid,
@@ -7858,6 +12929,7 @@ class TestProbeConsumedMarker:
                 journal_lines=[],
                 claims={},
                 known_uuids={parent_uuid},
+                known_complete=True,
                 fence_live=True,
             )
         )
@@ -7896,7 +12968,7 @@ class TestProbeConsumedMarker:
         engaged.mkdir(parents=True, exist_ok=True)
         marker = engaged / f"probe-consumed-{_UUID_A[:8]}-3-feedface.json"
         marker.write_text("{torn", encoding="utf-8")
-        merged, claimed, consumed, recovered, orphan_keys, adopted, _skipped = (
+        merged, claimed, consumed, recovered, orphan_keys, adopted, _skipped, _froze = (
             durability._adopt_probe_orphans(
                 engaged,
                 worker_uuid=_UUID_A,
@@ -7904,6 +12976,7 @@ class TestProbeConsumedMarker:
                 journal_lines=[],
                 claims={},
                 known_uuids={_UUID_A},
+                known_complete=True,
                 fence_live=True,
             )
         )
@@ -8431,7 +13504,12 @@ class TestBarrierStaging:
         plan = durability.prepare_resume(root, prior_merged_jsonl=None)
         assert plan["barrier_ok"] is False
         assert Path(planted["registry"]).exists(), "no consume without durable staging"
-        assert durability.is_sealed(root) is True, "failed barrier stays sealed for retry"
+        # A handled staging refusal releases the seal (#88R25-6): the
+        # seal blocks registration (provider entry), not the retry
+        # (the next barrier reseals idempotently), so holding it
+        # would turn a transient EACCES into a run-wide outage while
+        # the retained sources wait untouched.
+        assert durability.is_sealed(root) is False
 
     def test_torn_staging_warns_and_proceeds(self, tmp_path: Path) -> None:
         root = tmp_path / "counters"
@@ -8881,6 +13959,7 @@ class _FakeKernel32:
         get_times_ok: bool = True,
         terminate_ok: bool = True,
         wait_result: int = 0,
+        wait_results: list[int] | None = None,
         last_error: int = 0,
     ) -> None:
         self.calls: list[tuple[Any, ...]] = []
@@ -8889,6 +13968,7 @@ class _FakeKernel32:
         self._get_times_ok = get_times_ok
         self._terminate_ok = terminate_ok
         self._wait_result = wait_result
+        self._wait_results = list(wait_results) if wait_results is not None else []
         self._last_error = last_error
 
     def OpenProcess(  # noqa: N802 - mirrors the Win32 API name
@@ -8918,6 +13998,8 @@ class _FakeKernel32:
         self, handle: int, timeout_ms: int
     ) -> int:
         self.calls.append(("WaitForSingleObject", handle, timeout_ms))
+        if self._wait_results:
+            return self._wait_results.pop(0)
         return self._wait_result
 
     def CloseHandle(  # noqa: N802 - mirrors the Win32 API name
@@ -8985,8 +14067,35 @@ class TestWindowsKernel32:
         monkeypatch.setattr(durability, "_kernel32", lambda: fake)
         assert durability._pid_exists(424242) is False
 
+    def test_pid_exists_unrepresentable_never_reaches_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-5: out-of-range pids never reach OpenProcess (no wrap-to-dead)."""
+        fake = _FakeKernel32(open_result=0, last_error=87)
+        monkeypatch.setattr(durability.sys, "platform", "win32")
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._pid_exists(2**32) is True
+        assert durability._pid_exists(2**63) is True
+        assert fake.calls == []
+
     def test_pid_exists_open_handle_closes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        fake = _FakeKernel32(open_result=0xABCD)
+        fake = _FakeKernel32(open_result=0xABCD, wait_result=258)
+        monkeypatch.setattr(durability.sys, "platform", "win32")
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._pid_exists(424242) is True
+        assert ("CloseHandle", 0xABCD) in fake.calls
+
+    def test_pid_exists_terminated_handle_reads_dead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#88R31-WIN2: a signaled (terminated) handle reads dead, not alive."""
+        fake = _FakeKernel32(open_result=0xABCD, wait_result=0)
+        monkeypatch.setattr(durability.sys, "platform", "win32")
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._pid_exists(424242) is False
+        assert ("CloseHandle", 0xABCD) in fake.calls
+
+    def test_pid_exists_failed_wait_reads_alive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#88R31-WIN2: a failed liveness wait stays alive-conservative."""
+        fake = _FakeKernel32(open_result=0xABCD, wait_result=0xFFFFFFFF)
         monkeypatch.setattr(durability.sys, "platform", "win32")
         monkeypatch.setattr(durability, "_kernel32", lambda: fake)
         assert durability._pid_exists(424242) is True
@@ -9031,7 +14140,9 @@ class TestWindowsKernel32:
     def test_terminate_handle_terminate_failure_is_unresolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        fake = _FakeKernel32(creation=222, terminate_ok=False)
+        # Refused terminate on a RUNNING process stays unresolved; the
+        # pre-check wait must report it running (0x102), not signaled.
+        fake = _FakeKernel32(creation=222, terminate_ok=False, wait_result=0x102)
         monkeypatch.setattr(durability, "_kernel32", lambda: fake)
         assert durability._terminate_handle(424242, 222, 5.0) is False
 
@@ -9043,7 +14154,24 @@ class TestWindowsKernel32:
         assert durability._terminate_handle(424242, 222, 5.0) is False
 
     def test_terminate_handle_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _FakeKernel32(creation=222, wait_results=[0x102, 0])
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._terminate_handle(424242, 222, 5.0) is True
+        assert fake.terminated() is True
+
+    def test_terminate_handle_signaled_skips_signal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#88R32-sigkill: an already-exited handle proves death without signaling."""
         fake = _FakeKernel32(creation=222)
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._terminate_handle(424242, 222, 5.0) is True
+        assert fake.terminated() is False
+        assert ("CloseHandle", 0xABCD) in fake.calls
+
+    def test_terminate_handle_failed_signal_with_exit_is_fenced(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R32-sigkill: the wait verifies the goal, not the signal call."""
+        fake = _FakeKernel32(creation=222, terminate_ok=False, wait_results=[0x102, 0])
         monkeypatch.setattr(durability, "_kernel32", lambda: fake)
         assert durability._terminate_handle(424242, 222, 5.0) is True
         assert fake.terminated() is True
@@ -9079,7 +14207,9 @@ class TestWindowsKernel32:
                     raise OSError("exception: access violation writing 0x0000000000000000")
                 return super().GetProcessTimes(handle, creation_ptr, *rest)
 
-        fake = _StrictKernel32(creation=222)
+        # Running-then-exited: the fence must signal (exercising the
+        # out-pointers) rather than short-circuit on a signaled handle.
+        fake = _StrictKernel32(creation=222, wait_results=[0x102, 0])
         monkeypatch.setattr(durability, "_kernel32", lambda: fake)
         assert durability._terminate_handle(424242, 222, 5.0) is True
         assert fake.terminated() is True
@@ -9605,7 +14735,6 @@ class TestProbeOrphanAdoption:
     def test_run_probe_notes_loss_when_commit_fails(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from types import SimpleNamespace
 
         from pkcs11_check.testcases._probes.runner import run_probe
 
@@ -9614,7 +14743,7 @@ class TestProbeOrphanAdoption:
         # killed probe's unflushed tail can never read complete.
         seen_seq: list[int] = []
 
-        def _killed(*args: Any, **kwargs: Any) -> Any:
+        def _killed(*args: Any, **kwargs: Any) -> None:
             env = kwargs["env"]
             Path(env["_P11CHECK_SUBPROCESS_COVERAGE"]).write_bytes(b"{torn")
             seq = int(env[durability.PROBE_SEQ_ENV])
@@ -9629,10 +14758,17 @@ class TestProbeOrphanAdoption:
                 ),
                 encoding="utf-8",
             )
-            return SimpleNamespace(returncode=-9, stdout="", stderr="")
 
-        monkeypatch.setattr(subprocess, "run", _killed)
-        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        def _fail_commit_only(path: Any, payload: Any) -> None:
+            total = (payload.get("in_progress") or {}).get("total_calls", 0)
+            if total > 0:
+                raise durability.CounterPersistenceError("disk full")
+            durability.write_sidecar_atomic(path, payload)
+
+        monkeypatch.setattr(
+            subprocess, "Popen", _fake_popen_factory(on_spawn=_killed, returncode=-9)
+        )
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _fail_commit_only)
         with pytest.raises(durability.CounterPersistenceError):
             run_probe("_echo", {"module_path": "/x.so"})
         assert seen_seq != []
@@ -9720,7 +14856,7 @@ class TestProbeOrphanAdoption:
             lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": 1}],
         )
         sidecar = durability.read_json_file(planted["sidecar"])
-        merged, claimed, consumed, recovered, orphan_keys, adopted, _skipped = (
+        merged, claimed, consumed, recovered, orphan_keys, adopted, _skipped, _froze = (
             durability._adopt_probe_orphans(
                 engaged,
                 worker_uuid=_UUID_A,
@@ -9728,6 +14864,7 @@ class TestProbeOrphanAdoption:
                 journal_lines=[],
                 claims={},
                 known_uuids={_UUID_A},
+                known_complete=True,
                 producer_run=_RUN,
                 producer_unit="a.py",
                 fence_live=True,
@@ -10090,13 +15227,20 @@ class TestProbeOrphanAdoption:
         )
         failing: list[bool] = [True]
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
             if failing[0] and self == Path(planted["registry"]):
                 raise OSError("transient read failure")
             return real_read_text(self, *args, **kwargs)
 
+        def _flaky_read_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if failing[0] and self == Path(planted["registry"]):
+                raise OSError("transient read failure")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        monkeypatch.setattr(Path, "read_bytes", _flaky_read_bytes)
         assert (
             durability.collect_unit(
                 engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
@@ -10132,6 +15276,7 @@ class TestProbeOrphanAdoption:
             [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
         )
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
         attempts: list[str] = []
 
         def _flaky_twice(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -10142,7 +15287,14 @@ class TestProbeOrphanAdoption:
                 raise OSError("transient read failure")
             return real_read_text(self, *args, **kwargs)
 
+        def _flaky_twice_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if len(attempts) < 2 and self == Path(planted["registry"]):
+                attempts.append("read")
+                raise OSError("transient read failure")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _flaky_twice)
+        monkeypatch.setattr(Path, "read_bytes", _flaky_twice_bytes)
         records = durability.collect_unit(
             engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
         )
@@ -10883,13 +16035,20 @@ class TestProbeOrphanAdoption:
             engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
         )
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _sticky_fault(self: Path, *args: Any, **kwargs: Any) -> str:
             if self == Path(planted["registry"]):
                 raise OSError("sticky read failure")
             return real_read_text(self, *args, **kwargs)
 
+        def _sticky_fault_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if self == Path(planted["registry"]):
+                raise OSError("sticky read failure")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _sticky_fault)
+        monkeypatch.setattr(Path, "read_bytes", _sticky_fault_bytes)
         child = _write_jsonl(
             tmp_path / "child.jsonl",
             [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
@@ -10928,15 +16087,25 @@ class TestProbeOrphanAdoption:
         planted_b["sidecar"].write_text(json.dumps(sidecar_b), encoding="utf-8")
         fault_on = True
         real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
         def _gated_fault(self: Path, *args: Any, **kwargs: Any) -> str:
             if fault_on and self == Path(planted_b["sidecar"]):
                 raise OSError("transient barrier-phase fault")
             return real_read_text(self, *args, **kwargs)
 
+        def _gated_fault_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+            if fault_on and self == Path(planted_b["sidecar"]):
+                raise OSError("transient barrier-phase fault")
+            return real_read_bytes(self, *args, **kwargs)
+
         monkeypatch.setattr(Path, "read_text", _gated_fault)
-        plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
-        assert plan["barrier_ok"] is True
+        monkeypatch.setattr(Path, "read_bytes", _gated_fault_bytes)
+        # The faulted sidecar refuses admission (#88R30-5); the junk-run
+        # pin below still holds (a refusal credits nothing).
+        with pytest.warns(UserWarning, match="unit unidentifiable; refusing"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert plan["barrier_ok"] is False
         assert "None" not in plan["collected_runs"]
         fault_on = False
         durability.sweep_orphans(
@@ -13116,10 +18285,10 @@ class TestEagerProbeRegistration:
     ) -> None:
         from pkcs11_check.testcases._probes.runner import run_probe
 
-        def _boom(*args: Any, **kwargs: Any) -> Any:
+        def _boom(*args: Any, **kwargs: Any) -> None:
             raise OSError("no spawn")
 
-        monkeypatch.setattr(subprocess, "run", _boom)
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_boom))
         with pytest.raises(OSError, match="no spawn"):
             run_probe("_echo", {"module_path": "/x.so"})
         # The parent registered before the (failed) spawn: a child that
@@ -13129,18 +18298,16 @@ class TestEagerProbeRegistration:
     def test_run_probe_sealed_fails_before_spawn(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from types import SimpleNamespace
 
         from pkcs11_check.testcases._probes.runner import run_probe
 
         durability.seal(engaged, reason="test")
         calls: list[Any] = []
 
-        def _spy(*args: Any, **kwargs: Any) -> Any:
+        def _spy(*args: Any, **kwargs: Any) -> None:
             calls.append(1)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(subprocess, "run", _spy)
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_spy))
         with pytest.raises(durability.CounterPersistenceError):
             run_probe("_echo", {"module_path": "/x.so"})
         assert calls == [], "sealed probes never spawn (fail fast, no phantom traffic)"
@@ -13148,7 +18315,6 @@ class TestEagerProbeRegistration:
     def test_run_probe_strips_ambient_probe_context_when_disengaged(
         self, disengaged: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from types import SimpleNamespace
 
         from pkcs11_check.testcases._probes.runner import run_probe
 
@@ -13164,11 +18330,10 @@ class TestEagerProbeRegistration:
             monkeypatch.setenv(key, "ambient-leak")
         seen: dict[str, str] = {}
 
-        def _capture(*args: Any, **kwargs: Any) -> Any:
+        def _capture(*args: Any, **kwargs: Any) -> None:
             seen.update(kwargs.get("env", {}))
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(subprocess, "run", _capture)
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_capture))
         result = run_probe("_echo", {"module_path": "/x.so"})
         assert result.returncode == 0
         for key in f2_keys:
@@ -13177,7 +18342,6 @@ class TestEagerProbeRegistration:
     def test_run_probe_child_inherits_flush_k(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from types import SimpleNamespace
 
         from pkcs11_check.testcases._probes.runner import run_probe
 
@@ -13186,29 +18350,26 @@ class TestEagerProbeRegistration:
         monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "9")
         seen: dict[str, str] = {}
 
-        def _capture(*args: Any, **kwargs: Any) -> Any:
+        def _capture(*args: Any, **kwargs: Any) -> None:
             seen.update(kwargs.get("env", {}))
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(subprocess, "run", _capture)
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_capture))
         run_probe("_echo", {"module_path": "/x.so"})
         assert seen[durability.COUNTERS_FLUSH_K_ENV] == "9"
 
     def test_run_probe_exports_parent_context(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from types import SimpleNamespace
 
         from pkcs11_check.testcases._probes.runner import run_probe
 
         monkeypatch.setenv(call_counters.ISOLATION_ENV, "file")
         seen: dict[str, str] = {}
 
-        def _capture(*args: Any, **kwargs: Any) -> Any:
+        def _capture(*args: Any, **kwargs: Any) -> None:
             seen.update(kwargs.get("env", {}))
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(subprocess, "run", _capture)
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen_factory(on_spawn=_capture))
         result = run_probe("_echo", {"module_path": "/x.so"})
         assert result.returncode == 0
         parent = call_counters.get_worker_uuid()
@@ -13792,13 +18953,20 @@ def test_unreadable_registry_reserves_uuid(tmp_path: Path, monkeypatch: pytest.M
     )
     registry_name = Path(planted["registry"]).name
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
 
     def _eperm_once(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.name == registry_name:
             raise PermissionError("injected registry EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _eperm_once_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if self.name == registry_name:
+            raise PermissionError("injected registry EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _eperm_once)
+    monkeypatch.setattr(Path, "read_bytes", _eperm_once_bytes)
     with pytest.warns(UserWarning, match="unreadable"):
         records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert records == []
@@ -13819,6 +18987,7 @@ def test_healed_registry_skips_orphan_adoption(
         in_progress=_entry_only_block(1),
     )
     real_read = durability.read_registry_file
+    real_digested = durability._read_registry_file_digested
     calls = 0
 
     def _flaky(path: Path | str) -> dict[str, Any] | None:
@@ -13830,7 +18999,15 @@ def test_healed_registry_skips_orphan_adoption(
             return None
         return real_read(path)
 
+    def _flaky_digested(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            return None, None
+        return real_digested(path)
+
     monkeypatch.setattr(durability, "read_registry_file", _flaky)
+    monkeypatch.setattr(durability, "_read_registry_file_digested", _flaky_digested)
     records = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert records == []
     assert Path(planted["registry"]).exists()
@@ -15185,7 +20362,12 @@ def test_liveness_zombie_reads_dead(tmp_path: Path) -> None:
         assert zombie_birth is not None
         deadline = time.monotonic() + 30
         while True:
-            state = Path(f"/proc/{proc.pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            state = (
+                Path(f"/proc/{proc.pid}/stat")
+                .read_text(encoding="ascii")
+                .rsplit(")", 1)[1]
+                .split()[0]
+            )
             if state == "Z":
                 break
             assert time.monotonic() < deadline, "child never became a zombie"
@@ -15530,6 +20712,7 @@ def test_unreadable_producer_sidecar_defers(
     )
     sidecar = Path(planted["sidecar"])
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
     blocked = True
 
     def _flaky_sidecar(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -15537,7 +20720,13 @@ def test_unreadable_producer_sidecar_defers(
             raise PermissionError("injected sidecar EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _flaky_sidecar_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if blocked and self.name == sidecar.name:
+            raise PermissionError("injected sidecar EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _flaky_sidecar)
+    monkeypatch.setattr(Path, "read_bytes", _flaky_sidecar_bytes)
     with pytest.warns(UserWarning, match="deferred"):
         first = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert first == []
@@ -15569,6 +20758,7 @@ def test_unreadable_journal_defers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )
     journal = Path(planted["journal"])
     real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
     blocked = True
 
     def _flaky_journal(self: Path, *args: Any, **kwargs: Any) -> str:
@@ -15576,7 +20766,13 @@ def test_unreadable_journal_defers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             raise PermissionError("injected journal EPERM")
         return real_read_text(self, *args, **kwargs)
 
+    def _flaky_journal_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if blocked and self.name == journal.name:
+            raise PermissionError("injected journal EPERM")
+        return real_read_bytes(self, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", _flaky_journal)
+    monkeypatch.setattr(Path, "read_bytes", _flaky_journal_bytes)
     with pytest.warns(UserWarning, match="deferred"):
         first = _collect_crashed88(tmp_path, tmp_path / "child.jsonl")
     assert first == []
@@ -17640,3 +22836,921 @@ def test_sigkill_after_entry_names_unknown_module_row(tmp_path: Path) -> None:
         {"module": "", "bucket": "session_provisioning", "fn": "C_Digest", "count": 1}
     ]
     assert schema.is_sidecar_partial(partials[0]) is True
+
+
+def _fault_stat_once(
+    monkeypatch: pytest.MonkeyPatch, target: Path, *, at_call: int = 1
+) -> list[str]:
+    """Fail one os.stat of ``target`` with EACCES, then behave (deterministic).
+
+    Simulates a transient stat fault (perms flap, AV lock) at exactly
+    one lookup: the faulted call raises the real PermissionError and
+    every other stat behaves normally. ``at_call`` selects which
+    matching stat faults (1-based; single-threaded tests make the
+    order deterministic). Returns the fired list (assert it fired).
+    """
+    real_stat = os.stat
+    fired: list[str] = []
+    seen = 0
+
+    def _flaky_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal seen
+        if str(path) == str(target):
+            seen += 1
+            if seen == at_call:
+                fired.append(str(target))
+                raise PermissionError(errno.EACCES, "injected stat fault", str(target))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", _flaky_stat)
+    return fired
+
+
+def _fault_stat_always(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[str]:
+    """Fail every os.stat of ``target`` with EACCES (portable chmod-000).
+
+    Simulates a persistently unreadable path identically on every
+    interpreter (Windows chmod cannot deny the owner, so real perms
+    cannot express this there). Other paths behave normally. Returns
+    the fired list (assert it fired: an unfired fault is vacuous).
+    """
+    real_stat = os.stat
+    fired: list[str] = []
+
+    def _denied_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(path) == str(target):
+            fired.append(str(target))
+            raise PermissionError(errno.EACCES, "injected stat fault", str(target))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", _denied_stat)
+    return fired
+
+
+def _fault_read_always(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[str]:
+    """Deny every content read of ``target`` with EACCES (portable).
+
+    Covers read_text/read_bytes/Path.open while stat keeps working
+    (the chmod-000-file shape: present but unreadable). Other paths
+    behave normally. Returns the fired list (assert it fired).
+    """
+    real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
+    real_open = Path.open
+    fired: list[str] = []
+
+    def _denied_read(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if str(self) == str(target):
+            fired.append(str(target))
+            raise PermissionError(errno.EACCES, "injected read fault", str(target))
+        return real_read_text(self, *args, **kwargs)
+
+    def _denied_read_bytes(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if str(self) == str(target):
+            fired.append(str(target))
+            raise PermissionError(errno.EACCES, "injected read fault", str(target))
+        return real_read_bytes(self, *args, **kwargs)
+
+    def _denied_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if str(self) == str(target):
+            fired.append(str(target))
+            raise PermissionError(errno.EACCES, "injected read fault", str(target))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _denied_read)
+    monkeypatch.setattr(Path, "read_bytes", _denied_read_bytes)
+    monkeypatch.setattr(Path, "open", _denied_open)
+    return fired
+
+
+def _fault_scandir_always(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[str]:
+    """Fail every os.scandir of ``target`` dir with EACCES (portable).
+
+    Simulates an unlistable directory identically on every
+    interpreter. Other directories behave normally. Returns the fired
+    list (assert it fired).
+    """
+    real_scandir = os.scandir
+    fired: list[str] = []
+
+    def _denied_scandir(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(path) == str(target):
+            fired.append(str(target))
+            raise PermissionError(errno.EACCES, "injected scandir fault", str(target))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", _denied_scandir)
+    return fired
+
+
+class TestStatFaultTolerance:
+    """#88R24-1: stat faults fail closed, identically on every interpreter."""
+
+    def test_path_state_distinguishes_all_three(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        present = tmp_path / "present.json"
+        present.write_text("{}", encoding="utf-8")
+        assert durability._path_state(present) == "present"
+        assert durability._path_state(tmp_path / "absent.json") == "missing"
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        target = locked / "file.json"
+        target.write_text("{}", encoding="utf-8")
+        with monkeypatch.context() as m:
+            fired = _fault_stat_always(m, target)
+            assert durability._path_state(target) == "unreadable"
+        assert fired, "the stat fault must engage"
+
+    def test_unreadable_seal_reads_sealed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: a seal that cannot be proven absent blocks admission."""
+        root = tmp_path / "counters"
+        (root / "registrations").mkdir(parents=True)
+        with monkeypatch.context() as m:
+            fired = _fault_stat_always(m, root / durability.SEAL_FILENAME)
+            assert durability.is_sealed(root) is True
+        assert fired, "the stat fault must engage"
+
+    def test_seal_fault_falls_through_to_exclusive_create(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: a faulted seal lookup defers to O_EXCL, never raw."""
+        root = tmp_path / "counters"
+        (root / "registrations").mkdir(parents=True)
+        seal_path = durability.seal(root, reason="test")
+        fired = _fault_stat_once(monkeypatch, seal_path)
+        assert durability.seal(root, reason="test") == seal_path
+        assert fired, "the fault must hit the seal lookup"
+
+    def test_finalize_unreadable_marker_skips_recorded(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable marker withholds loudly, never bare-skips."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        msrc = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = msrc.with_name(msrc.name.replace("probe-", "probe-consumed-", 1))
+        msrc.rename(marker)
+        slot = engaged / f"probe-{_UUID_A[:8]}-0-feedface.json"
+        baseline = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        assert baseline == slot
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        fired = _fault_stat_once(monkeypatch, marker)
+        with pytest.warns(UserWarning, match="later pass"):
+            durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert fired, "the fault must hit the marker lookup"
+        assert marker.exists(), "an unreadable marker is retained, not skipped past"
+        assert Path(planted["registry"]).exists(), "the parent waits out the fault"
+
+    def test_spawn_consume_unreadable_slot_retains(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: a spawn file is never consumed through an unreadable slot."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        assert not slot.exists()
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        entry: dict[str, Any] = {"probe_seq": 1, "slot": str(slot), "pid": dead_pid}
+        if dead_birth is not None:
+            entry["birth_token"] = dead_birth
+        spawn = engaged / "spawn-aaaaaaaa-1-bead01.json"
+        spawn.write_text(json.dumps({"parent_uuid": _UUID_A, **entry}), encoding="utf-8")
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        # First slot stat (the outstanding check) reads missing cleanly
+        # so the pass proceeds; the reunion-consumption stat faults.
+        fired = _fault_stat_once(monkeypatch, slot, at_call=2)
+        with pytest.warns(UserWarning, match="later pass"):
+            durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert fired, "the fault must hit the consumption lookup"
+        assert spawn.exists(), "no reunion through an unreadable slot"
+
+    def test_outstanding_unreadable_slot_defers(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable slot is outstanding, never absorbed."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        slot = engaged / "probe-aaaaaaaa-1-00000000.json"
+        dead_pid, dead_birth = _dead_pid_with_birth()
+        sidecar_path = Path(planted["sidecar"])
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        record: dict[str, Any] = {"probe_seq": 1, "slot": str(slot), "pid": dead_pid}
+        if dead_birth is not None:
+            record["birth_token"] = dead_birth
+        payload["spawned_children"] = [record]
+        sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        fired = _fault_stat_once(monkeypatch, slot)
+        with pytest.warns(UserWarning, match="unflushed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert fired, "the fault must hit the outstanding check"
+        assert records == []
+        assert Path(planted["registry"]).exists()
+
+    def test_known_uuids_unreadable_dir_warns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable registry dir yields no uuids, loudly."""
+        root = tmp_path / "counters"
+        reg_dir = root / "registrations"
+        reg_dir.mkdir(parents=True)
+        (reg_dir / "x.json").write_text("{}", encoding="utf-8")
+        with monkeypatch.context() as m:
+            fired_root = _fault_scandir_always(m, root)
+            fired_reg = _fault_scandir_always(m, reg_dir)
+            with pytest.warns(UserWarning, match="unreadable"):
+                uuids, complete = durability._known_producer_uuids(root)
+                assert uuids == set()
+                assert complete is False
+        assert fired_root and fired_reg, "both listing faults must engage"
+
+    def test_collect_counters_dir_unreadable_retains_all(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable counters dir defers the whole collect."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        with monkeypatch.context() as m:
+            fired = _fault_stat_always(m, engaged / "registrations")
+            with pytest.warns(UserWarning, match="unreadable"):
+                records = durability.collect_unit(
+                    engaged,
+                    unit="a.py",
+                    child_jsonl=child,
+                    status="crashed",
+                    returncode=-11,
+                )
+        assert fired, "the stat fault must engage"
+        assert records == []
+        assert Path(planted["registry"]).exists()
+        assert Path(planted["sidecar"]).exists()
+
+    def test_collect_unreadable_child_jsonl_degrades_loudly(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable child routes to the loud-retain path."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+        )
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        child = reports / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        real_builtin_open = open
+        open_fired: list[str] = []
+
+        def _denied_builtin_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            if not isinstance(file, int) and str(file) == str(child):
+                open_fired.append(str(child))
+                raise PermissionError(errno.EACCES, "injected open fault", str(child))
+            return real_builtin_open(file, *args, **kwargs)
+
+        with monkeypatch.context() as m:
+            _fault_stat_always(m, child)
+            fired_read = _fault_read_always(m, child)
+            m.setattr("builtins.open", _denied_builtin_open)
+            with pytest.warns(UserWarning, match="unreadable"):
+                records = durability.collect_unit(
+                    engaged,
+                    unit="a.py",
+                    child_jsonl=child,
+                    status="crashed",
+                    returncode=-11,
+                )
+        assert fired_read and open_fired, "read and append faults must engage"
+        assert Path(planted["registry"]).exists()
+        assert all(rec.get("$report_type") != "CallCountersPartial" for rec in records)
+
+    def test_consume_unreadable_listed_holds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unverifiable cleanup target holds, never deletes."""
+        import hashlib
+
+        target = tmp_path / "locked" / "victim.partial.json"
+        target.parent.mkdir(parents=True)
+        target.write_text("{}", encoding="utf-8")
+        digest = hashlib.sha256(b"{}").hexdigest()
+        with monkeypatch.context() as m:
+            fired = _fault_stat_always(m, target)
+            with pytest.warns(UserWarning, match="held"):
+                held = durability._consume_producer_files([target], {str(target): digest})
+        assert fired, "the stat fault must engage"
+        assert held == [target]
+        assert target.exists()
+
+    def test_consume_unreadable_unlisted_holds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unprovable-gone target holds instead of escaping."""
+        target = tmp_path / "locked" / "victim.windows.jsonl"
+        target.parent.mkdir(parents=True)
+        target.write_text("{}", encoding="utf-8")
+        with monkeypatch.context() as m:
+            fired = _fault_stat_always(m, target)
+            fired_scan = _fault_scandir_always(m, target.parent)
+            with pytest.warns(UserWarning):
+                held = durability._consume_producer_files([target], {})
+        assert fired and fired_scan, "both faults must engage"
+        assert held == [target]
+        assert target.exists()
+
+    def test_sweep_unreadable_reg_dir_warns_zeros(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: the sweep never raises on an unreadable registry dir."""
+        root = tmp_path / "counters"
+        (root / "registrations").mkdir(parents=True)
+        with monkeypatch.context() as m:
+            fired = _fault_stat_always(m, root / "registrations")
+            with pytest.warns(UserWarning, match="unreadable"):
+                assert durability.sweep_orphans(root, current_run="R1") == {
+                    "removed": 0,
+                    "retained": 0,
+                }
+        assert fired, "the stat fault must engage"
+
+    def test_sweep_unreadable_sidecar_counts_retained(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: retention counts stay truthful through stat faults."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        sidecar = Path(planted["sidecar"])
+        fired = _fault_stat_once(monkeypatch, sidecar)
+        with pytest.warns(UserWarning):
+            swept = durability.sweep_orphans(engaged, current_run="R1")
+        assert fired
+        assert swept["removed"] == 0
+        assert swept["retained"] == 2
+
+    def test_sweep_journal_shield_holds_on_fault(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable registry still shields its orphan journal."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        reg_path = Path(planted["registry"])
+        journal = Path(planted["journal"])
+        journal.write_text("", encoding="utf-8")
+        Path(planted["sidecar"]).unlink()
+        fired = _fault_stat_once(monkeypatch, reg_path)
+        with pytest.warns(UserWarning):
+            swept = durability.sweep_orphans(engaged, current_run="R1")
+        assert fired
+        assert swept["removed"] == 0
+        assert journal.exists()
+
+    def test_sweep_registry_shield_holds_on_fault(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable registry still shields its sidecar."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        reg_path = Path(planted["registry"])
+        sidecar = Path(planted["sidecar"])
+        fired = _fault_stat_once(monkeypatch, reg_path)
+        with pytest.warns(UserWarning):
+            swept = durability.sweep_orphans(engaged, current_run="R1")
+        assert fired
+        assert swept["removed"] == 0
+        assert sidecar.exists()
+
+    def test_sweep_torn_registry_readable_sidecar_shields_on_fault(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: the torn-registry shield path fails closed on faults."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        reg_path = Path(planted["registry"])
+        reg_path.write_text("{torn", encoding="utf-8")
+        sidecar = Path(planted["sidecar"])
+        fired = _fault_stat_once(monkeypatch, reg_path)
+        with pytest.warns(UserWarning):
+            swept = durability.sweep_orphans(engaged, current_run="R1")
+        assert fired
+        assert swept["removed"] == 0
+        assert sidecar.exists()
+
+    def test_sweep_tmp_precheck_fault_counts_survivors(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: a faulted tmp check holds its primaries, counted."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        sidecar = Path(planted["sidecar"])
+        Path(planted["journal"]).write_text("", encoding="utf-8")
+        tmp = sidecar.with_name(f"{sidecar.name}.tmp-999")
+        tmp.write_text("{}", encoding="utf-8")
+        fired = _fault_stat_once(monkeypatch, tmp)
+        with pytest.warns(UserWarning):
+            swept = durability.sweep_orphans(
+                engaged, current_run="R1", committed_uuids=frozenset({_UUID_A})
+            )
+        assert fired
+        assert swept["removed"] == 0
+        assert swept["retained"] == 4
+        assert sidecar.exists() and tmp.exists()
+
+    def test_resume_unreadable_staging_refuses_loudly(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: unreadable barrier memory fails the barrier, released."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        staging = engaged / durability.BARRIER_STAGING_FILENAME
+        staging.write_text("{}", encoding="utf-8")
+        fired = _fault_stat_once(monkeypatch, staging)
+        with pytest.warns(UserWarning, match="staged|barrier"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert fired, "the fault must hit the staging lookup"
+        assert plan["barrier_ok"] is False
+        assert durability.is_sealed(engaged) is False, "no stuck seal on refusal"
+        assert Path(planted["registry"]).exists()
+
+    def test_resume_unreadable_prior_refuses(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R25-1: an unreadable prior refuses (empty misreads heal losses)."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        prior = reports / "merged.jsonl"
+        prior.write_text("", encoding="utf-8")
+        with monkeypatch.context() as m:
+            fired = _fault_read_always(m, prior)
+            with pytest.warns(UserWarning, match="cannot read prior"):
+                plan = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert fired, "the read fault must engage"
+        assert plan["barrier_ok"] is False
+        assert durability.is_sealed(engaged) is False
+        assert Path(planted["registry"]).exists()
+        assert Path(planted["sidecar"]).exists()
+
+    def test_resume_prior_stat_flap_keeps_authority(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-1: a flapped prior stat never empties authority (the read decides)."""
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5))
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(5),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        fired = _fault_stat_once(monkeypatch, prior, at_call=1)
+        plan = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert fired, "the fault must hit the prior lookup"
+        assert plan["barrier_ok"] is True
+        assert plan["cache_records"] == {}, "committed authority suppresses re-emit"
+
+    def test_resume_prior_read_fault_refuses(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R26-1: a prior that stats present but reads faulted refuses once."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
+        )
+        prior = _write_jsonl(
+            tmp_path / "prior.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                _session_record(
+                    pid,
+                    _counts_block(5),
+                    extra={"worker_uuid": _UUID_A, "run_id": _RUN},
+                ),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        real_read = durability._read_jsonl_lines
+        calls: list[str] = []
+
+        def _flaky_read(path: Path) -> Any:
+            if str(path) == str(prior):
+                calls.append(str(path))
+                return None
+            return real_read(path)
+
+        monkeypatch.setattr(durability, "_read_jsonl_lines", _flaky_read)
+        with pytest.warns(UserWarning, match="cannot read prior"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=prior)
+        assert calls == [str(prior)], "the prior reads once, from one snapshot"
+        assert plan["barrier_ok"] is False
+        assert durability.is_sealed(engaged) is False
+        assert Path(planted["registry"]).exists()
+        assert Path(planted["sidecar"]).exists()
+
+    def test_supplements_unreadable_tail_returns_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unreadable supplements file fails the append loudly."""
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        state = locked / "state.json"
+        state.write_text("{}", encoding="utf-8")
+        target = durability.supplements_path(state, "a.py")
+        real_builtin_open = open
+        open_fired: list[str] = []
+
+        def _denied_builtin_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            if not isinstance(file, int) and str(file) == str(target):
+                open_fired.append(str(target))
+                raise PermissionError(errno.EACCES, "injected open fault", str(target))
+            return real_builtin_open(file, *args, **kwargs)
+
+        with monkeypatch.context() as m:
+            fired = _fault_read_always(m, target)
+            m.setattr("builtins.open", _denied_builtin_open)
+            with pytest.warns(UserWarning):
+                ok = durability.append_supplement_records(
+                    state, "a.py", [{"$report_type": "CallCountersPartial"}]
+                )
+        assert fired and open_fired, "both faults must engage"
+        assert ok is False
+
+    def test_list_evidence_files_distinguishes_faults(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: evidence listing reports faults instead of empty."""
+        root = tmp_path / "counters"
+        root.mkdir()
+        (root / "probe-aaaaaaaa-0-nonce.json").write_text("{}", encoding="utf-8")
+        (root / "spawn-aaaaaaaa-0-bead01.json").write_text("{}", encoding="utf-8")
+        (root / "other.txt").write_text("{}", encoding="utf-8")
+        assert [path.name for path in durability._list_evidence_files(root, "probe-", ".json")] == [
+            "probe-aaaaaaaa-0-nonce.json"
+        ]
+        assert [path.name for path in durability._list_evidence_files(root, "spawn-", ".json")] == [
+            "spawn-aaaaaaaa-0-bead01.json"
+        ]
+        assert durability._list_evidence_files(root / "absent", "probe-", ".json") == []
+        with monkeypatch.context() as m:
+            fired = _fault_scandir_always(m, root)
+            assert durability._list_evidence_files(root, "probe-", ".json") is None
+        assert fired, "the listing fault must engage"
+
+    def test_orphan_listing_fault_defers(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1: an unlistable orphan dir defers, never silently misses."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        orphan = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        real_list = durability._list_evidence_files
+        calls = 0
+
+        def _fault_once(directory: Path, prefix: str, suffix: str) -> Any:
+            nonlocal calls
+            calls += 1
+            if prefix == "probe-":
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_once)
+        with pytest.warns(UserWarning, match="listing failed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert calls >= 1
+        assert records == []
+        assert Path(planted["registry"]).exists()
+        assert orphan.exists()
+
+    @pytest.mark.parametrize("fault_at_call", [1, 2])
+    def test_marker_listing_fault_defers(
+        self,
+        engaged: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fault_at_call: int,
+    ) -> None:
+        """#88R25-2: an unlistable marker dir defers (prescan and loop)."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        rows = [["m", "C_Digest", 0, 1]]
+        msrc = _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[list(row) for row in rows],
+            identity=_f2_identity(_UUID_A),
+            pid=pid,
+            birth=None,
+        )
+        marker = msrc.with_name(msrc.name.replace("probe-", "probe-consumed-", 1))
+        msrc.rename(marker)
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        real_list = durability._list_evidence_files
+        calls = 0
+
+        def _fault_once(directory: Path, prefix: str, suffix: str) -> Any:
+            nonlocal calls
+            if prefix != "probe-consumed-":
+                return real_list(directory, prefix, suffix)
+            calls += 1
+            if calls == fault_at_call:
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_once)
+        with pytest.warns(UserWarning, match="listing failed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert calls >= fault_at_call
+        assert records == []
+        assert marker.exists()
+        assert Path(planted["registry"]).exists()
+
+    def test_registry_listing_fault_refuses_barrier_credit(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R25-3: an unlistable registry grants no run-wide authority."""
+        pid_a, _ = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid_a,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        pid_b, birth_b = _dead_pid_with_birth()
+        planted_b = _plant_producer(
+            engaged,
+            uuid=_UUID_B,
+            pid=pid_b,
+            birth=birth_b,
+            in_progress=_counts_block(4, fn="C_Digest"),
+        )
+        Path(planted_b["registry"]).unlink()
+        real_list = durability._list_evidence_files
+        faulted: list[str] = []
+
+        def _fault_listings(directory: Path, prefix: str, suffix: str) -> Any:
+            if directory.name == "registrations":
+                faulted.append("registries")
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_listings)
+        with pytest.warns(UserWarning, match="listing failed|unlistable|refus"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert faulted
+        assert plan["barrier_ok"] is False
+        assert plan["collected_runs"] == []
+        assert durability.is_sealed(engaged) is False
+
+    def test_collect_registry_listing_fault_defers_all(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R25-3: unit collection degrades loudly on listing faults."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        real_list = durability._list_evidence_files
+        faulted: list[str] = []
+
+        def _fault_listings(directory: Path, prefix: str, suffix: str) -> Any:
+            if directory.name == "registrations":
+                faulted.append("registries")
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_listings)
+        with pytest.warns(UserWarning, match="listing failed|unlistable|deferred"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert faulted
+        assert records == []
+        assert Path(planted["registry"]).exists()
+
+    def test_collect_sidecar_listing_fault_skips_loop(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R25-3: unit collection skips an unlistable sidecar loop loudly."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        pid_b, birth_b = _dead_pid_with_birth()
+        planted_b = _plant_producer(
+            engaged,
+            uuid=_UUID_B,
+            pid=pid_b,
+            birth=birth_b,
+            in_progress=_counts_block(4),
+        )
+        Path(planted_b["registry"]).unlink()
+        orphan_sidecar = Path(planted_b["sidecar"])
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        real_list = durability._list_evidence_files
+        faulted: list[str] = []
+
+        def _fault_listings(directory: Path, prefix: str, suffix: str) -> Any:
+            if suffix == ".partial.json":
+                faulted.append("sidecars")
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_listings)
+        with pytest.warns(UserWarning, match="unlistable"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert faulted
+        assert any(rec.get("$report_type") == "CallCountersPartial" for rec in records)
+        assert not Path(planted["registry"]).exists(), "registry loop still converges"
+        assert orphan_sidecar.exists(), "unlisted sidecars wait for a later pass"
+
+    def test_resume_sidecar_listing_fault_refuses(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R25-3: the barrier refuses when sidecars cannot be inventoried."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+        real_list = durability._list_evidence_files
+        faulted: list[str] = []
+
+        def _fault_listings(directory: Path, prefix: str, suffix: str) -> Any:
+            if suffix == ".partial.json":
+                faulted.append("sidecars")
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_listings)
+        with pytest.warns(UserWarning, match="unlistable|cannot list"):
+            plan = durability.prepare_resume(engaged, prior_merged_jsonl=None)
+        assert faulted
+        assert plan["barrier_ok"] is False
+        assert durability.is_sealed(engaged) is False
+        assert Path(planted["registry"]).exists()
+
+    def test_sweep_listing_fault_deletes_nothing(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R25-3: the sweep never deletes through an unlistable dir."""
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(2)
+        )
+
+        def _fault_all(directory: Path, prefix: str, suffix: str) -> Any:
+            return None
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_all)
+        with pytest.warns(UserWarning):
+            swept = durability.sweep_orphans(
+                engaged, current_run="R1", committed_uuids=frozenset({_UUID_A})
+            )
+        assert swept["removed"] == 0
+        assert Path(planted["registry"]).exists()
+        assert Path(planted["sidecar"]).exists()
+
+    def test_spawn_listing_fault_defers(
+        self, engaged: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#88R24-1/2: an unlistable spawn dir defers, never hides launches."""
+        pid, _ = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=424243,
+            in_progress=_counts_block(2, fn="C_Digest"),
+        )
+        child = tmp_path / "child.jsonl"
+        child.write_text("", encoding="utf-8")
+        real_list = durability._list_evidence_files
+        calls = 0
+
+        def _fault_once(directory: Path, prefix: str, suffix: str) -> Any:
+            nonlocal calls
+            calls += 1
+            if prefix == "spawn-":
+                return None
+            return real_list(directory, prefix, suffix)
+
+        monkeypatch.setattr(durability, "_list_evidence_files", _fault_once)
+        with pytest.warns(UserWarning, match="listing failed"):
+            records = durability.collect_unit(
+                engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+            )
+        assert calls >= 1
+        assert records == []
+        assert Path(planted["registry"]).exists()

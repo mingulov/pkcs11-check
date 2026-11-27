@@ -49,6 +49,7 @@ from pkcs11_check.core._counters_durability import (
     _prune_sidecar_tmps,
     _replay_probe_tmp_rows,
     _snapshot_covered_by,
+    birth_token_for_pid,
     durability_dir,
     mark_probe_consumed,
     validate_probe_receipt,
@@ -58,9 +59,11 @@ from pkcs11_check.core.call_counters import (
     assign_probe_seq,
     ensure_registered,
     flush_counters,
+    forget_probe_spawn,
     get_worker_uuid,
     ingest_child_evidence,
     note_lost_probe,
+    note_probe_spawned,
     registration_info,
 )
 from pkcs11_check.core.counters_schema import is_lost_key, is_worker_uuid, mint_filename_nonce
@@ -635,8 +638,11 @@ def ingest_probe_payload(
             try:
                 # Divergent rewrites keep the orphan rows (quarantined
                 # loudly inside the replay); the live path ingests that
-                # baseline exactly like the file path folds it.
-                fallback_counters, _divergent = _replay_probe_tmp_rows(
+                # baseline exactly like the file path folds it. Refused
+                # garbage is warned inside the replay; live ingest has
+                # no receipt flags (it never heals), so the flag reads
+                # here only to keep the 3-tuple unpack aligned.
+                fallback_counters, _divergent, _refused_garbage = _replay_probe_tmp_rows(
                     Path(sidecar),
                     validated_fallback[0],
                     validated_fallback[1],
@@ -809,25 +815,60 @@ def run_probe(
             json.dump(payload, fh)
 
         cmd = [sys.executable, "-u", "-m", f"pkcs11_check.testcases._probes.{probe}", params_path]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                # F18: provider bytes on the pipe must not cost the markers.
-                errors="replace",
-                env=env,
-                timeout=timeout,
-            )
-            rc, out, err = proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as exc:
-            # TimeoutExpired.stdout/.stderr can be bytes even with text=True
-            # (raised mid-communicate() before decoding) -- use _as_text (I8).
-            timed_out = True
-            out = _as_text(exc.stdout)
-            err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
-            rc = SUBPROCESS_TIMEOUT_RC
+        # Popen + communicate, mirroring subprocess.run exactly
+        # (same kwargs, same TimeoutExpired kill/reap/partial semantics
+        # including the Windows re-collect): run() drops the child pid,
+        # but the spawn record below needs it.
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            # F18: provider bytes on the pipe must not cost the markers.
+            errors="replace",
+            env=env,
+        ) as proc:
+            if probe_sidecar is not None:
+                # Durable spawn record before the child can flush
+                # (#88R22-4): a supervisor killed before its child
+                # flushes must still leave the launch attributable, or
+                # a first flush landing between passes would fold into
+                # a retry that discards it. A failed record kills the
+                # child and raises (fail fast: an untracked child
+                # would silently reopen that hole).
+                try:
+                    note_probe_spawned(
+                        probe_seq=probe_seq,
+                        slot=probe_sidecar,
+                        pid=proc.pid,
+                        birth=birth_token_for_pid(proc.pid),
+                    )
+                except (ValueError, CounterPersistenceError):
+                    # Reap without draining (#88R23-6): communicate()
+                    # waits for pipe EOF, which a grandchild holding an
+                    # inherited pipe delays past the probe timeout. The
+                    # output is discarded (we raise), so wait() suffices
+                    # on every platform (unlike the timeout path, which
+                    # mirrors run()'s partial-output capture).
+                    proc.kill()
+                    proc.wait()
+                    raise
+            try:
+                out, err = proc.communicate(timeout=timeout)
+                rc = proc.returncode
+            except subprocess.TimeoutExpired as exc:
+                # TimeoutExpired.stdout/.stderr can be bytes even with text=True
+                # (raised mid-communicate() before decoding) -- use _as_text (I8).
+                proc.kill()
+                if sys.platform == "win32":
+                    exc.stdout, exc.stderr = proc.communicate()
+                else:
+                    proc.wait()
+                timed_out = True
+                out = _as_text(exc.stdout)
+                err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
+                rc = SUBPROCESS_TIMEOUT_RC
 
         # A non-negative exit code alone cannot tell "the module called exit() from inside
         # the PKCS#11 call" apart from "Python raised and died normally" -- both arrive
@@ -865,6 +906,11 @@ def run_probe(
             # heal exactly this claim. This is the only lost-probe
             # accounting site; ingests never account loss.
             note_lost_probe(parent_uuid=get_worker_uuid(), probe_seq=probe_seq)
+        # The child has exited (communicate waited) whatever the outcome:
+        # its spawn record is settled. Pruning is lazy (rides the next
+        # flush); a crash before it leaves a stale record the death
+        # check still resolves (#88R22-4).
+        forget_probe_spawn(probe_seq)
 
         # I7 AFTER ingest + loss accounting: the rv-trace is an optional
         # diagnostic parse, so it must never run before (or block) counter

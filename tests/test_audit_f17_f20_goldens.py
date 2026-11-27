@@ -111,7 +111,40 @@ def test_probe_runner_survives_bad_bytes_on_stdout(
 ) -> None:
     from pkcs11_check.testcases._probes.runner import run_probe
 
-    monkeypatch.setattr(subprocess, "run", _decoding_run(_BAD_BYTES))
+    def _decoding_popen(cmd: Any, **kwargs: Any) -> Any:
+        encoding = kwargs.get("encoding", "utf-8")
+        errors = kwargs.get("errors", "strict")
+        stdout = _BAD_BYTES.decode(encoding, errors)
+
+        class _Proc:
+            pid = 424242
+            returncode: int | None = None
+
+            def __enter__(self) -> _Proc:
+                return self
+
+            def __exit__(self, *exc: Any) -> bool:
+                self.wait()
+                return False
+
+            def communicate(self, timeout: Any = None) -> tuple[str, str]:
+                self.returncode = 0
+                return (stdout, "")
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout: Any = None) -> int:
+                if self.returncode is None:
+                    self.returncode = 0
+                return self.returncode
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "Popen", _decoding_popen)
     result = run_probe("session", {"module_path": "dummy"})
     assert result.returncode == 0
     assert "marker-line � garbage" in result.stdout
