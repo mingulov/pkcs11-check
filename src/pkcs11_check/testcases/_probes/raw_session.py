@@ -153,14 +153,16 @@ def _write_raw_coverage() -> None:
     """
     flattened = flatten_current()
     keys = lost_probe_keys()
-    sidecar_digest = flush_probe_sidecar(
-        flattened, lost_keys=keys or None, probes_lost=probes_lost()
-    )
+    # One captured contribution (#88R44-F5ar2): the sidecar flush and
+    # the coverage write carry the same loss scalar, so a mid-write
+    # loss can never split the pair.
+    lost = probes_lost()
+    sidecar_digest = flush_probe_sidecar(flattened, lost_keys=keys or None, probes_lost=lost)
     write_coverage(
         {},
         {},
         call_counters=flattened,
-        probes_lost=probes_lost(),
+        probes_lost=lost,
         receipt=probe_coverage_receipt(),
         receipts=current_receipts() or None,
         lost_keys=keys or None,
