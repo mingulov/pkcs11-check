@@ -5480,8 +5480,7 @@ def _read_sidecar() -> dict[str, Any]:
 
 
 class TestK1Cadence:
-    def test_flush_window_is_one(self) -> None:
-        assert durability.FLUSH_WINDOW_K == 1
+    """Exact-cadence behavior (the conftest pin holds K=1 here)."""
 
     def test_every_entry_flushes_immediately(self, engaged: Path) -> None:
         call_counters.record_call("C_Login", module="m")
@@ -8995,6 +8994,89 @@ def test_sigkill_after_entry_names_unknown_module_row(tmp_path: Path) -> None:
         {"module": "", "bucket": "session_provisioning", "fn": "C_Digest", "count": 1}
     ]
     assert schema.is_sidecar_partial(partials[0]) is True
+
+
+_K3_STALE_WINDOW_VICTIM = '''"""One flushed window plus one memory-only unit, then die (K>1)."""
+
+import ctypes
+import os
+import signal
+import sys
+
+from pkcs11_check.core import call_counters
+
+call_counters.record_call("C_Digest")
+call_counters.record_return("C_Digest", 0)
+call_counters.record_call("C_Digest")
+info = call_counters.registration_info()
+assert info is not None
+sys.stderr.write(f"WINDOW-FLUSHED sidecar={info['sidecar_path']}\\n")
+sys.stderr.flush()
+call_counters.record_call("C_Encrypt")
+sys.stderr.write("TAIL-OPEN\\n")
+sys.stderr.flush()
+if sys.platform == "win32":
+    kernel = ctypes.windll.kernel32
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    kernel.TerminateProcess(kernel.GetCurrentProcess(), 0xC0000005)
+else:
+    os.kill(os.getpid(), signal.SIGKILL)
+sys.stderr.write("UNREACHABLE: survived the kill\\n")
+'''
+
+
+def test_sigkill_stale_window_yields_partial_and_incomplete(tmp_path: Path) -> None:
+    """K>1 durable: a flushed window plus an unflushed tail recovers loud.
+
+    K=3: the victim's first three units flush (sidecar holds a
+    complete call plus an in-flight entry), the fourth sits
+    memory-only, then it dies. Recovery yields the persisted
+    partial -- never silent exactness, never double-counting --
+    with incomplete forced by the death.
+    """
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    victim = tmp_path / "victim_k3.py"
+    victim.write_text(_K3_STALE_WINDOW_VICTIM, encoding="utf-8")
+    src_root = str(Path(durability.__file__).resolve().parents[2])
+    env = dict(
+        os.environ,
+        PYTHONPATH=src_root + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        PKCS11_CHECK_COUNTERS_DIR=str(counters),
+        PKCS11_CHECK_COUNTERS_UNIT="a.py",
+        PKCS11_CHECK_COUNTERS_ATTEMPT="0",
+        PKCS11_CHECK_COUNTERS_ROLE="unit",
+        PKCS11_CHECK_RUN_ID="R1",
+        PKCS11_CHECK_COUNTERS_FLUSH_K="3",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(victim)],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    if sys.platform == "win32":
+        assert proc.returncode == 0xC0000005, proc
+    else:
+        assert proc.returncode == -signal.SIGKILL, proc
+    assert "WINDOW-FLUSHED" in proc.stderr, proc.stderr
+    assert "TAIL-OPEN" in proc.stderr, proc.stderr
+    assert "UNREACHABLE" not in proc.stderr, proc.stderr
+    records = _collect_crashed88(counters, tmp_path / "child.jsonl", returncode=proc.returncode)
+    partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+    assert len(partials) == 1
+    assert partials[0]["total_calls"] == 2, "the flushed window lands exactly"
+    assert partials[0]["truncated"] is True, "the unflushed tail stays visible"
+    assert partials[0]["in_flight"] == [
+        {"module": "", "bucket": "session_provisioning", "fn": "C_Digest", "count": 1}
+    ]
+    assert schema.is_sidecar_partial(partials[0]) is True
+    lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
+    assert len(lost) == 1
+    assert lost[0]["end_state"] == "killed"
 
 
 class TestEvidenceContainment:

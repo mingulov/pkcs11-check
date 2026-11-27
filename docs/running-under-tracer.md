@@ -39,6 +39,16 @@ around. Under the default isolation the crashing unit is recorded
 and the run continues; deleting crashing tests with `-k` exclusions
 hides provider defects instead of measuring them.
 
+## Reconciling counts against the tracer on crashing runs
+
+Counter sidecars persist every K evidence units (default 20),
+so a crashed producer can lose its unflushed tail (always
+flagged incomplete). When the last calls before death are
+themselves evidence -- exact count reconciliation against an
+external tracer on runs that crash -- set
+`PKCS11_CHECK_COUNTERS_FLUSH_K=1` so every unit persists.
+Clean runs reconcile exactly at any K.
+
 `disabled-tests` files exist for known hangs/crashes you deliberately
 exclude up front (documented, reviewable), not as a crash workaround
 discovered mid-run.

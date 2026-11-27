@@ -136,7 +136,7 @@ those by hand).
 | `PKCS11_CHECK_RV_TRACE` | Switch the probe subprocesses read for the CK_RV trace. Distinct from `P11TEST_RV_TRACE`, which is the `rv_trace` setting above. |
 | `PKCS11_CHECK_RV_TRACE_COMPACT` | Ring-buffer window size the probe subprocesses read. |
 | `PKCS11_CHECK_DATA_DIR` | Override the vector-data directory (default: repo `data/` in dev checkouts, else `~/.local/share/pkcs11-check/data/`). |
-| `PKCS11_CHECK_COUNTERS_FLUSH_K=N` | Counter sidecar snapshots every N evidence units instead of every unit. `1` (the default) is exact; higher values trade crash-exactness for speed (a crash can lose the unflushed tail, always flagged incomplete). Garbage warns and falls back to `1`. |
+| `PKCS11_CHECK_COUNTERS_FLUSH_K=N` | Counter sidecar snapshots every N evidence units. The default (`20`) batches for speed; `1` is exact (every unit persists; use it when the last calls before a crash are themselves evidence, e.g. reconciling counts against an external tracer on crashing runs). A crash can lose the unflushed tail (up to N-1 units), always flagged incomplete. Garbage warns and falls back to `1`. |
 | `PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES` | Cap, in plain integer bytes, for one module-reported output allocation (default 1 GiB). Missing/empty quietly means the default; garbage or non-positive warns and falls back to 1 GiB. |
 
 Full inventory (operator knobs above plus internal bridges like
