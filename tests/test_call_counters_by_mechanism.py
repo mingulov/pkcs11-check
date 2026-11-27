@@ -80,12 +80,36 @@ def test_mech_none_means_unattributed_subset() -> None:
     assert fn_block["by_mechanism"][RSA_PKCS_HEX]["calls"] == 1
 
 
-@pytest.mark.parametrize("bad", [True, False, "0x1082", -1, 1.5])
+@pytest.mark.parametrize("bad", [True, False, "0x1082", -1, 1.5, 2**64])
 def test_mech_rejects_bad_values(bad: Any) -> None:
     with pytest.raises(ValueError, match="mech"):
         call_counters.record_call("C_SignInit", mech=bad)
     with pytest.raises(ValueError, match="mech"):
         call_counters.record_return("C_SignInit", 0, mech=bad)
+
+
+def test_wire_parsers_skip_above_64_bit_mech() -> None:
+    """Garbage mech ids never reach a block (no whole-record invalidation)."""
+    from pkcs11_check.core import _counters_durability as durability
+
+    huge = ["m", "C_SignInit", 0, 1, 2**64]
+    assert call_counters._parse_flat_rows([huge]) == []
+    assert durability._parse_probe_flat_row(huge) is None
+    ok = ["m", "C_SignInit", 0, 1, 2**64 - 1]
+    assert call_counters._parse_flat_rows([ok]) == [("m", "C_SignInit", 0, 1, 2**64 - 1)]
+    assert durability._parse_probe_flat_row(ok) == ("m", "C_SignInit", 0, 1, 2**64 - 1)
+
+
+def test_choke_point_huge_mech_stays_unattributed() -> None:
+    buf = _function_list_buffer(2, 40)
+    raw = RawPKCS11(funclist_ptr=ctypes.addressof(buf))
+    raw._funcs["C_SignInit"] = lambda *args: 0
+    mechanism_arg = SimpleNamespace(_obj=SimpleNamespace(mechanism=2**64))
+    with call_counters.counted_bucket("test"):
+        raw._call("C_SignInit", 1, mechanism_arg)
+    fn_block = _fn_block(call_counters.serialize_current(), "C_SignInit")
+    assert fn_block["calls"] == 1
+    assert "by_mechanism" not in fn_block
 
 
 def test_schema_accepts_valid_by_mechanism_and_rejects_malformed() -> None:
@@ -186,6 +210,41 @@ def test_schema_mech_rv_must_fit_inside_fn_rv() -> None:
         RSA_PKCS_HEX
     ]["by_rv"]["0"]["count"] = 2
     assert schema.is_module_first_block(over_count) is False
+
+    # Summed across mechanisms: 5 + 5 against a fn row of 5 must fail even
+    # though each mech row fits on its own.
+    split_base = {
+        "total_calls": 10,
+        "by_module": {
+            "": {
+                "calls": 10,
+                "buckets": {
+                    "test": {
+                        "calls": 10,
+                        "by_fn": {
+                            "C_SignInit": {
+                                "calls": 10,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": 5}},
+                                "by_mechanism": {
+                                    RSA_PKCS_HEX: {
+                                        "name": "CKM_RSA_PKCS",
+                                        "calls": 5,
+                                        "by_rv": {"0": {"name": "CKR_OK", "count": 5}},
+                                    },
+                                    AES_CBC_HEX: {
+                                        "name": "CKM_AES_CBC",
+                                        "calls": 5,
+                                        "by_rv": {"0": {"name": "CKR_OK", "count": 5}},
+                                    },
+                                },
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+    assert schema.is_module_first_block(split_base) is False
 
 
 def test_schema_mech_key_rules() -> None:
@@ -442,6 +501,68 @@ def test_extractor_folds_by_mechanism_into_output(tmp_path: Path) -> None:
     assert mech["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
 
 
+def test_extractor_folds_by_mechanism_from_module_first_record(
+    tmp_path: Path,
+) -> None:
+    """The module-first session shape folds by_mechanism too (not just legacy)."""
+    from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
+
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text(
+        "\n".join(
+            [
+                json.dumps({"$report_type": "SessionStart"}),
+                json.dumps(
+                    {
+                        "$report_type": "CallCountersReport",
+                        "pid": 100,
+                        "isolation": "file",
+                        "probes_lost": 0,
+                        "total_calls": 1,
+                        "by_module": {
+                            "": {
+                                "calls": 1,
+                                "buckets": {
+                                    "test": {
+                                        "calls": 1,
+                                        "by_fn": {
+                                            "C_SignInit": {
+                                                "calls": 1,
+                                                "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                                                "by_mechanism": {
+                                                    RSA_PKCS_HEX: {
+                                                        "name": "CKM_RSA_PKCS",
+                                                        "calls": 1,
+                                                        "by_rv": {
+                                                            "0": {
+                                                                "name": "CKR_OK",
+                                                                "count": 1,
+                                                            }
+                                                        },
+                                                    }
+                                                },
+                                            }
+                                        },
+                                    }
+                                },
+                            }
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    mech = payload["by_module"]["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"][
+        "by_mechanism"
+    ][RSA_PKCS_HEX]
+    assert mech["calls"] == 1
+    assert mech["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
+
+
 def test_probe_rows_to_block_folds_five_element_rows() -> None:
     """Crashed-probe recovery folds mech rows (not garbage) with detail."""
     from pkcs11_check.core import _counters_durability as durability
@@ -511,6 +632,7 @@ def test_replay_tmp_returns_carries_by_mechanism() -> None:
         )
     )
     merged, _eligibility = durability._replay_tmp_returns(committed, tmp)
+    assert schema.is_module_first_block(merged["in_progress"]) is True
     gained = merged["in_progress"]["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"][
         "by_mechanism"
     ][RSA_PKCS_HEX]
@@ -518,6 +640,7 @@ def test_replay_tmp_returns_carries_by_mechanism() -> None:
 
     # Reverse: tmp without detail keeps the committed detail, never wipes it.
     merged2, _ = durability._replay_tmp_returns(tmp, committed)
+    assert schema.is_module_first_block(merged2["in_progress"]) is True
     kept = merged2["in_progress"]["by_module"][""]["buckets"]["test"]["by_fn"]["C_SignInit"][
         "by_mechanism"
     ][RSA_PKCS_HEX]

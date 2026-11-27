@@ -44,6 +44,8 @@ SESSION_REPORT_TYPE = "CallCountersReport"
 TEST_ENTRY_PROPERTY = "pkcs11_call_counters"
 PARTIAL_REPORT_TYPE = "CallCountersPartial"
 LOST_REPORT_TYPE = "CallCountersLost"
+#: Largest mechanism id the wire format can carry (64-bit CK_ULONG).
+MAX_MECH_ID = 0xFFFFFFFFFFFFFFFF
 REGISTRY_DIRNAME = "registrations"
 REGISTRY_SUFFIX = ".json"
 PROBE_STATUSES: frozenset[str] = frozenset({"folded", "lost"})
@@ -212,11 +214,13 @@ def _by_mechanism_valid(by_mech: object, fn_calls: int, fn_by_rv: Mapping[str, A
     block; mech calls sum at or below the fn calls (unattributed calls are
     simply absent), each mech ``by_rv`` obeys the same never-above rule,
     and every mech RV row must fit inside the fn's own row for that code
-    (a refusal the function never returned fails the block closed).
+    (a refusal the function never returned fails the block closed) — both
+    per mechanism and summed across all mechanisms sharing the code.
     """
     if not isinstance(by_mech, dict):
         return False
     mech_total = 0
+    rv_sums: dict[str, int] = {}
     for mech_key, mech_block in by_mech.items():
         if not _is_hex_mech_key(mech_key) or not isinstance(mech_block, dict):
             return False
@@ -247,6 +251,9 @@ def _by_mechanism_valid(by_mech: object, fn_calls: int, fn_by_rv: Mapping[str, A
                 return False
             assert isinstance(fn_count, int)
             if count > fn_count:
+                return False
+            rv_sums[rv_key] = rv_sums.get(rv_key, 0) + count
+            if rv_sums[rv_key] > fn_count:
                 return False
             mech_rv_total += count
         if mech_rv_total > mech_calls:

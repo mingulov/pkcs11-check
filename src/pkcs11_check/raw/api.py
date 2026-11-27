@@ -749,9 +749,16 @@ class RawPKCS11:
                 self._used_mechanisms.add(m)
                 self._mechanism_counts[m] += 1
                 # Counter attribution needs a real CKM int; anything else
-                # (exotic test doubles) stays unattributed, never loud:
-                # _call must not fail on shapes the provider would take.
-                mech_id = m if isinstance(m, int) and not isinstance(m, bool) and m >= 0 else None
+                # (exotic test doubles, above-64-bit ids) stays
+                # unattributed, never loud: _call must not fail on shapes
+                # the provider would take.
+                mech_id = (
+                    m
+                    if isinstance(m, int)
+                    and not isinstance(m, bool)
+                    and 0 <= m <= 0xFFFFFFFFFFFFFFFF
+                    else None
+                )
                 if tracing:
                     sub = getattr(obj, "_rv_trace_sub", None)
                     if sub:

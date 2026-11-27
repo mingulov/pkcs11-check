@@ -62,6 +62,7 @@ from uuid import uuid4
 from pkcs11_check.core._run_guard import guard_path_for, try_lock_file, unlock_file
 from pkcs11_check.core.counters_schema import (
     LOST_REPORT_TYPE,
+    MAX_MECH_ID,
     PARTIAL_ALLOWED_KEYS,
     PARTIAL_REPORT_TYPE,
     PARTIAL_REQUIRED_KEYS,
@@ -4197,7 +4198,9 @@ def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int, int | No
         return None
     if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
         return None
-    if mech is not None and (not isinstance(mech, int) or isinstance(mech, bool) or mech < 0):
+    if mech is not None and (
+        not isinstance(mech, int) or isinstance(mech, bool) or mech < 0 or mech > MAX_MECH_ID
+    ):
         return None
     return (module, fn, rv, count, mech)
 
