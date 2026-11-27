@@ -1318,6 +1318,7 @@ class TestCensusEngagement:
             "consumed",
             "counters_dir",
             "cleanup_held",
+            "staging_gen",
         }
 
     def test_stale_seal_resume_unseals_before_census(
