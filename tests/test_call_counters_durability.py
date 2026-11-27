@@ -73790,6 +73790,18 @@ def test_r44_ar59_fold_veto_entry_does_not_block_witness(tmp_path: Path) -> None
     if (real1 / "CASEPROBE-ABCDEF").exists():
         pytest.skip("needs a case-sensitive filesystem")
     sensitivity_probe.unlink()
+    # Non-ASCII names need a Unicode-capable filesystem
+    # encoding; probe the round-trip before creating any
+    # (the ascii-locale leg raises creating them).
+    locale_probe = real1 / "localeprobe-ß"
+    try:
+        locale_probe.write_text("x", encoding="utf-8")
+        spelled = locale_probe.name in os.listdir(real1)
+    except (UnicodeEncodeError, OSError):
+        spelled = False
+    if not spelled:
+        pytest.skip("needs a filesystem encoding for non-ASCII names")
+    locale_probe.unlink()
     # Sorts first; its swapcase (0-SS) is unlisted and missing,
     # so a vetoing scan dies here.
     (real1 / "0-ß").write_text("unrelated\n", encoding="utf-8")
@@ -73892,6 +73904,18 @@ def test_r44_ar60_fold_mixed_volume_proves_each_pair(tmp_path: Path) -> None:
     if (real1 / "CASEPROBE-ABCDEF").exists():
         pytest.skip("needs a case-sensitive filesystem")
     sensitivity_probe.unlink()
+    # Non-ASCII names need a Unicode-capable filesystem
+    # encoding; probe the round-trip before creating any
+    # (the ascii-locale leg raises creating them).
+    locale_probe = real1 / "localeprobe-Ä"
+    try:
+        locale_probe.write_text("x", encoding="utf-8")
+        spelled = locale_probe.name in os.listdir(real1)
+    except (UnicodeEncodeError, OSError):
+        spelled = False
+    if not spelled:
+        pytest.skip("needs a filesystem encoding for non-ASCII names")
+    locale_probe.unlink()
     (real1 / "1-witness").write_text("unrelated\n", encoding="utf-8")
     disk_name = f"{solo}-torn-Ä.partial.json"
     target = real1 / disk_name
@@ -74146,6 +74170,18 @@ def test_r44_ar61_fold_length_changing_case_faults(tmp_path: Path) -> None:
     if (real1 / "CASEPROBE-ABCDEF").exists():
         pytest.skip("needs a case-sensitive filesystem")
     sensitivity_probe.unlink()
+    # Non-ASCII names need a Unicode-capable filesystem
+    # encoding; probe the round-trip before creating any
+    # (the ascii-locale leg raises creating them).
+    locale_probe = real1 / f"localeprobe-{dotted}"
+    try:
+        locale_probe.write_text("x", encoding="utf-8")
+        spelled = locale_probe.name in os.listdir(real1)
+    except (UnicodeEncodeError, OSError):
+        spelled = False
+    if not spelled:
+        pytest.skip("needs a filesystem encoding for non-ASCII names")
+    locale_probe.unlink()
     (real1 / "1-witness").write_text("unrelated\n", encoding="utf-8")
     disk_name = f"{solo}-torn-{dotted}.partial.json"
     target = real1 / disk_name
@@ -74409,6 +74445,10 @@ def test_r44_ar60_absent_vanish_marks_over_presence(
             swept = durability.sweep_orphans(
                 root, current_run=_RUN, committed_uuids=frozenset({solo})
             )
+    # Exactly two listings on every leg (Claude Q3 N3):
+    # the hit's snapshot lists first, the absent leg breaks
+    # second -- and a post-check vanish returns before any
+    # re-list, so the empty legs list no third time either.
     assert len(full_lists) == 2, "hit listed, absent leg broke (premise)"
     if pre == "unreadable":
         assert pre_lied, "the pre-check read unreadable (premise)"
@@ -74428,11 +74468,6 @@ def test_r44_ar60_absent_vanish_marks_over_presence(
             "the archival inventory changed during verification" in text for text in texts
         ), texts
     assert not any("together with this family" in text for text in texts), texts
-    # Mechanism pin for the empty legs (not a premise: the old
-    # code re-listed here): a post-check vanish returns before
-    # any re-list, so the render listed exactly twice.
-    if mechanism == "empty":
-        assert len(full_lists) == 2, full_lists
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
@@ -75130,3 +75165,159 @@ def test_r44_ar55_journal_hit_overlap_conflicts(tmp_path: Path) -> None:
     # Mechanism pin: the conflict aborts adoption, so the
     # legs never merge (the skip variant merges them).
     assert "leg-lookup" not in looked_up, looked_up
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar62_fold_proof_oserror_faults(tmp_path: Path) -> None:
+    """#88R44-[A]r62: an unverifiable fold proof fails loud.
+
+    Claude Q3 L1: the mixed-volume pin covers only the
+    proof's include and drop arms. A non-ENOENT proof
+    error (here an injected ENOTDIR, a parent replaced by
+    a file mid-proof) is one unverifiable observation,
+    not two that differ, so drift cannot mark it and
+    churning it would rerun a persistent fault forever
+    (Claude Q3 N2): the render faults instead of dropping
+    the entry or publishing past it. The scan swallows
+    the same error as inconclusive, so the witness still
+    engages folding and only the proof faults.
+    """
+    import errno
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    real1 = root / "real1"
+    real1.mkdir()
+    (real1 / "1-witness").write_text("unrelated\n", encoding="utf-8")
+    disk_name = f"{solo}-torn.partial.json"
+    target = real1 / disk_name
+    target.write_text("{torn", encoding="utf-8")
+    own_name = f"{disk_name}.tmp-1"
+    (real1 / own_name).write_text("{}\n", encoding="utf-8")
+    upper_name = f"{disk_name}.tmp-2".upper()
+    (real1 / upper_name).write_text("{}\n", encoding="utf-8")
+    member = root / disk_name
+    os.symlink(target, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_samefile = os.path.samefile
+    witness = {os.fspath(real1 / "1-witness"), os.fspath(real1 / "1-WITNESS")}
+    proof = {os.fspath(real1 / upper_name), os.fspath(real1 / f"{disk_name}.tmp-2")}
+    injected: list[bool] = []
+
+    def _samefile_then_fault(first: Any, second: Any, *args: Any, **kwargs: Any) -> Any:
+        pair = {os.fspath(first), os.fspath(second)}
+        if pair == witness:
+            return True
+        if pair == proof:
+            injected.append(True)
+            raise OSError(errno.ENOTDIR, "injected proof churn")
+        return real_samefile(first, second, *args, **kwargs)
+
+    with mock.patch.object(os.path, "samefile", _samefile_then_fault):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert injected, "the proof pair errored (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("the member inventory could not be verified" in text for text in texts), texts
+    assert any(f"(unreadable: real1/{upper_name})" in text for text in texts), texts
+    assert not any(
+        "the archival inventory changed during verification" in text for text in texts
+    ), texts
+    assert not any("archive the listed members" in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar62_companion_lstat_fault_fails_loud(tmp_path: Path) -> None:
+    """#88R44-[A]r62: a link-check lstat fault fails loud.
+
+    Claude Q3 L1: the entry's link spelling renders
+    alongside its target, and the link check stats the
+    entry explicitly because islink would swallow a fault
+    as False and silently omit the link from a published
+    set. An lstat fault there fails like an unresolvable
+    companion. The fault injects only for the companion
+    path from the link-check caller (realpath stats the
+    same path internally while resolving it, and those
+    must stay truthful).
+    """
+    import errno
+    import inspect
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    real1 = root / "real1"
+    real1.mkdir()
+    disk_name = f"{solo}-torn.partial.json"
+    target = real1 / disk_name
+    target.write_text("{torn", encoding="utf-8")
+    own_name = f"{disk_name}.tmp-1"
+    (real1 / own_name).write_text("{}\n", encoding="utf-8")
+    member = root / disk_name
+    os.symlink(target, member)
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_lstat = os.lstat
+    companion_key = os.fspath(real1 / own_name)
+    injected: list[bool] = []
+
+    def _lstat_then_fault(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == companion_key:
+            caller = inspect.currentframe()
+            caller = caller.f_back if caller is not None else None
+            if caller is not None and caller.f_code.co_name == "_validate_companion_entries":
+                injected.append(True)
+                raise OSError(errno.ENOENT, "injected link-check fault")
+        return real_lstat(path, *args, **kwargs)
+
+    with mock.patch.object(os, "lstat", _lstat_then_fault):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert injected, "the link check faulted (premise)"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("the member inventory could not be verified" in text for text in texts), texts
+    assert any(f"(unreadable: real1/{own_name})" in text for text in texts), texts
+    assert not any(
+        "the archival inventory changed during verification" in text for text in texts
+    ), texts
+    assert not any("archive the listed members" in text for text in texts), texts
