@@ -2326,3 +2326,48 @@ def test_own_spawn_write_failure_raises(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv(durability.PROBE_PARENT_ENV, "b" * 32)
     with pytest.raises(durability.CounterPersistenceError):
         call_counters.note_own_probe_spawn()
+
+
+# --------------------------------------------------------------------------
+# R44-F5a round 2: single-capture exit writers (RED)
+# --------------------------------------------------------------------------
+
+
+def test_f5ar2_session_exit_writer_samples_loss_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F5ar2: the legacy exit writer samples the loss scalar once.
+
+    The sidecar flush and the coverage write must carry the same loss
+    contribution: sampling twice lets a mid-write loss split the pair
+    (the commit's lossless proof then fails spuriously, or the parent
+    absorbs a scalar the sidecar never stated).
+    """
+    calls = {"n": 0}
+
+    def _counting_probes_lost() -> int:
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(session, "probes_lost", _counting_probes_lost)
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    session._write_coverage(_fake_raw())
+    assert calls["n"] == 1, "one contribution captured for both writes"
+
+
+def test_f5ar2_raw_exit_writer_samples_loss_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R44-F5ar2: the raw exit writer samples the loss scalar once."""
+    calls = {"n": 0}
+
+    def _counting_probes_lost() -> int:
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(raw_session, "probes_lost", _counting_probes_lost)
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    raw_session._write_raw_coverage()
+    assert calls["n"] == 1, "one contribution captured for both writes"

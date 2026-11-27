@@ -272,14 +272,14 @@ def _emit_probe_attestation(record: dict[str, Any]) -> None:
     Best-effort, warns loudly on failure (never breaks session end):
     the admitted folded-probe digests, keyed by the session's
     publication digest, so a later recordless retry can prove exact
-    targets against a replacement publication. Skipped silently when
-    no digests were admitted (nothing to attest) or durability is
-    disengaged (no recordless scope). Never raises.
+    targets against a replacement publication. Every engaged
+    emission logs one line, even with no digests: a skipped emission
+    is invisible, so a proof-less winner could borrow the sole entry
+    of an equal-content emission (#88R44-F6r2). Skipped silently only
+    when durability is disengaged (no recordless scope). Never raises.
     """
     try:
         digests = folded_probe_digests()
-        if not digests:
-            return
         counters_dir = durability_dir()
         if counters_dir is None:
             return

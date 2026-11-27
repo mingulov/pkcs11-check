@@ -20,6 +20,7 @@ probes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -60,6 +61,7 @@ from pkcs11_check.core.call_counters import (
     assign_probe_seq,
     ensure_registered,
     flush_counters,
+    folded_probe_digests,
     forget_probe_spawn,
     get_worker_uuid,
     ingest_child_evidence,
@@ -510,6 +512,26 @@ def _fallback_identity_clash(
     return None
 
 
+def _sidecar_matches_admission(sidecar: str | None, validated: tuple[str, int]) -> bool:
+    """Whether a deduplicated sidecar reverifies against its admission (#88R44-F5ar2).
+
+    Dedup cleanup runs only for a reverified version already covered by
+    the admission: the sidecar's current bytes must hash to the digest
+    admitted under its receipt. A sidecar-less ingest matches vacuously
+    (nothing to protect); an unreadable sidecar or a missing admission
+    never matches (fail closed: without proof of duplication the
+    evidence retains for file collection). Never raises.
+    """
+    if sidecar is None:
+        return True
+    try:
+        current = hashlib.sha256(Path(sidecar).read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return False
+    admitted = folded_probe_digests().get(validated)
+    return admitted is not None and current == admitted
+
+
 def _admit_folded_probe_digest(data: Any, validated: tuple[str, int]) -> None:
     """Admit one folded probe's sidecar digest for attestation (#88R44-G7).
 
@@ -603,7 +625,7 @@ def ingest_probe_payload(
                 merged_keys: Any = (*raw_keys, *extra_keys)
             else:
                 merged_keys = raw_keys
-            ingest_child_evidence(
+            admitted = ingest_child_evidence(
                 absorbed_rows,
                 data.get("probes_lost", 0),
                 data.get("receipts", ()),
@@ -611,7 +633,11 @@ def ingest_probe_payload(
                 source=source,
                 consumed_probe=proved_receipt,
             )
-            if proved_receipt is not None:
+            # Proof admits with its counts and losses (#88R44-F5ar2): a
+            # deduplicated re-ingest advances neither. The commit below
+            # stays unconditional: it re-proves subsumption against a
+            # fresh read, so only a reverified version retires anyway.
+            if proved_receipt is not None and admitted:
                 _admit_folded_probe_digest(data, proved_receipt)
             absorbed_keys = frozenset((key["parent_uuid"], key["probe_seq"]) for key in extra_keys)
             # Exit coverage subsumes every mid-run tmp (#88R3).
@@ -640,8 +666,27 @@ def ingest_probe_payload(
                 # not advance attestation past the counts it skipped.
                 if admitted:
                     _admit_folded_probe_digest(data, validated)
-                # Exit coverage subsumes every mid-run tmp (#88R3).
-                _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
+                    # Exit coverage subsumes every mid-run tmp (#88R3).
+                    _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
+                elif _sidecar_matches_admission(sidecar, validated):
+                    # Deduplicated replay of the admitted version: the
+                    # sidecar reverifies byte-identical against the
+                    # admission, so duplicate cleanup proceeds.
+                    _commit_probe_sidecar(sidecar, force_tmps=True, expected=validated)
+                else:
+                    # Deduplicated replay with unproved duplication
+                    # (#88R44-F5ar2): same receipt, but the sidecar
+                    # matches no admission (changed evidence, or
+                    # nothing admitted to match against). The parent
+                    # keeps its admitted counts; the sidecar retains
+                    # for file collection, which defers loudly on the
+                    # unpublished delta instead of losing it silently.
+                    warnings.warn(
+                        f"probe ingest for {validated} deduplicated without a "
+                        "matching admission; evidence retained for file collection",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 return "folded"
     fallback = _read_probe_json(sidecar)
     if isinstance(fallback, _UnreadableEvidence):
@@ -685,9 +730,11 @@ def ingest_probe_payload(
                 # Containment anchors the engaged counters dir (authoritative),
                 # never the sidecar's own parent: the sidecar path rides the
                 # child payload, so deriving root from it would be
-                # self-justifying (#88R44-F1b). The parent fallback covers
-                # durability-off unit shapes only.
-                quarantine_root = durability_dir() or Path(sidecar).parent
+                # self-justifying (#88R44-F1b). Disengaged slotted calls
+                # pass no root at all (#88R44-F1r2): quarantine without
+                # an authoritative dir refuses and the ingest defers to
+                # file collection (which has one).
+                quarantine_root = durability_dir()
                 fallback_counters, _divergent, _refused_garbage = _replay_probe_tmp_rows(
                     Path(sidecar),
                     validated_fallback[0],

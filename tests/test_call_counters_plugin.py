@@ -207,11 +207,18 @@ def test_emit_probe_attestation_writes_file(
     call_counters.reset_for_tests()
 
 
-def test_emit_probe_attestation_skips_when_empty(
+def test_emit_probe_attestation_logs_empty_line_when_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#88R44-G7: no admitted digests means no attestation artifact."""
-    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV
+    """#88R44-F6r2: an empty emission logs an explicit empty line (no silent skip).
+
+    Inverts the G7 skip: a skipped emission is invisible, so a
+    proof-less winner could borrow the sole entry of an equal-content
+    emission. Every engaged emission logs one line; the loader drops
+    keys whose lines disagree, so single entries prove unique
+    emissions.
+    """
+    from pkcs11_check.core._counters_durability import COUNTERS_DIR_ENV, _publication_digest
 
     call_counters.reset_for_tests()
     root = tmp_path / "counters"
@@ -223,7 +230,15 @@ def test_emit_probe_attestation_skips_when_empty(
     )
     plugin_counters.emit_session_record(cast("pytest.Config", config))
     assert len(written) == 1
-    assert list(root.glob("attestations-*")) == []
+    worker = call_counters.get_worker_uuid()
+    path = root / f"attestations-{worker}.jsonl"
+    assert path.exists(), "the empty emission logs explicitly"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["worker_uuid"] == worker
+    assert record["publication"] == _publication_digest(json.loads(json.dumps(written[0])))
+    assert record["attestations"] == []
     call_counters.reset_for_tests()
 
 
