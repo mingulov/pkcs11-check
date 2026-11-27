@@ -58,9 +58,12 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKR_CRYPTOKI_ALREADY_INITIALIZED,
     CKR_OK,
+    CKR_PIN_INCORRECT,
+    CKR_SLOT_ID_INVALID,
     CKU_USER,
 )
 from pkcs11_check.testcases._probes._emit import (
+    emit_harness_error,
     emit_rv_trace,
     flush_probe_sidecar,
     mark_python_finalized,
@@ -229,7 +232,10 @@ def probe_main(
     I3 — PIN travels only via _P11CHECK_PIN env var; never serialised into params/argv.
          C_Login is skipped when the env var is absent.
     I4 — child never calls classify()/fail_as()/xfail_as(); a clean setup failure
-         prints SETUP_XFAIL:<reason> to stdout and exits 0.
+         prints SETUP_XFAIL:<reason> to stdout and exits 0. A setup failure
+         that is our own fault (B5a: wrong configured PIN, self-resolved
+         slot id rejected) prints HARNESS_ERROR: instead, so the parent
+         blames the harness/operator, never the module.
     I6 — atexit writes call, mechanism, OK, and mechanism-RV counts to
          _P11CHECK_SUBPROCESS_COVERAGE so the parent's get_preamble_subprocess_coverage()
          can aggregate it.
@@ -317,6 +323,12 @@ def probe_main(
         try:
             sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
         except CkrAssertionError as exc:
+            if exc.rv == int(CKR_SLOT_ID_INVALID):
+                # B5a: the id came from our own resolve_slot_id -- invalid
+                # means our resolution lied (harness bug), never provider
+                # capability. Blame us, not the module.
+                emit_harness_error(exc, phase="C_OpenSession with resolved slot id")
+                return
             print(f"SETUP_XFAIL:C_OpenSession rejected with {ckr_name(exc.rv)}")
             return
         teardown.sh = sh
@@ -329,6 +341,12 @@ def probe_main(
                 try:
                     login_user(raw, sh, CKU_USER, pin.encode())
                 except CkrAssertionError as exc:
+                    if exc.rv == int(CKR_PIN_INCORRECT):
+                        # B5a: the configured PIN is wrong -- operator config,
+                        # never not_operational (the CLI preflight already
+                        # refuses it; this arm covers bare-pytest runs).
+                        emit_harness_error(exc, phase="C_Login with configured PIN")
+                        return
                     print(f"SETUP_XFAIL:C_Login rejected with {ckr_name(exc.rv)}")
                     return
 
