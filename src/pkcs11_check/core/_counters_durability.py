@@ -20398,6 +20398,13 @@ def sweep_orphans(
                                     return None
                                 proven = False
                             except (OSError, RuntimeError, ValueError):
+                                # ENOTDIR faults here, unlike the member
+                                # reread's churn (Claude Q3 N2): a proof
+                                # fault is one unverifiable observation,
+                                # not two that differ, so drift cannot
+                                # mark it (Codex R58-2) -- and churning a
+                                # persistent fault would rerun forever.
+                                # Fail loud instead.
                                 fault_keys.add(_lexical_key(entry))
                                 return None
                             break
@@ -20933,7 +20940,18 @@ def sweep_orphans(
                         continue
                     # Companion-only base (Claude Q3 M3): rewrites may
                     # sit beside an absent sidecar, but it names
-                    # nothing itself.
+                    # nothing itself. The live parent resolution
+                    # below never traverses a link-bearing
+                    # intermediate (Claude Q3 L3, declined with
+                    # proof): nested lexical legs always map when
+                    # present or ride recorded-absent -- which
+                    # never resolves live -- when missing, while
+                    # dependents, census bases, journals, and
+                    # members are root-parented -- so no
+                    # construction delivers a nested parent to
+                    # this branch or the live path below. A
+                    # future nested unmapped base would need its
+                    # lexical intermediates bracketed.
                     if _path_state(base.parent) == "missing":
                         continue
                     resolved_parent = _resolve(base.parent)
@@ -22747,7 +22765,10 @@ def sweep_orphans(
                 # (#88R44-[A]r37, Codex R36-1): no finite observation
                 # closes interleaved-write races, so archival requires
                 # writers and collectors quiescent plus a fresh
-                # action-time inventory -- quiescence makes that
+                # action-time inventory. That inventory is a written
+                # operator instruction (the exit message below), not
+                # code: nothing here re-validates at action time
+                # (Claude Q3 Q6). Quiescence makes the instructed
                 # inventory complete by construction.
                 move = ", ".join(sorted(move_names)) if move_names else "the probe evidence"
                 move_exit = (
