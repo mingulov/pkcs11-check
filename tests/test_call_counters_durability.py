@@ -60534,9 +60534,13 @@ def test_r44_ar23_ownerless_sidecar_voices_unbound_exit(tmp_path: Path) -> None:
     # pin: renaming alone cannot clear an ownerless hold; r30
     # re-anchors it: "rename to match" lives only in the unrelated
     # unbound-stall exit, so the old negative pin could never fail
-    # here. Pinning the companion text instead -- any regression
-    # to standalone advice drops it and fails.)
-    assert any("rename without overwriting" in text for text in texts), texts
+    # here; r39 scopes both halves to this sidecar's voice (Claude
+    # Q3 finding 5): the companion must be present and the mismatch
+    # arm's standalone advice absent -- the positive half proves the
+    # filter is non-vacuous.
+    ownerless = [text for text in texts if stray.name in text]
+    assert any("rename without overwriting" in text for text in ownerless), texts
+    assert not any("rename to the verified binding" in text for text in ownerless), texts
     assert not any("under prefixes" in text for text in texts), texts
 
 
@@ -63257,7 +63261,7 @@ def test_r44_ar29_healthy_sole_probe_preserves_binding(tmp_path: Path) -> None:
     assert probe.exists(), "the probe waits for collection"
     assert first["removed"] == 0, first
     texts = [str(found.message) for found in seen]
-    assert any("last usable binding" in text for text in texts), texts
+    assert any("only usable binding the scan could establish" in text for text in texts), texts
     assert any("collect the probe evidence" in text for text in texts), texts
     child = tmp_path / "child.jsonl"
     child.write_text('{"n": 1}\n', encoding="utf-8")
@@ -63315,7 +63319,7 @@ def test_r44_ar29_healthy_sole_probe_run_credit_preserves_binding(tmp_path: Path
     assert Path(planted["sidecar"]).exists(), "run credit spares the sole sidecar"
     assert probe.exists(), "the orphan survives with its evidence"
     texts = [str(found.message) for found in seen]
-    assert any("last usable binding" in text for text in texts), texts
+    assert any("only usable binding the scan could establish" in text for text in texts), texts
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
@@ -63380,6 +63384,10 @@ def test_r44_ar29_prune_arrival_during_forensics_hashing_holds(tmp_path: Path) -
     counts: the next collect published nothing). The digest
     checks run inside the bracket now: mid-hash churn retries,
     and the fresh listing holds the arrival.
+    Relies on nanosecond directory timestamps (all CI filesystems);
+    would fail deterministically -- not flake -- on jiffy-granularity
+    clocks. Not scripted: in sweep flow the end-check samples sit at
+    unstable stream positions (unlike direct-prune tests).
     """
     import warnings
     from unittest import mock
@@ -63631,3 +63639,1342 @@ def test_r44_ar30_own_torn_probe_waits_for_member_archival(tmp_path: Path) -> No
     assert registry.exists(), "the hold persists across the quarantine"
     assert probe.exists(), "the probe waits for archival-then-collection"
     assert swept["removed"] == 0, swept
+
+
+def test_r44_ar31_healed_member_collects_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r31: a healed member collects in place, never archives.
+
+    Codex R30-1: the census saw a torn sidecar, but it healed
+    before the warning -- which still named it for archival
+    (existence recheck only). Following that instruction lost
+    the healed seven ([9]); leaving it yields [16]. The voice
+    qualifies the names as scan-time observations and says to
+    verify still-torn before archiving; healed members collect
+    in place.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(7))
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    healthy = sidecar.read_bytes()
+    sidecar.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        first = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert first["removed"] == 0, first
+    texts = [str(found.message) for found in seen]
+    assert any("with torn evidence while" in text for text in texts), texts
+    assert any(sidecar.name in text for text in texts), texts
+    assert any("still torn" in text for text in texts), texts
+    sidecar.write_bytes(healthy)
+    assert durability._replay_baseline_usable(sidecar) is True, "healed (premise)"
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        published = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    totals = [
+        rec["total_calls"]
+        for rec in published
+        if rec.get("worker_uuid") == solo and rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [16], f"healed 7 + probe 9 collect in place: {totals}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert not registry.exists(), "converged after the in-place collect"
+    assert swept["removed"] == 0, "nothing left to remove"
+
+
+def test_r44_ar31_sole_hold_names_every_floating_probe(tmp_path: Path) -> None:
+    """#88R44-[A]r31: the sole hold names all its probes.
+
+    Codex R30-2: with two floating probes, the singular archival
+    instruction let the operator archive one probe plus the family
+    and orphan the other. The exit names every affected probe and
+    marker now, and the cause no longer overstates the scan ("the
+    only usable binding the scan could establish").
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    probe_a = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    probe_b = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="f" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity=None,
+        nonce="deadbeef",
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probes float"
+    assert sidecar.exists(), "the healthy member waits with it"
+    assert probe_a.exists() and probe_b.exists(), "both probes wait for collection"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("only usable binding the scan could establish" in text for text in texts), texts
+    assert any(probe_a.name in text for text in texts), texts
+    assert any(probe_b.name in text for text in texts), texts
+
+
+def test_r44_ar32_sole_hold_names_attributed_dependents(tmp_path: Path) -> None:
+    """#88R44-[A]r32: the archival exit names attributed dependents too.
+
+    Codex R31-1: a sole family with a legacy probe (9) plus a
+    probe explicitly attributed to it (5) held with a voice
+    naming only the legacy probe (pinned_by tracks ambiguity
+    blockers, and the formatter caps at three). Following the
+    printed instruction stranded the five calls. The exit now
+    names every dependent probe and marker, uncapped, while the
+    blocker list stays for diagnosis. Collecting in place still
+    publishes all sixteen.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    attributed = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="f" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity={"parent_uuid": solo, "run_id": _RUN, "unit": "a.py"},
+        nonce="attrib",
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probes float"
+    assert sidecar.exists(), "the healthy member waits with it"
+    assert legacy.exists() and attributed.exists(), "both probes wait for collection"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("only usable binding the scan could establish" in text for text in texts), texts
+    assert any(legacy.name in text for text in texts), texts
+    assert any(attributed.name in text for text in texts), texts
+    assert any(f"registrations/{solo}.json" in text for text in texts), texts
+    assert any(sidecar.name in text for text in texts), texts
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        published = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    totals = [
+        rec["total_calls"]
+        for rec in published
+        if rec.get("worker_uuid") == solo and rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [16], f"own 2 + legacy 9 + attributed 5: {totals}"
+
+
+def test_r44_ar33_sole_hold_names_probe_rewrites(tmp_path: Path) -> None:
+    """#88R44-[A]r33: the archival exit names probe rewrites too.
+
+    Codex R32-1: an attributed probe (5 in-flight) with a present
+    rewrite tmp (their completed returns) held with a voice naming
+    only the probe baselines. Moving the printed list stranded the
+    rewrite (next collect and sweep did not recover it). The exit
+    now inventories each named probe's rewrite tmps, plus each
+    marker's original slot, uncapped.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    attributed = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="f" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity={"parent_uuid": solo, "run_id": _RUN, "unit": "a.py"},
+        nonce="attrib",
+        pid=pid,
+        birth=birth,
+    )
+    rewrite = _plant_probe_tmp(
+        attributed,
+        _probe_tmp_payload("f" * 32, 1, [["m", "C_Digest", 0, 5]], parent_uuid=solo),
+        pid=4242,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probes float"
+    assert sidecar.exists(), "the healthy member waits with it"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any(legacy.name in text for text in texts), texts
+    assert any(attributed.name in text for text in texts), texts
+    assert any(rewrite.name in text for text in texts), texts
+
+
+def test_r44_ar33_sole_hold_unverifiable_rewrites_keep_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r33: an unverifiable rewrite inventory keeps the family.
+
+    Codex R32-1's fail-closed half: when a rewrite listing faults,
+    the exit prints no partial archival list -- it directs the
+    operator to collect (or keep the family in place until the
+    inventory can be listed). The hold itself is unaffected (the
+    decision never depended on the listing).
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+
+    def _fault_probe_rewrites(directory: Any, prefix: str) -> Any:
+        if prefix == f"{legacy.name}.tmp-":
+            return None
+        return real_list(directory, prefix)
+
+    with mock.patch.object(durability, "_list_tmp_paths", _fault_probe_rewrites):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar34_sole_hold_brackets_rewrite_enumeration(tmp_path: Path) -> None:
+    """#88R44-[A]r34: a mid-enumeration rewrite keeps the family in place.
+
+    Codex R33-1: the first probe's tmp listing returned empty,
+    then its rewrite landed while the second probe was being
+    listed -- and the warning still offered archival without the
+    rewrite (moving the list stranded it; next collect published
+    nothing). The move list is one bracketed observation now:
+    any directory change between the scan and the after-sample
+    degrades to the keep-in-place exit.
+    Relies on nanosecond directory timestamps (all CI filesystems);
+    would fail deterministically -- not flake -- on jiffy-granularity
+    clocks. Not scripted: in sweep flow the voice samples sit at
+    unstable stream positions (unlike direct-prune tests).
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    probe_a = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="f" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity=None,
+        nonce="second",
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+    planted_rewrite: list[bool] = []
+
+    def _list_then_plant(directory: Any, prefix: str) -> Any:
+        result = real_list(directory, prefix)
+        if prefix == f"{probe_a.name}.tmp-" and not planted_rewrite:
+            planted_rewrite.append(True)
+            _plant_probe_tmp(
+                probe_a,
+                _probe_tmp_payload("e" * 32, 0, [["m", "C_Digest", 0, 9]], parent_uuid=solo),
+                pid=4242,
+            )
+        return result
+
+    with mock.patch.object(durability, "_list_tmp_paths", _list_then_plant):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert planted_rewrite, "the rewrite landed mid-enumeration (premise)"
+    assert registry.exists(), "the binding holds while the probes float"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar34_sole_hold_names_quarantine_companions(tmp_path: Path) -> None:
+    """#88R44-[A]r34: the archival exit names quarantine companions.
+
+    Codex R33-2: an interrupted quarantine left a surviving
+    rewrite plus its .quarantined-* companion; the exit named the
+    rewrite but not the companion, so following it separated the
+    veto evidence from the slot (restore-then-collect published
+    contested returns with no conflict warning). Quarantine
+    companions ride the move list with their slot's rewrites.
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    survivor = _plant_probe_tmp(
+        legacy,
+        _probe_tmp_payload("e" * 32, 0, [["m", "C_Digest", 0, 9]], parent_uuid=solo),
+        pid=4242,
+    )
+    companion = legacy.with_name(f"{legacy.name}.quarantined-4242")
+    companion.write_text(
+        json.dumps(_probe_tmp_payload("e" * 32, 0, [["m", "C_Digest", 0, 5]])),
+        encoding="utf-8",
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any(legacy.name in text for text in texts), texts
+    assert any(survivor.name in text for text in texts), texts
+    assert any(companion.name in text for text in texts), texts
+
+
+def test_r44_ar34_sole_hold_quarantine_fault_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r34: a quarantine-listing fault keeps the family in place.
+
+    Codex R33-2's fail-closed half: the quarantine glob shares the
+    verified flag with the rewrite globs, so a fault there also
+    suppresses the archival list (a separate pin -- sharing the
+    flag is exactly what a typo would break).
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+
+    def _fault_quarantine_glob(directory: Any, prefix: str) -> Any:
+        if prefix == f"{legacy.name}.quarantined-":
+            return None
+        return real_list(directory, prefix)
+
+    with mock.patch.object(durability, "_list_tmp_paths", _fault_quarantine_glob):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar35_sole_hold_reverifies_stale_classifications(tmp_path: Path) -> None:
+    """#88R44-[A]r35: a same-name probe flip keeps the family in place.
+
+    Codex R34-1: the scan saw a torn probe, which was then
+    atomically replaced (same name) with a valid five-call probe.
+    The memo saw unchanged filename sets, took the
+    departure-subtraction path, and advanced its timestamp without
+    reclassifying -- so the mtime bracket agreed and the warning
+    offered archival without the repaired probe (following it
+    stranded the five calls; in-place collect published [16]).
+    The voice re-runs the classification outright and requires
+    the same dependent union before offering archival (r36
+    replaced the r35 generation loop: membership, not bytes, is
+    what the move list must match).
+    (The scan hook below reproduces the stale-serve exactly: torn
+    classification served with a post-replacement timestamp, which
+    also freezes the memo so every voice in the sweep agrees.)
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    torn_probe = root / f"probe-{solo[:8]}-0-deadbeef.json"
+    torn_probe.write_text("{torn", encoding="utf-8")
+    floater = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        nonce="second",
+        pid=pid,
+        birth=birth,
+    )
+    real_scan = durability._probe_ambiguity_prefixes
+    flipped: list[bool] = []
+
+    def _scan_then_flip(scan_root: Path) -> Any:
+        inventory, raced = real_scan(scan_root)
+        if scan_root == root and not flipped:
+            flipped.append(True)
+            _plant_probe_orphan(
+                root,
+                parent_uuid=solo,
+                child_uuid="f" * 32,
+                seq=0,
+                counters=[["m", "C_Digest", 0, 5]],
+                identity=None,
+                nonce="deadbeef",
+                pid=pid,
+                birth=birth,
+            )
+            inventory = inventory._replace(dir_mtime_ns=durability._dir_mtime_ns(root))
+        return inventory, raced
+
+    with mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_flip):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert flipped, "the flip landed after the scan (premise)"
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert floater.exists(), "the floating probe waits"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("rerun to re-list" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar36_membership_stable_flip_keeps_archival(tmp_path: Path) -> None:
+    """#88R44-[A]r36: a membership-stable flip still offers archival.
+
+    Codex R35-1's fix compares classifications, not generations: a
+    same-name content flip that changes no dependent membership
+    moves the same files (bytes travel with the name), so archival
+    stays offered. Only membership drift -- or an unreadable
+    rescan -- degrades to keep-in-place. (This pins the design
+    against the r35 generation rule, which degraded on any flip.)
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    floater = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_scan = durability._probe_ambiguity_prefixes
+    flipped: list[bool] = []
+
+    def _scan_then_rewrite(scan_root: Path) -> Any:
+        inventory, raced = real_scan(scan_root)
+        if scan_root == root and not flipped:
+            flipped.append(True)
+            _plant_probe_orphan(
+                root,
+                parent_uuid=solo,
+                child_uuid="e" * 32,
+                seq=0,
+                counters=[["m", "C_Digest", 0, 7]],
+                identity=None,
+                nonce="feedface",
+                pid=pid,
+                birth=birth,
+            )
+        return inventory, raced
+
+    with mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_rewrite):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert flipped, "the rewrite landed after the scan (premise)"
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(floater.name in text for text in texts), texts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_r44_ar36_debris_symlink_does_not_suppress_archival(tmp_path: Path) -> None:
+    """#88R44-[A]r36: dangling debris never suppresses archival.
+
+    Codex R35-2's resolution: the r35 generation loop treated a
+    dangling probe-shaped symlink as unverifiable and kept the
+    family in place with the wrong exit ("until it can be
+    listed"). The rescan rule ignores it consistently instead --
+    zero-byte debris is correctly excluded from the move list,
+    and archival stays offered with the real dependents named.
+    """
+    import os
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    floater = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    os.symlink(root / "no-such-target.json", root / "probe-junk.json")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("together with this family" in text for text in texts), texts
+    assert any(floater.name in text for text in texts), texts
+
+
+def test_r44_ar38_archival_inventory_is_family_scoped(tmp_path: Path) -> None:
+    """#88R44-[A]r38: the archival inventory covers only the named family.
+
+    Codex R37-1: the procedure said to inventory probe, marker,
+    rewrite, and quarantine files "on this directory" and move
+    that inventory with the named family -- which reads
+    directory-wide. Following it in a two-family fixture moved
+    the other family's probe ([2] vs [9]). The exit now scopes
+    the fresh inventory to the named family, requires ownership
+    verification at action time, and keeps the family in place
+    when ownership or completeness cannot be established.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    other = "d" * 32
+    planted_u = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    planted_x = _plant_producer(
+        root, uuid=other, pid=pid, birth=birth, in_progress=_counts_block(7)
+    )
+    probe_u = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    probe_x = _plant_probe_orphan(
+        root,
+        parent_uuid=other,
+        child_uuid="f" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 7]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(
+            root, current_run=_RUN, committed_uuids=frozenset({solo, other})
+        )
+    assert Path(planted_u["registry"]).exists(), "U holds while its probe floats"
+    assert Path(planted_x["registry"]).exists(), "X holds while its probe floats"
+    assert probe_u.exists() and probe_x.exists(), "both probes wait for collection"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("this family's probe" in text for text in texts), texts
+    assert any("ownership at action time" in text for text in texts), texts
+    assert any("together with this family" in text for text in texts), texts
+    assert any(probe_u.name in text for text in texts), texts
+
+
+def test_r44_ar37_archival_names_are_diagnostic_only(tmp_path: Path) -> None:
+    """#88R44-[A]r37: archival names are diagnostic, action needs quiescence.
+
+    Codex R36-1: a probe flipping between the rescan's completed
+    reads still produced an incomplete (but offered) archival
+    list -- no finite observation closes interleaved-write races,
+    and content flips never bump the directory clock. The printed
+    names are diagnostic preview now: the exit requires writers
+    and collectors quiescent plus a fresh action-time inventory
+    before moving the family (quiescence makes the action
+    inventory complete by construction -- nothing moves while you
+    look). The voice-time bracket and rescan stay as the
+    freshness preview and churn detector.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    attributed = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="f" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity={"parent_uuid": solo, "run_id": _RUN, "unit": "a.py"},
+        nonce="attrib",
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probes float"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("diagnostic only" in text for text in texts), texts
+    assert any("quiescent" in text for text in texts), texts
+    assert any("fresh inventory" in text for text in texts), texts
+    assert any(legacy.name in text for text in texts), texts
+    assert any(attributed.name in text for text in texts), texts
+    assert any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar39_own_torn_exit_names_rewrite_companions(tmp_path: Path) -> None:
+    """#88R44-[A]r39: the own-torn exit names rewrite companions.
+
+    Claude Q3 finding 1 (verified by running): the own-torn
+    archival exit named only the torn member, so following it
+    stranded the member's rewrite -- the next collect published
+    the probe's 9 but never the rewrite's 5. The exit inventories
+    each member's `.tmp-*`/`.quarantined-*` companions (bracketed,
+    uncapped) like the sole-voice machinery. Following the full
+    list preserves every file in the archive; nothing strands in
+    the counters directory.
+    """
+    import json
+    import shutil
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    sidecar.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    rewrite = _plant_tmp(sidecar, _tmp_payload(solo, _counts_block(5), pid=pid), nonce="a")
+    companion = sidecar.with_name(f"{sidecar.name}.quarantined-4242")
+    companion.write_text(
+        json.dumps(_tmp_payload(solo, _counts_block(5), pid=pid)), encoding="utf-8"
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        first = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert first["removed"] == 0, first
+    texts = [str(found.message) for found in seen]
+    assert any("with torn evidence while" in text for text in texts), texts
+    assert any(sidecar.name in text for text in texts), texts
+    assert any(rewrite.name in text for text in texts), texts
+    assert any(companion.name in text for text in texts), texts
+    own_torn_voice = " ".join(text for text in texts if "with torn evidence while" in text)
+    assert "quiescent" in own_torn_voice and "still torn" in own_torn_voice, texts
+    assert own_torn_voice.find("quiescent") < own_torn_voice.find("still torn"), texts
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    for named in (sidecar, rewrite, companion):
+        shutil.move(str(named), archive / named.name)
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        published = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    totals = [
+        rec["total_calls"]
+        for rec in published
+        if rec.get("worker_uuid") == solo and rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [9], f"probe collects; rewrite preserved in archive: {totals}"
+    assert (archive / rewrite.name).exists(), "the rewrite travels with the member"
+    assert (archive / companion.name).exists(), "the companion travels with it"
+    assert not rewrite.exists(), "nothing strands in the counters directory"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert not registry.exists(), "converged after archival-then-collection"
+    assert swept["removed"] == 0, "nothing left to remove"
+
+
+def test_r44_ar39_own_torn_member_fault_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r39: a member-inventory fault keeps the family in place.
+
+    The own-torn companion inventory fails closed like the sole
+    machinery: a listing fault suppresses the archival list (no
+    partial names) and keeps the family in place until the
+    inventory can be listed. The hold itself is unaffected.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    sidecar.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+
+    def _fault_member_rewrites(directory: Any, prefix: str) -> Any:
+        if prefix == f"{sidecar.name}.tmp-":
+            return None
+        return real_list(directory, prefix)
+
+    with mock.patch.object(durability, "_list_tmp_paths", _fault_member_rewrites):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+
+
+def test_r44_ar39_run_credit_hold_converges_via_barrier(tmp_path: Path) -> None:
+    """#88R44-[A]r39: the production route converges through the barrier.
+
+    Claude Q3 finding 2, closed with proof: the run-credit test
+    stopped after the first sweep, leaving open whether the hold
+    repeats on every resume. It does not -- the resume barrier
+    adopts the floating probe and its family (recorded in staging,
+    counted as consumed), and the following sweep converges with
+    nothing left. Production order: barrier first, sweep after.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    Path(planted["registry"]).unlink()
+    sidecar = Path(planted["sidecar"])
+    probe = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 9, 2]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        plan = durability.prepare_resume(root, prior_merged_jsonl=None)
+    assert plan["barrier_ok"] is True, "the barrier admits the resume"
+    assert plan["consumed"] >= 1, "the barrier adopts the stranded family"
+    assert (root / "barrier-staging.json").exists(), "the adoption is recorded"
+    assert plan["cache_records"], "adopted records are staged"
+    assert not sidecar.exists(), "the barrier consumes the sidecar"
+    assert not probe.exists(), "the barrier consumes the probe"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(
+            root, current_run="R2", collected_runs=frozenset(plan["collected_runs"])
+        )
+    assert swept["removed"] == 0, "the following sweep converges"
+
+
+def test_r44_ar39_uncapped_names_beyond_three(tmp_path: Path) -> None:
+    """#88R44-[A]r39: archival lists name every dependent, uncapped.
+
+    Claude Q3 finding 5: the r31/r32 tests name at most two
+    dependents, which the capped formatter also prints in full --
+    so a regression to the capped formatter would pass them. Four
+    floating probes pin the uncapped join: every name must appear.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    probes = [
+        _plant_probe_orphan(
+            root,
+            parent_uuid=solo,
+            child_uuid=f"{n:08x}" + "e" * 24,
+            seq=n,
+            counters=[["m", "C_Digest", 0, 1]],
+            identity=None,
+            nonce=f"n{n}",
+            pid=pid,
+            birth=birth,
+        )
+        for n in range(4)
+    ]
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probes float"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    for probe in probes:
+        assert any(probe.name in text for text in texts), (probe.name, texts)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFO semantics")
+@pytest.mark.timeout(30)
+def test_r44_ar40_member_reread_never_blocks_on_fifo(tmp_path: Path) -> None:
+    """#88R44-[A]r40: the member re-read never blocks on a fifo.
+
+    Codex R39-2: a torn sidecar replaced by a writerless FIFO after
+    the census hung the sweep inside the new re-read (the parent
+    commit returned promptly -- it never re-read). The re-read
+    uses the nonblocking regular-file reader now: an unverifiable
+    member fails as a fault (keep the family in place until the
+    inventory can be listed), never a hang.
+    """
+    import os
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    sidecar = Path(planted["sidecar"])
+    sidecar.write_text("{torn", encoding="utf-8")
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_census = durability._owner_census
+    swapped: list[bool] = []
+
+    def _census_then_fifo(root_arg: Path) -> Any:
+        census = real_census(root_arg)
+        if root_arg == root and not swapped:
+            swapped.append(True)
+            os.unlink(sidecar)
+            os.mkfifo(sidecar)
+        return census
+
+    with mock.patch.object(durability, "_owner_census", _census_then_fifo):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert swapped, "the FIFO landed after the census (premise)"
+    assert registry.exists(), "the hold never depended on the read"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+
+
+def test_r44_ar40_schema_invalid_registry_archives(tmp_path: Path) -> None:
+    """#88R44-[A]r40: a schema-invalid registry archives, never reruns.
+
+    Codex R39-3: a `{}` registry (census-torn by schema rules) was
+    re-read as valid JSON and dropped, so the voice looped on the
+    rerun exit forever -- while collection deferred until the
+    invalid registry archived, then published [11]. The re-read
+    applies the census's own per-kind validity rules now, so the
+    stable invalid member is named and archival converges.
+    """
+    import shutil
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    registry.write_text("{}", encoding="utf-8")
+    sidecar = Path(planted["sidecar"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        first = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the invalid member waits for archival"
+    assert sidecar.exists(), "the healthy member waits with it"
+    assert first["removed"] == 0, first
+    texts = [str(found.message) for found in seen]
+    assert any("with torn evidence while" in text for text in texts), texts
+    assert any(f"registrations/{solo}.json" in text for text in texts), texts
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    shutil.move(str(registry), archive / registry.name)
+    child = tmp_path / "child.jsonl"
+    child.write_text('{"n": 1}\n', encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        published = durability.collect_unit(
+            root, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+    totals = [
+        rec["total_calls"]
+        for rec in published
+        if rec.get("worker_uuid") == solo and rec.get("$report_type") == "CallCountersPartial"
+    ]
+    assert totals == [11], f"collection recovers own 2 + probe 9: {totals}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert swept["removed"] == 0, "nothing left to remove"
+
+
+def test_r44_ar40_rescan_churn_preserves_listing_fault(tmp_path: Path) -> None:
+    """#88R44-[A]r40: a raced rescan never clears a listing fault.
+
+    Codex R39-4: a companion-listing fault followed by a raced
+    rescan overwrote the fault flag (`move_faulted = not
+    fresh_raced`), producing the transient rerun exit for a
+    persistent fault. Fault flags accumulate with OR now: the
+    fault exit stands.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    legacy = _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="f" * 32,
+        seq=1,
+        counters=[["m", "C_Digest", 0, 5]],
+        identity={"parent_uuid": solo, "run_id": _RUN, "unit": "a.py"},
+        nonce="attrib",
+        pid=pid,
+        birth=birth,
+    )
+    real_list = durability._list_tmp_paths
+    real_scan = durability._probe_ambiguity_prefixes
+    scans = {"n": 0}
+
+    def _fault_legacy_rewrites(directory: Any, prefix: str) -> Any:
+        if prefix == f"{legacy.name}.tmp-":
+            return None
+        return real_list(directory, prefix)
+
+    def _scan_then_race(scan_root: Path) -> Any:
+        scans["n"] += 1
+        inventory, _raced = real_scan(scan_root)
+        if scans["n"] == 1:
+            return inventory, False
+        return inventory._replace(readable=False), True
+
+    with (
+        mock.patch.object(durability, "_list_tmp_paths", _fault_legacy_rewrites),
+        mock.patch.object(durability, "_probe_ambiguity_prefixes", _scan_then_race),
+    ):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert scans["n"] >= 2, "the rescan ran after the verdict scan (premise)"
+    assert registry.exists(), "the hold never depended on either check"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("rerun to re-list" in text for text in texts), texts
+
+
+def test_r44_ar40_journal_glob_fault_keeps_in_place(tmp_path: Path) -> None:
+    """#88R44-[A]r40: a journal-listing fault keeps the family in place.
+
+    Codex R39-5 (fault-aware enumeration): the family journal glob
+    fails closed like every other inventory listing -- a fault
+    suppresses the archival list instead of printing a silently
+    partial one. The hold itself is unaffected.
+    """
+    import warnings
+    from unittest import mock
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    real_evidence = durability._list_evidence_files
+
+    def _fault_journal_glob(directory: Any, prefix: str, suffix: str) -> Any:
+        if Path(directory) == root and prefix == "" and suffix == durability.JOURNAL_SUFFIX:
+            return None
+        return real_evidence(directory, prefix, suffix)
+
+    with mock.patch.object(durability, "_list_evidence_files", _fault_journal_glob):
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            swept = durability.sweep_orphans(
+                root, current_run=_RUN, committed_uuids=frozenset({solo})
+            )
+    assert registry.exists(), "the hold never depended on the listing"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any("keep the family in place" in text for text in texts), texts
+    assert any("until it can be listed" in text for text in texts), texts
+    assert not any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar40_body_linked_sidecar_is_named(tmp_path: Path) -> None:
+    """#88R44-[A]r40: a body-linked sidecar joins the family preview.
+
+    Codex R39-5: filename matching misses sidecars the census
+    attested by body (a valid body with no contradictory filename
+    claim attests its owner, uuidless name or not). The family
+    inventory unions the census's trusted bases, so the
+    body-linked file is named. (The sweep skips uuidless names
+    itself, so nothing else touches the stray.)
+    """
+    import json
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    stray = root / "stray-name.partial.json"
+    stray.write_text(json.dumps({"worker_uuid": solo}), encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert stray.exists(), "nothing else touches the stray"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any(stray.name in text for text in texts), texts
+    assert any("together with this family" in text for text in texts), texts
+
+
+def test_r44_ar40_orphan_journal_is_named(tmp_path: Path) -> None:
+    """#88R44-[A]r40: an orphan journal joins the family preview.
+
+    Codex R39-5: journals derived from sidecars miss orphans whose
+    sidecar is absent. A direct fault-aware uuid-prefix journal
+    glob covers them.
+    """
+    import warnings
+
+    root = tmp_path / "counters"
+    root.mkdir()
+    pid, birth = _dead_pid_with_birth()
+    solo = "c" * 32
+    planted = _plant_producer(
+        root, uuid=solo, pid=pid, birth=birth, in_progress=_counts_block(2, fn="C_Digest")
+    )
+    registry = Path(planted["registry"])
+    _plant_probe_orphan(
+        root,
+        parent_uuid=solo,
+        child_uuid="e" * 32,
+        seq=0,
+        counters=[["m", "C_Digest", 0, 9]],
+        identity=None,
+        pid=pid,
+        birth=birth,
+    )
+    orphan = root / f"{solo}-orphan{durability.JOURNAL_SUFFIX}"
+    orphan.write_text("{}\n", encoding="utf-8")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        swept = durability.sweep_orphans(root, current_run=_RUN, committed_uuids=frozenset({solo}))
+    assert registry.exists(), "the binding holds while the probe floats"
+    assert orphan.exists(), "nothing else touches the orphan"
+    assert swept["removed"] == 0, swept
+    texts = [str(found.message) for found in seen]
+    assert any(orphan.name in text for text in texts), texts
+    assert any("together with this family" in text for text in texts), texts
