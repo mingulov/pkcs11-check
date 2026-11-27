@@ -20366,13 +20366,25 @@ def sweep_orphans(
                         # (fold: validate on), misses a listed
                         # entry (distinct files: drop the
                         # stranger), or fails while the entry
-                        # itself vanished (fault, like an
-                        # unresolvable companion).
+                        # itself is unresolvable (fault, like an
+                        # unresolvable companion; the entry check
+                        # follows links, since lstat passes
+                        # dangling ones (Codex R60-1)).
                         proven = False
                         for infix in (".tmp-", ".quarantined-"):
                             pattern = f"{stem}{infix}"
                             if not entry.name.lower().startswith(pattern.lower()):
                                 continue
+                            if len(pattern.lower()) != len(pattern):
+                                # Length-changing case (U+0130 and kin,
+                                # Codex R60-2): lower() rewrites the
+                                # width, so tail slicing would prove
+                                # against a misspelled counterpart.
+                                # Real stems are uuid-ASCII -- only
+                                # an adversarial shape lands here --
+                                # so fail loud instead of misproving.
+                                fault_keys.add(_lexical_key(entry))
+                                return None
                             counterpart = os.path.join(
                                 os.path.dirname(entry), pattern + entry.name[len(pattern) :]
                             )
@@ -20380,7 +20392,7 @@ def sweep_orphans(
                                 proven = os.path.samefile(entry, counterpart)
                             except FileNotFoundError:
                                 try:
-                                    os.lstat(entry)
+                                    os.stat(entry)
                                 except OSError:
                                     fault_keys.add(_lexical_key(entry))
                                     return None
@@ -20464,6 +20476,26 @@ def sweep_orphans(
                         )
                         fault_keys.add(_key(validated))
                         return None
+                    if verified is None or verified.get(os.fspath(entry)) is None:
+                        # Live-resolved entries re-resolve before
+                        # rendering (Codex R60 minor): an
+                        # intermediate link outside the sampled
+                        # directories can retarget between the
+                        # checks above and this read, and the
+                        # preview would name a file no check saw.
+                        # Map-pinned entries skip this (the late
+                        # re-verification owns them). A mismatch
+                        # marks drift and re-observes; an
+                        # unresolvable entry faults like one that
+                        # never resolved.
+                        try:
+                            fresh = os.path.realpath(entry, strict=True)
+                        except (OSError, RuntimeError, ValueError):
+                            fault_keys.add(_lexical_key(entry))
+                            return None
+                        if fresh != validated:
+                            _note_drift()
+                            return found_names
                     found_names.add(_key(validated))
                     try:
                         entry_is_link = stat.S_ISLNK(os.lstat(entry).st_mode)
@@ -20878,6 +20910,25 @@ def sweep_orphans(
                             }:
                                 _note_drift()
                                 return set(), False, False, set()
+                            if not relisted:
+                                # Agreed-empty re-list (Codex R60 minor):
+                                # a disappearance during the re-list
+                                # reads [] like a stable-empty dir
+                                # (the helper maps ENOENT to empty),
+                                # so equal sets prove nothing here. A
+                                # non-empty first listing would have
+                                # mismatched, so this path means the
+                                # liveness post-check above read
+                                # present: a gone parent now marks
+                                # drift, while haze fails like an
+                                # unverifiable listing.
+                                post3 = _path_state(absent_parent)
+                                if post3 == "missing":
+                                    _note_drift()
+                                    return set(), False, False, set()
+                                if post3 != "present":
+                                    fault_keys.add(_lexical_key(base))
+                                    return set(), False, True, fault_keys
                         names.update(companions)
                         continue
                     # Companion-only base (Claude Q3 M3): rewrites may
@@ -21770,6 +21821,7 @@ def sweep_orphans(
                     elif member_status == "fault":
                         member_faulted = True
                         faulted_keys.add(key)
+                member_drift_marks: list[bool] = []
                 (
                     member_names,
                     member_verified,
@@ -21787,6 +21839,7 @@ def sweep_orphans(
                         for lexical, recorded in member_targets.items()
                         if recorded is not None
                     },
+                    drift_out=member_drift_marks,
                 )
                 member_faulted = member_faulted or member_helper_faulted
                 faulted_keys.update(member_helper_keys)
@@ -21822,11 +21875,26 @@ def sweep_orphans(
                     and member_before == member_after
                 )
                 member_proven_drift = (
-                    member_before is not None
-                    and member_after is not None
-                    and member_before != member_after
-                ) or member_drifted
+                    (
+                        member_before is not None
+                        and member_after is not None
+                        and member_before != member_after
+                    )
+                    or member_drifted
+                    or bool(member_drift_marks)
+                )
                 if not member_bracket_clean:
+                    member_verified = False
+                if member_drift_marks:
+                    # Render-time drift withdraws verification
+                    # (Codex R60 minor): the companion
+                    # re-resolution observed change mid-render,
+                    # so the pass re-observes like an unclean
+                    # bracket (drift outranks everywhere, Codex
+                    # R45-4). Scoped to render marks only: the
+                    # pre-existing drifted flag keeps its shape
+                    # (its exclusion coupling needs its own
+                    # adjudication).
                     member_verified = False
                 if not member_names and not misplaced_keys:
                     # Nothing archivable (members vanished mid-pass):
