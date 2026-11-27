@@ -523,15 +523,23 @@ def _blob_only_incomplete(
     return counters, False
 
 
+# Record types safe to re-carry without a uuid (R5-R6 minor): session
+# bookends create no groups, and loss records merge by identity -- neither
+# can double-sum, while dropping them would lose segments and losses.
+_ALWAYS_REPEATABLE_TYPES = frozenset({"SessionStart", "SessionFinish", "CallCountersLost"})
+
+
 def _repeatable_earlier_scopes(earlier: bytes) -> bytes:
     """Re-emit earlier evidence lines that are safe to repeat (R5-F1).
 
     Earlier scopes are not guaranteed to be in the report JSONL already
     (several exits never splice), so the append re-carries the ones whose
     repetition cannot corrupt the fold: records with a worker_uuid fold
-    first-wins. Parsed records WITHOUT a uuid are skipped (re-appending
-    would double-sum the retained ones); unparseable lines are kept (a dup
-    cannot be proven, and the extractor tolerates malformed lines).
+    first-wins, and bookends/losses cannot double-sum. Parsed records
+    WITHOUT a uuid that DO sum (session counters, partials, TestReport)
+    are skipped (re-appending would double-sum the retained ones);
+    unparseable lines are kept (a dup cannot be proven, and the extractor
+    tolerates malformed lines).
     """
     out: list[bytes] = []
     for line in earlier.splitlines():
@@ -542,7 +550,11 @@ def _repeatable_earlier_scopes(earlier: bytes) -> bytes:
         except ValueError:
             out.append(line)
             continue
-        if isinstance(record, dict) and record.get("worker_uuid"):
+        if not isinstance(record, dict):
+            continue
+        if record.get("worker_uuid"):
+            out.append(line)
+        elif record.get("$report_type") in _ALWAYS_REPEATABLE_TYPES:
             out.append(line)
     return b"".join(line + b"\n" for line in out)
 

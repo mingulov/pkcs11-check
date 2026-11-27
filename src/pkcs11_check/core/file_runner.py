@@ -2794,7 +2794,11 @@ def run_isolated_pytest_units(
             results=[],
             module_snapshot=run_module_snapshot,
         )
-        # B1/C11: backfill the module snapshot onto legacy states (see above).
+        # B1/C11: backfill the module snapshot onto legacy states (saved
+        # before the field existed) on an accepted resume, so the next
+        # early failure can verify instead of merging blind. Safe here:
+        # the fingerprint gate above already matched, and the fingerprint
+        # hashes this same snapshot. In-memory only; per-unit saves persist.
         if (
             previous_state is not None
             and state.module_snapshot is None
