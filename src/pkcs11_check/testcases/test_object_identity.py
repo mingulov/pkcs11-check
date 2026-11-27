@@ -18,6 +18,7 @@ lengths only, never ID bytes.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from ctypes import byref
 from typing import Any
 
@@ -87,8 +88,8 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._adoption import OwnershipUnprovedError, adopt_correlated_output
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._copy_mutability import classify_rv_validity_or_none
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
@@ -321,11 +322,207 @@ def _destroy_all(rs: Any, handles: list[int]) -> None:
             destroy_quietly(rs.raw, rs.sh, handle)
 
 
+def _baseline_or_void(rs: Any, *, label: str) -> list[int]:
+    """Live-handle baseline for staging adoption (R3F2).
+
+    A refused baseline voids staging visibly (honest-deviation
+    unproved-effect: no output can be adopted without proving it is
+    new); an undefined RV fails the metadata contract loud.
+    """
+    try:
+        return _inventory(rs)
+    except CkrAssertionError as exc:
+        rv = exc.rv
+        if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+            C.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_FindObjects",
+                inherit_mechanism=False,
+                actual=rv,
+                summary=(f"{label}: staging baseline returned undefined CK_RV {ckr_name(rv)}"),
+            )
+        C.xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            actual=rv,
+            summary=(f"{label}: staging baseline refused ({ckr_name(rv)}); adoption unproved"),
+            detail={"disposition": "unproved-effect", "inventory_rv": ckr_name(rv)},
+        )
+
+
+def _adopt_staged(
+    rs: Any,
+    claimed: int,
+    *,
+    label: str,
+    producer_operation: str,
+    before: Collection[int],
+    siblings: Collection[int],
+    expect_label: str | bytes,
+    expect_token: bool,
+) -> int:
+    """Adopt a staged output only with proved ownership (R3F2, R4-F1).
+
+    A null handle, an already-staged sibling (alias), or a handle
+    predating the baseline is a proved provider contradiction: fail
+    WITHOUT staging it, or shared cleanup would destroy a foreign
+    object (or the same object twice). A novel handle is adopted only
+    with attempt correlation (label plus session-ness; staged fixtures
+    never judge shape): a mismatch fails WITHOUT staging it, and an
+    unreadable identity xfails unproved-effect WITHOUT staging it.
+    Returns the adopted handle; never returns an unproved one.
+    """
+    if not claimed:
+        cause = "a null handle"
+    elif claimed in set(siblings):
+        cause = "an already-staged handle (alias)"
+    elif claimed in set(before):
+        cause = "a pre-existing handle"
+    else:
+        try:
+            adopt_correlated_output(
+                rs,
+                claimed,
+                label=label,
+                operation=producer_operation,
+                expect_label=expect_label,
+                expect_token=expect_token,
+                expect_class=None,
+                expect_key_type=None,
+            )
+        except OwnershipUnprovedError as exc:
+            fields = ", ".join(f"{name}: {why}" for name, why in exc.fields.items())
+            C.xfail_as(
+                "honest_deviation",
+                kind="policy",
+                label=label,
+                operation=producer_operation,
+                inherit_mechanism=False,
+                actual=int(CKR_OK),
+                summary=(
+                    f"{label}: {producer_operation} output ownership unproved "
+                    f"({fields}); refusing to stage it"
+                ),
+                detail={"disposition": "unproved-effect", "handle": claimed},
+            )
+        return claimed
+    C.fail_as(
+        "self_contradiction",
+        kind="policy",
+        label=label,
+        operation=producer_operation,
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        summary=(
+            f"{label}: {producer_operation} returned {cause} ({claimed}); refusing to stage it"
+        ),
+        detail={"handle": claimed},
+    )
+
+
+def _append_staged(
+    rs: Any,
+    staged: list[tuple[int, str, str]],
+    claimed: int,
+    leg_label: str,
+    producer: str,
+    *,
+    before: Collection[int],
+    extra: Collection[int] = (),
+    expect_label: str | bytes,
+    expect_token: bool,
+) -> None:
+    """Adopt *claimed* into *staged* (R3F2: null/alias/pre-existing fail).
+
+    *extra* covers live adopted handles outside *staged* (a derive
+    base, unwrap transient keys): an output aliasing any of them is
+    the same proved contradiction. A novel handle is correlated
+    against *expect_label*/*expect_token* before staging (R4-F1).
+    """
+    staged.append(
+        (
+            _adopt_staged(
+                rs,
+                claimed,
+                label=leg_label,
+                producer_operation=producer,
+                before=before,
+                siblings=[*[h for h, _, _ in staged], *extra],
+                expect_label=expect_label,
+                expect_token=expect_token,
+            ),
+            leg_label,
+            producer,
+        )
+    )
+
+
+def _append_keypair_halves(
+    rs: Any,
+    staged: list[tuple[int, str, str]],
+    pub: int,
+    priv: int,
+    pub_label: str,
+    priv_label: str,
+    producer: str,
+    *,
+    before: Collection[int],
+    expect_pub_label: str | bytes,
+    expect_priv_label: str | bytes,
+) -> None:
+    """Adopt a generated pair: pair-aliasing fails before correlation (R4-F1).
+
+    The halves share one producer return, so an aliased pair is a
+    proved contradiction even when the handle itself is unreadable
+    (per-half adoption would void on the first half before the alias
+    manifests). Each half then correlates like any staged output.
+    """
+    if pub and pub == priv:
+        C.fail_as(
+            "self_contradiction",
+            kind="policy",
+            label=pub_label,
+            operation=producer,
+            inherit_mechanism=False,
+            actual=int(CKR_OK),
+            summary=(
+                f"{pub_label}: {producer} returned aliased halves ({pub}); refusing to stage them"
+            ),
+            detail={"halves": [pub, priv]},
+        )
+    _append_staged(
+        rs,
+        staged,
+        pub,
+        pub_label,
+        producer,
+        before=before,
+        expect_label=expect_pub_label,
+        expect_token=False,
+    )
+    _append_staged(
+        rs,
+        staged,
+        priv,
+        priv_label,
+        producer,
+        before=before,
+        expect_label=expect_priv_label,
+        expect_token=False,
+    )
+
+
 def _stage_created_objects(rs: Any) -> list[tuple[int, str, str]]:
     """Three C_CreateObject routes: data, imported AES, imported RSA public."""
     from cryptography.hazmat.primitives.asymmetric import rsa
 
     skip_unless_create_object_supported(rs)
+    before = _baseline_or_void(rs, label="CKA_UNIQUE_ID created staging")
     staged: list[tuple[int, str, str]] = []
     try:
         data = create_object(
@@ -338,11 +535,33 @@ def _stage_created_objects(rs: Any) -> list[tuple[int, str, str]]:
                 CKA_LABEL: "qc7c-created-data",
             },
         )
-        staged.append((data, "CKA_UNIQUE_ID:created data object", "C_CreateObject"))
-        secret = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, bytes(range(16)), attrs={CKA_LABEL: "qc7c-created-aes"}
+        _append_staged(
+            rs,
+            staged,
+            data,
+            "CKA_UNIQUE_ID:created data object",
+            "C_CreateObject",
+            before=before,
+            expect_label="qc7c-created-data",
+            expect_token=False,
         )
-        staged.append((secret, "CKA_UNIQUE_ID:imported AES key", "C_CreateObject"))
+        secret = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(range(16)),
+            attrs={CKA_LABEL: "qc7c-created-aes", CKA_TOKEN: False},
+        )
+        _append_staged(
+            rs,
+            staged,
+            secret,
+            "CKA_UNIQUE_ID:imported AES key",
+            "C_CreateObject",
+            before=before,
+            expect_label="qc7c-created-aes",
+            expect_token=False,
+        )
         numbers = rsa.generate_private_key(65537, 2048).public_key().public_numbers()
         rsa_pub = create_object(
             rs.raw,
@@ -357,7 +576,16 @@ def _stage_created_objects(rs: Any) -> list[tuple[int, str, str]]:
                 CKA_LABEL: "qc7c-created-rsa",
             },
         )
-        staged.append((rsa_pub, "CKA_UNIQUE_ID:imported RSA public key", "C_CreateObject"))
+        _append_staged(
+            rs,
+            staged,
+            rsa_pub,
+            "CKA_UNIQUE_ID:imported RSA public key",
+            "C_CreateObject",
+            before=before,
+            expect_label="qc7c-created-rsa",
+            expect_token=False,
+        )
     except BaseException:
         _destroy_all(rs, [h for h, _, _ in staged])
         raise
@@ -365,32 +593,123 @@ def _stage_created_objects(rs: Any) -> list[tuple[int, str, str]]:
 
 
 def _stage_generated_objects(rs: Any) -> list[tuple[int, str, str]]:
+    before = _baseline_or_void(rs, label="CKA_UNIQUE_ID generated staging")
     staged: list[tuple[int, str, str]] = []
     try:
         first = gen_aes_key_or_xfail(
-            rs, bits=128, attrs={CKA_LABEL: "qc7c-gen-aes-1"}, purpose="QC7c generated IDs"
+            rs,
+            bits=128,
+            attrs={CKA_LABEL: "qc7c-gen-aes-1", CKA_TOKEN: False},
+            purpose="QC7c generated IDs",
         )
-        staged.append((first, "CKA_UNIQUE_ID:generated AES key 1", "C_GenerateKey"))
+        _append_staged(
+            rs,
+            staged,
+            first,
+            "CKA_UNIQUE_ID:generated AES key 1",
+            "C_GenerateKey",
+            before=before,
+            expect_label="qc7c-gen-aes-1",
+            expect_token=False,
+        )
         second = gen_aes_key_or_xfail(
-            rs, bits=128, attrs={CKA_LABEL: "qc7c-gen-aes-2"}, purpose="QC7c generated IDs"
+            rs,
+            bits=128,
+            attrs={CKA_LABEL: "qc7c-gen-aes-2", CKA_TOKEN: False},
+            purpose="QC7c generated IDs",
         )
-        staged.append((second, "CKA_UNIQUE_ID:generated AES key 2", "C_GenerateKey"))
-        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
-        staged.append((pub, "CKA_UNIQUE_ID:generated RSA public half", "C_GenerateKeyPair"))
-        staged.append((priv, "CKA_UNIQUE_ID:generated RSA private half", "C_GenerateKeyPair"))
+        _append_staged(
+            rs,
+            staged,
+            second,
+            "CKA_UNIQUE_ID:generated AES key 2",
+            "C_GenerateKey",
+            before=before,
+            expect_label="qc7c-gen-aes-2",
+            expect_token=False,
+        )
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            public_attrs={CKA_LABEL: "qc7c-gen-rsa-pub", CKA_TOKEN: False},
+            private_attrs={CKA_LABEL: "qc7c-gen-rsa-priv", CKA_TOKEN: False},
+        )
+        _append_keypair_halves(
+            rs,
+            staged,
+            pub,
+            priv,
+            "CKA_UNIQUE_ID:generated RSA public half",
+            "CKA_UNIQUE_ID:generated RSA private half",
+            "C_GenerateKeyPair",
+            before=before,
+            expect_pub_label="qc7c-gen-rsa-pub",
+            expect_priv_label="qc7c-gen-rsa-priv",
+        )
     except BaseException:
         _destroy_all(rs, [h for h, _, _ in staged])
         raise
     return staged
 
 
-def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
-    """Two C_DeriveKey outputs for the shared uniqueness assertion.
+#: Distinct AES-block-aligned derive inputs (length pinned: raw ECB refuses misaligned data).
+_QC7C_DERIVE_DATA: tuple[bytes, ...] = (b"qc7c-derive-dat1", b"qc7c-derive-dat2")
 
-    Returns [] (noted, never fatal) when the derive mechanism is
-    unavailable or a valid derive setup is refused, so the shared
-    creator check stays live on the remaining objects. Undefined and
-    vendor RVs still route through validity-first.
+
+def _note_staging_refusal(
+    exc: CkrAssertionError, *, leg: str, operation: str
+) -> C.Classification | None:
+    """Record a staging refusal against its operation (C3).
+
+    Returns the DEFERRED terminal: an undefined RV records a metadata
+    fail, a vendor-defined RV records a visible alternate xfail, and a
+    standard refusal is noted with its operation and RV (no terminal).
+    The caller runs the shared ID checks and cleanup on the staged
+    outputs first, then raises the deferred terminal: already-accepted
+    handles are never stranded by an immediate raise, and a vendor
+    refusal can never leave the node green.
+    """
+    if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
+        return C.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"QC7c {leg} staging",
+            operation=operation,
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(f"QC7c {leg} staging returned undefined CK_RV {ckr_name(exc.rv)}"),
+        )
+    if is_vendor_defined_ckr(exc.rv):
+        return C.record_as(
+            "nonspec_reject",
+            kind="metadata",
+            label=f"QC7c {leg} staging",
+            operation=operation,
+            inherit_mechanism=False,
+            actual=exc.rv,
+            summary=(
+                f"QC7c {leg} staging refused with vendor-defined {ckr_name(exc.rv)}; "
+                "shared checks run on the staged outputs first"
+            ),
+        )
+    note(
+        f"QC7c {leg} staging refused ({operation} {ckr_name(exc.rv)}); "
+        "shared assertion runs with the staged outputs",
+        ComplianceLevel.STANDARD,
+        reference=f"QC7c #59 {leg} creator leg",
+    )
+    return None
+
+
+def _stage_derived_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Classification | None:
+    """Stage up to two C_DeriveKey outputs for the shared uniqueness assertion.
+
+    Each accepted handle is transferred to *into* as it is staged, so
+    the caller's cleanup owns it even when a later step refuses. A
+    refused setup or derive step ends the leg short and returns the
+    deferred terminal (vendor/undefined; None for standard notes and
+    clean runs): the caller runs the shared checks and cleanup first,
+    then raises it.
     """
     if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
         note(
@@ -398,11 +717,11 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
             ComplianceLevel.STANDARD,
             reference="QC7c #59 derive creator leg",
         )
-        return []
-    staged: list[tuple[int, str, str]] = []
+        return None
+    before = _baseline_or_void(rs, label="CKA_UNIQUE_ID derive staging")
     base = 0
     try:
-        base = import_secret_key(
+        raw_base = import_secret_key(
             rs.raw,
             rs.sh,
             CKK_AES,
@@ -413,50 +732,67 @@ def _stage_derived_objects(rs: Any) -> list[tuple[int, str, str]]:
                 CKA_LABEL: "qc7c-derive-base",
             },
         )
-        for index in (1, 2):
-            derived = derive_key(
-                rs.raw,
-                rs.sh,
-                base,
-                CKM_AES_ECB_ENCRYPT_DATA,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_VALUE_LEN: 16,
-                    CKA_TOKEN: False,
-                    CKA_LABEL: f"qc7c-derived-{index}",
-                },
-                mech_param=mech_string_data(
-                    CKM_AES_ECB_ENCRYPT_DATA, f"qc7c-derive-data{index}".encode()
-                ),
-            )
-            staged.append((derived, f"CKA_UNIQUE_ID:derived key {index}", "C_DeriveKey"))
     except CkrAssertionError as exc:
-        _destroy_all(rs, [h for h, _, _ in staged])
+        return _note_staging_refusal(exc, leg="derive", operation="C_CreateObject")
+    base = _adopt_staged(
+        rs,
+        raw_base,
+        label="CKA_UNIQUE_ID:derive base",
+        producer_operation="C_CreateObject",
+        before=before,
+        siblings=[h for h, _, _ in into],
+        expect_label="qc7c-derive-base",
+        expect_token=False,
+    )
+    pending: C.Classification | None = None
+    try:
+        for index in (1, 2):
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base,
+                    CKM_AES_ECB_ENCRYPT_DATA,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_TOKEN: False,
+                        CKA_LABEL: f"qc7c-derived-{index}",
+                    },
+                    mech_param=mech_string_data(
+                        CKM_AES_ECB_ENCRYPT_DATA, _QC7C_DERIVE_DATA[index - 1]
+                    ),
+                )
+            except CkrAssertionError as exc:
+                pending = _note_staging_refusal(exc, leg="derive", operation="C_DeriveKey")
+                break
+            _append_staged(
+                rs,
+                into,
+                derived,
+                f"CKA_UNIQUE_ID:derived key {index}",
+                "C_DeriveKey",
+                before=before,
+                extra=[base],
+                expect_label=f"qc7c-derived-{index}",
+                expect_token=False,
+            )
+    finally:
         if base:
             destroy_quietly(rs.raw, rs.sh, base)
-        classify_rv_validity_or_none(
-            exc.rv, label="QC7c derive staging", operation="C_DeriveKey", kind="metadata"
-        )
-        note(
-            f"QC7c derive staging not operational ({ckr_name(exc.rv)}); "
-            "shared assertion runs without derived objects",
-            ComplianceLevel.STANDARD,
-            reference="QC7c #59 derive creator leg",
-        )
-        return []
-    if base:
-        destroy_quietly(rs.raw, rs.sh, base)
-    return staged
+    return pending
 
 
-def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
-    """Two C_UnwrapKey outputs for the shared uniqueness assertion.
+def _stage_unwrapped_objects(rs: Any, into: list[tuple[int, str, str]]) -> C.Classification | None:
+    """Stage up to two C_UnwrapKey outputs for the shared uniqueness assertion.
 
-    Returns [] (noted, never fatal) when wrap/unwrap is unavailable or a
-    valid wrap/unwrap setup is refused, so the shared creator check stays
-    live on the remaining objects. Undefined and vendor RVs still route
-    through validity-first.
+    Each accepted handle is transferred to *into* as it is staged, so
+    the caller's cleanup owns it even when a later step refuses. A
+    refused setup, wrap, or unwrap step ends the leg short and returns
+    the deferred terminal (vendor/undefined; None for standard notes
+    and clean runs): the caller runs the shared checks and cleanup
+    first, then raises it.
     """
     if not rs.has_mechanism("AES_KEY_WRAP"):
         note(
@@ -464,66 +800,98 @@ def _stage_unwrapped_objects(rs: Any) -> list[tuple[int, str, str]]:
             ComplianceLevel.STANDARD,
             reference="QC7c #59 unwrap creator leg",
         )
-        return []
-    staged: list[tuple[int, str, str]] = []
+        return None
+    before = _baseline_or_void(rs, label="CKA_UNIQUE_ID unwrap staging")
     transient: list[int] = []
     try:
-        kek = import_secret_key(
-            rs.raw,
-            rs.sh,
-            CKK_AES,
-            bytes(range(0x20, 0x30)),
-            attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_TOKEN: False,
-                CKA_LABEL: "qc7c-unwrap-kek",
-            },
-        )
-        transient.append(kek)
-        target = import_secret_key(
-            rs.raw,
-            rs.sh,
-            CKK_AES,
-            bytes(range(0x40, 0x50)),
-            attrs={
-                CKA_EXTRACTABLE: True,
-                CKA_TOKEN: False,
-                CKA_LABEL: "qc7c-unwrap-target",
-            },
-        )
-        transient.append(target)
-        blob = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
-        for index in (1, 2):
-            unwrapped = unwrap_key(
+        try:
+            raw_kek = import_secret_key(
                 rs.raw,
                 rs.sh,
-                kek,
-                blob,
-                CKM_AES_KEY_WRAP,
+                CKK_AES,
+                bytes(range(0x20, 0x30)),
                 attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
                     CKA_TOKEN: False,
-                    CKA_LABEL: f"qc7c-unwrapped-{index}",
+                    CKA_LABEL: "qc7c-unwrap-kek",
                 },
             )
-            staged.append((unwrapped, f"CKA_UNIQUE_ID:unwrapped key {index}", "C_UnwrapKey"))
-    except CkrAssertionError as exc:
-        _destroy_all(rs, [h for h, _, _ in staged])
+        except CkrAssertionError as exc:
+            return _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
+        kek = _adopt_staged(
+            rs,
+            raw_kek,
+            label="CKA_UNIQUE_ID:unwrap KEK",
+            producer_operation="C_CreateObject",
+            before=before,
+            siblings=[h for h, _, _ in into],
+            expect_label="qc7c-unwrap-kek",
+            expect_token=False,
+        )
+        transient.append(kek)
+        try:
+            raw_target = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                bytes(range(0x40, 0x50)),
+                attrs={
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_LABEL: "qc7c-unwrap-target",
+                },
+            )
+        except CkrAssertionError as exc:
+            return _note_staging_refusal(exc, leg="unwrap", operation="C_CreateObject")
+        target = _adopt_staged(
+            rs,
+            raw_target,
+            label="CKA_UNIQUE_ID:unwrap target",
+            producer_operation="C_CreateObject",
+            before=before,
+            siblings=[*[h for h, _, _ in into], kek],
+            expect_label="qc7c-unwrap-target",
+            expect_token=False,
+        )
+        transient.append(target)
+        try:
+            blob = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
+        except CkrAssertionError as exc:
+            return _note_staging_refusal(exc, leg="unwrap", operation="C_WrapKey")
+        pending: C.Classification | None = None
+        for index in (1, 2):
+            try:
+                unwrapped = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    kek,
+                    blob,
+                    CKM_AES_KEY_WRAP,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_TOKEN: False,
+                        CKA_LABEL: f"qc7c-unwrapped-{index}",
+                    },
+                )
+            except CkrAssertionError as exc:
+                pending = _note_staging_refusal(exc, leg="unwrap", operation="C_UnwrapKey")
+                break
+            _append_staged(
+                rs,
+                into,
+                unwrapped,
+                f"CKA_UNIQUE_ID:unwrapped key {index}",
+                "C_UnwrapKey",
+                before=before,
+                extra=transient,
+                expect_label=f"qc7c-unwrapped-{index}",
+                expect_token=False,
+            )
+    finally:
         _destroy_all(rs, transient)
-        classify_rv_validity_or_none(
-            exc.rv, label="QC7c unwrap staging", operation="C_UnwrapKey", kind="metadata"
-        )
-        note(
-            f"QC7c unwrap staging not operational ({ckr_name(exc.rv)}); "
-            "shared assertion runs without unwrapped objects",
-            ComplianceLevel.STANDARD,
-            reference="QC7c #59 unwrap creator leg",
-        )
-        return []
-    _destroy_all(rs, transient)
-    return staged
+    return pending
 
 
 class TestUniqueIdGeneration:
@@ -553,18 +921,41 @@ class TestUniqueIdGeneration:
         """A copy gets its own ID and the source ID is unchanged."""
         rs = p11_raw_session
         _require_unique_id_applicable(rs)
-        source = gen_aes_key_or_xfail(
-            rs, bits=128, attrs={CKA_LABEL: "qc7c-copy-source"}, purpose="QC7c copy ID"
+        before = _baseline_or_void(rs, label="CKA_UNIQUE_ID copy-ID staging")
+        source = _adopt_staged(
+            rs,
+            gen_aes_key_or_xfail(
+                rs,
+                bits=128,
+                attrs={CKA_LABEL: "qc7c-copy-source", CKA_TOKEN: False},
+                purpose="QC7c copy ID",
+            ),
+            label="CKA_UNIQUE_ID:copy source",
+            producer_operation="C_GenerateKey",
+            before=before,
+            siblings=[],
+            expect_label="qc7c-copy-source",
+            expect_token=False,
         )
         copied = 0
         try:
             try:
-                copied = copy_object(rs.raw, rs.sh, source)
+                raw_copied = copy_object(rs.raw, rs.sh, source)
             except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc, KEYPAIR_RUNTIME_REJECT_RVS, "QC7c copy setup is not operational"
                 )
                 raise
+            copied = _adopt_staged(
+                rs,
+                raw_copied,
+                label="CKA_UNIQUE_ID:copied object",
+                producer_operation="C_CopyObject",
+                before=before,
+                siblings=[source],
+                expect_label="qc7c-copy-source",
+                expect_token=False,
+            )
             records: list[C.Classification] = []
             source_id, source_records = _read_unique_id(
                 rs,
@@ -626,9 +1017,11 @@ class TestUniqueIdGeneration:
         rs = p11_raw_session
         _require_unique_id_applicable(rs)
         staged = _stage_created_objects(rs)
+        pending: list[C.Classification] = []
         try:
             staged.extend(_stage_generated_objects(rs))
             source = staged[0][0]
+            copy_before = _baseline_or_void(rs, label="CKA_UNIQUE_ID cross-creator copy staging")
             try:
                 copied = copy_object(rs.raw, rs.sh, source)
             except AssertionError as exc:
@@ -636,10 +1029,27 @@ class TestUniqueIdGeneration:
                     exc, KEYPAIR_RUNTIME_REJECT_RVS, "QC7c copy setup is not operational"
                 )
                 raise
-            staged.append((copied, "CKA_UNIQUE_ID:copied object", "C_CopyObject"))
-            staged.extend(_stage_derived_objects(rs))
-            staged.extend(_stage_unwrapped_objects(rs))
-            _raise_strongest(_collect_ids(rs, staged))
+            _append_staged(
+                rs,
+                staged,
+                copied,
+                "CKA_UNIQUE_ID:copied object",
+                "C_CopyObject",
+                before=copy_before,
+                expect_label="qc7c-created-data",
+                expect_token=False,
+            )
+            # R2C2: derive/unwrap transfer each accepted handle into
+            # STAGED as it lands and defer vendor/undefined terminals:
+            # the shared checks and cleanup run on everything staged,
+            # then the deferred terminals join the strongest verdict.
+            for leg_pending in (
+                _stage_derived_objects(rs, staged),
+                _stage_unwrapped_objects(rs, staged),
+            ):
+                if leg_pending is not None:
+                    pending.append(leg_pending)
+            _raise_strongest(_collect_ids(rs, staged) + pending)
         finally:
             _destroy_all(rs, [h for h, _, _ in staged])
 
@@ -651,6 +1061,7 @@ class TestUniqueIdGeneration:
             pytest.skip("ML_KEM_KEY_PAIR_GEN not supported by module")
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported by module")
+        kem_before = _baseline_or_void(rs, label="CKA_UNIQUE_ID KEM staging")
         try:
             pub, priv = gen_keypair(
                 rs.raw,
@@ -658,8 +1069,16 @@ class TestUniqueIdGeneration:
                 int(CKM_ML_KEM_KEY_PAIR_GEN),
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, int(CKP_ML_KEM_512))],
                 priv_base=[],
-                public_attrs={CKA_TOKEN: False, CKA_ENCAPSULATE: True},
-                private_attrs={CKA_TOKEN: False, CKA_DECAPSULATE: True},
+                public_attrs={
+                    CKA_TOKEN: False,
+                    CKA_ENCAPSULATE: True,
+                    CKA_LABEL: "qc7c-kem-pub",
+                },
+                private_attrs={
+                    CKA_TOKEN: False,
+                    CKA_DECAPSULATE: True,
+                    CKA_LABEL: "qc7c-kem-priv",
+                },
                 pub_skip={CKA_PARAMETER_SET},
             )
         except AssertionError as exc:
@@ -667,10 +1086,7 @@ class TestUniqueIdGeneration:
                 exc, KEYPAIR_RUNTIME_REJECT_RVS, "QC7c ML-KEM pair setup is not operational"
             )
             raise
-        staged: list[tuple[int, str, str]] = [
-            (pub, "CKA_UNIQUE_ID:ML-KEM public half", "C_GenerateKeyPair"),
-            (priv, "CKA_UNIQUE_ID:ML-KEM private half", "C_GenerateKeyPair"),
-        ]
+        staged: list[tuple[int, str, str]] = []
         secret_attrs: dict[Any, Any] = {
             CKA_CLASS: CKO_SECRET_KEY,
             CKA_KEY_TYPE: CKK_AES,
@@ -680,26 +1096,65 @@ class TestUniqueIdGeneration:
             CKA_EXTRACTABLE: True,
         }
         try:
+            _append_keypair_halves(
+                rs,
+                staged,
+                pub,
+                priv,
+                "CKA_UNIQUE_ID:ML-KEM public half",
+                "CKA_UNIQUE_ID:ML-KEM private half",
+                "C_GenerateKeyPair",
+                before=kem_before,
+                expect_pub_label="qc7c-kem-pub",
+                expect_priv_label="qc7c-kem-priv",
+            )
             try:
                 encapsulated, ciphertext = encapsulate_key(
-                    rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=secret_attrs
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_ML_KEM,
+                    attrs={**secret_attrs, CKA_LABEL: "qc7c-kem-encapped"},
                 )
             except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc, _KEM_STAGING_REJECT_RVS, "QC7c ML-KEM encapsulate is not operational"
                 )
                 raise
-            staged.append((encapsulated, "CKA_UNIQUE_ID:encapsulated secret", "C_EncapsulateKey"))
+            _append_staged(
+                rs,
+                staged,
+                encapsulated,
+                "CKA_UNIQUE_ID:encapsulated secret",
+                "C_EncapsulateKey",
+                before=kem_before,
+                expect_label="qc7c-kem-encapped",
+                expect_token=False,
+            )
             try:
                 decapsulated = decapsulate_key(
-                    rs.raw, rs.sh, priv, CKM_ML_KEM, ciphertext, attrs=secret_attrs
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_ML_KEM,
+                    ciphertext,
+                    attrs={**secret_attrs, CKA_LABEL: "qc7c-kem-decapped"},
                 )
             except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc, _KEM_STAGING_REJECT_RVS, "QC7c ML-KEM decapsulate is not operational"
                 )
                 raise
-            staged.append((decapsulated, "CKA_UNIQUE_ID:decapsulated secret", "C_DecapsulateKey"))
+            _append_staged(
+                rs,
+                staged,
+                decapsulated,
+                "CKA_UNIQUE_ID:decapsulated secret",
+                "C_DecapsulateKey",
+                before=kem_before,
+                expect_label="qc7c-kem-decapped",
+                expect_token=False,
+            )
             _raise_strongest(_collect_ids(rs, staged))
         finally:
             _destroy_all(rs, [h for h, _, _ in staged])
@@ -750,6 +1205,23 @@ def _judge_override(
     honest deviation; zero and the untouched sentinel are normalized.
     """
     records: list[C.Classification] = []
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        # R4-F7: journal the producer undefined RV BEFORE any follow-up
+        # inventory runs, so a follow-up termination can never hide it.
+        # The validity record stands alone (RV plus operation); delta
+        # context rides the follow-up records below.
+        records.append(
+            C.record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=producer_operation,
+                inherit_mechanism=False,
+                actual=rv,
+                detail=_detail(producer_operation=producer_operation),
+                summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
+            )
+        )
     found: list[int] = []
     if label_text is not None:
         found = find_objects_exhaustive(
@@ -838,7 +1310,7 @@ def _judge_override(
                     summary=f"{label}: caller-supplied CKA_UNIQUE_ID was honored",
                 )
             )
-        else:
+        elif stored is not None:
             records.append(
                 C.record_as(
                     "honest_deviation",
@@ -855,6 +1327,35 @@ def _judge_override(
                         f"{label}: caller-supplied CKA_UNIQUE_ID was accepted but "
                         "ignored (stored ID differs); refusal is required"
                     ),
+                )
+            )
+        else:
+            # R3F13: no proved readback target (target == 0) differs
+            # from a refused read of a proved target -- split the
+            # summary so the void names what was actually missing.
+            if target == 0:
+                unproved_summary = (
+                    f"{label}: caller-supplied CKA_UNIQUE_ID was accepted but "
+                    "no readback target was proved; ignore unproved, refusal is required"
+                )
+            else:
+                unproved_summary = (
+                    f"{label}: caller-supplied CKA_UNIQUE_ID was accepted but "
+                    "the stored ID is unreadable; ignore unproved, refusal is required"
+                )
+            records.append(
+                C.record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation=producer_operation,
+                    inherit_mechanism=False,
+                    expected=CKR_ATTRIBUTE_READ_ONLY,
+                    actual=rv,
+                    detail=_detail(
+                        producer_operation=producer_operation, outcome="unproved", **judge_detail
+                    ),
+                    summary=unproved_summary,
                 )
             )
         return records
@@ -875,9 +1376,11 @@ def _judge_override(
                 summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
             )
         )
-    elif unproved_new and (
-        rv == int(CKR_ATTRIBUTE_READ_ONLY) or is_standard_ckr(rv) or is_vendor_defined_ckr(rv)
-    ):
+    elif not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        # Already journaled above (R4-F7); the chain below grades defined
+        # RVs only. (Proved leaks still win above via their own arm.)
+        pass
+    elif unproved_new:
         records.append(
             C.record_as(
                 "honest_deviation",
@@ -909,7 +1412,8 @@ def _judge_override(
                 detail=_detail(producer_operation=producer_operation, **judge_detail),
                 summary=(
                     f"{label}: refusal {ckr_name(rv)} wrote non-invalid output "
-                    f"handle {handle_value}; no object created"
+                    f"handle {handle_value}; post-attempt delta: "
+                    f"{new_handles if new_handles else 'none'}"
                 ),
             )
         )
@@ -930,18 +1434,7 @@ def _judge_override(
             )
         )
     else:
-        records.append(
-            C.record_as(
-                "self_contradiction",
-                kind="metadata",
-                label=label,
-                operation=producer_operation,
-                inherit_mechanism=False,
-                actual=rv,
-                detail=_detail(producer_operation=producer_operation, **judge_detail),
-                summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
-            )
-        )
+        raise AssertionError(f"{label}: RV trichotomy broken for {ckr_name(rv)}")
     return records
 
 

@@ -47,10 +47,10 @@ def callback(
 app.command(
     "test",
     epilog=(
-        "Examples:\n"
-        "  pkcs11-check doctor --module <module> --slot 0 --pin 1234\n"
-        "  pkcs11-check test --module <module> --slot 0 --pin 1234 --marker smoke\n"
-        "  pkcs11-check test --module <module> --slot 0 --pin 1234 --skip-slow\n"
+        "Examples:\n\n"
+        "  pkcs11-check doctor --module <module> --slot 0 --pin 1234\n\n"
+        "  pkcs11-check test --module <module> --slot 0 --pin 1234 --marker smoke\n\n"
+        "  pkcs11-check test --module <module> --slot 0 --pin 1234 --skip-slow\n\n"
         "  pkcs11-check fetch-data all && "
         "pkcs11-check test --module <module> --slot 0 --pin 1234"
     ),

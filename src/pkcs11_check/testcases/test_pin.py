@@ -1089,8 +1089,17 @@ def _run_qc11a_same_process_node(
             {"role": role, "attempts": _QC11A_PERSISTENCE_ATTEMPTS},
             p11_config=p11_config,
         )
-        trace = token_admin.parse_child_output(rc, out, err, label=label)
-        if "PHASE2" in out and "NO_SLOTS" in out:
+        # Crash/incomplete output fails loud; the trace gates per phase below.
+        token_admin.parse_child_output(rc, out, err, label=label)
+        # D2: split on the exact marker FIRST, then gate each phase
+        # separately: a phase-two setup refusal must never hide
+        # phase-one evidence behind a merged-trace skip.
+        first_raw, sep, second_raw = out.partition("PHASE2")
+        first = token_admin.parse_admin_trace(first_raw)
+        token_admin.gate_child_trace(first, label=label)
+        assert sep, f"{label}: probe contract broken (no PHASE2 marker)"
+        second = token_admin.parse_admin_trace(second_raw)
+        if second.no_slots:
             fail_as(
                 "self_contradiction",
                 kind="lifecycle",
@@ -1100,10 +1109,6 @@ def _run_qc11a_same_process_node(
                 inherit_mechanism=False,
                 summary=f"{label}: provisioned token absent after restart",
             )
-        token_admin.gate_child_trace(trace, label=label)
-        assert "PHASE2" in out, f"{label}: probe contract broken (no PHASE2 marker)"
-        first_raw, _, second_raw = out.partition("PHASE2")
-        first = token_admin.parse_admin_trace(first_raw)
         reinit = {step.name: step.rv for step in first.steps if step.name.startswith("reinit:")}
         assert set(reinit) == {"reinit:finalize", "reinit:initialize"}, (
             f"{label}: probe contract broken (reinit steps {sorted(reinit)})"
@@ -1111,10 +1116,11 @@ def _run_qc11a_same_process_node(
         if reinit["reinit:finalize"] != int(CKR_OK) or reinit["reinit:initialize"] != int(CKR_OK):
             _prescan_lockout_fails(first, role=role)
             pytest.skip(f"{label}: in-process reinit failed; same-process leg untestable")
-        second = token_admin.parse_admin_trace(second_raw)
+        # D2: grade phase-one FAILs before gating phase two, so a
+        # phase-two setup refusal (open, enumerate) can never hide them.
+        _prescan_lockout_fails(first, role=role)
         # R19-02 collect-then-judge, mirrored from the two-phase node.
         if token_admin.trace_skip_reason(second) is not None:
-            _prescan_lockout_fails(first, role=role)
             token_admin.fail_on_undefined_snapshots(
                 second,
                 label=f"QC11a {role} restart persistence",
