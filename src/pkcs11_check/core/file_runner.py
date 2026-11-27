@@ -674,6 +674,45 @@ def _collect_counters_for_attempt(
     )
 
 
+def _verify_counters_application(
+    state_file: Path, unit: str, records: list[dict[str, Any]], *, pending: bool
+) -> bool:
+    """Whether every applied record is readable at its destination (#88R12-5).
+
+    Staging must survive until the recovery records prove readable:
+    an applied-but-unreadable batch (torn destination, swallowed
+    write) fails the application instead of discarding its staging.
+    Records without a stable identity hash are unverifiable and pass
+    (they fail open at append time). Never raises.
+    """
+    wanted: set[str] = set()
+    for record in records:
+        identity = _record_identity_hex(record)
+        if identity is not None:
+            wanted.add(identity)
+    if not wanted:
+        return True
+    try:
+        if pending:
+            # Production-reader parity (see append_supplement_records).
+            have = {
+                identity
+                for record in iter_report_log_records(supplements_path(state_file, unit))
+                if (identity := _record_identity_hex(record)) is not None
+            }
+        else:
+            cache_path = _report_record_cache_path(state_file, unit)
+            have = set()
+            if cache_path.exists():
+                for record in _load_report_log_records(cache_path):
+                    identity = _record_identity_hex(record)
+                    if identity is not None:
+                        have.add(identity)
+    except OSError:
+        return False
+    return wanted <= have
+
+
 def _apply_counters_barrier_plan(
     state_file: Path,
     plan: dict[str, Any],
@@ -695,6 +734,8 @@ def _apply_counters_barrier_plan(
             idempotently); the resume must not proceed without its
             recovered evidence.
     """
+    staged_root = plan.get("counters_dir")
+    held = plan.get("cleanup_held", [])
     pending_set = set(pending_units)
     failed: list[str] = []
     for unit, records in plan["cache_records"].items():
@@ -703,6 +744,17 @@ def _apply_counters_barrier_plan(
         else:
             landed = _write_counters_recovery_cache(state_file, unit, records)
         if not landed:
+            failed.append(unit)
+    for unit, records in plan["cache_records"].items():
+        if unit in failed or not records:
+            continue
+        if not _verify_counters_application(state_file, unit, records, pending=unit in pending_set):
+            warnings.warn(
+                f"counter barrier plan for {unit} not readable after landing; "
+                "staging retained for the next resume",
+                UserWarning,
+                stacklevel=2,
+            )
             failed.append(unit)
     skipped_live = set(plan.get("skipped_live", plan["skipped_units"]))
     for unit in plan["skipped_units"]:
@@ -726,8 +778,6 @@ def _apply_counters_barrier_plan(
             f"counter barrier plan failed to land for {sorted(failed)}; "
             "staging retained for the next resume"
         )
-    staged_root = plan.get("counters_dir")
-    held = plan.get("cleanup_held", [])
     if staged_root is None:
         warnings.warn(
             "counter barrier plan names no counters dir; "
@@ -751,6 +801,10 @@ def _apply_counters_barrier_plan(
             UserWarning,
             stacklevel=2,
         )
+    elif not plan["cache_records"]:
+        # Nothing landed and nothing is held: best-effort discard of
+        # any stale staging (a leftover skip-hold clears with it).
+        discard_barrier_staging(staged_root)
     elif not discard_barrier_staging(staged_root):
         warnings.warn(
             f"counter barrier staging in {staged_root} could not be removed; "
