@@ -2718,6 +2718,12 @@ def run_isolated_pytest_units(
         if units
         else ""
     )
+    # B1/R2-F2: module identity rides in the state (same snapshot the
+    # fingerprint hashes), so an early-failure resume — which cannot rebuild
+    # the full fingerprint without collected units — can still refuse a
+    # cross-provider merge. None when no --p11-module rides the args.
+    module_arg = _extract_option_value(pytest_args, "--p11-module")
+    run_module_snapshot = _path_snapshot(module_arg) if module_arg is not None else None
     if not resume:
         if not _reset_fresh_run_artifacts(state_file, report_config):
             # Reset refused (a live barrier holds a retired root, or
@@ -2753,7 +2759,12 @@ def run_isolated_pytest_units(
         if resume and previous_state is not None:
             state = previous_state
         else:
-            state = FileRunState(units=[], fingerprint=fingerprint, results=[])
+            state = FileRunState(
+                units=[],
+                fingerprint=fingerprint,
+                results=[],
+                module_snapshot=run_module_snapshot,
+            )
             if not resume:
                 save_run_state(state_file, state)
         pending_units: list[str] = []
@@ -2771,7 +2782,12 @@ def run_isolated_pytest_units(
         )
         raise ValueError(msg)
     else:
-        state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
+        state = previous_state or FileRunState(
+            units=units,
+            fingerprint=fingerprint,
+            results=[],
+            module_snapshot=run_module_snapshot,
+        )
         pending_units = units_remaining_for_resume(units, previous_state)
 
     if units and resume and previous_state is not None and not state.process_observations_complete:
@@ -2794,7 +2810,9 @@ def run_isolated_pytest_units(
                 f"[bold]{state_file}[/bold] ({len(pending_units)}/{len(units)} units pending)"
             )
     elif units:
-        state = FileRunState(units=units, fingerprint=fingerprint, results=[])
+        state = FileRunState(
+            units=units, fingerprint=fingerprint, results=[], module_snapshot=run_module_snapshot
+        )
         save_run_state(state_file, state)
         if granularity == "test":
             unit_noun = "tests"

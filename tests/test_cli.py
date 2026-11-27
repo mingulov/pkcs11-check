@@ -22,6 +22,7 @@ from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
+    load_run_state,
     run_isolated_pytest_units,
     save_run_state,
 )
@@ -5638,6 +5639,467 @@ class TestTestCommand:
         assert len(payload["units"]) == 1
         assert stale_jsonl.read_text(encoding="utf-8") == "stale-unattributable-bytes\n"
 
+    def test_test_resume_manifest_crash_rejoins_saved_collection_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: a saved collection-failure row rejoins through the reporting copy."""
+        from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        sidecar = collection_failure_sidecar_path(state_file)
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "$report_type": "CollectReport",
+                    "outcome": "failed",
+                    "nodeid": "b.py",
+                    "longrepr": "import boom",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        results_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted(
+            [("a.py", "passed"), ("<collection>", "failed"), (str(module), "crashed")]
+        )
+        by_target = {unit["target"]: unit for unit in payload["units"]}
+        assert "import boom" in json.dumps(by_target["<collection>"])
+
+    def test_test_resume_manifest_crash_seeds_only_missing_details(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: details seed missing units from the JSONL; shards are never overwritten."""
+        from pkcs11_check.core._report_records import _write_unit_report_record_cache
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py", "b.py"],
+                fingerprint="prior",
+                results=[
+                    FileRunResult("a.py", "passed", 0, 0.1),
+                    FileRunResult("b.py", "failed", 1, 0.2),
+                ],
+            ),
+        )
+        _write_unit_report_record_cache(
+            state_file,
+            "a.py",
+            [{"nodeid": "a.py::test_x", "when": "call", "outcome": "passed"}],
+        )
+        # The JSONL contradicts the a.py shard and carries b.py: the shard
+        # must win for a.py, the seed must serve b.py.
+        (tmp_path / "report.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps({"nodeid": "a.py::test_x", "when": "call", "outcome": "failed"}),
+                    json.dumps({"nodeid": "b.py::test_y", "when": "call", "outcome": "failed"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        results_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        by_target = {unit["target"]: unit for unit in payload["units"]}
+        assert by_target["a.py"]["counts"]["passed"] == 1
+        assert by_target["a.py"]["counts"]["failed"] == 0
+        assert by_target["b.py"]["counts"]["failed"] == 1
+
+    def test_test_resume_early_failure_without_prior_jsonl_folds_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: with a state but no prior JSONL, the new evidence folds alone."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        preflight_evidence_path_for_state(state_file).write_text(
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["call_counters"]["total_calls"] == 5
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted([("a.py", "passed"), (str(module), "crashed")])
+
+    def test_test_resume_early_failure_retry_is_counter_idempotent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1: consecutive resume retries re-append bytes but fold identical counts."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        round_one = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16)
+        round_two = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16)
+        prior_jsonl.write_text(round_one + "\n", encoding="utf-8")
+        preflight_evidence_path_for_state(state_file).write_text(
+            round_one + "\n" + round_two + "\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        argv = [
+            "test",
+            "--module",
+            str(module),
+            "--output",
+            "json",
+            "--output-file",
+            str(results_path),
+            "--resume",
+            "--state-file",
+            str(state_file),
+        ]
+        first = runner.invoke(app, argv)
+        assert first.exit_code == 1, first.output
+        payload_one = json.loads(results_path.read_text(encoding="utf-8"))
+        second = runner.invoke(app, argv)
+        assert second.exit_code == 1, second.output
+        payload_two = json.loads(results_path.read_text(encoding="utf-8"))
+        assert len(prior_jsonl.read_text(encoding="utf-8").splitlines()) == 5
+        assert payload_two["call_counters"] == payload_one["call_counters"]
+        assert payload_two["units"] == payload_one["units"]
+
+    def test_test_resume_manifest_crash_cross_module_reports_separately(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R2-F2: a proven cross-provider state reports separately, artifacts kept."""
+        from pkcs11_check.core.file_runner import _path_snapshot
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module_a = tmp_path / "a.so"
+        module_a.write_bytes(b"provider-a-bytes")
+        module_b = tmp_path / "b.so"
+        module_b.write_bytes(b"provider-b-bytes")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                module_snapshot=_path_snapshot(str(module_a)),
+            ),
+        )
+        results_path = tmp_path / "results.json"
+        prior_jsonl = tmp_path / "report.jsonl"
+        prior_line = self._b1_counter_line(111, 10, run_id="run-1", worker_uuid="aa" * 16) + "\n"
+        prior_jsonl.write_text(prior_line, encoding="utf-8")
+        preflight_evidence_path_for_state(state_file).write_text(
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module_b),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert "different module" in result.output
+        # Fresh shape: only the current crash row; the prior JSONL keeps
+        # provider A's bytes exactly, so a later valid resume never folds
+        # provider B's counts; the counters come from B's own sidecar.
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        rows = [(unit["target"], unit["status"]) for unit in payload["units"]]
+        assert rows == [(str(module_b), "crashed")]
+        assert prior_jsonl.read_text(encoding="utf-8") == prior_line
+        assert payload["call_counters"]["total_calls"] == 5
+
+    def test_test_resume_manifest_crash_same_module_snapshot_merges(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R2-F2: a matching module snapshot admits the merge (no false refusal)."""
+        from pkcs11_check.core.file_runner import _path_snapshot
+
+        module = tmp_path / "dummy.so"
+        module.write_bytes(b"same-provider-bytes")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+                module_snapshot=_path_snapshot(str(module)),
+            ),
+        )
+        # The snapshot survives the state roundtrip the gate reads back.
+        loaded = load_run_state(state_file)
+        assert loaded is not None
+        assert loaded.module_snapshot == _path_snapshot(str(module))
+        results_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted([("a.py", "passed"), (str(module), "crashed")])
+
+    def test_prior_state_gate_branches(self, tmp_path: Path) -> None:
+        """B1/R2-F2: the gate admits None/legacy/unverifiable, refuses proven mismatch."""
+        import io
+
+        from rich.console import Console
+
+        from pkcs11_check.core.file_runner import _path_snapshot
+
+        module_a = tmp_path / "a.so"
+        module_a.write_bytes(b"provider-a-bytes")
+        console = Console(file=io.StringIO(), width=100)
+        state_file = tmp_path / "state.json"
+
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=None,
+            module=module_a,
+            state_file=state_file,
+            console=console,
+        )
+        assert (admitted, refused) == (None, False)
+
+        legacy = FileRunState(units=[], fingerprint="", results=[])
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=legacy,
+            module=module_a,
+            state_file=state_file,
+            console=console,
+        )
+        assert admitted is legacy and refused is False
+
+        snapshotted = FileRunState(
+            units=[],
+            fingerprint="",
+            results=[],
+            module_snapshot=_path_snapshot(str(module_a)),
+        )
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=snapshotted,
+            module=tmp_path / "gone.so",
+            state_file=state_file,
+            console=console,
+        )
+        assert admitted is snapshotted and refused is False
+
+        module_b = tmp_path / "b.so"
+        module_b.write_bytes(b"provider-b-bytes")
+        admitted, refused = test_cmd._prior_state_for_early_failure(
+            prior_state=snapshotted,
+            module=module_b,
+            state_file=state_file,
+            console=console,
+        )
+        assert (admitted, refused) == (None, True)
+
+    def test_test_resume_manifest_crash_colliding_output_keeps_valid_summary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B1/R2-F5: under a results/JSONL collision the summary wins, counters stay honest."""
+        from pkcs11_check.core.preflight import preflight_evidence_path_for_state
+
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["a.py"],
+                fingerprint="prior",
+                results=[FileRunResult("a.py", "passed", 0, 0.1)],
+            ),
+        )
+        collided = tmp_path / "report.jsonl"
+        collided.write_text("stale-unattributable-bytes\n", encoding="utf-8")
+        preflight_evidence_path_for_state(state_file).write_text(
+            self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, **kwargs: self._b1_crashed_manifest(module),
+        )
+        monkeypatch.setattr(
+            test_cmd, "prepare_resume", lambda *args, **kwargs: {"barrier_ok": True}
+        )
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(collided),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        # The merge still lands (prior results preserved); the file holds a
+        # valid summary whose counters come from the current sidecar only —
+        # the stale same-path bytes are neither retained nor folded.
+        payload = json.loads(collided.read_text(encoding="utf-8"))
+        rows = sorted((unit["target"], unit["status"]) for unit in payload["units"])
+        assert rows == sorted([("a.py", "passed"), (str(module), "crashed")])
+        assert payload["call_counters"]["total_calls"] == 5
+
     def test_retain_without_prior_state_overwrites(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -5652,14 +6114,14 @@ class TestTestCommand:
         evidence = tmp_path / "evidence.jsonl"
         blob = self._b1_counter_line(222, 5, run_id="run-2", worker_uuid="bb" * 16) + "\n"
         evidence.write_text(blob, encoding="utf-8")
-        written = test_cmd._retain_early_failure_evidence(
+        result = test_cmd._retain_early_failure_evidence(
             output="json",
             output_file=str(results_path),
             preflight_evidence_path=evidence,
             console=Console(file=io.StringIO(), width=100),
             prior_state=None,
         )
-        assert written == stale_jsonl
+        assert result is None
         assert stale_jsonl.read_text(encoding="utf-8") == blob
 
     def test_test_preflight_timeout_default_json_artifact(
