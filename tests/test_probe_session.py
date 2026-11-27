@@ -246,3 +246,36 @@ def test_session_python_initialize_error_propagates(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(RuntimeError, match="bootstrap bug"):
         session.probe_main(lambda _ctx, _extra: None, level=session.Level.INIT)
+
+
+def test_probe_main_announces_spawn_before_module_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#88R23-1: the spawn record lands before the module even loads."""
+    from pkcs11_check.core import _counters_durability as durability
+    from pkcs11_check.core import call_counters
+
+    counters = tmp_path / "counters"
+    counters.mkdir()
+    monkeypatch.setenv(durability.PROBE_SIDECAR_ENV, str(counters / "probe-aaaaaaaa-5-bead01.json"))
+    monkeypatch.setenv(durability.PROBE_SEQ_ENV, "5")
+    monkeypatch.setenv(durability.PROBE_PARENT_ENV, "a" * 32)
+    order: list[str] = []
+    real_note = call_counters.note_own_probe_spawn
+
+    def _note() -> object:
+        order.append("spawn")
+        return real_note()
+
+    def _from_lib(path: str, **kwargs: object) -> object:
+        order.append("load")
+        return SimpleNamespace()
+
+    monkeypatch.setattr(session.ProbeParams, "load", lambda _path: _session_params())
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", _from_lib)
+    monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
+    monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
+    monkeypatch.setattr(session, "note_own_probe_spawn", _note, raising=False)
+    session.probe_main(lambda _ctx, _extra: None, level=session.Level.LOAD)
+    assert order == ["spawn", "load"]
+    assert len(list(counters.glob("spawn-*.json"))) == 1

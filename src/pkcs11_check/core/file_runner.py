@@ -785,18 +785,27 @@ def _apply_counters_barrier_plan(
             UserWarning,
             stacklevel=2,
         )
-    elif held:
+    elif held or plan["unresolved"]:
         # Held cleanup targets keep their staging: discarding it would
         # expire the authority their retry needs, and the next barrier
         # would re-emit the records a second time. The retry finishes
         # the cleanup without re-emitting, and a later application
-        # with nothing held discards the staging (#88R10-4c).
+        # with nothing held discards the staging (#88R10-4c). The same
+        # holds for explicitly unresolved producers: a deferral
+        # decided nothing, so its staging (routing memory included)
+        # stands for the retry instead of being re-derived blind
+        # (#88R29-1).
         names = ", ".join(sorted(Path(entry).name for entry in held[:3]))
         if len(held) > 3:
             names += f", +{len(held) - 3} more"
+        detail = (
+            f"{len(held)} cleanup target(s) still present ({names})"
+            if held
+            else f"{len(plan['unresolved'])} producer(s) unresolved"
+        )
         warnings.warn(
             f"counter barrier staging in {staged_root} retained: "
-            f"{len(held)} cleanup target(s) still present ({names}); "
+            f"{detail}; "
             "the next barrier retries them without re-emitting",
             UserWarning,
             stacklevel=2,

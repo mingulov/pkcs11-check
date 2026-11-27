@@ -53,6 +53,7 @@ from pkcs11_check.core.call_counters import (
     current_receipts,
     flatten_current,
     lost_probe_keys,
+    note_own_probe_spawn,
     probes_lost,
     record_call,
     record_return,
@@ -278,6 +279,12 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
     # reads its absence as 'the module terminated the process from inside a PKCS#11
     # call', so a load failure here must not look the same as one.
     atexit.register(mark_python_finalized)
+    # SECOND, before any provider call: the child's own launch record, so a
+    # supervisor that dies before its parent-side note flushes still leaves
+    # this launch attributable (#88R23-1). After the atexit registration so
+    # a fail-closed spawn refusal still finalizes (Python-level death, not
+    # a module termination).
+    note_own_probe_spawn()
     params = ProbeParams.load(sys.argv[1])
 
     # Windows DLL-dir handling before CDLL load (I11).

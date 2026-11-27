@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +21,55 @@ from pkcs11_check.core.process_observation import drain_process_observations
 from pkcs11_check.testcases._probes.runner import ProbeResult, run_probe
 from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
 from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
+
+
+def _fake_popen_factory(
+    *,
+    on_spawn: Any = None,
+    stdout: str = "",
+    stderr: str = "",
+    returncode: int = 0,
+    pid: int = 424242,
+    communicate_hook: Any = None,
+) -> Any:
+    """Build a subprocess.Popen double honoring the runner's call shape."""
+
+    class _FakePopen:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.pid = pid
+            self.returncode: int | None = None
+            if on_spawn is not None:
+                on_spawn(*args, **kwargs)
+
+        def __enter__(self) -> _FakePopen:
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            self.wait()
+            return False
+
+        def communicate(self, timeout: Any = None) -> tuple[str, str]:
+            if communicate_hook is not None:
+                return communicate_hook(self, timeout)
+            if self.returncode is None:
+                self.returncode = returncode
+            return (stdout, stderr)
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout: Any = None) -> int:
+            if self.returncode is None:
+                self.returncode = returncode
+            return self.returncode
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    return _FakePopen
+
 
 # ---------------------------------------------------------------------------
 # Env injection & basic echo
@@ -46,12 +97,14 @@ def test_run_probe_serializes_explicit_interface_without_mutating_params(
     original = {"module_path": "/nonexistent.so", "marker": "hello"}
     captured: dict[str, object] = {}
 
-    def _fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _capture(args: list[str], **kwargs: object) -> None:
         captured["payload"] = json.loads(Path(args[-1]).read_text(encoding="utf-8"))
         captured["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_capture),
+    )
 
     run_probe("_echo", original, interface="3.1")
 
@@ -76,11 +129,13 @@ def test_run_probe_accepts_equivalent_normalized_interfaces(
     params = {"module_path": "/x.so", "interface": existing}
     captured: dict[str, object] = {}
 
-    def _fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _capture(args: list[str], **_kwargs: object) -> None:
         captured["payload"] = json.loads(Path(args[-1]).read_text(encoding="utf-8"))
-        return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_capture),
+    )
 
     run_probe("_echo", params, interface=requested)
 
@@ -93,12 +148,14 @@ def test_run_probe_rejects_unknown_interface_before_launch(
 ) -> None:
     launched = False
 
-    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _spy(*_args: object, **_kwargs: object) -> None:
         nonlocal launched
         launched = True
-        return subprocess.CompletedProcess([], 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_spy),
+    )
 
     with pytest.raises(ValueError, match="Unknown PKCS#11 interface"):
         run_probe("_echo", {"module_path": "/x.so"}, interface="4.0")
@@ -111,12 +168,14 @@ def test_run_probe_rejects_conflicting_interface_selection(
     """A caller cannot silently replace a selector already present in params."""
     launched = False
 
-    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _spy(*_args: object, **_kwargs: object) -> None:
         nonlocal launched
         launched = True
-        return subprocess.CompletedProcess([], 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_spy),
+    )
 
     with pytest.raises(ValueError, match="conflicting interface"):
         run_probe("_echo", {"module_path": "/x.so", "interface": "2.40"}, interface="3.1")
@@ -130,12 +189,14 @@ def test_run_probe_rejects_present_auto_interface_selection(
     params = {"module_path": "/x.so", "interface": None}
     launched = False
 
-    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _spy(*_args: object, **_kwargs: object) -> None:
         nonlocal launched
         launched = True
-        return subprocess.CompletedProcess([], 0, "", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(on_spawn=_spy),
+    )
 
     with pytest.raises(ValueError, match="conflicting interface"):
         run_probe("_echo", params, interface="3.1")
@@ -147,8 +208,8 @@ def test_run_probe_allows_matching_interface_in_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(),
     )
 
     run_probe("_echo", {"module_path": "/x.so", "interface": "3.1"}, interface="3.1")
@@ -198,8 +259,8 @@ def test_run_probe_records_sigkill_process_observation(
 ) -> None:
     drain_process_observations()
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *a, **k: _fake_completed(-9),
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(returncode=-9),
     )
 
     result = run_probe("_echo", {"module_path": "/x.so"})
@@ -212,16 +273,27 @@ def test_run_probe_records_timeout_process_observation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     drain_process_observations()
+    calls: list[str] = []
 
-    def raise_timeout(*args: object, **kwargs: object) -> None:
-        raise subprocess.TimeoutExpired(args[0] if args else [], 1)
+    def raise_timeout_once(proc: object, timeout: object) -> tuple[str, str]:
+        # The first communicate() times out; the reaping call after the
+        # kill succeeds like a real Popen (R31: the win32 timeout path
+        # re-communicates, so an always-raising double is unrealistic).
+        calls.append("communicate")
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired([], 1)
+        return ("", "")
 
-    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", raise_timeout)
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(communicate_hook=raise_timeout_once),
+    )
     result = run_probe("_echo", {"module_path": "/x.so"}, timeout=1)
 
     assert result.returncode == 124
     _assert_probe_observation(result, returncode=124, kind="timeout")
     assert drain_process_observations() == [result.observation]
+    assert calls == ["communicate"] * (2 if sys.platform == "win32" else 1)
 
 
 def test_run_probe_records_windows_access_violation_process_observation(
@@ -230,8 +302,8 @@ def test_run_probe_records_windows_access_violation_process_observation(
     drain_process_observations()
     monkeypatch.setattr(process_observation.sys, "platform", "win32")
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *a, **k: _fake_completed(-1073741819),
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(returncode=-1073741819),
     )
 
     result = run_probe("_echo", {"module_path": "/x.so"})
@@ -246,12 +318,12 @@ def test_run_probe_records_ctypes_windows_access_violation_from_stderr(
     drain_process_observations()
     monkeypatch.setattr(process_observation.sys, "platform", "win32")
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *a, **k: subprocess.CompletedProcess(
-            [],
-            1,
-            "",
-            "Traceback (most recent call last):\nOSError: exception: access violation reading 0",
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(
+            returncode=1,
+            stderr=(
+                "Traceback (most recent call last):\nOSError: exception: access violation reading 0"
+            ),
         ),
     )
 
@@ -389,8 +461,8 @@ def test_run_probe_marks_zero_exit_without_finalizer_as_abrupt(
     """
     drain_process_observations()
     monkeypatch.setattr(
-        "pkcs11_check.testcases._probes.runner.subprocess.run",
-        lambda *a, **k: _fake_completed(0),
+        "pkcs11_check.testcases._probes.runner.subprocess.Popen",
+        _fake_popen_factory(),
     )
 
     result = run_probe("_echo", {"module_path": "/x.so"})
