@@ -75734,7 +75734,7 @@ def test_r44_ar67_guard_depth_retries_resolved_root() -> None:
     assert durability._guard_depth(Path("//tmp/x/counters/a/b/f"), root, resolved) == 3
 
 
-def test_r44_ar67_quarantine_identity_missing_reads_none(tmp_path: Path) -> None:
+def test_r44_ar67_quarantine_identity_regular_files_only(tmp_path: Path) -> None:
     """#88R44-[A]r67: only a regular file has a quarantine identity.
 
     Claude Q3 N3/L2: the sweep-won-race rework mocks
