@@ -93,6 +93,11 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   present. If the same report also contains provider failed/crashed/timeout evidence, that
   finding is retained and takes precedence with public exit `1`. Crashes, Windows crash codes,
   and timeouts remain findings with public exit `1`.
+- A user interrupt (`SIGINT`/`KeyboardInterrupt`) at any run phase -- preflight, login probe,
+  collection, or a unit wait -- exits `2` when the run is incomplete, or `1` when provider
+  failed/crashed/timeout evidence is already present (current-run or durable resume state).
+  The killed child's OS kill status never determines the command's exit code and never creates
+  a provider finding.
 - Non-isolated output applies the same completion rule to its one captured report-log stream:
   only raw exits `0`, `1`, and `5` with exactly one balanced session and a matching finish are
   verified. A missing or mismatched finish adds one typed `HarnessError` with the raw return code

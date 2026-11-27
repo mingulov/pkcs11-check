@@ -1046,6 +1046,178 @@ class TestTestCommand:
         assert result.exit_code == 1, result.output
         assert "PIN incorrect for slot 0" in result.output
 
+    def test_test_isolated_interrupt_exits_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6: a user interrupt mid-run exits 2 (incomplete), not 130."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def interrupted_run(*args: object, **kwargs: object) -> int:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", interrupted_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "Traceback" not in result.output
+
+    def test_test_isolated_interrupt_keeps_prior_provider_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6: on resume, durable findings upgrade the interrupt exit to 1."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "crashed", -11, 0.1)],
+            ),
+        )
+
+        def interrupted_run(*args: object, **kwargs: object) -> int:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", interrupted_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 1, result.output
+
+    def test_test_isolated_interrupt_sees_current_run_findings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6: a fresh run interrupted after a unit crashed exits 1.
+
+        The run loop saves each completed unit before the next starts, so the
+        interrupt arm reads current-run evidence -- the same precedence the
+        non-isolated path applies to its captured report.
+        """
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def crash_then_interrupt(*args: object, **kwargs: object) -> int:
+            state_file = kwargs["state_file"]
+            assert isinstance(state_file, Path)
+            save_run_state(
+                state_file,
+                FileRunState(
+                    units=["provider.py"],
+                    fingerprint="fresh",
+                    results=[FileRunResult("provider.py", "crashed", -11, 0.1)],
+                ),
+            )
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", crash_then_interrupt)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--state-file",
+                str(tmp_path / "state.json"),
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 1, result.output
+
+    def test_test_preflight_interrupt_exits_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6: an interrupt during preflight exits 2 (nothing ran)."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def interrupted_preflight(*args: object, **kwargs: object) -> CapabilityManifest:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", interrupted_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "Traceback" not in result.output
+
+    def test_test_login_probe_interrupt_exits_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6: an interrupt during the login probe exits 2 (nothing ran)."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+
+        def interrupted_login(*args: object, **kwargs: object) -> LoginProbe:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "run_login_probe_subprocess", interrupted_login)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "file",
+                "--ignore-disabled-tests",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "Traceback" not in result.output
+
     def test_test_empty_match_fails_fast_without_running_units(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -3214,6 +3386,105 @@ class TestTestCommand:
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["summary"]["failed"] == 1
         assert payload["summary"]["incomplete"] is True
+
+    def test_test_none_interrupt_shape_without_finish_exits_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6 pin: a none-path interrupt (no SessionFinish) exits 2.
+
+        pytest catches the interrupt itself and returns INTERRUPTED; the CLI
+        maps it to public 2 -- the parity anchor for the isolated arm.
+        """
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "nested" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            Path(args[args.index("--report-log") + 1]).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": "test_demo.py::test_ok",
+                                "when": "call",
+                                "outcome": "passed",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return int(pytest.ExitCode.INTERRUPTED)
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+
+    def test_test_none_interrupt_shape_with_failure_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B6 pin: partial provider evidence upgrades the interrupt exit to 1."""
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "nested" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            Path(args[args.index("--report-log") + 1]).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": "test_demo.py::test_failed",
+                                "when": "call",
+                                "outcome": "failed",
+                                "longrepr": "provider failure",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return int(pytest.ExitCode.INTERRUPTED)
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+        assert result.exit_code == 1, result.output
 
     @pytest.mark.parametrize(
         ("output", "returncode", "finish", "expected_exit"),
