@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -255,3 +256,52 @@ def test_kill_tree_tolerates_already_gone_group(monkeypatch: pytest.MonkeyPatch)
     proc = SimpleNamespace(pid=4242, kill=lambda: None)
 
     _kill_process_tree(proc)  # type: ignore[arg-type]
+
+
+class _InterruptibleProc:
+    """Fake Popen whose first wait dies to KeyboardInterrupt (B6 pin)."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        self.stdout = None
+        self.stderr = None
+        self.pid = 2**30  # impossible pid; the real tree-kill never runs here
+        self.returncode: int | None = -9
+        self.wait_calls = 0
+
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        self.wait_calls += 1
+        if self.wait_calls == 1:
+            raise KeyboardInterrupt
+        return -9
+
+
+def test_interrupt_contains_reaps_and_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B6 pin: an interrupt during the unit wait kills the tree, reaps, reraises.
+
+    Deterministic (no real signals): the runner arm above the real kill is
+    what this pins -- the kill itself is proven by the sibling tests.
+    """
+    contained: list[object] = []
+    spawned: list[_InterruptibleProc] = []
+
+    def _record(proc: object) -> None:
+        contained.append(proc)
+
+    def _factory(*args: object, **kwargs: object) -> _InterruptibleProc:
+        proc = _InterruptibleProc(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", _factory)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_kill_process_tree", _record)
+    with pytest.raises(KeyboardInterrupt):
+        _run_subprocess_tee(
+            [sys.executable, "-c", "pass"],
+            env={"PATH": "/usr/bin:/bin"},
+            timeout=30,
+        )
+    assert len(contained) == 1
+    assert len(spawned) == 1
+    assert spawned[0].wait_calls == 2  # initial wait + post-kill reap

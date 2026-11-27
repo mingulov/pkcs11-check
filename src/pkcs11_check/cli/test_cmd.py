@@ -1432,14 +1432,20 @@ def test_command(
         )
         # Recovery probes resolve the same file from the environment.
         os.environ[PREFLIGHT_EVIDENCE_ENV] = str(preflight_evidence_path)
-        manifest = run_preflight_subprocess(
-            module,
-            interface=interface,
-            slot=slot,
-            timeout=_preflight_timeout_seconds(timeout),
-            output_path=manifest_path,
-            counters=census_counters,
-        )
+        try:
+            manifest = run_preflight_subprocess(
+                module,
+                interface=interface,
+                slot=slot,
+                timeout=_preflight_timeout_seconds(timeout),
+                output_path=manifest_path,
+                counters=census_counters,
+            )
+        except KeyboardInterrupt:
+            # B6: an operator interrupt is an incomplete run, not a crash --
+            # exit 2 (or 1 when durable findings already exist), never 130.
+            console.print("[yellow]Interrupted[/yellow] -- run incomplete.")
+            raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2) from None
         if manifest.status != "ok":
             console.print(
                 f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}"
@@ -1498,14 +1504,19 @@ def test_command(
                 attempt=1,
                 evidence_path=preflight_evidence_path,
             )
-            login_probe = run_login_probe_subprocess(
-                module,
-                interface=interface,
-                slot=slot,
-                pin=effective_pin.encode("utf-8", "surrogateescape"),
-                timeout=max(10, min(timeout, 60)),
-                counters=probe_counters,
-            )
+            try:
+                login_probe = run_login_probe_subprocess(
+                    module,
+                    interface=interface,
+                    slot=slot,
+                    pin=effective_pin.encode("utf-8", "surrogateescape"),
+                    timeout=max(10, min(timeout, 60)),
+                    counters=probe_counters,
+                )
+            except KeyboardInterrupt:
+                # B6: same incomplete-run contract as the preflight arm above.
+                console.print("[yellow]Interrupted[/yellow] -- run incomplete.")
+                raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2) from None
             if login_probe.status == "pin_incorrect":
                 console.print(
                     f"[red]✗[/red] PIN incorrect for slot {slot} — run `pkcs11-check doctor`"
@@ -1890,6 +1901,20 @@ def test_command(
                 _fold_preflight_evidence(report_config, preflight_evidence_path, output, console)
                 if output != "json":
                     _print_run_totals(state_file)
+            except KeyboardInterrupt:
+                # B6: the runner already killed and reaped the in-flight child;
+                # its OS kill status must not surface. The state consult is
+                # deliberately unguarded on the isolated path: on a fresh run
+                # the file holds current-run completed units (reset at start,
+                # saved per unit), on resume it folds prior findings too --
+                # either way a provider finding upgrades 2 to 1, matching the
+                # non-isolated path's report-evidence precedence.
+                console.print("[yellow]Interrupted[/yellow] -- run incomplete.")
+                if resume or isolation in {"auto", "file", "test"}:
+                    abort_code = _resume_exit_code(state_file, 2)
+                else:
+                    abort_code = 2
+                raise typer.Exit(code=abort_code) from None
             except (FileNotFoundError, ValueError, CounterPersistenceError) as exc:
                 if collection_phase:
                     _persist_collection_failure(
