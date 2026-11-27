@@ -12,6 +12,7 @@ import ctypes
 import errno
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -407,6 +408,32 @@ class TestFlusher:
         assert call_counters.serialize_current()["total_calls"] == 10
         assert sidecar.read_bytes() == before
         assert list(engaged.glob("*.tmp-*")) == []
+
+    def test_sidecar_staging_names_carry_fresh_nonce_per_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B5c pin: staging tmps are never pid-predictable (D6 re-check).
+
+        The run-owned-dir model stays 1.x, but the plantable-name half of
+        D6 is already closed on this line: every staging tmp carries a
+        fresh random nonce, so a sibling process cannot pre-position a
+        symlink at the next staging path.
+        """
+        seen: list[str] = []
+        real_replace = os.replace
+
+        def _record(src: object, dst: object) -> None:
+            seen.append(Path(str(src)).name)
+            real_replace(src, dst)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "replace", _record)
+        target = tmp_path / "w.json"
+        for seq in range(5):
+            durability.write_sidecar_atomic(target, {"seq": seq})
+        assert len(seen) == 5
+        assert len(set(seen)) == 5, seen
+        for name in seen:
+            assert re.fullmatch(r"w\.json\.tmp-\d+-[0-9a-f]{8}", name) is not None, name
 
     def test_failed_publish_keeps_window_in_progress(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch

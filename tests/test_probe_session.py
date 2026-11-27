@@ -21,7 +21,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.types_std import (
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+    CKR_OK,
+    CKR_PIN_INCORRECT,
+    CKR_PIN_LOCKED,
+    CKR_SLOT_ID_INVALID,
+)
 from pkcs11_check.testcases._probes import session
 
 
@@ -279,3 +287,80 @@ def test_probe_main_announces_spawn_before_module_load(
     session.probe_main(lambda _ctx, _extra: None, level=session.Level.LOAD)
     assert order == ["spawn", "load"]
     assert len(list(counters.glob("spawn-*.json"))) == 1
+
+
+def _drive_login_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    open_rv: int | None = None,
+    login_rv: int | None = None,
+) -> None:
+    """Run probe_main at LOGIN with scripted setup failures (B5a harness)."""
+
+    class _Raw:
+        def C_Initialize(self, _reserved: object) -> int:  # noqa: N802
+            return int(CKR_OK)
+
+    def _open(_raw: object, _slot: int, _flags: int) -> int:
+        if open_rv is not None:
+            raise CkrAssertionError(f"C_OpenSession -> {ckr_name(open_rv)}", open_rv)
+        return 99
+
+    def _login(_raw: object, _sh: int, _user: int, _pin: bytes) -> None:
+        if login_rv is not None:
+            raise CkrAssertionError(f"C_Login -> {ckr_name(login_rv)}", login_rv)
+
+    monkeypatch.setattr(session.ProbeParams, "load", lambda _path: _session_params())
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path, **_kwargs: _Raw())
+    monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
+    monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
+    monkeypatch.setattr(session, "rv_trace_enabled", lambda: False)
+    monkeypatch.setattr(session, "get_slot_ids", lambda _raw: [7])
+    monkeypatch.setattr(session, "resolve_slot_id", lambda _slots, _idx: 7)
+    monkeypatch.setattr(session, "open_session", _open)
+    monkeypatch.setattr(session, "login_user", _login)
+    monkeypatch.setenv("_P11CHECK_PIN", "1234")
+    session.probe_main(
+        lambda _ctx, _extra: pytest.fail("probe must not run"),
+        level=session.Level.LOGIN,
+    )
+
+
+def test_session_login_pin_incorrect_is_harness_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B5a: a wrong configured PIN is operator config, never not_operational."""
+    _drive_login_setup(monkeypatch, login_rv=int(CKR_PIN_INCORRECT))
+    out = capsys.readouterr().out
+    assert "HARNESS_ERROR:" in out
+    assert "SETUP_XFAIL" not in out
+
+
+def test_session_open_invalid_slot_id_is_harness_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B5a: our own resolved slot id coming back invalid means we lied."""
+    _drive_login_setup(monkeypatch, open_rv=int(CKR_SLOT_ID_INVALID))
+    out = capsys.readouterr().out
+    assert "HARNESS_ERROR:" in out
+    assert "SETUP_XFAIL" not in out
+
+
+def test_session_open_device_error_stays_setup_xfail(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B5a control: ambiguous provider setup faults keep the xfail bucket."""
+    _drive_login_setup(monkeypatch, open_rv=int(CKR_DEVICE_ERROR))
+    out = capsys.readouterr().out
+    assert "SETUP_XFAIL:C_OpenSession rejected with CKR_DEVICE_ERROR" in out
+    assert "HARNESS_ERROR" not in out
+
+
+def test_session_login_pin_locked_stays_setup_xfail(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B5a control: a locked PIN is token state, not operator config."""
+    _drive_login_setup(monkeypatch, login_rv=int(CKR_PIN_LOCKED))
+    out = capsys.readouterr().out
+    assert "SETUP_XFAIL:C_Login rejected with CKR_PIN_LOCKED" in out
+    assert "HARNESS_ERROR" not in out
