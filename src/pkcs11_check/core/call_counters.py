@@ -104,6 +104,13 @@ _lock = RLock()
 _state = _ThreadState()
 _entry_counts: Counter[tuple[str, str, str]] = Counter()
 _exit_counts: Counter[tuple[str, str, str, int]] = Counter()
+#: Per-mechanism attribution (#87 item 1): parallel to the entry/exit
+#: counters, keyed with the CKM int. A call contributes here only when its
+#: mechanism was captured (mech=None stays unattributed), so these sums
+#: reconcile as a SUBSET of the fn totals, never above. Admitted, rolled
+#: back, snapshotted, flattened, and ingested alongside the plain keys.
+_entry_mech_counts: Counter[tuple[str, str, str, int]] = Counter()
+_exit_mech_counts: Counter[tuple[str, str, str, int, int]] = Counter()
 _phase_name: str = DEFAULT_BUCKET
 #: Keyed losses ``(accounting_parent_uuid, probe_seq)``: probes noted lost
 #: with identity. Recovery removes the key; ``probes_lost()`` derives the
@@ -162,6 +169,8 @@ _folded_probe_digests: dict[tuple[str, int], str] = {}
 _probe_seq = 0
 _inprog_entry: Counter[tuple[str, str, str]] = Counter()
 _inprog_exit: Counter[tuple[str, str, str, int]] = Counter()
+_inprog_entry_mech: Counter[tuple[str, str, str, int]] = Counter()
+_inprog_exit_mech: Counter[tuple[str, str, str, int, int]] = Counter()
 _journal_len = 0
 _atexit_installed = False
 
@@ -305,7 +314,12 @@ def _flush_locked() -> None:
         "role": _registration.role,
         "isolation": _registration.isolation,
         "journal_seq": _journal_len,
-        "in_progress": _serialize(Counter(_inprog_entry), Counter(_inprog_exit)),
+        "in_progress": _serialize(
+            Counter(_inprog_entry),
+            Counter(_inprog_exit),
+            Counter(_inprog_entry_mech),
+            Counter(_inprog_exit_mech),
+        ),
         "receipts": [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)],
         "consumed_probes": [
             {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_consumed_probes)
@@ -502,6 +516,7 @@ def _unadmit(counter: Counter[Any], key: Any) -> None:
 def _rollback_admission(
     entry_key: tuple[str, str, str] | None,
     exit_key: tuple[str, str, str, int] | None,
+    entry_mech_key: tuple[str, str, str, int] | None = None,
 ) -> Iterator[None]:
     """Roll back just-admitted counts if the dirty-mark flush fails (holds ``_lock``).
 
@@ -539,6 +554,10 @@ def _rollback_admission(
             _unadmit(_exit_counts, exit_key)
             if admitted_inprog:
                 _unadmit(_inprog_exit, exit_key)
+        if entry_mech_key is not None:
+            _unadmit(_entry_mech_counts, entry_mech_key)
+            if admitted_inprog:
+                _unadmit(_inprog_entry_mech, entry_mech_key)
         if pending_before > 0:
             _set_pending_locked("entry")
         raise
@@ -647,22 +666,45 @@ def _resolve_module(module: str) -> str:
     return module
 
 
-def record_call(fn: str, *, bucket: str | None = None, module: str = UNKNOWN_MODULE) -> None:
+def _resolve_mech(mech: int | None) -> int | None:
+    """Return the CKM mechanism id, failing loud on a mistyped value.
+
+    None means unattributed (not a mechanism call, or the struct was
+    unreadable); bools and negatives are caller bugs, never wire data.
+    """
+    if mech is None:
+        return None
+    if not isinstance(mech, int) or isinstance(mech, bool) or mech < 0:
+        raise ValueError(f"invalid call-counter mechanism: {mech!r}")
+    return mech
+
+
+def record_call(
+    fn: str,
+    *,
+    bucket: str | None = None,
+    module: str = UNKNOWN_MODULE,
+    mech: int | None = None,
+) -> None:
     """Count one entry into the PKCS#11 function ``fn``.
 
     Attributed to ``bucket`` when given (validated like ``counted_bucket``),
     else to the calling thread's active bucket. ``module`` is the id bound to
     the handle the call passed through; the default ``""`` marks calls with
-    no handle (never inferred to a real module). When durability is engaged
-    the call self-registers first (raising ``CounterPersistenceError`` when
-    sealed or on I/O failure, blocking provider entry), recovers any
-    pending-persistence marker (retrying the covering flush; while the writer
-    is still broken the entry raises without admitting), and K-flushes under
-    the same lock acquisition. A failed K flush rolls back the just-admitted
-    entry (strong exception guarantee): the provider never ran, so the
-    session must not show the call either.
+    no handle (never inferred to a real module). ``mech`` is the CKM int for
+    mechanism calls (validated non-negative int); None leaves the call
+    unattributed in ``by_mechanism`` (a subset of the fn totals). When
+    durability is engaged the call self-registers first (raising
+    ``CounterPersistenceError`` when sealed or on I/O failure, blocking
+    provider entry), recovers any pending-persistence marker (retrying the
+    covering flush; while the writer is still broken the entry raises
+    without admitting), and K-flushes under the same lock acquisition. A
+    failed K flush rolls back the just-admitted entry (strong exception
+    guarantee): the provider never ran, so the session must not show the
+    call either.
     """
     module_id = _resolve_module(module)
+    mech_id = _resolve_mech(mech)
     if bucket is not None and bucket not in BUCKETS:
         raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     with _lock:
@@ -673,25 +715,37 @@ def record_call(fn: str, *, bucket: str | None = None, module: str = UNKNOWN_MOD
         _entry_counts[key] += 1
         if _registration is not None:
             _inprog_entry[key] += 1
-        with _rollback_admission(entry_key=key, exit_key=None):
+        mech_key = (module_id, target, fn, mech_id) if mech_id is not None else None
+        if mech_key is not None:
+            _entry_mech_counts[mech_key] += 1
+            if _registration is not None:
+                _inprog_entry_mech[mech_key] += 1
+        with _rollback_admission(entry_key=key, exit_key=None, entry_mech_key=mech_key):
             _mark_dirty_locked(calls=1)
 
 
 def record_return(
-    fn: str, rv: int, *, bucket: str | None = None, module: str = UNKNOWN_MODULE
+    fn: str,
+    rv: int,
+    *,
+    bucket: str | None = None,
+    module: str = UNKNOWN_MODULE,
+    mech: int | None = None,
 ) -> None:
     """Count one return from ``fn`` with ``rv`` (same bucket rule as entry).
 
     Call sites that pair with :func:`record_call` must capture the bucket
     once at entry and pass it to both halves, so a mid-call bucket switch
     cannot land the entry and the RV in different buckets. The module halves
-    must likewise match: entry and exit of one call always share a handle.
-    The return fills the K window like an entry (with K=1 every return
-    persists immediately). A failed flush RETAINS the just-admitted exit —
-    the provider already returned, so rolling back would hide real traffic —
-    marks the undurable evidence pending, and raises.
+    must likewise match: entry and exit of one call always share a handle,
+    and so must the mechanism halves. The return fills the K window like an
+    entry (with K=1 every return persists immediately). A failed flush
+    RETAINS the just-admitted exit — the provider already returned, so
+    rolling back would hide real traffic — marks the undurable evidence
+    pending, and raises.
     """
     module_id = _resolve_module(module)
+    mech_id = _resolve_mech(mech)
     if bucket is not None and bucket not in BUCKETS:
         raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     with _lock:
@@ -701,6 +755,11 @@ def record_return(
         _exit_counts[key] += 1
         if _registration is not None:
             _inprog_exit[key] += 1
+        if mech_id is not None:
+            mech_key = (module_id, target, fn, rv, mech_id)
+            _exit_mech_counts[mech_key] += 1
+            if _registration is not None:
+                _inprog_exit_mech[mech_key] += 1
         try:
             _mark_dirty_locked(calls=1)
         except CounterPersistenceError:
@@ -709,7 +768,12 @@ def record_return(
 
 
 def record_direct_call(
-    fn: str, rv: int, *, bucket: str | None = None, module: str = UNKNOWN_MODULE
+    fn: str,
+    rv: int,
+    *,
+    bucket: str | None = None,
+    module: str = UNKNOWN_MODULE,
+    mech: int | None = None,
 ) -> None:
     """Count a call made outside the ``_call`` choke point (entry + exit together).
 
@@ -718,6 +782,7 @@ def record_direct_call(
     marks the undurable evidence pending, and raises.
     """
     module_id = _resolve_module(module)
+    mech_id = _resolve_mech(mech)
     if bucket is not None and bucket not in BUCKETS:
         raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     with _lock:
@@ -730,6 +795,14 @@ def record_direct_call(
         if _registration is not None:
             _inprog_entry[entry_key] += 1
             _inprog_exit[exit_key] += 1
+        if mech_id is not None:
+            entry_mech_key = (module_id, target, fn, mech_id)
+            exit_mech_key = (module_id, target, fn, rv, mech_id)
+            _entry_mech_counts[entry_mech_key] += 1
+            _exit_mech_counts[exit_mech_key] += 1
+            if _registration is not None:
+                _inprog_entry_mech[entry_mech_key] += 1
+                _inprog_exit_mech[exit_mech_key] += 1
         try:
             _mark_dirty_locked(calls=1)
         except CounterPersistenceError:
@@ -740,6 +813,10 @@ def record_direct_call(
 def _serialize(
     entry: Counter[tuple[str, str, str]] | dict[tuple[str, str, str], int],
     exits: Counter[tuple[str, str, str, int]] | dict[tuple[str, str, str, int], int],
+    entry_mech: Counter[tuple[str, str, str, int]] | dict[tuple[str, str, str, int], int],
+    exit_mech: (
+        Counter[tuple[str, str, str, int, int]] | dict[tuple[str, str, str, int, int], int]
+    ),
 ) -> dict[str, Any]:
     """Render counters in the module-first shape (uniform-5 per module block).
 
@@ -747,11 +824,14 @@ def _serialize(
     at both levels; inner buckets keep the rc1 serialized contract, and
     every module block present carries all five bucket keys (zero buckets
     explicit as ``{"calls": 0, "by_fn": {}}``) while functions/RVs stay
-    sparse. An exit without an entry (a lone return) still opens its
-    module map entry with zero calls, but the result fails validation;
-    production return sites are always paired. Empty counters emit
-    no module blocks at all (``{"total_calls": 0, "by_module": {}}``).
+    sparse. Functions with mechanism attribution carry
+    ``by_mechanism{hex: {name, calls, by_rv}}`` (omitted when unattributed;
+    a subset of the fn totals). An exit without an entry (a lone return)
+    still opens its module map entry with zero calls, but the result fails
+    validation; production return sites are always paired. Empty counters
+    emit no module blocks at all (``{"total_calls": 0, "by_module": {}}``).
     """
+    from pkcs11_check.raw.api import ckm_name
     from pkcs11_check.raw.rv import ckr_name
 
     by_module: dict[str, dict[str, Any]] = {}
@@ -772,29 +852,58 @@ def _serialize(
         by_fn = module_block["buckets"].setdefault(bucket, {"calls": 0, "by_fn": {}})["by_fn"]
         target = by_fn.setdefault(fn, {"calls": 0, "by_rv": {}})
         target["by_rv"][str(rv)] = {"name": ckr_name(rv), "count": count}
+    for (module, bucket, fn, mech), calls in entry_mech.items():
+        if calls <= 0:
+            continue
+        module_block = by_module.setdefault(module, {"calls": 0, "buckets": {}})
+        by_fn = module_block["buckets"].setdefault(bucket, {"calls": 0, "by_fn": {}})["by_fn"]
+        target = by_fn.setdefault(fn, {"calls": 0, "by_rv": {}})
+        by_mech = target.setdefault("by_mechanism", {})
+        by_mech[f"0x{mech:08x}"] = {"name": ckm_name(mech), "calls": calls, "by_rv": {}}
+    for (module, bucket, fn, rv, mech), count in exit_mech.items():
+        if count <= 0:
+            continue
+        module_block = by_module.setdefault(module, {"calls": 0, "buckets": {}})
+        by_fn = module_block["buckets"].setdefault(bucket, {"calls": 0, "by_fn": {}})["by_fn"]
+        target = by_fn.setdefault(fn, {"calls": 0, "by_rv": {}})
+        mech_entry = target.setdefault("by_mechanism", {}).setdefault(
+            f"0x{mech:08x}", {"name": ckm_name(mech), "calls": 0, "by_rv": {}}
+        )
+        mech_entry["by_rv"][str(rv)] = {"name": ckr_name(rv), "count": count}
     for module_block in by_module.values():
         module_block["buckets"] = ensure_five_buckets(module_block["buckets"])
     return {"total_calls": total, "by_module": by_module}
 
 
-Snapshot = tuple[Counter[tuple[str, str, str]], Counter[tuple[str, str, str, int]]]
+Snapshot = tuple[
+    Counter[tuple[str, str, str]],
+    Counter[tuple[str, str, str, int]],
+    Counter[tuple[str, str, str, int]],
+    Counter[tuple[str, str, str, int, int]],
+]
 
 
 def take_snapshot() -> Snapshot:
-    """Return a detached copy of both counters for later ``diff_snapshots``."""
+    """Return a detached copy of all counters for later ``diff_snapshots``."""
     with _lock:
-        return (Counter(_entry_counts), Counter(_exit_counts))
+        return (
+            Counter(_entry_counts),
+            Counter(_exit_counts),
+            Counter(_entry_mech_counts),
+            Counter(_exit_mech_counts),
+        )
 
 
 def diff_snapshots(before: Snapshot, after: Snapshot) -> dict[str, Any]:
     """Serialize the ``after - before`` delta in the module-first shape.
 
-    Only positive deltas are reported; modules, functions, and RVs with no
-    new calls in the window are omitted (sparse), while every module block
-    present carries all five bucket keys (uniform-5, zero buckets explicit).
+    Only positive deltas are reported; modules, functions, RVs, and
+    mechanisms with no new calls in the window are omitted (sparse), while
+    every module block present carries all five bucket keys (uniform-5,
+    zero buckets explicit).
     """
-    before_entry, before_exit = before
-    after_entry, after_exit = after
+    before_entry, before_exit, before_entry_mech, before_exit_mech = before
+    after_entry, after_exit, after_entry_mech, after_exit_mech = after
     entry_delta = {
         key: after_entry[key] - before_entry[key]
         for key in after_entry
@@ -805,22 +914,39 @@ def diff_snapshots(before: Snapshot, after: Snapshot) -> dict[str, Any]:
         for key in after_exit
         if after_exit[key] - before_exit[key] > 0
     }
-    return _serialize(entry_delta, exit_delta)
+    entry_mech_delta = {
+        key: after_entry_mech[key] - before_entry_mech[key]
+        for key in after_entry_mech
+        if after_entry_mech[key] - before_entry_mech[key] > 0
+    }
+    exit_mech_delta = {
+        key: after_exit_mech[key] - before_exit_mech[key]
+        for key in after_exit_mech
+        if after_exit_mech[key] - before_exit_mech[key] > 0
+    }
+    return _serialize(entry_delta, exit_delta, entry_mech_delta, exit_mech_delta)
 
 
 def serialize_current() -> dict[str, Any]:
     """Serialize all counters recorded so far in the module-first shape."""
     with _lock:
-        return _serialize(Counter(_entry_counts), Counter(_exit_counts))
+        return _serialize(
+            Counter(_entry_counts),
+            Counter(_exit_counts),
+            Counter(_entry_mech_counts),
+            Counter(_exit_mech_counts),
+        )
 
 
 def flatten_current() -> list[list[str | int | None]]:
-    """Flatten all counters to the child wire format ``[[module, fn, rv_or_None, count]]``.
+    """Flatten all counters to the child wire format.
 
-    Bucket attribution is dropped (the ingesting parent applies its own
-    bucket); the module id is kept so absorbed traffic stays attributable and
-    ``rv None`` marks entries that never returned. Sorted by module, then fn,
-    then RV ascending with the unreturned row last per fn.
+    Rows are ``[module, fn, rv_or_None, count]`` with an optional fifth
+    ``mech_or_None`` element (#87 item 1). Bucket attribution is dropped
+    (the ingesting parent applies its own bucket); the module id is kept so
+    absorbed traffic stays attributable and ``rv None`` marks entries that
+    never returned. Sorted by module, then fn, then RV ascending with the
+    unreturned row last per fn.
     """
     with _lock:
         entries: Counter[tuple[str, str]] = Counter()
@@ -829,22 +955,72 @@ def flatten_current() -> list[list[str | int | None]]:
         exits: Counter[tuple[str, str, int]] = Counter()
         for (module, _bucket, fn, rv), count in _exit_counts.items():
             exits[(module, fn, rv)] += count
-    typed: list[tuple[str, str, int | None, int]] = []
+        entry_mech: Counter[tuple[str, str, int]] = Counter()
+        for (module, _bucket, fn, mech), calls in _entry_mech_counts.items():
+            entry_mech[(module, fn, mech)] += calls
+        exit_mech: Counter[tuple[str, str, int, int]] = Counter()
+        for (module, _bucket, fn, rv, mech), count in _exit_mech_counts.items():
+            exit_mech[(module, fn, rv, mech)] += count
+    typed: list[tuple[str, str, int | None, int, int | None]] = []
+    # Paired halves share their mechanism (record_* contract), so a returned
+    # call's mech is known exactly from its exit row; deduct it from the
+    # entry pool so unreturned rows cannot inherit a returned call's mech.
+    returned_mech: Counter[tuple[str, str, int]] = Counter()
     for (module, fn, rv), count in exits.items():
-        typed.append((module, fn, rv, count))
+        remaining = count
+        for (emod, efn, erv, emech), mcount in sorted(exit_mech.items()):
+            if (emod, efn, erv) != (module, fn, rv):
+                continue
+            use = min(mcount, remaining)
+            if use <= 0:
+                continue
+            typed.append((module, fn, rv, use, emech))
+            exit_mech[(emod, efn, erv, emech)] -= use
+            returned_mech[(module, fn, emech)] += use
+            remaining -= use
+        if remaining > 0:
+            typed.append((module, fn, rv, remaining, None))
         entries[(module, fn)] -= count
+    for key, used in returned_mech.items():
+        entry_mech[key] -= used
     for (module, fn), unreturned in entries.items():
-        if unreturned > 0:
-            typed.append((module, fn, None, unreturned))
-    typed.sort(key=lambda item: (item[0], item[1], item[2] is None, item[2] or 0))
-    return [[module, fn, rv, count] for module, fn, rv, count in typed]
+        if unreturned <= 0:
+            continue
+        remaining = unreturned
+        for (emod, efn, emech), mcount in sorted(entry_mech.items()):
+            if (emod, efn) != (module, fn):
+                continue
+            use = min(mcount, remaining)
+            if use <= 0:
+                continue
+            typed.append((module, fn, None, use, emech))
+            entry_mech[(emod, efn, emech)] -= use
+            remaining -= use
+        if remaining > 0:
+            typed.append((module, fn, None, remaining, None))
+    typed.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+            item[2] is None,
+            item[2] or 0,
+            item[4] is None,
+            item[4] or 0,
+        )
+    )
+    # The fifth element rides only when attributed: unattributed rows keep
+    # the exact legacy 4-column bytes.
+    return [
+        [module, fn, rv, count] if mech is None else [module, fn, rv, count, mech]
+        for module, fn, rv, count, mech in typed
+    ]
 
 
-def _parse_flat_rows(flat: Any) -> list[tuple[str, str, int | None, int]]:
+def _parse_flat_rows(flat: Any) -> list[tuple[str, str, int | None, int, int | None]]:
     """Parse child wire-format rows (pure; garbage rows skipped, never raised)."""
     if not isinstance(flat, (list, tuple)):
         return []
-    parsed: list[tuple[str, str, int | None, int]] = []
+    parsed: list[tuple[str, str, int | None, int, int | None]] = []
     for row in flat:
         if not isinstance(row, (list, tuple)):
             continue
@@ -852,11 +1028,14 @@ def _parse_flat_rows(flat: Any) -> list[tuple[str, str, int | None, int]]:
         fn: Any
         rv: Any
         count: Any
+        mech: Any = None
         if len(row) == 3:
             module = UNKNOWN_MODULE
             fn, rv, count = row[0], row[1], row[2]
         elif len(row) == 4:
             module, fn, rv, count = row[0], row[1], row[2], row[3]
+        elif len(row) == 5:
+            module, fn, rv, count, mech = row[0], row[1], row[2], row[3], row[4]
         else:
             continue
         if not isinstance(module, str):
@@ -867,7 +1046,9 @@ def _parse_flat_rows(flat: Any) -> list[tuple[str, str, int | None, int]]:
             continue
         if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
             continue
-        parsed.append((module, fn, rv, count))
+        if mech is not None and (not isinstance(mech, int) or isinstance(mech, bool) or mech < 0):
+            continue
+        parsed.append((module, fn, rv, count, mech))
     return parsed
 
 
@@ -992,7 +1173,7 @@ def ingest_child_evidence(
         _ensure_registered_locked()
         if src is not None and src in _ingested_sources:
             return False
-        for module, fn, rv, count in parsed:
+        for module, fn, rv, count, mech in parsed:
             _entry_counts[(module, target, fn)] += count
             if _registration is not None:
                 _inprog_entry[(module, target, fn)] += count
@@ -1000,6 +1181,14 @@ def ingest_child_evidence(
                 _exit_counts[(module, target, fn, rv)] += count
                 if _registration is not None:
                     _inprog_exit[(module, target, fn, rv)] += count
+            if mech is not None:
+                _entry_mech_counts[(module, target, fn, mech)] += count
+                if _registration is not None:
+                    _inprog_entry_mech[(module, target, fn, mech)] += count
+                if rv is not None:
+                    _exit_mech_counts[(module, target, fn, rv, mech)] += count
+                    if _registration is not None:
+                        _inprog_exit_mech[(module, target, fn, rv, mech)] += count
         _lost_keys |= key_set
         # Without a positive total nothing was ever counted inside
         # it, so each malformed item floors one unkeyed loss on its
@@ -1022,7 +1211,7 @@ def ingest_child_evidence(
             or consumed_key is not None
         ):
             try:
-                units = sum(count for _, _, _, count in parsed) if parsed else 1
+                units = sum(count for _, _, _, count, _ in parsed) if parsed else 1
                 _mark_dirty_locked(calls=units)
             except CounterPersistenceError:
                 _set_pending_locked("ingest")
@@ -1033,15 +1222,17 @@ def ingest_child_evidence(
 def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
     """Merge child wire-format rows into the globals under ``bucket`` (or active).
 
-    Only ``[module, fn, rv_or_None, count]`` rows with a str module, a
-    non-empty str fn, a None-or-non-negative-int rv (bools rejected), and a
-    positive int count are applied; legacy 3-column ``[fn, rv, count]`` rows
-    fold under the ``""`` unknown module, and every other shape (including a
-    non-list/tuple payload) is ignored without raising. A negative rv is
-    garbage per-row, never folded: serializing one would emit a ``"-1"`` RV
-    key the extractor rejects whole-record, discarding valid traffic. An
-    explicitly unknown ``bucket`` raises ValueError like ``counted_bucket``.
-    Applies through :func:`ingest_child_evidence` (one lock acquisition).
+    Only ``[module, fn, rv_or_None, count]`` rows (with an optional fifth
+    ``mech_or_None`` element) with a str module, a non-empty str fn, a
+    None-or-non-negative-int rv (bools rejected), a positive int count, and
+    a None-or-non-negative-int mech are applied; legacy 3-column
+    ``[fn, rv, count]`` rows fold under the ``""`` unknown module, and every
+    other shape (including a non-list/tuple payload) is ignored without
+    raising. A negative rv is garbage per-row, never folded: serializing one
+    would emit a ``"-1"`` RV key the extractor rejects whole-record,
+    discarding valid traffic. An explicitly unknown ``bucket`` raises
+    ValueError like ``counted_bucket``. Applies through
+    :func:`ingest_child_evidence` (one lock acquisition).
     """
     ingest_child_evidence(flat, 0, (), bucket=bucket)
 
@@ -1330,7 +1521,12 @@ def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> 
         registration = _ensure_registered_locked()
         assert registration is not None
         if block is None:
-            window = _serialize(Counter(_inprog_entry), Counter(_inprog_exit))
+            window = _serialize(
+                Counter(_inprog_entry),
+                Counter(_inprog_exit),
+                Counter(_inprog_entry_mech),
+                Counter(_inprog_exit_mech),
+            )
         else:
             if not is_module_first_block(block):
                 raise ValueError(f"invalid test window block for {nodeid!r}")
@@ -1362,6 +1558,8 @@ def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> 
         _persistence_pending = None
         _inprog_entry.clear()
         _inprog_exit.clear()
+        _inprog_entry_mech.clear()
+        _inprog_exit_mech.clear()
         _dirty = True
         _flush_locked()
 
@@ -1375,6 +1573,8 @@ def reset_for_tests() -> None:
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
+        _entry_mech_counts.clear()
+        _exit_mech_counts.clear()
         _phase_name = DEFAULT_BUCKET
         _lost_keys.clear()
         _unkeyed_lost = 0
@@ -1396,6 +1596,8 @@ def reset_for_tests() -> None:
         _probe_seq = 0
         _inprog_entry.clear()
         _inprog_exit.clear()
+        _inprog_entry_mech.clear()
+        _inprog_exit_mech.clear()
         _journal_len = 0
     _state.regions.clear()
 

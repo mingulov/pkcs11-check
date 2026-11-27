@@ -748,7 +748,10 @@ class RawPKCS11:
                 m = obj.mechanism
                 self._used_mechanisms.add(m)
                 self._mechanism_counts[m] += 1
-                mech_id = m
+                # Counter attribution needs a real CKM int; anything else
+                # (exotic test doubles) stays unattributed, never loud:
+                # _call must not fail on shapes the provider would take.
+                mech_id = m if isinstance(m, int) and not isinstance(m, bool) and m >= 0 else None
                 if tracing:
                     sub = getattr(obj, "_rv_trace_sub", None)
                     if sub:
@@ -767,11 +770,13 @@ class RawPKCS11:
         # Entry is recorded only once the module is actually invoked: an
         # unavailable function (AttributeError above) counts nothing, while a
         # crash inside func(*args) still counts the entry with no RV. The
-        # bucket is captured once so a mid-call switch cannot split the pair.
+        # bucket is captured once so a mid-call switch cannot split the pair,
+        # and the mechanism halves always match (None when unreadable or not
+        # a mechanism call: unattributed, a subset of the fn totals).
         bucket = current_bucket()
-        record_call(name, bucket=bucket, module=self._module_id)
+        record_call(name, bucket=bucket, module=self._module_id, mech=mech_id)
         result = int(func(*args))
-        record_return(name, result, bucket=bucket, module=self._module_id)
+        record_return(name, result, bucket=bucket, module=self._module_id, mech=mech_id)
         if result == int(CKR_OK):
             self._call_log_ok[name] += 1
         if mech_id is not None:

@@ -80,7 +80,9 @@ Module-first: `{total_calls, by_module{module: {calls, buckets}}}`.
 ```json
 {"total_calls": 0, "by_module": {"<module>": {"calls": 0,
   "buckets": {"<bucket>": {"calls": 0, "by_fn": {"<fn>": {
-  "calls": 0, "by_rv": {"<rv-int>": {"name": "<CKR_...>", "count": 0}}}}}}}}}
+  "calls": 0, "by_rv": {"<rv-int>": {"name": "<CKR_...>", "count": 0}},
+  "by_mechanism": {"0x<hex>": {"name": "<CKM_...>", "calls": 0,
+    "by_rv": {}}}}}}}}}}
 ```
 
 - Modules, functions, and RVs with zero calls are omitted (sparse);
@@ -93,6 +95,14 @@ Module-first: `{total_calls, by_module{module: {calls, buckets}}}`.
   coerced), so a malformed leaf cannot silently shift totals.
 - `sum(by_rv) <= calls` per function: entry increments `calls`, exit adds the
   RV, so a call that never returns counts with no RV row.
+- Mechanism calls additionally carry `by_mechanism` under their fn block
+  (#87 item 1): hex keys (`0x` + 1-8 digits, emitted zero-padded to 8)
+  mapping to `{name, calls, by_rv}` mirroring the fn block. Keys come from
+  `ckm_name` (symbolic or hex fallback); only type ids are recorded, never
+  mechanism params. Unattributed calls (not a mechanism call, or an
+  unreadable struct) are simply absent, so mech calls sum at or below the
+  fn calls. Merge unions the sub-blocks (deterministic symbolic-preferred
+  names); canonicalization carries them sorted.
 - Invariant: `total_calls` equals the sum of the per-module `calls`, and
   each module's `calls` equals the sum of its buckets.
 - Legacy rc1 blocks (`{total_calls, buckets}`) still parse: readers
