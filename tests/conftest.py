@@ -35,6 +35,25 @@ def classification_report_plugin_enabled() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _pin_counters_flush_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin counter snapshots to K=1 unless a test says otherwise.
+
+    The product default cadence is batched (K=20); behavior tests
+    pin exact snapshots so crash/kill/count assertions stay
+    deterministic. Tests that exercise the knob (or the default
+    itself) set or delete the variable explicitly, which wins
+    over this setdefault pin. Resets the cached cadence so the
+    pin takes effect even after a test that resolved another K.
+    """
+    from pkcs11_check.core import _counters_durability as durability
+    from pkcs11_check.core import call_counters
+
+    if durability.COUNTERS_FLUSH_K_ENV not in os.environ:
+        monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "1")
+    call_counters.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_meta_test_classifications(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
