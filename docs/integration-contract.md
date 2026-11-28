@@ -98,14 +98,14 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   failed/crashed/timeout evidence is already present. On the isolated path the evidence
   consulted is completed units only (current-run or durable resume state); the killed
   child's OS kill status never determines the command's exit code and never creates a
-  provider finding. Residual (R1-F5, B1-owned, isolated path only): the in-flight unit's
-  partial report is discarded with its temp JSONL, so a failure in the interrupted unit
-  itself does not upgrade the exit; B1's failure-path preservation owns that evidence.
-  The non-isolated path consults its captured (possibly partial) report instead, so an
-  interrupted report that already contains a provider failure still exits `1`. Translation
-  covers every blocking wait (preflight, probes, unit runs, `pytest.main`); a signal
-  landing in a non-blocking setup/assembly micro-window outside those waits surfaces
-  the runtime default instead (Q2-M4).
+  provider finding. Residual (isolated path only): the in-flight unit's partial report
+  is discarded with its temp JSONL, so a failure in the interrupted unit itself does not
+  upgrade the exit; startup-check and collection failures preserve their evidence, but
+  interrupted units are not covered yet. The non-isolated path consults its captured
+  (possibly partial) report instead, so an interrupted report that already contains a
+  provider failure still exits `1`. Translation covers every blocking wait (preflight,
+  probes, unit runs, `pytest.main`); a signal landing in a non-blocking setup/assembly
+  micro-window outside those waits surfaces the runtime default instead.
 - Non-isolated output applies the same completion rule to its one captured report-log stream:
   only raw exits `0`, `1`, and `5` with exactly one balanced session and a matching finish are
   verified. A missing or mismatched finish adds one typed `HarnessError` with the raw return code
@@ -134,16 +134,14 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   `empty`; preserved provider findings or incomplete results return `1`, while raw pytest harness
   exits `2`/`3`/`4` without a provider finding return public code `2`. A provider finding retained
   alongside one of those harness exits still returns `1`.
-- Resumed runs that fail their startup checks merge the failure into the
-  prior results instead of overwriting them. Residual risks: resuming
-  without a state file still overwrites same-path outputs, so keep a copy
-  of any report you need before resuming. A resume refused as
-  cross-provider (state file belongs to a different module run) never
-  touches the prior summary -- its separate crash/timeout or collection
-  failure report lands beside the requested path as
-  `<stem>.refused<suffix>`. Refused plain errors and downstream
-  fingerprint refusals (which can also be a same-module argument change,
-  not a provider swap) write no summary at all.
+- Resumed runs that fail their startup checks merge the failure into the prior results instead
+  of overwriting them. Residual risk: resuming without a state file still overwrites
+  same-path outputs, so keep a copy of any report you need before resuming. A resume refused
+  as cross-provider (state file belongs to a different module run) never touches the prior
+  summary -- its separate crash/timeout or collection failure report lands beside the
+  requested path as `<stem>.refused<suffix>`. Refused plain errors and downstream fingerprint
+  refusals (which can also be a same-module argument change, not a provider swap) write no
+  summary at all.
 - Daemon recovery can replace a dying provider's result only as the current aggregate verdict.
   The superseded attempt (including report records, output, and process observations) remains in
   `attempt_history`; every confirmed daemon death remains in `recovery_events` and contributes a

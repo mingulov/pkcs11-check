@@ -2,10 +2,10 @@
 
 ## [0.3.2] - 2026-11-28
 
-Crash-proof counting release: counter recovery now survives crashes
-during collection, resumed runs keep prior results when startup checks
-fail, call statistics break down by mechanism, and call-dense runs
-finish much faster. Not yet validated by a full provider round (see
+Crash-proof counting release: counter recovery is more robust against
+crashes during collection, resumed runs keep prior results when startup
+checks fail, call statistics break down by mechanism, and call-dense
+runs finish much faster. Not yet validated by a full provider round (see
 Known limitations).
 
 ### Added
@@ -16,29 +16,37 @@ Known limitations).
   code each mechanism call ended with, so refused mechanisms show up
   with their reasons.
 - `--ckr-strict` now works from the `test` command (previously only
-  documented for direct pytest runs).
+  available to direct pytest runs).
+
+### Changed
+
+- Counter snapshots are now batched by default (about ten calls per
+  snapshot instead of every call), which makes call-dense runs much
+  faster. Totals stay exact for runs that finish; a run that crashes
+  can lose up to its last 19 unsaved counts, always flagged
+  incomplete. Set `PKCS11_CHECK_COUNTERS_FLUSH_K=1` to restore
+  per-call persistence when reconciling crashing runs against an
+  external tracer.
 
 ### Fixed
 
-- Crash recovery for counters now adopts orphaned counter files left by
-  crashes during collection instead of discarding them, and return codes
-  survive crashes in the middle of a counter write.
+- Crash recovery for counters is more robust: orphaned counter files
+  are adopted and replayed across more crash shapes, and return codes
+  now survive crashes in the middle of a counter write.
 - Resumed runs that fail their startup checks now preserve prior results
   and append the failure to them instead of overwriting; a resume
   pointed at a different module's state reports the failure separately
   rather than mixing providers.
-- Call-dense runs finish much faster: counter snapshots are now batched
-  (every 20 evidence units by default instead of every call) while
-  keeping exact totals; per-call persistence stays available for crash
-  forensics.
-- Interrupted runs now exit 2 (or 1 when completed units already carry
-  findings) instead of an unstable code.
+- Interrupted runs (Ctrl-C) now exit 2 (or 1 when completed units
+  already carry findings) instead of 130 on isolated runs.
 - Wrong-PIN and bad-slot setup failures are now reported as harness
   errors (blaming the tool or its configuration) instead of
   inconclusive module results.
-- An empty user PIN is now treated as no PIN everywhere instead of
-  sometimes meaning an empty password (service-owner PIN behavior
-  unchanged).
+- Empty PIN handling is now consistent: an empty user PIN means no PIN
+  everywhere, and an explicit `--pin ""` overrides a set `P11TEST_PIN`
+  instead of inheriting it. The same explicit-overrides-environment
+  rule now applies to `--so-pin ""`, while the empty-means-absent rule
+  itself still exempts the security officer (SO) PIN.
 
 ### Known limitations
 
@@ -46,18 +54,22 @@ Known limitations).
   exact totals; in rare multiple-fault situations (for example a crash
   while results are being collected, or during a resumed run) the
   report may say the counts are incomplete instead of recovering them
-  exactly. Recovered runs now adopt orphaned counter files left by
-  crashes during collection instead of discarding them. Counts can
-  still be dropped silently in narrow cases: a resumed run whose prior
-  report is present but unreadable; counter files unreadable through a
-  disk or permission fault; and counter files held for a later pass
-  because the process slot they name looks still occupied. In these
-  cases the totals can still report complete. Apart from that
-  exception, counts are never silently wrong as "complete", and they
-  never change any test result. For exact totals, use a fresh run.
+  exactly. Recovery is more robust than in 0.3.1 but still has narrow
+  silent-drop cases: a resumed run whose prior report is present but
+  unreadable; counter files unreadable through a disk or permission
+  fault; counter files deleted as leftovers of an already-collected
+  run after being unreadable during collection; and counter files
+  held for a later pass because the process slot they name looks
+  still occupied. In these cases the totals can still report
+  complete. Apart from that exception, counts are never silently
+  wrong as "complete", and they never change any test result. For
+  exact totals, use a fresh run.
 - Resumed runs: startup-check failures now preserve prior results (see
   above), except resuming without a state file still overwrites
-  same-path outputs. Keep a copy of any report you need before resuming.
+  same-path outputs. States saved by 0.3.1 carry no module snapshot,
+  so the first resume after upgrading cannot tell a different
+  module's state apart and merges as before. Keep a copy of any
+  report you need before resuming.
 - Call counters count calls made by pkcs11-check itself. Calls made by
   helper programs it launches (such as OpenSSL interoperability tests)
   are not included, and a whole-machine crash (not just a program
