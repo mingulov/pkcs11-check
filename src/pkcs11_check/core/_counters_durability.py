@@ -56,7 +56,7 @@ import warnings
 from collections.abc import Callable, Collection, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, NamedTuple, TypeGuard
+from typing import Any, BinaryIO, Literal, NamedTuple, NotRequired, TypedDict, TypeGuard
 from uuid import uuid4
 
 from pkcs11_check.core._run_guard import guard_path_for, try_lock_file, unlock_file
@@ -5155,7 +5155,7 @@ def _orphan_coverage_kind(
 
 
 def _note_persistent_conflict(
-    plan: dict[str, Any] | None,
+    plan: CountersBarrierPlan | None,
     exc: _DeferProducerError,
     *,
     unit: str | None,
@@ -25830,9 +25830,34 @@ def _staged_target_carries(path: Path, digest: str) -> bool:
     return digest_now == digest
 
 
+class CountersBarrierPlan(TypedDict, total=True):
+    """Resume-barrier plan produced by :func:`prepare_resume`.
+
+    All keys but ``conflict_units`` are set at construction;
+    ``conflict_units`` is recorded while a persistent counter conflict
+    holds and popped when it clears. Threaded through the CLI and the
+    file runner; every consumer annotates it instead of
+    ``dict[str, Any]`` so key drift fails at typecheck time.
+    """
+
+    barrier_ok: bool
+    fenced: list[str]
+    unresolved: list[str]
+    retained_uuids: list[str]
+    skipped_units: list[str]
+    skipped_live: list[str]
+    cache_records: dict[str, list[dict[str, Any]]]
+    collected_runs: list[str]
+    consumed: int
+    counters_dir: str
+    cleanup_held: list[str]
+    staging_gen: tuple[int, int, int, int] | None
+    conflict_units: NotRequired[dict[str, str]]
+
+
 def prepare_resume(
     counters_dir: Path | str, *, prior_merged_jsonl: Path | str | None
-) -> dict[str, Any]:
+) -> CountersBarrierPlan:
     """Run the resume admission barrier: seal, collect, fence.
 
     Seals registration (post-seal producers are rejected and blocked),
@@ -25844,9 +25869,7 @@ def prepare_resume(
     onto ``skipped_units``: resume must skip those reruns, report them,
     and never assume quiescence.
 
-    Returns a plan ``{barrier_ok, fenced, unresolved, skipped_units,
-    cache_records, collected_runs, consumed, counters_dir,
-    staging_gen}``;
+    Returns a :class:`CountersBarrierPlan` (keys documented there);
     a pass holding a persistent counter conflict
     (covered divergence, #88R42-Q2) additionally records
     ``conflict_units``, mapping each held unit to its disposition:
@@ -25877,7 +25900,7 @@ def prepare_resume(
     (#88R42-8).
     """
     root = Path(counters_dir)
-    plan: dict[str, Any] = {
+    plan: CountersBarrierPlan = {
         "barrier_ok": True,
         "fenced": [],
         "unresolved": [],
@@ -29594,7 +29617,7 @@ def prepare_resume(
         staged_this_pass = False
         preserved_now: set[str] = set(committed_held_tmps)
 
-        def _refuse_stale_generation() -> dict[str, Any] | None:
+        def _refuse_stale_generation() -> CountersBarrierPlan | None:
             """Refuse on a moved staging generation (#88R44-C), else proceed.
 
             Returns the refused plan (init-defaults + ``barrier_ok``

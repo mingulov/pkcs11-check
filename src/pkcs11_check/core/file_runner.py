@@ -31,6 +31,7 @@ from pkcs11_check.core._counters_durability import (
     COUNTERS_UNIT_ENV,
     RECOVERY_SUPPLEMENTS_SUFFIX,
     CounterPersistenceError,
+    CountersBarrierPlan,
     _record_identity_hex,
     append_supplement_records,
     collect_unit,
@@ -746,7 +747,7 @@ def _barrier_gate(root: Path | str) -> Iterator[tuple[bool, OSError | None]]:
         release_barrier_lock(token)
 
 
-def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, Any]) -> None:
+def _retire_converged_barrier_staging(staged_root: Path | str, plan: CountersBarrierPlan) -> None:
     """Discard a converged plan's staging, generation-bound (#88R44-[C]r3).
 
     Retires only the generation this plan's barrier wrote: a rival
@@ -798,7 +799,7 @@ def _retire_converged_barrier_staging(staged_root: Path | str, plan: dict[str, A
 
 def _apply_counters_barrier_plan(
     state_file: Path,
-    plan: dict[str, Any],
+    plan: CountersBarrierPlan,
     pending_units: list[str],
     console: Any,
 ) -> list[str]:
@@ -917,7 +918,7 @@ def _setup_counters_durability(
     report_config: Any | None,
     console: Any,
     *,
-    barrier_plan: dict[str, Any] | None = None,
+    barrier_plan: CountersBarrierPlan | None = None,
 ) -> list[str]:
     """Resolve the counters dir and run the start-of-run barrier (rc2 Task 3).
 
@@ -2660,7 +2661,7 @@ def run_isolated_pytest_units(
     unit_test_counts: Mapping[str, int] | None = None,
     selection_batch_id: str | None = None,
     selection_digest: str | None = None,
-    counters_barrier_plan: dict[str, Any] | None = None,
+    counters_barrier_plan: CountersBarrierPlan | None = None,
     quiet_unit_display: bool = False,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress.
