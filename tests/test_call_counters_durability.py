@@ -60891,15 +60891,7 @@ def test_r44_ar23_uncommitted_torn_arrival_reholds(tmp_path: Path) -> None:
     assert any("otherwise unknown, sharing its probe prefix with" in text for text in texts), texts
 
 
-def test_r44_ar23_uncommitted_torn_gate_holds_before_prune(tmp_path: Path) -> None:
-    """#88R44-[A]r23: the torn gate runs before prune unlinks anything.
-
-    Codex R22-1 (ordering half): the uncommitted torn-sidecar
-    route prunes rewrite tmps between its loop-time verdict and
-    the removal. A probe arriving there must hold the whole
-    family -- tmps included -- via the early gate, not just the
-    primaries via the late one.
-    """
+def _run_torn_gate_hold_case(tmp_path: Path) -> None:
     import warnings
     from unittest import mock
 
@@ -60939,6 +60931,15 @@ def test_r44_ar23_uncommitted_torn_gate_holds_before_prune(tmp_path: Path) -> No
                 pid=pid,
                 birth=birth,
             )
+            # The gate re-scans on directory-mtime change; force the
+            # arrival onto a new tick. Without this, a plant landing
+            # in the snapshot's mtime tick (coarse/lazy directory
+            # timestamps: Windows CI) is invisible to the memo and
+            # the family prunes instead of holding -- environmentally
+            # flaky, not behavioral. Far-future is deliberate: it
+            # escapes any filesystem quantum.
+            future = time.time_ns() + 5_000_000_000
+            os.utime(root, (future, future))
         return result
 
     with mock.patch.object(durability, "_owner_evidence_survives", _verdict_then_arrive):
@@ -60951,6 +60952,41 @@ def test_r44_ar23_uncommitted_torn_gate_holds_before_prune(tmp_path: Path) -> No
     assert swept["removed"] == 0
     texts = [str(found.message) for found in seen]
     assert any("otherwise unknown, sharing its probe prefix with" in text for text in texts), texts
+
+
+def test_r44_ar23_uncommitted_torn_gate_holds_before_prune(tmp_path: Path) -> None:
+    """#88R44-[A]r23: the torn gate runs before prune unlinks anything.
+
+    Codex R22-1 (ordering half): the uncommitted torn-sidecar
+    route prunes rewrite tmps between its loop-time verdict and
+    the removal. A probe arriving there must hold the whole
+    family -- tmps included -- via the early gate, not just the
+    primaries via the late one.
+    """
+    _run_torn_gate_hold_case(tmp_path)
+
+
+def test_r44_ar23_torn_gate_hold_survives_coarse_dir_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-tick arrival pin: the hold must not depend on mtime resolution.
+
+    Regression test for the main-CI Windows flake (run 46118654535):
+    the gate re-scans on directory-mtime change, and a plant landing
+    in the snapshot's tick is invisible to the memo on coarse/lazy
+    directory timestamps. The case forces its arrival onto a new tick,
+    so it must hold even under a 15ms-quantized dir clock. Red-proven:
+    fails with the pre-fix body, passes with it.
+    """
+    real_mtime = durability._dir_mtime_ns
+    monkeypatch.setattr(
+        durability,
+        "_dir_mtime_ns",
+        lambda path: (
+            None if (value := real_mtime(path)) is None else (value // 15_000_000) * 15_000_000
+        ),
+    )
+    _run_torn_gate_hold_case(tmp_path)
 
 
 def test_r44_ar24_prune_binds_unlink_to_classified_bytes(tmp_path: Path) -> None:
