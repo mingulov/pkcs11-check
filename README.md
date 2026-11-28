@@ -48,7 +48,7 @@ project.
 pip install pkcs11-check
 
 # Or from source, pinned to this release (prefix the commands below with `uv run`)
-git clone --branch v0.3.1 https://github.com/mingulov/pkcs11-check
+git clone --branch v0.3.2 https://github.com/mingulov/pkcs11-check
 cd pkcs11-check
 uv sync
 
