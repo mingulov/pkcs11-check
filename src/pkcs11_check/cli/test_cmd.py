@@ -62,7 +62,10 @@ from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
     ensure_failed_collection_report,
 )
-from pkcs11_check.core.counters_schema import mint_filename_nonce
+from pkcs11_check.core.counters_schema import (
+    LOST_REPORT_TYPE,
+    mint_filename_nonce,
+)
 from pkcs11_check.core.disabled_baseline import (
     build_disabled_baseline_block,
     format_disabled_baseline_banner,
@@ -526,7 +529,7 @@ def _blob_only_incomplete(
 # Record types safe to re-carry without a uuid (R5-R6 minor): session
 # bookends create no groups, and loss records merge by identity -- neither
 # can double-sum, while dropping them would lose segments and losses.
-_ALWAYS_REPEATABLE_TYPES = frozenset({"SessionStart", "SessionFinish", "CallCountersLost"})
+_ALWAYS_REPEATABLE_TYPES = frozenset({"SessionStart", "SessionFinish", LOST_REPORT_TYPE})
 
 
 def _repeatable_earlier_scopes(earlier: bytes) -> bytes:
