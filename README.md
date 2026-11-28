@@ -114,6 +114,8 @@ That writes into `./reports/`:
 
 - **`report.jsonl`** - one JSON record per test (outcome, return code, notes)
 - **`results.json`** - the consolidated run summary (counts, crashes, environment)
+- **`results.refused.json`** - instead of `results.json`, when a resumed
+  run is refused as another provider's state (the prior summary is kept)
 - **`quality.json`** - the per-outcome classification report
 - **`coverage.json`** - mechanism coverage, only when the run collected
   coverage data (absent otherwise, not an empty file)

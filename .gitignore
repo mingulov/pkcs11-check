@@ -14,6 +14,8 @@ results/
 artifacts/
 artifacts*/
 .pkcs11-check-isolation-state.json
+.pkcs11-check-isolation-state.json.preflight-counters.jsonl
+.pkcs11-check-isolation-state.json.counters.*/
 .pkcs11-check-isolation-policy.json
 .pkcs11-check-isolation-state.json.lock
 .pkcs11-check-isolation-policy.json.lock

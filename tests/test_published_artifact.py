@@ -44,7 +44,7 @@ _CANONICAL_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(rc[1-9][0-9]*)?$")
 def _distribution_version() -> str:
     """Installed `pkcs11-check` dist version, or skip when no metadata exists.
 
-    Under PKCS11_CHECK_GATE_STRICT (set by the TestPyPI gate, whose pip
+    Under PKCS11_CHECK_GATE_STRICT (set by the PyPI gate, whose pip
     install always writes metadata) a missing distribution is a failure:
     skipping there would let a broken install stay green.
     """

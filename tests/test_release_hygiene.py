@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_DOCS = [
     REPO_ROOT / "README.md",
     REPO_ROOT / "CHANGELOG.md",
-    *sorted((REPO_ROOT / "docs").glob("*.md")),
+    *sorted((REPO_ROOT / "docs").rglob("*.md")),
 ]
 SOURCE_DIRS = [REPO_ROOT / "src", REPO_ROOT / "tests"]
 SOURCES_TOML = REPO_ROOT / "src/pkcs11_check/testcases/data/sources.toml"

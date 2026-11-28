@@ -101,7 +101,7 @@ def test_no_relocated_doc_refs() -> None:
 
 
 def test_no_workspace_or_infra_refs() -> None:
-    """No workspace/CI-infra references in docs/*.md (excl. docker-examples.md),
+    """No workspace/CI-infra references in docs/**/*.md (excl. docker-examples.md),
     README.md, AGENTS.md, CHANGELOG.md, THIRD_PARTY_LICENSES.md, or src/.
     """
     banned = (
@@ -123,10 +123,10 @@ def test_no_workspace_or_infra_refs() -> None:
         "test-pkcs11-mock",
         "test-optee",
     )
-    # Build file list: docs/*.md excluding docker-examples.md, plus README.md, AGENTS.md,
-    # CHANGELOG.md, THIRD_PARTY_LICENSES.md, and src/
+    # Build file list: docs/**/*.md excluding docker-examples.md, plus README.md,
+    # AGENTS.md, CHANGELOG.md, THIRD_PARTY_LICENSES.md, and src/
     paths_to_check: list[Path] = []
-    for md in sorted(DOCS_DIR.glob("*.md")):
+    for md in sorted(DOCS_DIR.rglob("*.md")):
         if md.name != "docker-examples.md":
             paths_to_check.append(md)
     paths_to_check.append(REPO_ROOT / "README.md")
