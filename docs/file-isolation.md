@@ -83,9 +83,11 @@ Only targets missing from saved results run. Failed, crashed, timed-out, unverif
 results while any missing expanded child still runs.
 
 > **Warning -- back up reports before resuming.** If a resumed run fails its
-> startup checks, the failure is merged into the prior results; only a
+> startup checks, the failure is merged into the prior results (a resume
+> refused as a different module's run reports separately instead); only a
 > resume without a state file still overwrites same-path outputs. Keep a
 > copy of any report you need.
+
 Fresh non-resume runs reset the state and remove the state-specific report-record shards, known
 `report.jsonl`, configured output, `quality.json` beside the output, and `coverage.json`/
 `provisioning.json` beside `report.jsonl` before starting, so prior-generation evidence cannot

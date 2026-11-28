@@ -2,10 +2,10 @@
 
 ## [0.3.2] - 2026-11-28
 
-Crash-proof counting release: counter recovery is more robust against
-crashes during collection, resumed runs keep prior results when startup
-checks fail, call statistics break down by mechanism, and call-dense
-runs finish much faster. Not yet validated by a full provider round (see
+Crash-recovery release: counter recovery covers more crash shapes,
+resumed runs keep prior results when startup checks fail, call
+statistics break down by mechanism, and call-dense runs finish much
+faster. Not yet validated by a full provider round (see
 Known limitations).
 
 ### Added
@@ -54,22 +54,24 @@ Known limitations).
   exact totals; in rare multiple-fault situations (for example a crash
   while results are being collected, or during a resumed run) the
   report may say the counts are incomplete instead of recovering them
-  exactly. Recovery is more robust than in 0.3.1 but still has narrow
-  silent-drop cases: a resumed run whose prior report is present but
-  unreadable; counter files unreadable through a disk or permission
-  fault; counter files deleted as leftovers of an already-collected
-  run after being unreadable during collection; and counter files
-  held for a later pass because the process slot they name looks
-  still occupied. In these cases the totals can still report
-  complete. Apart from that exception, counts are never silently
-  wrong as "complete", and they never change any test result. For
-  exact totals, use a fresh run.
+  exactly. Apart from the batched crash tail under Changed above
+  (up to 19 unsaved counts per crashed process, always flagged
+  incomplete), recovery is more robust than in 0.3.1 but still has
+  narrow silent-drop cases: a resumed run whose prior report is
+  present but unreadable; counter files unreadable through a disk or
+  permission fault; counter files deleted as leftovers of an
+  already-collected run after being unreadable during collection;
+  and counter files held for a later pass because the process slot
+  they name looks still occupied. In these cases the totals can
+  still report complete. Apart from that exception, counts are never
+  silently wrong as "complete", and they never change any test
+  result. For exact totals, use a fresh run.
 - Resumed runs: startup-check failures now preserve prior results (see
   above), except resuming without a state file still overwrites
   same-path outputs. States saved by 0.3.1 carry no module snapshot,
-  so the first resume after upgrading cannot tell a different
-  module's state apart and merges as before. Keep a copy of any
-  report you need before resuming.
+  so resumes of a 0.3.1 state, until one completes a unit, cannot
+  tell a different module's state apart and merge as before. Keep a
+  copy of any report you need before resuming.
 - Call counters count calls made by pkcs11-check itself. Calls made by
   helper programs it launches (such as OpenSSL interoperability tests)
   are not included, and a whole-machine crash (not just a program
