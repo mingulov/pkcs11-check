@@ -92,6 +92,8 @@ from pkcs11_check.core.counters_schema import (
 )
 from pkcs11_check.core.report_log import (
     _ISOLATED_UNIT_REPORT_TYPE,
+    REPORT_TYPE_KEY,
+    TEST_REPORT_TYPE,
     iter_report_log_records,
     parse_report_log_line,
     user_property,
@@ -224,7 +226,7 @@ def _is_authoritative_staged_record(record: Any) -> bool:
     """
     if not isinstance(record, dict):
         return False
-    report_type = record.get("$report_type")
+    report_type = record.get(REPORT_TYPE_KEY)
     if not isinstance(report_type, str):
         return False
     if report_type == PARTIAL_REPORT_TYPE:
@@ -1582,7 +1584,7 @@ def _iter_test_entry_probes(
     inside (``is_worker_uuid`` returns plain ``bool``).
     """
     for record in _iter_jsonl_line_records(snap):
-        if record.get("$report_type", "TestReport") != "TestReport":
+        if record.get(REPORT_TYPE_KEY, TEST_REPORT_TYPE) != TEST_REPORT_TYPE:
             continue
         nodeid = record.get("nodeid")
         if not isinstance(nodeid, str) or not nodeid:
@@ -2090,7 +2092,7 @@ def _extractor_accepted_partial_key(record: Any) -> tuple[str, str] | None:
     """
     if not isinstance(record, dict):
         return None
-    if record.get("$report_type") != PARTIAL_REPORT_TYPE:
+    if record.get(REPORT_TYPE_KEY) != PARTIAL_REPORT_TYPE:
         return None
     if record.get("truncated") is not True:
         return None
@@ -2192,7 +2194,7 @@ def _first_accepted_sessions(
     winners: dict[tuple[str, str], tuple[dict[str, Any], _SessionScope]] = {}
     current: _SessionScope = None
     for record in _iter_jsonl_line_records(lines):
-        report_type = record.get("$report_type", "TestReport")
+        report_type = record.get(REPORT_TYPE_KEY, TEST_REPORT_TYPE)
         if report_type in ("SessionStart", "SessionFinish"):
             current = None
             continue
@@ -2482,7 +2484,7 @@ def _hold_reason_for_veto_groups(
     for run in superseded:
         session_scope = session_scopes.get((run, uuid), "unclaimed")
         for record in groups[run]:
-            if record.get("$report_type") != PARTIAL_REPORT_TYPE:
+            if record.get(REPORT_TYPE_KEY) != PARTIAL_REPORT_TYPE:
                 # Lost records bypass the scope gate (#88R41-FIX
                 # F2): they carry no volume and are never
                 # superseded, so a scope-less Lost on corrupt
@@ -2533,7 +2535,7 @@ def _hold_reason_for_veto_groups(
                 f"staged loss key(s) {shown}"
             )
         staged_first = next(
-            (record for record in group if record.get("$report_type") == PARTIAL_REPORT_TYPE),
+            (record for record in group if record.get(REPORT_TYPE_KEY) == PARTIAL_REPORT_TYPE),
             None,
         )
         staged_remainder = _unkeyed_remainder(staged_first) if staged_first is not None else 0
@@ -9560,7 +9562,7 @@ def _partial_record(
     the extractor either way.
     """
     record: dict[str, Any] = {
-        "$report_type": "CallCountersPartial",
+        REPORT_TYPE_KEY: PARTIAL_REPORT_TYPE,
         "worker_uuid": worker_uuid,
         "truncated": True,
         "total_calls": block["total_calls"],
@@ -9619,7 +9621,7 @@ def _lost_record(
     if worker_uuid is None and pid is None:
         return None
     record: dict[str, Any] = {
-        "$report_type": "CallCountersLost",
+        REPORT_TYPE_KEY: LOST_REPORT_TYPE,
         "end_state": end_state,
         "scope_index": 0,
     }
@@ -12886,7 +12888,7 @@ def _fold_witness_entries(
     for record in records:
         if not isinstance(record, dict):
             continue
-        if record.get("$report_type") != PARTIAL_REPORT_TYPE:
+        if record.get(REPORT_TYPE_KEY) != PARTIAL_REPORT_TYPE:
             continue
         parent = record.get("worker_uuid")
         if not is_worker_uuid(parent):
@@ -14242,7 +14244,7 @@ def _strip_vetoed_heals(
             else:
                 record.pop("recovered_keys", None)
         if (
-            record.get("$report_type") == PARTIAL_REPORT_TYPE
+            record.get(REPORT_TYPE_KEY) == PARTIAL_REPORT_TYPE
             and not record.get("recovered_keys")
             and not record.get("orphan_keys")
             and not record.get("lost_keys")
@@ -14462,7 +14464,7 @@ def _fresh_remainder_uncovered(records: Any, remainder_cover: Any) -> bool:
     for record in records:
         if not isinstance(record, dict):
             continue
-        if record.get("$report_type") != PARTIAL_REPORT_TYPE:
+        if record.get(REPORT_TYPE_KEY) != PARTIAL_REPORT_TYPE:
             continue
         remainder = _unkeyed_remainder(record)
         if remainder is None or remainder > cover:
@@ -14633,7 +14635,7 @@ def _uncovered_delta_counts_text(
         for record in records:
             if not isinstance(record, dict):
                 continue
-            if record.get("$report_type") != PARTIAL_REPORT_TYPE:
+            if record.get(REPORT_TYPE_KEY) != PARTIAL_REPORT_TYPE:
                 continue
             remainder = _unkeyed_remainder(record)
             if remainder is None:
@@ -18455,7 +18457,7 @@ def _record_scope_key(record: Any) -> tuple[str, str, str] | None:
     """
     if not isinstance(record, dict):
         return None
-    kind = record.get("$report_type")
+    kind = record.get(REPORT_TYPE_KEY)
     if kind != SESSION_REPORT_TYPE and kind != PARTIAL_REPORT_TYPE:
         return None
     # Function-local: _jsonl_extract reaches this module through
@@ -23612,7 +23614,7 @@ def _write_barrier_staging(
             for record in per_unit:
                 if not isinstance(record, dict):
                     continue
-                if record.get("$report_type") != PARTIAL_REPORT_TYPE:
+                if record.get(REPORT_TYPE_KEY) != PARTIAL_REPORT_TYPE:
                     continue
                 if not _is_publication_occurrence(record.get("publication_occurrence")):
                     if "publication_occurrence" in record:
@@ -30113,14 +30115,14 @@ def write_recovery_supplements(
         engaged = durability_dir() is not None
     if not engaged:
         return None
-    sessions = [rec for rec in records if rec.get("$report_type") == SESSION_REPORT_TYPE]
+    sessions = [rec for rec in records if rec.get(REPORT_TYPE_KEY) == SESSION_REPORT_TYPE]
     if not sessions:
         return None
     path = supplements_path(state_file, unit)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"$report_type": "SessionStart"}) + "\n")
+            fh.write(json.dumps({REPORT_TYPE_KEY: "SessionStart"}) + "\n")
             for record in sessions:
                 fh.write(json.dumps(record) + "\n")
     except OSError as exc:

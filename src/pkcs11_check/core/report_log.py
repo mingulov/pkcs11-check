@@ -39,7 +39,7 @@ class SessionCompletionTracker:
                 self._invalid = True
             self._active = True
             return
-        if report_type == "TestReport":
+        if report_type == TEST_REPORT_TYPE:
             if (
                 not self._active
                 or not isinstance(record.get("nodeid"), str)
@@ -169,7 +169,10 @@ def map_report_outcome(raw_outcome: str, wasxfail: object) -> str:
 def map_report_record_outcome(record: Mapping[str, Any]) -> str:
     """Map one report record, including a direct caught ctypes SEH failure."""
     raw_outcome = str(record.get("outcome", "passed"))
-    if record.get("$report_type", "TestReport") == "TestReport" and raw_outcome == "failed":
+    if (
+        record.get(REPORT_TYPE_KEY, TEST_REPORT_TYPE) == TEST_REPORT_TYPE
+        and raw_outcome == "failed"
+    ):
         classifications = user_property(dict(record), "pkcs11_classification")
         if isinstance(classifications, list) and any(
             isinstance(classification, Mapping)
@@ -199,9 +202,11 @@ def user_property_names(record: dict[str, Any]) -> set[str]:
     return names
 
 
-# Kept as a private literal (not imported from core/_report_records.py, which imports
-# FROM this module) so the marker type name cannot drift; core/_report_records.py's
-# `_ISOLATED_UNIT_REPORT_TYPE` must keep the same value.
+# Report-log record vocabulary shared across core. ``_report_records.py``
+# imports these FROM this module; never reverse the direction (it would
+# cycle). Import the constants; do not re-declare the literals.
+REPORT_TYPE_KEY = "$report_type"
+TEST_REPORT_TYPE = "TestReport"
 _ISOLATED_UNIT_REPORT_TYPE = "IsolatedUnitReport"
 _TEST_REPORT_PHASES = ("setup", "call", "teardown")
 _CLASSIFICATION_PROPERTY = "pkcs11_classification"
@@ -329,7 +334,7 @@ def iter_classification_occurrences(
     current_target: str | None = None
     current_attempt: int | None = None
     for record in records:
-        report_type = record.get("$report_type", "TestReport")
+        report_type = record.get(REPORT_TYPE_KEY, TEST_REPORT_TYPE)
         if report_type == "SessionStart":
             current_target = None
             current_attempt = None
@@ -351,7 +356,7 @@ def iter_classification_occurrences(
                 if on_malformed_marker is not None:
                     on_malformed_marker()
             continue
-        if report_type != "TestReport":
+        if report_type != TEST_REPORT_TYPE:
             continue
         when = record.get("when")
         if when not in _TEST_REPORT_PHASES:

@@ -84,6 +84,9 @@ from pkcs11_check.core.crash_codes import (
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
+    _ISOLATED_UNIT_REPORT_TYPE as _ISOLATED_UNIT_REPORT_TYPE,
+)
+from pkcs11_check.core.report_log import (
     F11_CONTRACT_VERSION as _F11_CONTRACT_VERSION,
 )
 from pkcs11_check.core.report_log import (
@@ -107,8 +110,6 @@ from pkcs11_check.core.report_log import (
 from pkcs11_check.core.report_log import (
     map_report_record_outcome as _map_record_outcome,
 )
-
-_ISOLATED_UNIT_REPORT_TYPE = "IsolatedUnitReport"
 
 
 def _resolved_report_file(path: str, cwd: Path) -> str:
