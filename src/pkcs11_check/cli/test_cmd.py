@@ -34,6 +34,7 @@ from pkcs11_check.config_layers import (
 )
 from pkcs11_check.core._counters_durability import (
     COUNTERS_DIR_ENV,
+    CountersBarrierPlan,
     counters_run_dir_for_state,
     ensure_layout,
     prepare_resume,
@@ -1745,7 +1746,7 @@ def test_command(
     owned_counters_dir: Path | None = None
     # C2: the resume-barrier plan, computed before preflight and threaded
     # to the runner (None on fresh runs and --isolation none).
-    counters_barrier_plan: dict[str, Any] | None = None
+    counters_barrier_plan: CountersBarrierPlan | None = None
     # F-038: holds the run-artifact guards from before the first reset to
     # run end; entered once at startup, released in cleanup_owned_resources.
     artifact_guard_stack = ExitStack()
