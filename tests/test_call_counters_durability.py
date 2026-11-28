@@ -60932,12 +60932,15 @@ def _run_torn_gate_hold_case(tmp_path: Path) -> None:
                 birth=birth,
             )
             # The gate re-scans on directory-mtime change; force the
-            # arrival onto a new tick. Without this, a plant landing
-            # in the snapshot's mtime tick (coarse/lazy directory
-            # timestamps: Windows CI) is invisible to the memo and
-            # the family prunes instead of holding -- environmentally
-            # flaky, not behavioral. Far-future is deliberate: it
-            # escapes any filesystem quantum.
+            # arrival onto a new tick. This isolates what the test pins
+            # (gate-vs-prune ordering) from a known clock-resolution
+            # limit: a plant landing in the snapshot's mtime tick is
+            # invisible to the memo on coarse directory timestamps
+            # (Windows CI), so the family prunes instead of holding.
+            # Production hardening for that limit (treat a memo within
+            # one tick of its build as unproven and re-list names) is
+            # tracked separately. Far-future is deliberate: it escapes
+            # any filesystem quantum.
             future = time.time_ns() + 5_000_000_000
             os.utime(root, (future, future))
         return result
@@ -60966,24 +60969,27 @@ def test_r44_ar23_uncommitted_torn_gate_holds_before_prune(tmp_path: Path) -> No
     _run_torn_gate_hold_case(tmp_path)
 
 
-def test_r44_ar23_torn_gate_hold_survives_coarse_dir_clock(
+def test_r44_ar23_torn_gate_case_forces_new_tick_under_coarse_dir_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Same-tick arrival pin: the hold must not depend on mtime resolution.
+    """Pin that the hold case forces its arrival onto a new tick.
 
     Regression test for the main-CI Windows flake (run 46118654535):
     the gate re-scans on directory-mtime change, and a plant landing
     in the snapshot's tick is invisible to the memo on coarse/lazy
-    directory timestamps. The case forces its arrival onto a new tick,
-    so it must hold even under a 15ms-quantized dir clock. Red-proven:
-    fails with the pre-fix body, passes with it.
+    directory timestamps. The 2s (FAT-class) quantum makes a missing
+    tick-forcing fail near-deterministically; the 5s future stamp in
+    the case clears any quantum. Red-proven: fails with the pre-fix
+    body, passes with it.
     """
     real_mtime = durability._dir_mtime_ns
     monkeypatch.setattr(
         durability,
         "_dir_mtime_ns",
         lambda path: (
-            None if (value := real_mtime(path)) is None else (value // 15_000_000) * 15_000_000
+            None
+            if (value := real_mtime(path)) is None
+            else (value // 2_000_000_000) * 2_000_000_000
         ),
     )
     _run_torn_gate_hold_case(tmp_path)
