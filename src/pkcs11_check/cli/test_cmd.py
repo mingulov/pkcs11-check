@@ -110,7 +110,11 @@ from pkcs11_check.core.preflight import (
     run_preflight_subprocess,
 )
 from pkcs11_check.core.recovery import build_recovery_config
-from pkcs11_check.core.report_log import SessionCompletionTracker, iter_report_log_records
+from pkcs11_check.core.report_log import (
+    REPORT_TYPE_KEY,
+    SessionCompletionTracker,
+    iter_report_log_records,
+)
 from pkcs11_check.core.test_selection import (
     CaseSelection,
     DisabledSelectionPlan,
@@ -558,7 +562,7 @@ def _repeatable_earlier_scopes(earlier: bytes) -> bytes:
             continue
         if record.get("worker_uuid"):
             out.append(line)
-        elif record.get("$report_type") in _ALWAYS_REPEATABLE_TYPES:
+        elif record.get(REPORT_TYPE_KEY) in _ALWAYS_REPEATABLE_TYPES:
             out.append(line)
     return b"".join(line + b"\n" for line in out)
 

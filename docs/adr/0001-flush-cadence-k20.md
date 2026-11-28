@@ -5,11 +5,12 @@ Status: accepted (shipped in 0.3.2).
 ## Context
 
 Call counters persist a sidecar snapshot every K evidence units (one
-unit per recorded call entry, call return, or zero-call mutation).
+unit per recorded call entry, call return, or zero-call mutation;
+ingests add their row counts).
 Per-call persistence (K=1) costs about 100 microseconds per call,
 which multiplies into hours on call-dense runs (measured on a
-call-dense KAT suite: tens of minutes at K=1-friendly versions,
-rising past an hour as counting grew). K=1 remains the right choice
+call-dense KAT suite: tens of minutes at K=1 on early versions,
+past an hour once counting grew). K=1 remains the right choice
 for crash forensics, where the last calls before death are themselves
 evidence reconciled against an external tracer.
 
