@@ -1570,6 +1570,35 @@ def _iter_jsonl_line_records(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]
             yield record
 
 
+def _iter_test_entry_probes(
+    snap: list[bytes],
+) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    """Yield ``(uuid, nodeid, entry)`` for valid per-test entries.
+
+    Shared 5-gate filter preamble (report type, nodeid shape,
+    user-properties shape, test-entry match, worker-uuid match) for
+    the committed-sets and folded-claims derivations, so the two
+    filters cannot drift apart. ``uuid`` is narrowed to ``str``
+    inside (``is_worker_uuid`` returns plain ``bool``).
+    """
+    for record in _iter_jsonl_line_records(snap):
+        if record.get("$report_type", "TestReport") != "TestReport":
+            continue
+        nodeid = record.get("nodeid")
+        if not isinstance(nodeid, str) or not nodeid:
+            continue
+        if not isinstance(record.get("user_properties"), (list, tuple)):
+            continue
+        entry = user_property(record, TEST_ENTRY_PROPERTY)
+        if not is_test_entry(entry):
+            continue
+        uuid = entry.get("worker_uuid")
+        if not is_worker_uuid(uuid):
+            continue
+        assert isinstance(uuid, str)
+        yield uuid, nodeid, entry
+
+
 def _committed_from_jsonl_lines(
     lines: Iterable[bytes],
 ) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
@@ -1622,21 +1651,8 @@ def _committed_from_jsonl_lines(
         lenient.add(key)
         if is_session_record(record):
             sessions.add(key)
-    for record in _iter_jsonl_line_records(snap):
-        if record.get("$report_type", "TestReport") != "TestReport":
-            continue
-        nodeid = record.get("nodeid")
-        if not isinstance(nodeid, str) or not nodeid:
-            continue
-        if not isinstance(record.get("user_properties"), (list, tuple)):
-            continue
-        entry = user_property(record, TEST_ENTRY_PROPERTY)
-        if not is_test_entry(entry):
-            continue
-        uuid = entry.get("worker_uuid")
-        if is_worker_uuid(uuid):
-            assert isinstance(uuid, str)
-            entries.add((uuid, nodeid))
+    for uuid, nodeid, _entry in _iter_test_entry_probes(snap):
+        entries.add((uuid, nodeid))
     return sessions, entries, lenient
 
 
@@ -1689,21 +1705,7 @@ def _claimed_receipts_from_jsonl_lines(
     """
     snap = list(lines)
     claims = _session_claimed_receipts_from_jsonl_lines(snap)
-    for record in _iter_jsonl_line_records(snap):
-        if record.get("$report_type", "TestReport") != "TestReport":
-            continue
-        nodeid = record.get("nodeid")
-        if not isinstance(nodeid, str) or not nodeid:
-            continue
-        if not isinstance(record.get("user_properties"), (list, tuple)):
-            continue
-        entry = user_property(record, TEST_ENTRY_PROPERTY)
-        if not is_test_entry(entry):
-            continue
-        uuid = entry.get("worker_uuid")
-        if not is_worker_uuid(uuid):
-            continue
-        assert isinstance(uuid, str)
+    for uuid, _nodeid, entry in _iter_test_entry_probes(snap):
         # Entry receipts and entry consumed proofs both claim
         # before orphan adoption: a teardown entry that survives
         # a failed journal publish still suppresses the retained
