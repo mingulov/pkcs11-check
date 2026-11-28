@@ -27,6 +27,7 @@ from pkcs11_check.core import _counters_durability as durability
 from pkcs11_check.core import call_counters
 from pkcs11_check.core import counters_schema as schema
 from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
+from tests._counters_fixtures import _session_record
 
 _UUID_A = "a" * 32
 _UUID_B = "b" * 32
@@ -67,21 +68,6 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> Path:
 
 def _marker(target: str, attempt: int) -> dict[str, Any]:
     return {"$report_type": "IsolatedUnitReport", "target": target, "attempt": attempt}
-
-
-def _session_record(
-    pid: int, block: dict[str, Any], *, extra: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "$report_type": "CallCountersReport",
-        "pid": pid,
-        "probes_lost": 0,
-        "isolation": "file",
-    }
-    record.update(block)
-    if extra:
-        record.update(extra)
-    return record
 
 
 def _test_report(nodeid: str, when: str, entry: dict[str, Any]) -> dict[str, Any]:
