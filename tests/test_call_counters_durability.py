@@ -2521,6 +2521,24 @@ _AUTO_DEAD_PID = 5000000
 _auto_dead_pid_verified = False
 
 
+def _plant_probe_orphan_on_new_tick(root: Path, **kwargs: Any) -> Path:
+    """Plant a mid-route probe orphan, forcing it onto a new mtime tick.
+
+    Mid-route arrival tests plant DURING a sweep and assert the gate sees
+    the arrival. The gate re-scans on directory-mtime change, so a plant
+    landing in the snapshot's tick is invisible to the memo on coarse
+    directory timestamps (Windows CI flake, main run 46118654535) and the
+    family prunes instead of holding. The explicit far-future stamp
+    escapes any filesystem quantum, making the ordering premise
+    deterministic on every platform. Production hardening for
+    same-tick arrivals is tracked separately.
+    """
+    planted = _plant_probe_orphan(root, **kwargs)
+    future = time.time_ns() + 5_000_000_000
+    os.utime(root, (future, future))
+    return planted
+
+
 def _plant_probe_orphan(
     root: Path,
     *,
@@ -58618,7 +58636,7 @@ def test_r44_ar18_midpass_probe_arrival_invalidates_memo(tmp_path: Path) -> None
         done = real_reap(root, registry_path, **kwargs)
         if registry_path.name == f"{unrelated}.json" and not planted:
             planted.append(True)
-            _plant_probe_orphan(
+            _plant_probe_orphan_on_new_tick(
                 root,
                 parent_uuid=second,
                 child_uuid="e" * 32,
@@ -58848,7 +58866,7 @@ def test_r44_ar19_delete_recreate_race_invalidates_memo(tmp_path: Path) -> None:
         if registry_path.name == f"{unrelated}.json" and not churned:
             churned.append(True)
             probe_path.unlink()
-            _plant_probe_orphan(
+            _plant_probe_orphan_on_new_tick(
                 root,
                 parent_uuid=second,
                 child_uuid="e" * 32,
@@ -60390,7 +60408,7 @@ def test_r44_ar22_gate_readjudicates_after_arrival(tmp_path: Path) -> None:
         debris = real_debris(sidecar_path)
         if debris is not None and not planted:
             planted.append(True)
-            _plant_probe_orphan(
+            _plant_probe_orphan_on_new_tick(
                 root,
                 parent_uuid=second,
                 child_uuid="e" * 32,
@@ -60868,7 +60886,7 @@ def test_r44_ar23_uncommitted_torn_arrival_reholds(tmp_path: Path) -> None:
         result = real_prune(path, **kwargs)
         if Path(path) == target and not planted:
             planted.append(True)
-            _plant_probe_orphan(
+            _plant_probe_orphan_on_new_tick(
                 root,
                 parent_uuid=second,
                 child_uuid="e" * 32,
@@ -60921,7 +60939,7 @@ def _run_torn_gate_hold_case(tmp_path: Path) -> None:
         result = real_survives(root_dir, census, uuid)
         if uuid == second and not planted:
             planted.append(True)
-            _plant_probe_orphan(
+            _plant_probe_orphan_on_new_tick(
                 root,
                 parent_uuid=second,
                 child_uuid="e" * 32,
@@ -60931,18 +60949,6 @@ def _run_torn_gate_hold_case(tmp_path: Path) -> None:
                 pid=pid,
                 birth=birth,
             )
-            # The gate re-scans on directory-mtime change; force the
-            # arrival onto a new tick. This isolates what the test pins
-            # (gate-vs-prune ordering) from a known clock-resolution
-            # limit: a plant landing in the snapshot's mtime tick is
-            # invisible to the memo on coarse directory timestamps
-            # (Windows CI), so the family prunes instead of holding.
-            # Production hardening for that limit (treat a memo within
-            # one tick of its build as unproven and re-list names) is
-            # tracked separately. Far-future is deliberate: it escapes
-            # any filesystem quantum.
-            future = time.time_ns() + 5_000_000_000
-            os.utime(root, (future, future))
         return result
 
     with mock.patch.object(durability, "_owner_evidence_survives", _verdict_then_arrive):
@@ -61889,7 +61895,7 @@ def test_r44_ar23_committed_torn_arrival_reholds(tmp_path: Path) -> None:
         debris = real_debris(sidecar_path)
         if debris is not None and not planted:
             planted.append(True)
-            _plant_probe_orphan(
+            _plant_probe_orphan_on_new_tick(
                 root,
                 parent_uuid=second,
                 child_uuid="e" * 32,
