@@ -1572,7 +1572,7 @@ def _iter_jsonl_line_records(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]
             yield record
 
 
-def _iter_test_entry_probes(
+def _iter_valid_test_entries(
     snap: list[bytes],
 ) -> Iterator[tuple[str, str, dict[str, Any]]]:
     """Yield ``(uuid, nodeid, entry)`` for valid per-test entries.
@@ -1653,7 +1653,7 @@ def _committed_from_jsonl_lines(
         lenient.add(key)
         if is_session_record(record):
             sessions.add(key)
-    for uuid, nodeid, _entry in _iter_test_entry_probes(snap):
+    for uuid, nodeid, _entry in _iter_valid_test_entries(snap):
         entries.add((uuid, nodeid))
     return sessions, entries, lenient
 
@@ -1707,7 +1707,7 @@ def _claimed_receipts_from_jsonl_lines(
     """
     snap = list(lines)
     claims = _session_claimed_receipts_from_jsonl_lines(snap)
-    for uuid, _nodeid, entry in _iter_test_entry_probes(snap):
+    for uuid, _nodeid, entry in _iter_valid_test_entries(snap):
         # Entry receipts and entry consumed proofs both claim
         # before orphan adoption: a teardown entry that survives
         # a failed journal publish still suppresses the retained
@@ -25835,7 +25835,8 @@ class CountersBarrierPlan(TypedDict, total=True):
 
     All keys but ``conflict_units`` are set at construction;
     ``conflict_units`` is recorded while a persistent counter conflict
-    holds and popped when it clears. Threaded through the CLI and the
+    holds, absent when nothing holds, and dropped by the
+    stale-generation refusal. Threaded through the CLI and the
     file runner; every consumer annotates it instead of
     ``dict[str, Any]`` so key drift fails at typecheck time.
     """
@@ -25869,7 +25870,7 @@ def prepare_resume(
     onto ``skipped_units``: resume must skip those reruns, report them,
     and never assume quiescence.
 
-    Returns a :class:`CountersBarrierPlan` (keys documented there);
+    Returns a :class:`CountersBarrierPlan` (key types declared there);
     a pass holding a persistent counter conflict
     (covered divergence, #88R42-Q2) additionally records
     ``conflict_units``, mapping each held unit to its disposition:
@@ -30185,6 +30186,7 @@ __all__ = [
     "SEAL_FILENAME",
     "SIDECAR_SUFFIX",
     "CounterPersistenceError",
+    "CountersBarrierPlan",
     "Registration",
     "append_journal",
     "append_supplement_records",

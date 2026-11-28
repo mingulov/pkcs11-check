@@ -29,7 +29,7 @@ class SessionCompletionTracker:
     _exitstatuses: list[int] | None = None
 
     def observe(self, record: Mapping[str, Any]) -> None:
-        report_type = record.get("$report_type")
+        report_type = record.get(REPORT_TYPE_KEY)
         if not isinstance(report_type, str) or not report_type:
             self._invalid = True
             return
@@ -204,7 +204,8 @@ def user_property_names(record: dict[str, Any]) -> set[str]:
 
 # Report-log record vocabulary shared across core. ``_report_records.py``
 # imports these FROM this module; never reverse the direction (it would
-# cycle). Import the constants; do not re-declare the literals.
+# cycle). Prefer these constants in new code; the remaining literals
+# elsewhere are legacy.
 REPORT_TYPE_KEY = "$report_type"
 TEST_REPORT_TYPE = "TestReport"
 _ISOLATED_UNIT_REPORT_TYPE = "IsolatedUnitReport"

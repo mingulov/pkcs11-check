@@ -24,7 +24,7 @@ Known limitations).
   about twenty counter updates (roughly ten calls) instead of every
   call, which makes call-dense runs much faster. Totals stay exact
   for runs that finish; a run that crashes can lose up to its last
-  19 unsaved counts, always flagged incomplete. Set
+  19 unsaved counter updates, always flagged incomplete. Set
   `PKCS11_CHECK_COUNTERS_FLUSH_K=1` to restore per-call persistence
   when reconciling crashing runs against an external tracer.
 
@@ -57,7 +57,7 @@ Known limitations).
   while results are being collected, or during a resumed run) the
   report may say the counts are incomplete instead of recovering them
   exactly. Apart from the batched crash tail under Changed above
-  (up to 19 unsaved counts per crashed process, always flagged
+  (up to 19 unsaved counter updates per crashed process, always flagged
   incomplete), recovery is more robust than in 0.3.1 but still has
   narrow silent-drop cases: a resumed run whose prior report is
   present but unreadable; counter files unreadable through a disk or
