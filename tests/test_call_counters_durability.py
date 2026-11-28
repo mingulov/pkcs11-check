@@ -2546,16 +2546,17 @@ def test_mid_route_probe_plants_force_new_tick() -> None:
     Windows flake (same-tick arrival invisible to the memo). Setup-time
     plants need no forcing (the snapshot postdates setup). Allowlisted,
     verified by review: sole-hold reverification re-reads the clock
-    itself; both debris-symlink and membership-flip overwrites keep the
-    same path (no dir entry changes, so no tick to force, and their
-    verdicts hold whether the flip is seen); both exclusion tests
-    assert the mid-pass file stays out until the next pass, which
-    forcing would break.
+    itself; the membership-flip overwrite keeps the same path (no dir
+    entry changes, and its verdict holds whether the flip is seen);
+    the mid-pass exclusion test asserts the planted file stays out
+    until the next pass, which forcing would break. Limit: only
+    direct calls are detected; a nested mock planting through a
+    module-level wrapper would not be flagged.
     """
     import ast
 
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    offenders: list[str] = []
+    offenders: list[tuple[str, int]] = []
 
     class Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -2582,18 +2583,19 @@ def test_mid_route_probe_plants_force_new_tick() -> None:
                 and func.id == "_plant_probe_orphan"
                 and len(self.stack) >= 2
             ):
-                offenders.append("::".join(self.stack[-2:]))
+                offenders.append(("::".join(self.stack[-2:]), node.lineno))
             self.generic_visit(node)
 
     Visitor().visit(tree)
     allowed = {
         "test_r44_ar35_sole_hold_reverifies_stale_classifications::_scan_then_flip",
-        "test_r44_ar36_debris_symlink_does_not_suppress_archival::_scan_then_rewrite",
         "test_r44_ar36_membership_stable_flip_keeps_archival::_scan_then_rewrite",
-        "test_r44_f3r6_reconcile_without_framing_generation_withholds::_planting_parse",
         "test_mid_pass_orphan_excluded_from_this_pass::_planting_parse",
     }
-    assert sorted(set(offenders) - allowed) == [], sorted(set(offenders) - allowed)
+    found = {key for key, _ in offenders}
+    assert allowed <= found, f"stale allowlist entries: {sorted(allowed - found)}"
+    unexpected = [(key, line) for key, line in offenders if key not in allowed]
+    assert unexpected == [], [f"{key} (line {line})" for key, line in unexpected]
 
 
 def _plant_probe_orphan(
