@@ -134,13 +134,16 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   `empty`; preserved provider findings or incomplete results return `1`, while raw pytest harness
   exits `2`/`3`/`4` without a provider finding return public code `2`. A provider finding retained
   alongside one of those harness exits still returns `1`.
-- Known limitation: if a resumed run fails its startup checks, it can overwrite the previous
-  report files. Keep a copy of any report you need before resuming; a code fix is deferred
-  follow-up work. Exception: a resume refused as cross-provider (state file belongs to a
-  different module run) never touches the prior summary -- its separate crash/timeout or
-  collection failure report lands beside the requested path as `<stem>.refused<suffix>`.
-  Refused plain errors and downstream fingerprint refusals (which can also be a same-module
-  argument change, not a provider swap) write no summary at all.
+- Resumed runs that fail their startup checks merge the failure into the
+  prior results instead of overwriting them. Residual risks: resuming
+  without a state file still overwrites same-path outputs, so keep a copy
+  of any report you need before resuming. A resume refused as
+  cross-provider (state file belongs to a different module run) never
+  touches the prior summary -- its separate crash/timeout or collection
+  failure report lands beside the requested path as
+  `<stem>.refused<suffix>`. Refused plain errors and downstream
+  fingerprint refusals (which can also be a same-module argument change,
+  not a provider swap) write no summary at all.
 - Daemon recovery can replace a dying provider's result only as the current aggregate verdict.
   The superseded attempt (including report records, output, and process observations) remains in
   `attempt_history`; every confirmed daemon death remains in `recovery_events` and contributes a

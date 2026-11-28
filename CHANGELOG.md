@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.3.2] - 2026-11-28
+
+Crash-proof counting release: counter recovery now survives crashes
+during collection, resumed runs keep prior results when startup checks
+fail, call statistics break down by mechanism, and call-dense runs
+finish much faster. Not yet validated by a full provider round (see
+Known limitations).
+
+### Added
+
+- Per-mechanism call statistics: counter reports now break down
+  mechanism calls (initializations, key generation, wrapping, key
+  derivation, and encapsulation) by mechanism, including which return
+  code each mechanism call ended with, so refused mechanisms show up
+  with their reasons.
+- `--ckr-strict` now works from the `test` command (previously only
+  documented for direct pytest runs).
+
+### Fixed
+
+- Crash recovery for counters now adopts orphaned counter files left by
+  crashes during collection instead of discarding them, and return codes
+  survive crashes in the middle of a counter write.
+- Resumed runs that fail their startup checks now preserve prior results
+  and append the failure to them instead of overwriting; a resume
+  pointed at a different module's state reports the failure separately
+  rather than mixing providers.
+- Call-dense runs finish much faster: counter snapshots are now batched
+  (every 20 evidence units by default instead of every call) while
+  keeping exact totals; per-call persistence stays available for crash
+  forensics.
+- Interrupted runs now exit 2 (or 1 when completed units already carry
+  findings) instead of an unstable code.
+- Wrong-PIN and bad-slot setup failures are now reported as harness
+  errors (blaming the tool or its configuration) instead of
+  inconclusive module results.
+- An empty user PIN is now treated as no PIN everywhere instead of
+  sometimes meaning an empty password (service-owner PIN behavior
+  unchanged).
+
+### Known limitations
+
+- Call counters: a run that crashes and is fully recovered reports
+  exact totals; in rare multiple-fault situations (for example a crash
+  while results are being collected, or during a resumed run) the
+  report may say the counts are incomplete instead of recovering them
+  exactly. Recovered runs now adopt orphaned counter files left by
+  crashes during collection instead of discarding them. Counts can
+  still be dropped silently in narrow cases: a resumed run whose prior
+  report is present but unreadable; counter files unreadable through a
+  disk or permission fault; and counter files held for a later pass
+  because the process slot they name looks still occupied. In these
+  cases the totals can still report complete. Apart from that
+  exception, counts are never silently wrong as "complete", and they
+  never change any test result. For exact totals, use a fresh run.
+- Resumed runs: startup-check failures now preserve prior results (see
+  above), except resuming without a state file still overwrites
+  same-path outputs. Keep a copy of any report you need before resuming.
+- Call counters count calls made by pkcs11-check itself. Calls made by
+  helper programs it launches (such as OpenSSL interoperability tests)
+  are not included, and a whole-machine crash (not just a program
+  crash) can still lose the last moments of counts.
+- Running the tests directly with pytest keeps counts in memory only.
+- The round-evidence commands (`evidence-export`, `evidence-admit`,
+  `evidence-compare`) are included for an upcoming CI workflow that is
+  not yet active; receipt checks verify file shape and linkage, not
+  the recorded digests themselves.
+- Startup-check counter evidence can fail warn-only under disk I/O
+  pathology (loud warning, no loss record).
+- Sign-permission checks: on modules where generic-secret keys are
+  unavailable, a refusal on the signing-disabled key earns a pass only
+  when the signing-enabled comparison key initializes signing. If the
+  comparison key gives a normal refusal instead, the result is
+  inconclusive; if a key reports signing disabled yet successfully
+  initializes signing, that contradiction is reported as a failure.
+- Key-derivation policy checks read the second key's allowed-mechanism
+  list strictly: a two-key derivation the list excludes is reported as
+  a failure even when the module performs it. This reading is intentional
+  and will be revisited if a conforming module disputes it.
+- Object-copy checks treat inconsistent copy answers as failures: one
+  guess accepted while the other is refused, or two different standard
+  refusals for the same question, is reported as a failure. This
+  consistency rule is intentional and will be revisited if a conforming
+  module disputes it.
+- No complete provider round has been run for this release; results
+  against your module may differ from the SoftHSM2-based testing.
+
 ## [0.3.1] - 2026-11-23
 
 Counting-exactness and honesty release: provider call counts now reconcile
