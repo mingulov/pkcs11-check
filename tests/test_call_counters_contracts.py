@@ -51,56 +51,18 @@ from pkcs11_check.core import counters_schema as schema
 from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
 from pkcs11_check.core.call_counters import CALL_COUNTERS_PROPERTY, ISOLATION_ENV
 from pkcs11_check.core.merge import merge_shard_dirs
+from tests._counters_fixtures import (
+    _fn_block,
+    _legacy_block,
+    _module_block,
+    _session_record,
+)
 
 _R1 = "20261115T120000000000Z-p100-a1b2c3d4"
 _R2 = "20261115T130000000000Z-p200-e5f6a7b8"
 
 _UUID_A = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 _UUID_B = "00112233445566778899aabbccddeeff"
-
-
-def _fn_block(calls: int, *, rv: int = 0, name: str = "CKR_OK") -> dict[str, Any]:
-    return {"calls": calls, "by_rv": {str(rv): {"name": name, "count": calls}}}
-
-
-def _legacy_block(
-    total: int, *, bucket: str = "test", fn: str = "C_Sign", rv: int = 0
-) -> dict[str, Any]:
-    return {
-        "total_calls": total,
-        "buckets": {bucket: {"calls": total, "by_fn": {fn: _fn_block(total, rv=rv)}}},
-    }
-
-
-def _module_block(module_buckets: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    by_module: dict[str, Any] = {}
-    total = 0
-    for module, buckets in module_buckets.items():
-        calls = sum(block["calls"] for block in buckets.values())
-        by_module[module] = {"calls": calls, "buckets": buckets}
-        total += calls
-    return {"total_calls": total, "by_module": by_module}
-
-
-def _session_record(
-    pid: int,
-    block: dict[str, Any] | None = None,
-    total: int = 10,
-    *,
-    isolation: str = "file",
-    probes_lost: int = 0,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "$report_type": "CallCountersReport",
-        "pid": pid,
-        "isolation": isolation,
-        "probes_lost": probes_lost,
-    }
-    record.update(_legacy_block(total) if block is None else block)
-    if extra:
-        record.update(extra)
-    return record
 
 
 def _test_entry(

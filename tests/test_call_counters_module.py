@@ -24,6 +24,12 @@ from pkcs11_check.core import counters_schema as schema
 from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
 from pkcs11_check.core.call_counters import CALL_COUNTERS_PROPERTY, ISOLATION_ENV
 from pkcs11_check.core.merge import merge_shard_dirs
+from tests._counters_fixtures import (
+    _fn_block,
+    _legacy_block,
+    _module_block,
+    _session_record,
+)
 
 _MOD_A = "/lib/softhsm/libsofthsm2.so"
 _MOD_B = "/lib/p11kit-proxy.so"
@@ -37,45 +43,8 @@ def _clean_counters() -> Iterator[None]:
     call_counters.reset_for_tests()
 
 
-def _fn_block(calls: int, *, rv: int = 0, name: str = "CKR_OK") -> dict[str, Any]:
-    return {"calls": calls, "by_rv": {str(rv): {"name": name, "count": calls}}}
-
-
 def _buckets(total: int, *, bucket: str = "test", fn: str = "C_Sign") -> dict[str, Any]:
     return {bucket: {"calls": total, "by_fn": {fn: _fn_block(total)}}}
-
-
-def _module_block(modules: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    by_module: dict[str, Any] = {}
-    total = 0
-    for module, buckets in modules.items():
-        calls = sum(block["calls"] for block in buckets.values())
-        by_module[module] = {"calls": calls, "buckets": buckets}
-        total += calls
-    return {"total_calls": total, "by_module": by_module}
-
-
-def _legacy_block(total: int, **kwargs: Any) -> dict[str, Any]:
-    return {"total_calls": total, "buckets": _buckets(total, **kwargs)}
-
-
-def _session_record(
-    pid: int,
-    block: dict[str, Any] | None = None,
-    total: int = 10,
-    *,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "$report_type": "CallCountersReport",
-        "pid": pid,
-        "isolation": "file",
-        "probes_lost": 0,
-    }
-    record.update(_legacy_block(total) if block is None else block)
-    if extra:
-        record.update(extra)
-    return record
 
 
 def _test_entry(
