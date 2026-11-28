@@ -2535,7 +2535,7 @@ def _plant_probe_orphan_on_new_tick(root: Path, **kwargs: Any) -> Path:
     """
     planted = _plant_probe_orphan(root, **kwargs)
     future = time.time_ns() + 5_000_000_000
-    os.utime(root, (future, future))
+    os.utime(root, ns=(future, future))
     return planted
 
 
