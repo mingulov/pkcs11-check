@@ -39,9 +39,11 @@ Known limitations).
   rather than mixing providers.
 - Interrupted runs (Ctrl-C) now exit 2 (or 1 when completed units
   already carry findings) instead of 130 on isolated runs.
-- Wrong-PIN and bad-slot setup failures are now reported as harness
-  errors (blaming the tool or its configuration) instead of
-  inconclusive module results.
+- Wrong-PIN setup failures are now reported as harness errors
+  (blaming the tool or its configuration) instead of inconclusive
+  module results. Bad-slot setup failures stay inconclusive: a
+  yanked token or a renumbering module explains them as well as a
+  harness bug, so the tool does not blame itself.
 - Empty PIN handling is now consistent: an empty user PIN means no PIN
   everywhere, and an explicit `--pin ""` overrides a set `P11TEST_PIN`
   instead of inheriting it. The same explicit-overrides-environment
