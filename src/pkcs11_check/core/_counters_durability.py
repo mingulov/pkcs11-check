@@ -1570,16 +1570,14 @@ def _iter_jsonl_line_records(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]
             yield record
 
 
-def _committed_from_jsonl(
-    path: Path | str | None,
-) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]] | None:
-    """Return ``(sessions, entries, lenient sessions)``, runs included.
+def _committed_from_jsonl_lines(
+    lines: Iterable[bytes],
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
+    """Derive committed sets from already-read JSONL lines (#88R26-1).
 
     Sessions are authoritative for their whole producer; entries are
     authoritative per test window. Used to compute the sidecar gap (full
     entry supersedes same-(uuid, test) partial) and delete-after-commit.
-    Returns None when the file exists but cannot be read (fail-closed:
-    the caller degrades instead of reasoning from an empty snapshot).
     Session sets key on ``(run, uuid)`` exactly like the extractor's
     authority staging (absent run reads ``""``, malformed run skips the
     record): uuid-only matching would let a cross-round session divert
@@ -1606,23 +1604,9 @@ def _committed_from_jsonl(
     says (#88R40-3: a winner exists exactly where extraction stages
     authority). Overshoot there only ever yields spurious-incomplete,
     never silent-complete.
-    """
-    if path is None:
-        return set(), set(), set()
-    lines = _read_jsonl_lines(Path(path))
-    if lines is None:
-        return None
-    return _committed_from_jsonl_lines(lines)
 
-
-def _committed_from_jsonl_lines(
-    lines: Iterable[bytes],
-) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
-    """Derive committed sets from already-read JSONL lines (#88R26-1).
-
-    The single-snapshot core of :func:`_committed_from_jsonl`: callers
-    that need sessions and claims from the same file read once and
-    derive both, so a fault between two reads can never split
+    Callers that need sessions and claims from the same file read once
+    and derive both, so a fault between two reads can never split
     authority from claims. Session pairs derive from the shared
     first-accepted selection (#88R40-3): the strict pair is claimed
     iff the winning record passes the strict gate, and the lenient
@@ -1656,31 +1640,6 @@ def _committed_from_jsonl_lines(
     return sessions, entries, lenient
 
 
-def _claimed_receipts_from_jsonl(
-    path: Path | str | None,
-) -> dict[str, set[tuple[str, int]]] | None:
-    """Return per-producer folded-probe claims ``{uuid: {(uuid, seq)}}`` from JSONL.
-
-    Claims ride C4-valid sessions and valid per-test entries (first-match
-    ``user_property``, mirroring :func:`_committed_from_jsonl`); uuid-less
-    records claim nothing (unattributable). The orphan collector unions
-    these with the producer's durable file receipts: either holder proves
-    the probe evidence durable, so the orphan suppresses instead of
-    folding twice. Returns None when the file exists but cannot be read
-    (the caller degrades instead of suppressing nothing). Claims stay
-    global across runs deliberately (receipt identities are unique per
-    probe child; per-round scoping would break cross-round dedup the
-    resume track relies on) -- see the review report for the full
-    tradeoff.
-    """
-    if path is None:
-        return {}
-    lines = _read_jsonl_lines(Path(path))
-    if lines is None:
-        return None
-    return _claimed_receipts_from_jsonl_lines(lines)
-
-
 def _session_claimed_receipts_from_jsonl_lines(
     lines: Iterable[bytes],
 ) -> dict[str, set[tuple[str, int]]]:
@@ -1711,12 +1670,22 @@ def _claimed_receipts_from_jsonl_lines(
 ) -> dict[str, set[tuple[str, int]]]:
     """Derive folded-probe claims from already-read JSONL lines (#88R26-1).
 
-    The single-snapshot core of
-    :func:`_claimed_receipts_from_jsonl` (same one-read rationale as
-    :func:`_committed_from_jsonl_lines`). The session arm reads the
-    shared first-accepted selection (#88R40-3): only the record
-    extraction folds may claim, and only when it also passes the
-    strict gate; the entry arm is unchanged.
+    Claims ride C4-valid sessions and valid per-test entries (first-match
+    ``user_property``, mirroring the committed-sets gate); uuid-less
+    records claim nothing (unattributable). The orphan collector unions
+    these with the producer's durable file receipts: either holder proves
+    the probe evidence durable, so the orphan suppresses instead of
+    folding twice. Claims stay global across runs deliberately (receipt
+    identities are unique per probe child; per-round scoping would break
+    cross-round dedup the resume track relies on) -- see the review
+    report for the full tradeoff.
+
+    Callers that need sessions and claims from the same file read once
+    and derive both, so a fault between two reads can never split
+    authority from claims. The session arm reads the shared
+    first-accepted selection (#88R40-3): only the record extraction
+    folds may claim, and only when it also passes the strict gate;
+    the entry arm is unchanged.
     """
     snap = list(lines)
     claims = _session_claimed_receipts_from_jsonl_lines(snap)
@@ -1746,36 +1715,21 @@ def _claimed_receipts_from_jsonl_lines(
     return claims
 
 
-def _claimed_loss_from_jsonl(
-    path: Path | str | None,
-) -> dict[str, set[tuple[str, int]]] | None:
-    """Return per-producer session loss keys ``{uuid: {(uuid, seq)}}`` from JSONL.
-
-    Reads session ``lost_keys`` only (test entries carry no loss keys);
-    uuid-less records claim nothing (unattributable). Returns None when
-    the file exists but cannot be read (the caller degrades instead of
-    covering nothing). Session loss is durable cover for deletion:
-    keys the supervisor attested need no re-publication before their
-    duplicate evidence converges (#88R39-5).
-    """
-    if path is None:
-        return {}
-    lines = _read_jsonl_lines(Path(path))
-    if lines is None:
-        return None
-    return _claimed_loss_from_jsonl_lines(lines)
-
-
 def _claimed_loss_from_jsonl_lines(
     lines: Iterable[bytes],
 ) -> dict[str, set[tuple[str, int]]]:
     """Derive session loss keys from already-read JSONL lines (#88R39-5).
 
-    The single-snapshot core of :func:`_claimed_loss_from_jsonl`
-    (same one-read rationale as :func:`_committed_from_jsonl_lines`).
-    Claims derive from the shared first-accepted selection (#88R40-3):
-    only the record extraction folds may cover, and only when it
-    also passes the strict gate.
+    Reads session ``lost_keys`` only (test entries carry no loss keys);
+    uuid-less records claim nothing (unattributable). Session loss is
+    durable cover for deletion: keys the supervisor attested need no
+    re-publication before their duplicate evidence converges (#88R39-5).
+
+    Callers that need sessions and claims from the same file read once
+    and derive both, so a fault between two reads can never split
+    authority from claims. Claims derive from the shared first-accepted
+    selection (#88R40-3): only the record extraction folds may cover,
+    and only when it also passes the strict gate.
     """
     claimed: dict[str, set[tuple[str, int]]] = {}
     for (run, uuid), (record, _scope) in _first_accepted_sessions(lines).items():
@@ -4321,31 +4275,6 @@ def _checkpoint_recorded_returns(
             key = (leaf[0], leaf[2], leaf[3])
             recorded[key] = recorded.get(key, 0) + count
     return recorded
-
-
-def _suppressed_returns_uncovered(
-    rows: list[Any], recorded: Mapping[tuple[str, str, str], int]
-) -> dict[tuple[str, str, str], int]:
-    """Suppressed returns the checkpoint never recorded, per key (#88R43-F10).
-
-    Parses flat probe rows (garbage skipped, mirroring the merge) and
-    subtracts the checkpoint-recorded returns; empty means every
-    suppressed return is accounted. Returnless rows (in-flight entries)
-    never appear here: entries-only suppression is the pre-existing
-    absorbed-live semantic. Never raises.
-    """
-    exits: dict[tuple[str, str, str], int] = {}
-    for row in rows:
-        parsed = _parse_probe_flat_row(row)
-        if parsed is None or parsed[2] is None:
-            continue
-        key = (parsed[0], parsed[1], str(parsed[2]))
-        exits[key] = exits.get(key, 0) + parsed[3]
-    return {
-        key: total - recorded.get(key, 0)
-        for key, total in exits.items()
-        if total > recorded.get(key, 0)
-    }
 
 
 def _checkpoint_recorded_entries(
