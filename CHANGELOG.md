@@ -20,13 +20,13 @@ Known limitations).
 
 ### Changed
 
-- Counter snapshots are now batched by default (about ten calls per
-  snapshot instead of every call), which makes call-dense runs much
-  faster. Totals stay exact for runs that finish; a run that crashes
-  can lose up to its last 19 unsaved counts, always flagged
-  incomplete. Set `PKCS11_CHECK_COUNTERS_FLUSH_K=1` to restore
-  per-call persistence when reconciling crashing runs against an
-  external tracer.
+- Counter snapshots are now batched by default: each snapshot covers
+  about twenty counter updates (roughly ten calls) instead of every
+  call, which makes call-dense runs much faster. Totals stay exact
+  for runs that finish; a run that crashes can lose up to its last
+  19 unsaved counts, always flagged incomplete. Set
+  `PKCS11_CHECK_COUNTERS_FLUSH_K=1` to restore per-call persistence
+  when reconciling crashing runs against an external tracer.
 
 ### Fixed
 
